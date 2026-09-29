@@ -8,3 +8,5 @@ windows/salida/
 *.tar.gz
 *.bundle
 /dist
+
+windows/salida-setup/

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="94.77" viewBox="0 0 220 139">
+  <title>Arca</title>
+  <defs>
+  <linearGradient id="mL" gradientUnits="userSpaceOnUse" x1="30" y1="55" x2="102" y2="98">
+    <stop offset="0" stop-color="#4A9BFF"/>
+    <stop offset=".42" stop-color="#1B66EE"/>
+    <stop offset="1" stop-color="#0839AE"/>
+  </linearGradient>
+  <linearGradient id="mR" gradientUnits="userSpaceOnUse" x1="120" y1="14" x2="196" y2="139">
+    <stop offset="0" stop-color="#0A2A8F"/>
+    <stop offset=".5" stop-color="#0F4FD6"/>
+    <stop offset="1" stop-color="#2F8DFF"/>
+  </linearGradient>
+  <linearGradient id="mT" gradientUnits="userSpaceOnUse" x1="96" y1="0" x2="118" y2="46">
+    <stop offset="0" stop-color="#57A2FF"/>
+    <stop offset="1" stop-color="#2B72EE"/>
+  </linearGradient>
+  <linearGradient id="mFL" gradientUnits="userSpaceOnUse" x1="10" y1="96" x2="52" y2="139">
+    <stop offset="0" stop-color="#3F8DFF"/>
+    <stop offset="1" stop-color="#8CC4FF"/>
+  </linearGradient>
+  <linearGradient id="mFR" gradientUnits="userSpaceOnUse" x1="140" y1="92" x2="212" y2="139">
+    <stop offset="0" stop-color="#2A7DF5"/>
+    <stop offset="1" stop-color="#5FAEFF"/>
+  </linearGradient>
+  <linearGradient id="mO" gradientUnits="userSpaceOnUse" x1="110" y1="83" x2="110" y2="139">
+    <stop offset="0" stop-color="#FFA65E"/>
+    <stop offset="1" stop-color="#FF7A22"/>
+  </linearGradient>
+  </defs>
+  <path d="M83.45 0L133 0Q138 0 140.54 4.31L218.37 136.24Q220 139 216.8 139L168.66 139Q165.46 139 163.83 136.24Z" fill="url(#mR)"/>
+  <path d="M79.46 4.31Q82 0 87 0L136.55 0L56.17 136.24Q54.54 139 51.34 139L3.2 139Q0 139 1.63 136.24Z" fill="url(#mL)"/>
+  <path d="M83.45 0L136.55 0L110 45Z" fill="url(#mT)"/>
+  <path d="M3.2 139Q0 139 2.76 137.38L83.45 90L56.17 136.24Q54.54 139 51.34 139Z" fill="url(#mFL)"/>
+  <path d="M136.55 90L217.24 137.38Q220 139 216.8 139L168.66 139Q165.46 139 163.83 136.24Z" fill="url(#mFR)" opacity=".9"/>
+  <path d="M108.78 85.07Q110 83 111.22 85.07L141.82 136.93Q143.04 139 140.64 139L79.36 139Q76.96 139 78.18 136.93Z" fill="url(#mO)"/>
+</svg>

@@ -38,6 +38,7 @@ If the crate version is ever raised, that is the order worth looking in.
 | `AppxManifest.xml` | Sparse MSIX package giving the extension an identity. Its `Version` is left at zeros and stamped at install time |
 | `arca.iss` | Inno Setup script that produces the installer |
 | `build.ps1` | Builds, packages and registers both menus for development |
+| `build-setup.ps1` | Builds the new installer (`arca-setup`) into `dist`, with the release binaries inside. See `docs/plans/instalador-propio.md` |
 
 ## Two menus, two interfaces, two CLSIDs
 

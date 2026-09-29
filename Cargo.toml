@@ -6,8 +6,10 @@ members = [
     "arca-tar",
     "arca-cli",
     "arca-gui",
+    "arca-setup",
     "arca-icons",
     "arca-drag",
+    "arca-notify",
     "arca-net",
 ]
 # Solo compila en Windows: se queda fuera del workspace para que

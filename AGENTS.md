@@ -11,6 +11,8 @@ Arca is a cross-platform archiver written in Rust. The workspace contains:
 - `arca-tar`: TAR reading and writing.
 - `arca-cli`: the `arca` command-line binary.
 - `arca-gui`: the desktop window.
+- `arca-setup`: the installer window and engine; releases still ship the Inno Setup one.
+- `arca-notify`: broadcasts environment and file-association changes to Windows.
 - `arca-icons`: desktop file-type icons.
 - `arca-drag`: drag-and-drop integration.
 - `arca-net`: networking support.

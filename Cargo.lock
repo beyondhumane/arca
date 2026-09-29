@@ -313,6 +313,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "arca-notify"
+version = "0.7.1"
+dependencies = [
+ "windows 0.58.0",
+]
+
+[[package]]
+name = "arca-setup"
+version = "0.7.1"
+dependencies = [
+ "arca-core",
+ "arca-notify",
+ "arca-zip",
+ "gpui-pre",
+ "gpui-pre-platform",
+ "sys-locale",
+ "winreg",
+ "winresource",
+]
+
+[[package]]
 name = "arca-tar"
 version = "0.7.1"
 dependencies = [
