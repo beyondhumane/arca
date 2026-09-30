@@ -1,5 +1,5 @@
 ---
-description: Look inside archives and unpack them in parallel — safely.
+description: Look inside archives and unpack them in parallel and safely.
 group: Using Arca
 order: 5
 keywords: list extract unpack parallel conflict overwrite skip rename zip slip -o
@@ -13,7 +13,7 @@ keywords: list extract unpack parallel conflict overwrite skip rename zip slip -
 arca list <ARCHIVE> [-t | --time]
 ```
 
-Prints one line per entry — uncompressed size, method, ratio and name — without extracting anything.
+Prints one line per entry (uncompressed size, method, ratio and name) without extracting anything.
 
 ```sh
 arca list arca.zip --time
@@ -48,11 +48,11 @@ arca extract <ARCHIVE> [-o DIR] [--on-conflict POLICY] [-j THREADS] [-p PASSWORD
 | `skip` | Leave the existing file alone and move on. |
 | `rename` | Write it next to the other one as name (1).ext. |
 
-Destinations are decided up front, on a single thread, before anything is written — so two entries with the same name can never race for the same free name.
+Destinations are decided up front, on a single thread, before anything is written, so two entries with the same name can never race for the same free name.
 
 ## Parallel extraction
 
-A `.zip` is random access: the central directory says where every entry starts, so one thread per core can each open the file and decompress a different entry. A `.tar` is a single stream — and a `.tar.gz` a single gzip stream on top of it — so there’s nothing to split and extraction stays sequential.
+A `.zip` is random access: the central directory says where every entry starts, so one thread per core can each open the file and decompress a different entry. A `.tar` is a single stream, and a `.tar.gz` a single gzip stream on top of it, so there’s nothing to split and extraction stays sequential.
 
 | 287 MB in 16 text files · Windows 11 | Time |
 | --- | --- |
@@ -63,7 +63,7 @@ A `.zip` is random access: the central directory says where every entry starts, 
 > [!NOTE]
 > **Many small files**
 >
-> Splitting changes nothing when there are thousands of tiny files: extracting 5,358 source files took 4.5 s, but decompressing those same 55 MB took 0.128 s. 97% of the time goes into creating files on NTFS — and 7-Zip, at 4.6 s, hits the same wall.
+> Splitting changes nothing when there are thousands of tiny files: extracting 5,358 source files took 4.5 s, but decompressing those same 55 MB took 0.128 s. 97% of the time goes into creating files on NTFS, and 7-Zip took 4.6 s on the same files.
 
 ## Safe paths
 

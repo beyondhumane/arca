@@ -11,7 +11,7 @@ const Code = ({ children }: { children: ReactNode }) => (
 
 const FAQS: { q: string; a: ReactNode }[] = [
   {
-    q: 'Is Arca really free — including at work?',
+    q: 'Is Arca free to use at work?',
     a: (
       <>
         Yes. Arca is released under the Apache License 2.0: use it at home or at work, modify it, and ship it inside
@@ -33,7 +33,7 @@ const FAQS: { q: string; a: ReactNode }[] = [
     q: 'Can other tools open the archives Arca creates?',
     a: (
       <>
-        Yes — that’s what <Code>interop.sh</Code> checks, across 35 cases verified by SHA-256: unzip, tar and 7-Zip read
+        Yes. <Code>interop.sh</Code> checks it across 35 cases verified by SHA-256: unzip, tar and 7-Zip read
         what Arca writes at all four levels, and Arca reads what they write. One caveat: Zstandard inside ZIP (method 93)
         isn’t read by classic unzip, which is why <Code>-c auto</Code> uses Deflate for <Code>.zip</Code>.
       </>
@@ -44,8 +44,8 @@ const FAQS: { q: string; a: ReactNode }[] = [
     a: (
       <>
         AES-256 using the WinZip AE-2 scheme: PBKDF2-HMAC-SHA1 key derivation, AES-256 in CTR mode, an HMAC-SHA1 over
-        the ciphertext and a random 16-byte salt per entry — the same scheme 7-Zip, WinRAR and NanaZip write. Note that
-        ZIP never encrypts file names, so the listing stays visible without the password.
+        the ciphertext and a random 16-byte salt per entry, the same scheme 7-Zip, WinRAR and NanaZip write. ZIP
+        never encrypts file names, so the listing stays visible without the password.
       </>
     ),
   },
@@ -73,8 +73,8 @@ const FAQS: { q: string; a: ReactNode }[] = [
     q: 'Can I use Arca as a Rust library?',
     a: (
       <>
-        The workspace is split into crates — <Code>arca-core</Code>, <Code>arca-zip</Code>, <Code>arca-tar</Code> — that
-        aren’t on crates.io yet. You can depend on them straight from the Git repository today.
+        The crates (<Code>arca-core</Code>, <Code>arca-zip</Code>, <Code>arca-tar</Code>) aren’t on crates.io yet. You
+        can depend on them straight from the Git repository.
       </>
     ),
   },
@@ -151,7 +151,7 @@ export function FAQ() {
             </Reveal>
             <Reveal delay={180}>
               <p className="mt-5 max-w-sm text-base leading-relaxed text-slate-400">
-                The short version of what people ask most. The docs have the long version.
+                Short answers. The docs have the long ones.
               </p>
             </Reveal>
             <Reveal delay={260}>

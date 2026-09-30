@@ -19,13 +19,13 @@ Arca is a Cargo workspace. Each crate has one job and a declared stance on unsaf
 | `arca-cli` | The arca binary | allowed, unused |
 | `arca-gui` | The arca-gui window | forbidden |
 | `arca-icons` | The icon the desktop shows for a file type | Windows only, for the shell call |
-| `windows/arca-shell` | Explorer context menu — outside the workspace so cargo build still works on Linux and macOS | required: COM |
+| `windows/arca-shell` | Explorer context menu, outside the workspace so cargo build still works on Linux and macOS | required: COM |
 
 The workspace also contains `arca-drag` and `arca-net`; see [their sources](https://github.com/beyondhumane/arca) for details.
 
 ## The unsafe policy
 
-Every crate that parses bytes from an archive declares `#![forbid(unsafe_code)]` at crate level, so the compiler — not code review — guarantees there’s no unsafe code in them. It appears only where the operating system demands it: one shell call for icons on Windows, and COM for the Explorer extension.
+Every crate that parses bytes from an archive declares `#![forbid(unsafe_code)]` at crate level, so the compiler guarantees there’s no unsafe code in them. It appears only where the operating system demands it: one shell call for icons on Windows, and COM for the Explorer extension.
 
 ```rust
 #![forbid(unsafe_code)]
@@ -41,7 +41,7 @@ match ZipArchive::open(file) {
 
 | Crate | Used for |
 | --- | --- |
-| `flate2` + `zlib-rs` | Deflate — the fastest Rust implementation measured during design |
+| `flate2` + `zlib-rs` | Deflate, using the fastest Rust implementation measured during design |
 | `zstd` | Zstandard bindings to libzstd, with its internal multithreading enabled |
 | `crc32fast` | CRC-32 checks |
 | `rayon` | The thread pool behind parallel compression and extraction |

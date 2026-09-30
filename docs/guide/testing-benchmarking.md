@@ -1,5 +1,5 @@
 ---
-description: Verify archives without writing to disk, and measure performance honestly.
+description: Verify archives without writing to disk, and measure performance reproducibly.
 group: Using Arca
 order: 6
 keywords: test verify crc ci github actions bench benchmark r1 r2 methodology
@@ -9,7 +9,7 @@ keywords: test verify crc ci github actions bench benchmark r1 r2 methodology
 
 ## arca test
 
-Reads every entry and checks its CRC — or its HMAC, when the entry is encrypted — without writing anything to disk.
+Reads every entry and checks its CRC (or its HMAC, when the entry is encrypted) without writing anything to disk.
 
 ```sh
 arca test arca.zip
@@ -25,7 +25,7 @@ Corrupt entries are reported on standard error, and the command exits with statu
 ### Verifying artifacts in CI
 
 ```yaml
-# with arca on the PATH — see Installation
+# with arca on the PATH; see Installation
 - name: Package
   run: arca create dist.zip build/ -l best
 - name: Verify
@@ -55,14 +55,14 @@ Performance requirements (design document, section 05)
 
 The published figures for R1, R2 and R3, and the script that reproduces them, are on the [benchmarks](benchmarks.md) page.
 
-## Benchmarking honestly
+## Reproducible benchmarks
 
 - Report the best of several runs, and delete the output directory before every pass.
-- Small corpora sit in the operating system’s write cache and flatter everybody — use data that doesn’t fit.
+- Small corpora sit in the operating system’s write cache and make every tool look faster. Use data that doesn’t fit.
 - When a run writes gigabytes, alternate the arms (A B B A) and measure the disk with a plain sequential write before and after.
 - Compare CPU time with wall time. If they match, the program is its own bottleneck; if wall time is longer, the disk is.
 
 > [!WARNING]
-> **A cautionary tale**
+> **Alternate the arms**
 >
-> An ordered sweep over thread counts once produced a clean, convincing and completely false result — one thread looking twice as fast as sixteen — because the drive degraded as the run went on, and “more threads” really meant “later in the run”. Re-run alternating, 16 threads beat 1 thread in all three rounds.
+> An ordered sweep over thread counts once showed one thread running twice as fast as sixteen. The drive was degrading as the run went on, so “more threads” really meant “later in the run”. Re-run alternating, 16 threads beat 1 thread in all three rounds.

@@ -46,7 +46,7 @@ export function SocialProof() {
       <Container>
         <Reveal>
           <p id="proof-title" className="text-center text-sm text-slate-500">
-            Reads and writes the archives your team already trades — with the tools they already use
+            Archives open in the tools people already use. Built on Zstandard and zlib-rs.
           </p>
         </Reveal>
       </Container>

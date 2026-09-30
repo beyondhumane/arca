@@ -22,7 +22,7 @@ Both are built, installed and verified on Windows 11.
 
 ## Progress, not silence
 
-Right-clicking an archive opens the Arca window with a progress bar rather than running the command line with no console. An extraction that fails — or that finds a file already there — says so instead of doing nothing.
+Right-clicking an archive opens the Arca window with a progress bar rather than running the command line with no console. An extraction that fails, or that finds a file already there, says so instead of doing nothing.
 
 ## Installer
 
@@ -30,4 +30,4 @@ The installer is produced with Inno Setup from `windows/arca.iss`. Download `arc
 
 ## Why it lives outside the workspace
 
-`windows/arca-shell` needs COM — and therefore `unsafe` — and only compiles on Windows. It’s excluded from the Cargo workspace so that `cargo build` keeps working on Linux and macOS.
+`windows/arca-shell` needs COM, and therefore `unsafe`, and only compiles on Windows. It’s excluded from the Cargo workspace so that `cargo build` keeps working on Linux and macOS.

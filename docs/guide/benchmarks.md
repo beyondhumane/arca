@@ -1,5 +1,5 @@
 ---
-description: Every measurement, the machines behind it — and the cases Arca loses.
+description: Every measurement, the machine behind it, and the cases Arca loses.
 group: Reference
 order: 14
 keywords: performance speed benchmarks nanazip 7-zip zip numbers
@@ -7,7 +7,7 @@ keywords: performance speed benchmarks nanazip 7-zip zip numbers
 
 # Benchmarks
 
-These numbers come from specific machines and should not be read as a general advantage. The methodology is part of the result — including the cases where Arca loses.
+These numbers come from specific machines and should not be read as a general advantage. Each one comes with its method, including the cases where Arca loses.
 
 ## Requirements
 
@@ -56,7 +56,7 @@ With Zstandard, Arca was 13.2× faster than `zip` and 18.1× faster than 7-Zip; 
 > [!NOTE]
 > **Why 120 files**
 >
-> Each entry is compressed on one thread. Silesia’s own twelve files are dominated by a 49 MB one, so on them two threads only reach 1.56× — the corpus, not the code, sets the ceiling.
+> Each entry is compressed on one thread. Silesia’s own twelve files are dominated by a 49 MB one, so on them two threads only reach 1.56×.
 
 ### Deflate against deflate on Windows 11
 
@@ -72,7 +72,7 @@ arca create c1.zip src
 7z a -tzip -mx5 c2.zip src
 ```
 
-With large files Arca compressed 5.7× faster at the cost of 3.7% in size; with many small files 7-Zip was somewhat ahead at the same size. **There is no single winner — it depends on the corpus.**
+With large files Arca compressed 5.7× faster at the cost of 3.7% in size; with many small files 7-Zip was somewhat ahead at the same size. The winner depends on the corpus.
 
 ## Parallel extraction
 
@@ -97,7 +97,7 @@ A 3.13 GB `.zip` holding 1,513 files that unpack to 6.28 GB, all Deflate, with 1
 
 ### Decompression alone
 
-Both tools read every entry, check every CRC and write nothing — one core each.
+Both tools read every entry, check every CRC and write nothing, on one core each.
 
 | Tool | Wall | CPU | Cores |
 | --- | --- | --- | --- |
@@ -125,9 +125,9 @@ arca extract big.zip -o out
 NanaZipC x -y -o"out" big.zip
 ```
 
-The disk sustained 327 MB/s before the four runs and 90 MB/s after them. Arca ran on both the freshest and the most worn disk — and its worst run still beat NanaZip’s best.
+The disk sustained 327 MB/s before the four runs and 90 MB/s after them. Arca ran on both the freshest and the most worn disk, and its worst run still beat NanaZip’s best.
 
 > [!NOTE]
-> **Why Arca wins here — and it isn’t the disk**
+> **Why Arca wins here**
 >
-> NanaZip’s wall time equals its CPU time: its own processor is the limit. Arca burns slightly more CPU than wall clock (1.1 cores), so decompression overlaps with writing and the wall clock settles against the disk — 6.28 GB in 21.9 s is 294 MB/s against a 327 MB/s ceiling. The faster decoder is the cause; saturating the disk is the consequence.
+> NanaZip’s wall time equals its CPU time: its own processor is the limit. Arca burns slightly more CPU than wall clock (1.1 cores), so decompression overlaps with writing and the wall clock settles against the disk: 6.28 GB in 21.9 s is 294 MB/s against a 327 MB/s ceiling. The faster decoder is what gets it there.

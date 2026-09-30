@@ -7,7 +7,7 @@ keywords: password aes aes-256 encrypt decrypt zipcrypto hmac pbkdf2 security
 
 # Encryption
 
-Arca encrypts `.zip` archives with AES-256 using the WinZip AE-2 scheme — the same thing 7-Zip, WinRAR and NanaZip write. `interop.sh` checks it in both directions against 7-Zip.
+Arca encrypts `.zip` archives with AES-256 using the WinZip AE-2 scheme, the same one 7-Zip, WinRAR and NanaZip write. `interop.sh` checks it in both directions against 7-Zip.
 
 ## The scheme
 
@@ -21,7 +21,7 @@ Arca encrypts `.zip` archives with AES-256 using the WinZip AE-2 scheme — the 
 ## Design decisions
 
 - **A salt per entry.** Reusing a salt would reuse the keystream, and two identical files would look identical inside the archive.
-- **Compress, then encrypt.** That’s the order the specification calls for — the other way round the compressor would find nothing to compress.
+- **Compress, then encrypt.** That’s the order the specification calls for, because encrypted bytes leave the compressor nothing to compress.
 - **The CRC is stored as zero.** AE-2 says so: it’s a checksum of the plaintext and has no business being there once the HMAC speaks for the data.
 - **Tampering fails loudly.** An altered byte doesn’t come out as content; it fails the authentication code.
 

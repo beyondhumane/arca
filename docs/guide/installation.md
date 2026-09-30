@@ -21,11 +21,11 @@ Get the file for your platform from the [latest release](https://github.com/beyo
 | macOS Intel | `arca-v<version>-macos-x86_64.tar.gz` | Intel |
 | Linux | `arca-v<version>-linux-x86_64.tar.gz` | x86\_64 |
 
-Every asset for every version — with its SHA-256 digest — is on the [releases page](https://github.com/beyondhumane/arca/releases).
+Every asset for every version, with its SHA-256 digest, is on the [releases page](https://github.com/beyondhumane/arca/releases).
 
 ### Windows
 
-Run the installer. It’s produced with Inno Setup from `windows/arca.iss` and sets Arca up together with the Explorer context menu — see [Windows integration](windows-integration.md).
+Run the installer. It’s produced with Inno Setup from `windows/arca.iss` and sets Arca up together with the Explorer context menu; see [Windows integration](windows-integration.md).
 
 ### macOS and Linux
 
@@ -44,7 +44,7 @@ sudo mv arca /usr/local/bin/
 
 ## Build from source
 
-You need Rust **1.95 or newer**. The default build also compiles libzstd, so a C compiler (cc, clang or MSVC) must be available.
+You need Rust 1.95 or newer. The default build also compiles libzstd, so a C compiler (cc, clang or MSVC) must be available.
 
 ```sh
 git clone https://github.com/beyondhumane/arca
@@ -57,7 +57,7 @@ cargo build --release      # binary at target/release/arca
 | Profile | Command | What you get |
 | --- | --- | --- |
 | codecs-native (default) | `cargo build --release` | Includes libzstd (C) for native Zstandard performance. |
-| pure Rust | `cargo build --release --no-default-features` | No C dependency — builds for any target Rust supports. |
+| pure Rust | `cargo build --release --no-default-features` | No C dependency; builds for any target Rust supports. |
 
 ### Verify your build
 
@@ -70,7 +70,7 @@ bash interop.sh            # the phase acceptance criterion
 
 ### About the release profile
 
-Release builds use fat LTO, a single codegen unit, `panic = "abort"` and stripped symbols — tuned for requirement R1 (startup) and R3/R4 (throughput).
+Release builds use fat LTO, a single codegen unit, `panic = "abort"` and stripped symbols, tuned for requirement R1 (startup) and R3/R4 (throughput).
 
 ```toml
 [profile.release]

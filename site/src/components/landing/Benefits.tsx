@@ -18,7 +18,7 @@ const BENEFITS: {
     persona: 'Developers',
     icon: Terminal,
     title: 'A CLI that stays out of your way',
-    text: 'One-letter aliases, predictable flags, a single summary line — and a non-zero exit code the moment anything is wrong. It scripts exactly the way you expect.',
+    text: 'One-letter aliases, predictable flags, a single summary line, and a non-zero exit code the moment anything fails.',
     proof: '0.8 ms',
     proofLabel: 'cold start',
     method: 'requirements',
@@ -27,7 +27,7 @@ const BENEFITS: {
     persona: 'CI & release engineering',
     icon: Workflow,
     title: 'Give your pipeline its minutes back',
-    text: 'Zstandard plus every core turns packaging into a rounding error, and arca test verifies an artifact end to end without writing a single byte to disk.',
+    text: 'Zstandard packs 212 MB in 436 ms on two cores, and arca test verifies an artifact end to end without writing a byte to disk.',
     proof: '13.2×',
     proofLabel: 'faster than zip -6',
     method: 'compression',
@@ -36,7 +36,7 @@ const BENEFITS: {
     persona: 'Security teams',
     icon: ShieldCheck,
     title: 'Hostile archives are just errors',
-    text: 'Parsers forbid unsafe code and bound every header read. Zip Slip paths are rejected, encrypted data is authenticated, and broken ZipCrypto is read — never written.',
+    text: 'Parsers forbid unsafe code and bound every header read. Zip Slip paths are rejected, encrypted data is authenticated, and ZipCrypto, which is broken, is read but never written.',
     proof: '0',
     proofLabel: 'lines of unsafe in the parsers',
   },
@@ -69,8 +69,8 @@ export function Benefits() {
             </Reveal>
             <Reveal delay={180}>
               <p className="mt-5 max-w-md text-pretty text-base leading-relaxed text-slate-400 sm:text-lg">
-                Faster tools change habits. When packing and unpacking stop costing anything, you archive more often,
-                verify every artifact and stop worrying about what’s inside the file someone just sent you.
+                When packing and unpacking are fast, you archive more often, verify every artifact and open the file
+                someone just sent you without worrying about what’s inside.
               </p>
             </Reveal>
             <Reveal delay={260}>

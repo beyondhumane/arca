@@ -162,7 +162,7 @@ function CliPanel() {
           ))}
         </div>
 
-        <TerminalWindow title="site — arca — zsh" label={`Terminal running arca ${c.id}`} bodyClassName="min-h-[280px] sm:min-h-[320px]">
+        <TerminalWindow title="demo — arca — zsh" label={`Terminal running arca ${c.id}`} bodyClassName="min-h-[280px] sm:min-h-[320px]">
           <div className="break-all">
             <Prompt dir="demo" />
             {colorizeCommand(typed)}
@@ -192,9 +192,9 @@ function CliPanel() {
 /*  Tabs                                                               */
 /* ------------------------------------------------------------------ */
 const TABS = [
-  { id: 'cli', label: 'Terminal', icon: Terminal, caption: 'Six commands, four one-letter aliases, one line of output. Scripts and CI love it.' },
+  { id: 'cli', label: 'Terminal', icon: Terminal, caption: 'Six commands, four one-letter aliases, one line of output.' },
   { id: 'desktop', label: 'Desktop app', icon: AppWindow, caption: 'Try it: click the list, then use ↑ ↓, Space, Ctrl+A, the filter box or Extract all.' },
-  { id: 'explorer', label: 'Explorer', icon: MousePointerClick, caption: 'Windows 11’s modern menu and the classic one — right-click, extract, done. Try it.' },
+  { id: 'explorer', label: 'Explorer', icon: MousePointerClick, caption: 'Windows 11’s modern menu and the classic one. Right-click an archive to extract it. Try it.' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -238,10 +238,10 @@ export function Showcase() {
           eyebrow="Product"
           title={
             <span id="showcase-title">
-              One engine. <Accent>Three</Accent> ways in.
+              One core, <Accent>three</Accent> ways in.
             </span>
           }
-          description="Script it from the terminal, browse it in a native window, or never leave File Explorer. Same core, same speed, same safety."
+          description="Script it from the terminal, browse it in a native window, or never leave File Explorer."
         />
 
         <Reveal delay={100}>

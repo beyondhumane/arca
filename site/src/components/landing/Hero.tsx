@@ -3,7 +3,7 @@ import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { ArrowRight, Check, Lock, ShieldCheck, Timer } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { formatCount, useGitHubStars, useInView, usePrefersReducedMotion } from '@/lib/hooks';
-import { REPO_URL, VERSION } from '@/lib/site';
+import { RELEASE_URL, REPO_URL, VERSION } from '@/lib/site';
 import { Accent, ButtonLink, Container } from '../ui';
 import { DownloadButton } from '../download';
 import { GitHubIcon } from '../icons';
@@ -364,13 +364,15 @@ export function Hero() {
       <Container>
         <div className="mx-auto max-w-4xl text-center">
           <a
-            href="#/docs/encryption"
+            href={RELEASE_URL}
+            target="_blank"
+            rel="noreferrer noopener"
             className="group inline-flex max-w-full animate-fade-up items-center gap-2 rounded-full border border-white/10 bg-white/[0.035] py-1 pl-1 pr-3 text-[12.5px] text-slate-300 backdrop-blur transition hover:border-brand-400/40 hover:bg-white/[0.06] sm:text-[13px]"
           >
             <span className="shrink-0 rounded-full bg-linear-to-r from-brand-300 to-brand-500 px-2 py-0.5 text-[11px] font-semibold text-ink-950">
-              New
+              v{VERSION}
             </span>
-            <span className="truncate">v{VERSION} · AES-256 encryption &amp; parallel extraction</span>
+            <span className="truncate">Release notes and checksums</span>
             <ArrowRight className="size-3.5 shrink-0 text-slate-500 transition group-hover:translate-x-0.5 group-hover:text-brand-300" />
           </a>
 
@@ -393,8 +395,8 @@ export function Hero() {
             className="mx-auto mt-7 max-w-2xl animate-fade-up text-pretty text-base leading-relaxed text-slate-400 sm:text-lg"
             style={{ animationDelay: '560ms' }}
           >
-            Arca is the open-source archiver built in safe Rust. Zstandard and every core for speed, AES-256 for
-            secrets, and parsers that turn hostile archives into errors&nbsp;— never memory corruption.
+            Arca is an open-source archiver written in safe Rust. It compresses with Zstandard on every core,
+            encrypts with AES-256, and rejects a malformed archive with an error instead of corrupting memory.
           </p>
 
           <div

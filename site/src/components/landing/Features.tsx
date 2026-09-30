@@ -180,7 +180,7 @@ function CipherVisual() {
         {text}
       </span>
       <span className="sr-only">{on ? `Decrypted contents: ${plain}` : 'Encrypted contents. Activate to decrypt.'}</span>
-      <span className="mt-3 block text-[11px] text-slate-500">{on ? 'Decrypted — tap again to lock' : 'Hover or tap to decrypt'}</span>
+      <span className="mt-3 block text-[11px] text-slate-500">{on ? 'Decrypted. Tap again to lock.' : 'Hover or tap to decrypt'}</span>
     </button>
   );
 }
@@ -375,18 +375,18 @@ export function Features() {
           eyebrow="Features"
           title={
             <span id="features-title">
-              Everything an archiver should be. <Accent>Nothing</Accent> it shouldn’t.
+              An archiver built for <Accent>speed</Accent> and hostile input.
             </span>
           }
-          description="One small binary for the terminal, a native window for everyone else — and the same fast, careful core underneath both."
+          description="A small binary for the terminal and a native window for everyone else, both on the same core."
         />
 
         <div className="mt-16 grid grid-cols-1 gap-4 md:grid-cols-6 lg:grid-cols-12">
           <Reveal className="md:col-span-6 lg:col-span-7 lg:row-span-2">
             <SpotlightCard className="h-full p-6 sm:p-8">
               <CardHeader icon={Cpu} eyebrow="Multi-threaded" title="Every core, on demand">
-                Compression and extraction fan out across your CPU. A .zip is random access, so each thread opens its
-                own entry — no locks, no shared stream. Pick a thread count and watch it scale.
+                Compression and extraction use every core. A .zip indexes its entries, so each thread opens its own
+                entry and shares nothing with the others. Pick a thread count to see it scale.
               </CardHeader>
               <ThreadsVisual />
             </SpotlightCard>
@@ -405,8 +405,8 @@ export function Features() {
           <Reveal className="md:col-span-3 lg:col-span-5" delay={160}>
             <SpotlightCard className="h-full p-6 sm:p-8">
               <CardHeader icon={Lock} eyebrow="Encryption" title="AES-256, authenticated">
-                WinZip AE-2 with a fresh salt per entry and an HMAC over every byte. 7-Zip and WinRAR open it; tampering
-                fails loudly.
+                WinZip AE-2 with a fresh salt per entry and an HMAC over every byte. 7-Zip and WinRAR open it, and a
+                tampered entry fails the HMAC check.
               </CardHeader>
               <CipherVisual />
             </SpotlightCard>
@@ -424,8 +424,8 @@ export function Features() {
 
           <Reveal className="md:col-span-3 lg:col-span-4" delay={80}>
             <SpotlightCard className="h-full p-6 sm:p-8">
-              <CardHeader icon={Timer} eyebrow="Startup" title="Instant, literally">
-                LTO, one codegen unit and zero runtime baggage. Arca is done before your terminal finishes blinking.
+              <CardHeader icon={Timer} eyebrow="Startup" title="Starts in under a millisecond">
+                Built with LTO and one codegen unit, with no runtime to start up.
               </CardHeader>
               <ColdStartVisual />
             </SpotlightCard>
@@ -434,8 +434,8 @@ export function Features() {
           <Reveal className="md:col-span-6 lg:col-span-4" delay={160}>
             <SpotlightCard className="h-full p-6 sm:p-8">
               <CardHeader icon={FileArchive} eyebrow="Formats" title="Speaks the formats you use">
-                ZIP with Zip64 for giant archives, ustar TAR with checksum verification, gzip on top — and legacy
-                ZipCrypto archives open, then upgrade.
+                ZIP with Zip64 for archives over 4 GB, ustar TAR with checksum verification, and gzip on top.
+                Legacy ZipCrypto archives open, and <code>arca password</code> moves them to AES-256.
               </CardHeader>
               <FormatsVisual />
             </SpotlightCard>
@@ -453,7 +453,7 @@ export function Features() {
 
           <Reveal className="md:col-span-3 lg:col-span-6" delay={80}>
             <SpotlightCard className="h-full p-6 sm:p-8">
-              <CardHeader icon={Wrench} eyebrow="Portable" title="Pure Rust, any target">
+              <CardHeader icon={Wrench} eyebrow="Portable" title="A pure-Rust build">
                 Keep native libzstd for peak speed, or flip one flag for a build with no C dependency at all.
               </CardHeader>
               <BuildVisual />

@@ -38,18 +38,18 @@ arca create copy.zip my-files/ -c zstd
 > [!WARNING]
 > **Zstandard inside ZIP**
 >
-> Zstandard is ZIP method 93. It’s registered in the specification, but classic `unzip` can’t read it yet — so use it when you know who opens the archive. It will become the default once Arca has a native format.
+> Zstandard is ZIP method 93. It’s registered in the specification, but classic `unzip` can’t read it yet, so use it when you know who opens the archive. It will become the default once Arca has a native format.
 
 ## Threads
 
-Arca uses every core by default. Pin the count with `-j` — handy on shared CI runners:
+Arca uses every core by default. Pin the count with `-j`, for example on shared CI runners:
 
 ```sh
 arca create copy.zip my-files/ -j 8
 arca create copy.zip my-files/ -j 0    # every core (the default)
 ```
 
-Scaling measured **1.79× on two threads** — 90% efficiency, against a design requirement (R3) of at least 1.6×. See [benchmarks](benchmarks.md) for the command.
+Scaling measured 1.79× on two threads, 90% efficiency, against a design requirement (R3) of at least 1.6×. See [benchmarks](benchmarks.md) for the command.
 
 ## TAR and gzip
 
@@ -65,7 +65,7 @@ The gzip layer honours the chosen level. TAR has nowhere to put encryption, so `
 - Directories are walked recursively in sorted order, so the same input always produces the same entry order.
 - Paths are stored relative to the parent of each input: `arca create a.zip ~/work/site` stores entries as `site/…`.
 - Modification times are preserved.
-- Only regular files are added — symbolic links are skipped for now (see the [roadmap](roadmap.md)).
+- Only regular files are added. Symbolic links are skipped for now (see the [roadmap](roadmap.md)).
 
 ## Encrypting while you create
 

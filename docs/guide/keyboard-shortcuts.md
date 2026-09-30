@@ -30,7 +30,7 @@ The keys act on the highlighted row. The first arrow press puts the highlight on
 > [!NOTE]
 > **When typing**
 >
-> While the filter box or a dialog has the keyboard, none of these apply — the typing belongs there.
+> While the filter box or a dialog has the keyboard, none of these apply, and the keys go to that box or dialog.
 
 ## With the mouse
 

@@ -54,7 +54,7 @@ export function Footer() {
               <Logo />
             </a>
             <p className="mt-5 max-w-xs text-sm leading-relaxed text-slate-500">
-              The fast, safe, open-source archiver for every platform. Built in Rust, measured honestly.
+              Open-source archiver for Windows, macOS and Linux, written in Rust. Every benchmark ships with its command.
             </p>
             <div className="mt-6 flex items-center gap-3">
               <a

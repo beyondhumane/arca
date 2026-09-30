@@ -1,5 +1,5 @@
 ---
-description: A fast, safe, cross-platform archiver written in Rust — a command line, a native window and one careful core.
+description: A cross-platform archiver written in safe Rust, with a command line, a native window and one shared core.
 group: Getting started
 order: 1
 keywords: overview what why status about
@@ -7,31 +7,31 @@ keywords: overview what why status about
 
 # Introduction
 
-Arca is a cross-platform archiver written in Rust. It creates and extracts ZIP and TAR archives, compresses with Deflate or Zstandard across every core of your machine, and encrypts with AES-256 — from a single command-line binary, a native desktop window, or the Windows Explorer context menu.
+Arca is a cross-platform archiver written in Rust. It creates and extracts ZIP and TAR archives, compresses with Deflate or Zstandard across every core of your machine, and encrypts with AES-256. It runs as a single command-line binary, a native desktop window, or the Windows Explorer context menu.
 
 ## Why another archiver?
 
-Because archive parsers are a classic attack surface, and most of the ones in daily use are written in memory-unsafe languages. Arca’s container parsers are written in safe Rust with `#![forbid(unsafe_code)]` at crate level: **a malformed archive produces an error, never memory corruption.**
+Archive parsers are a classic attack surface, and most of the ones in daily use are written in memory-unsafe languages. Arca’s container parsers are written in safe Rust with `#![forbid(unsafe_code)]` at crate level: a malformed archive produces an error, never memory corruption.
 
-And because being careful doesn’t have to mean being slow. On the machine it was measured on, Arca with Zstandard compressed the Silesia corpus 13.2× faster than `zip` and 18.1× faster than 7-Zip, on the same two cores. Where it doesn’t win, the [benchmarks](benchmarks.md) say so.
+It is also fast. On the machine it was measured on, Arca with Zstandard compressed the Silesia corpus 13.2× faster than `zip` and 18.1× faster than 7-Zip, on the same two cores. Where it doesn’t win, the [benchmarks](benchmarks.md) say so.
 
 ## At a glance
 
-- **Formats** — ZIP with Zip64 (store, Deflate over zlib-rs, Zstandard, AES-256), ustar TAR with checksum verification, and `.tar.gz`.
-- **Speed** — multi-threaded compression, parallel extraction of `.zip`, and a sub-millisecond cold start.
-- **Safety** — unsafe-free parsers, bounded header reads and a Zip Slip defence on every entry name.
-- **Encryption** — WinZip AE-2 AES-256, interoperable with 7-Zip, WinRAR and NanaZip.
-- **Interfaces** — the `arca` command line, the `arca-gui` window and a Windows 11 Explorer menu.
-- **License** — Apache-2.0. Free for personal and commercial use.
+- **Formats:** ZIP with Zip64 (store, Deflate over zlib-rs, Zstandard, AES-256), ustar TAR with checksum verification, and `.tar.gz`.
+- **Speed:** multi-threaded compression, parallel extraction of `.zip`, and a sub-millisecond cold start.
+- **Safety:** unsafe-free parsers, bounded header reads and a Zip Slip defence on every entry name.
+- **Encryption:** WinZip AE-2 AES-256, interoperable with 7-Zip, WinRAR and NanaZip.
+- **Interfaces:** the `arca` command line, the `arca-gui` window and a Windows 11 Explorer menu.
+- **License:** Apache-2.0, free for personal and commercial use.
 
 ## Project status
 
 > [!NOTE]
-> Arca covers phase F01 and part of F03 of its design — the core, ZIP and TAR, Zstandard, multi-threaded compression and a command line — plus AES-256 encryption, the desktop window and Windows Explorer integration. The [roadmap](roadmap.md) lists what isn’t there yet.
+> Arca covers phase F01 and part of F03 of its design (the core, ZIP and TAR, Zstandard, multi-threaded compression and a command line), plus AES-256 encryption, the desktop window and Windows Explorer integration. The [roadmap](roadmap.md) lists what isn’t there yet.
 
 ## Next steps
 
-- [Installation](installation.md) — Download a release or build from source.
-- [Quick start](quick-start.md) — Create, list, test and extract in four commands.
-- [CLI reference](cli-reference.md) — Every command, argument and default.
-- [Encryption](encryption.md) — How AES-256 works in Arca, and its limits.
+- [Installation](installation.md): download a release or build from source.
+- [Quick start](quick-start.md): create, list, test and extract in four commands.
+- [CLI reference](cli-reference.md): every command, argument and default.
+- [Encryption](encryption.md): how AES-256 works in Arca, and its limits.

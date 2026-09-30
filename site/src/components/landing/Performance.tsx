@@ -70,14 +70,14 @@ const DATASETS: Dataset[] = [
     method: 'against-nanazip-on-an-archive-big-enough-to-hurt',
     groups: [
       {
-        title: 'Decode only — one core, nothing written',
+        title: 'Decode only: one core, nothing written',
         bars: [
           { label: 'Arca', value: 13.2, display: '13.2 s', arca: true },
           { label: 'NanaZip', value: 25.9, display: '25.9 s' },
         ],
       },
       {
-        title: 'Full extraction — best run of each',
+        title: 'Full extraction, best run of each',
         bars: [
           { label: 'Arca', value: 21.9, display: '21.9 s', arca: true },
           { label: 'NanaZip', value: 49.0, display: '49.0 s' },
@@ -87,7 +87,7 @@ const DATASETS: Dataset[] = [
     highlights: [
       { value: '2×', label: 'faster deflate decoder, same single core' },
       { value: '294 MB/s', label: 'against a 327 MB/s disk ceiling' },
-      { value: '28.0 s', label: 'Arca’s worst run — still beats NanaZip’s best' },
+      { value: '28.0 s', label: 'Arca’s worst run, faster than NanaZip’s best' },
     ],
   },
   {
@@ -98,7 +98,7 @@ const DATASETS: Dataset[] = [
     method: 'requirements',
     groups: [
       {
-        title: 'R1 · cold start, list a one-entry zip — target < 15 ms',
+        title: 'R1 · cold start, list a one-entry zip · target < 15 ms',
         bars: [
           { label: 'Arca', value: 0.8, display: '0.8 ms', arca: true },
           { label: 'unzip', value: 2.0, display: '2.0 ms' },
@@ -106,7 +106,7 @@ const DATASETS: Dataset[] = [
         ],
       },
       {
-        title: 'R2 · list 6,000 entries — target < 200 ms',
+        title: 'R2 · list 6,000 entries · target < 200 ms',
         bars: [
           { label: 'Arca', value: 3.1, display: '3.1 ms', arca: true },
           { label: 'unzip', value: 18.6, display: '18.6 ms' },
@@ -204,10 +204,10 @@ export function Performance() {
           eyebrow="Performance"
           title={
             <span id="performance-title">
-              Numbers, not <Accent>adjectives.</Accent>
+              Every number comes with its <Accent>command.</Accent>
             </span>
           }
-          description="Every figure here links to the command that produced it, run on the machine named next to it. Including the runs Arca doesn’t win."
+          description="Each chart names the machine it ran on and links to the command behind it, including the runs Arca loses."
         />
 
         <Reveal delay={100}>
@@ -282,8 +282,8 @@ export function Performance() {
                 </div>
                 <p className="mt-3 text-sm leading-relaxed text-slate-400">
                   5,358 small source files, deflate vs deflate on Windows 11: <span className="text-slate-200">7-Zip 0.627 s</span>,
-                  Arca 0.710 s. With many tiny files, 97% of the time is spent creating files on NTFS — every tool hits
-                  that wall.
+                  Arca 0.710 s. With many tiny files, 97% of the time goes to creating files on NTFS, and every tool
+                  pays that cost.
                 </p>
                 <a
                   href="#/docs/benchmarks/deflate-against-deflate-on-windows-11"

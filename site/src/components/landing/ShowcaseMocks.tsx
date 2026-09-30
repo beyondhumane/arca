@@ -123,7 +123,7 @@ export function DesktopMock() {
     });
 
   const open = (e: Entry) => {
-    if (e.kind === 'folder') flash(`Opened ${e.name}/ — Backspace goes up`);
+    if (e.kind === 'folder') flash(`Opened ${e.name}/. Backspace goes up.`);
     else flash(`Extracted ${e.name} to a temp folder and opened it`);
   };
 
@@ -251,7 +251,7 @@ export function DesktopMock() {
               type="button"
               aria-label={label}
               disabled={disabled}
-              onClick={() => flash(`${label} — also Alt+← / Alt+→ and the mouse side buttons`)}
+              onClick={() => flash(`${label}. Also Alt+← / Alt+→ and the mouse side buttons.`)}
               className="inline-flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
             >
               <Icon className="size-4" />
@@ -279,7 +279,7 @@ export function DesktopMock() {
             type="button"
             onClick={() => {
               setEncrypted((v) => !v);
-              flash(encrypted ? 'Password removed — no recompression needed' : 'AES-256 applied — nothing was recompressed');
+              flash(encrypted ? 'Password removed without recompressing' : 'AES-256 applied without recompressing');
             }}
             className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
           >

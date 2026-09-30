@@ -55,7 +55,7 @@ Extract the contents.
 | --- | --- | --- |
 | `<ARCHIVE>` | required | Archive to extract. |
 | `-o, --dest <DEST>` | . | Destination directory. |
-| `--on-conflict <POLICY>` | overwrite | overwrite · skip · rename — what to do when the file is already there. |
+| `--on-conflict <POLICY>` | overwrite | overwrite · skip · rename. What to do when the file is already there. |
 | `-j, --threads <N>` | 0 | Threads to use. 0 means every core. Only .zip can go parallel. |
 | `-p, --password <PASSWORD>` | — | Password of an encrypted archive (AES-256 or ZipCrypto). |
 
@@ -70,7 +70,7 @@ Check integrity without writing to disk.
 
 ## password
 
-Rewrite a `.zip` with a different password, or with none. Entries aren’t compressed again — WinZip AES encrypts the already-compressed bytes.
+Rewrite a `.zip` with a different password, or with none. Entries aren’t compressed again, because WinZip AES encrypts the already-compressed bytes.
 
 | Argument / option | Default | Description |
 | --- | --- | --- |

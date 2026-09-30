@@ -14,7 +14,7 @@ An archiver is only useful if other tools can open what it writes. `interop.sh` 
 - What Arca writes is read by `unzip`, `tar` and 7-Zip, at all four levels.
 - What `zip`, `tar` and 7-Zip write is read by Arca without losing a byte.
 - An archive Arca encrypted with AES-256 opens in 7-Zip, and the other way round.
-- Adding and removing the password of an existing archive — Arca’s own or 7-Zip’s.
+- Adding and removing the password of an existing archive, Arca’s own or 7-Zip’s.
 - An altered byte is caught by the CRC, or by the HMAC when encrypted.
 - An entry with `../../` is rejected instead of writing outside the destination.
 
@@ -24,7 +24,7 @@ bash interop.sh
 
 ## Zstandard in ZIP
 
-Zstandard is ZIP method 93: registered in the specification, but not yet read by classic `unzip`. That’s why `-c auto` uses Deflate in a `.zip` — a zip exists so that anything can open it. Zstandard is asked for by hand, and will be the default once there is a native format.
+Zstandard is ZIP method 93: registered in the specification, but not yet read by classic `unzip`. That’s why `-c auto` uses Deflate in a `.zip`, so that anything can open it. Zstandard is asked for by hand, and will be the default once there is a native format.
 
 ## Encryption
 
