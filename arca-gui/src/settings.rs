@@ -60,7 +60,7 @@ impl Settings {
     // What a column starts out at, before anybody has pulled on it.
     pub(crate) fn default_widths() -> Vec<f32> {
         std::iter::once(NAME_WIDE)
-            .chain(std::iter::repeat(CELL_WIDE).take(Columns::ALL.len()))
+            .chain(std::iter::repeat_n(CELL_WIDE, Columns::ALL.len()))
             .collect()
     }
 
