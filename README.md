@@ -10,7 +10,7 @@ crate level. A malformed archive produces an error, never memory corruption.
 
 ```sh
 cargo build --release      # binary at target/release/arca
-cargo test --workspace     # 56 tests
+cargo test --workspace
 bash interop.sh            # the phase acceptance criterion
 ```
 
@@ -331,7 +331,7 @@ or that finds a file already there, now says so instead of doing nothing.
 
 ## Interoperability
 
-`interop.sh` checks 34 cases, verifying the SHA-256 of the contents:
+`interop.sh` checks 35 cases, verifying the SHA-256 of the contents:
 
 - What Arca writes is read by `unzip`, `tar` and 7-Zip, at all four levels
 - What `zip`, `tar` and 7-Zip write is read by Arca without losing a byte
