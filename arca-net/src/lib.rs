@@ -333,7 +333,7 @@ mod live {
     #[ignore = "sale a internet"]
     fn una_peticion_de_verdad_trae_algo() {
         let body = super::get(
-            "https://api.github.com/repos/THIONG/arca/releases/latest",
+            "https://api.github.com/repos/beyondhumane/arca/releases/latest",
             "arca-net-test",
         );
         match body {

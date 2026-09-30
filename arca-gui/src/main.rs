@@ -122,14 +122,14 @@ mod tests {
     #[test]
     fn la_respuesta_de_la_release_da_version_instalador_y_sumas() {
         let reply = r#"{"url":"https://api.github.com/x","tag_name":"v0.6.2","assets":[
-            {"name":"SHA256SUMS.txt","browser_download_url":"https://github.com/THIONG/arca/releases/download/v0.6.2/SHA256SUMS.txt"},
-            {"name":"arca-setup-0.6.2-x86_64.exe","browser_download_url":"https://github.com/THIONG/arca/releases/download/v0.6.2/arca-setup-0.6.2-x86_64.exe"},
-            {"name":"arca-v0.6.2-linux-x86_64.tar.gz","browser_download_url":"https://github.com/THIONG/arca/releases/download/v0.6.2/arca-v0.6.2-linux-x86_64.tar.gz"}]}"#;
+            {"name":"SHA256SUMS.txt","browser_download_url":"https://github.com/beyondhumane/arca/releases/download/v0.6.2/SHA256SUMS.txt"},
+            {"name":"arca-setup-0.6.2-x86_64.exe","browser_download_url":"https://github.com/beyondhumane/arca/releases/download/v0.6.2/arca-setup-0.6.2-x86_64.exe"},
+            {"name":"arca-v0.6.2-linux-x86_64.tar.gz","browser_download_url":"https://github.com/beyondhumane/arca/releases/download/v0.6.2/arca-v0.6.2-linux-x86_64.tar.gz"}]}"#;
         let r = release_of(reply).expect("una release");
         assert_eq!(r.tag, "v0.6.2");
         assert_eq!(
             r.installer.as_deref(),
-            Some("https://github.com/THIONG/arca/releases/download/v0.6.2/arca-setup-0.6.2-x86_64.exe")
+            Some("https://github.com/beyondhumane/arca/releases/download/v0.6.2/arca-setup-0.6.2-x86_64.exe")
         );
         assert!(r.sums.is_some());
     }
@@ -138,9 +138,9 @@ mod tests {
     fn una_direccion_que_no_sea_la_nuestra_no_se_acepta() {
         let reply = r#"{"tag_name":"v9.9.9","assets":[
             {"browser_download_url":"https://evil.example/arca-setup-9.9.9-x86_64.exe"},
-            {"browser_download_url":"http://github.com/THIONG/arca/releases/download/v9/arca-setup-9-x86_64.exe"},
+            {"browser_download_url":"http://github.com/beyondhumane/arca/releases/download/v9/arca-setup-9-x86_64.exe"},
             {"browser_download_url":"https://github.com/otro/arca/releases/download/v9/arca-setup-9-x86_64.exe"},
-            {"browser_download_url":"https://github.com/THIONG/arca/releases/download/v9/SHA256SUMS.txt"}]}"#;
+            {"browser_download_url":"https://github.com/beyondhumane/arca/releases/download/v9/SHA256SUMS.txt"}]}"#;
         let r = release_of(reply).expect("una release");
         assert_eq!(r.tag, "v9.9.9");
         assert!(

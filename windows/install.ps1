@@ -273,7 +273,7 @@ $k.SetValue("QuietUninstallString", $uninstall)
 $k.SetValue("EstimatedSize", [int]$size, [Microsoft.Win32.RegistryValueKind]::DWord)
 $k.SetValue("NoModify", 1, [Microsoft.Win32.RegistryValueKind]::DWord)
 $k.SetValue("NoRepair", 1, [Microsoft.Win32.RegistryValueKind]::DWord)
-$k.SetValue("URLInfoAbout", "https://github.com/THIONG/arca")
+$k.SetValue("URLInfoAbout", "https://github.com/beyondhumane/arca")
 $k.Close()
 
 Write-Host ""

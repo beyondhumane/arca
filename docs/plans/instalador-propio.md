@@ -53,7 +53,7 @@ El asistente de Inno Setup no puede dibujar estas pantallas: fondo vectorial, pa
 
 Arca se actualiza sola y da por hecho cómo es el instalador. Cambiarlo sin tocar estas cinco cosas rompe la actualización de quien ya lo tiene instalado.
 
-1. **Nombre del fichero**: `arca-setup-<versión>-x86_64.exe`, subido a la release de `github.com/THIONG/arca`. El aviso de versión nueva busca ese patrón (`arca-gui/src/controller/actions.rs`) y comprueba la suma en `SHA256SUMS.txt`.
+1. **Nombre del fichero**: `arca-setup-<versión>-x86_64.exe`, subido a la release de `github.com/beyondhumane/arca`. El aviso de versión nueva busca ese patrón (`arca-gui/src/controller/actions.rs`) y comprueba la suma en `SHA256SUMS.txt`.
 2. **Argumentos**: `/VERYSILENT /NOCANCEL /NORESTART /NORESTARTAPPLICATIONS /update=1` (`install_update` en `arca-gui/src/archive_ops/mod.rs`). En modo silencioso no se abre ninguna ventana.
 3. **Actualización sin parpadeo**: con `/update=1` no se reinicia el Explorador. La DLL de la extensión se reemplaza en el siguiente arranque y los ejecutables se copian igualmente.
 4. **Volver a abrir Arca**: con `/update=1` el propio instalador lanza `arca-gui.exe` al terminar; Arca se cierra sola para dejarse reemplazar.

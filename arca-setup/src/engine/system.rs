@@ -20,7 +20,7 @@ const CLASSIC_CLSID: &str = "{B528A7F3-C889-4C98-B052-5D7F7F778E14}";
 const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{7C4E0E4A-6C0D-4C21-9E0B-2B5D0F1A9C77}_is1";
 const MODERN_PACKAGE: &str = "Arca.Archivador";
 const PUBLISHER: &str = "Arca Project";
-const URL: &str = "https://github.com/THIONG/arca";
+const URL: &str = "https://github.com/beyondhumane/arca";
 const POWERSHELL_TIMEOUT: Duration = Duration::from_secs(90);
 
 const ASSOCIATIONS: [(&str, &str, &str); 4] = [

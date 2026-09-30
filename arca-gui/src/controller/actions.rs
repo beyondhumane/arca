@@ -306,8 +306,9 @@ pub(crate) fn subject_of(job: &Job) -> String {
 
 /// Where the announcement is asked for, and where a copy that cannot update
 /// itself is sent instead.
-pub(crate) const RELEASES_API: &str = "https://api.github.com/repos/THIONG/arca/releases/latest";
-pub(crate) const RELEASES_PAGE: &str = "https://github.com/THIONG/arca/releases/latest";
+pub(crate) const RELEASES_API: &str =
+    "https://api.github.com/repos/beyondhumane/arca/releases/latest";
+pub(crate) const RELEASES_PAGE: &str = "https://github.com/beyondhumane/arca/releases/latest";
 
 /// As much installer as is ever going to arrive. A reply longer than this is
 /// not our release and is not going to be written to disk, let alone run.
@@ -343,7 +344,7 @@ pub(crate) fn release_of(reply: &str) -> Option<Release> {
         let url = &open[..close];
         // Only ours, and only over the wire we trust. A reply that names some
         // other place is not one to go and fetch an executable from.
-        if !url.starts_with("https://github.com/THIONG/arca/releases/download/") {
+        if !url.starts_with("https://github.com/beyondhumane/arca/releases/download/") {
             continue;
         }
         if url.ends_with("/SHA256SUMS.txt") {
