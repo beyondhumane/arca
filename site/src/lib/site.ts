@@ -1,4 +1,4 @@
-export const VERSION = '0.7.2';
+export const VERSION = __ARCA_RELEASE__.version;
 export const REPO_URL = 'https://github.com/beyondhumane/arca';
 export const ISSUES_URL = `${REPO_URL}/issues`;
 export const NEW_ISSUE_URL = `${REPO_URL}/issues/new`;
@@ -22,33 +22,15 @@ export type DownloadAsset = {
   detail: string;
 };
 
+function asset(os: string, label: string, file: string, detail: string): DownloadAsset {
+  const bytes = __ARCA_RELEASE__.sizes[file];
+  const size = bytes ? ` · ${(bytes / 1e6).toFixed(1)} MB` : '';
+  return { os, label, file, url: `${DL}/${file}`, detail: detail + size };
+}
+
 export const DOWNLOADS: Record<Platform, DownloadAsset> = {
-  windows: {
-    os: 'Windows',
-    label: 'Windows',
-    file: `arca-setup-${VERSION}-x86_64.exe`,
-    url: `${DL}/arca-setup-${VERSION}-x86_64.exe`,
-    detail: 'Installer · x86_64 · 7.3 MB',
-  },
-  macos: {
-    os: 'macOS',
-    label: 'macOS',
-    file: `arca-v${VERSION}-macos-arm64.tar.gz`,
-    url: `${DL}/arca-v${VERSION}-macos-arm64.tar.gz`,
-    detail: 'Apple silicon · arm64 · 6.7 MB',
-  },
-  'macos-intel': {
-    os: 'macOS',
-    label: 'macOS Intel',
-    file: `arca-v${VERSION}-macos-x86_64.tar.gz`,
-    url: `${DL}/arca-v${VERSION}-macos-x86_64.tar.gz`,
-    detail: 'Intel · x86_64 · 7.5 MB',
-  },
-  linux: {
-    os: 'Linux',
-    label: 'Linux',
-    file: `arca-v${VERSION}-linux-x86_64.tar.gz`,
-    url: `${DL}/arca-v${VERSION}-linux-x86_64.tar.gz`,
-    detail: 'x86_64 · 13.8 MB',
-  },
+  windows: asset('Windows', 'Windows', `arca-setup-${VERSION}-x86_64.exe`, 'Installer · x86_64'),
+  macos: asset('macOS', 'macOS', `arca-v${VERSION}-macos-arm64.tar.gz`, 'Apple silicon · arm64'),
+  'macos-intel': asset('macOS', 'macOS Intel', `arca-v${VERSION}-macos-x86_64.tar.gz`, 'Intel · x86_64'),
+  linux: asset('Linux', 'Linux', `arca-v${VERSION}-linux-x86_64.tar.gz`, 'x86_64'),
 };

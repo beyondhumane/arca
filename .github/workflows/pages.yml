@@ -14,6 +14,11 @@ on:
       - "brand/**"
       - "docs/guide/**"
       - ".github/workflows/pages.yml"
+  # A release made with GITHUB_TOKEN does not fire `release` events in other
+  # workflows, so the site follows the Release workflow instead.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -25,6 +30,9 @@ concurrency:
 
 jobs:
   build:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -39,6 +47,15 @@ jobs:
           cache: npm
           cache-dependency-path: site/package-lock.json
       - run: npm ci
+      # Version and download sizes come from the latest published release.
+      - name: Latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          out="$RUNNER_TEMP/release.json"
+          gh release view -R "$GITHUB_REPOSITORY" \
+            --json tagName,assets > "$out"
+          echo "ARCA_RELEASE_JSON=$out" >> "$GITHUB_ENV"
       - run: npx tsc --noEmit -p .
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
