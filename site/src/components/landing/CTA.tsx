@@ -87,7 +87,7 @@ export function CTA() {
                 <CopyButton text={CLONE_CMD} label="Copy build-from-source command" />
               </div>
               <p className="mt-4 text-center text-xs text-slate-500">
-                Needs Rust 1.75+.{' '}
+                Needs Rust 1.95+.{' '}
                 <a href={RELEASE_URL} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-slate-400 underline decoration-white/20 underline-offset-4 transition hover:text-white">
                   Release notes & checksums <ArrowRight className="size-3" />
                 </a>

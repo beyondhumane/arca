@@ -47,6 +47,25 @@ jobs:
       - name: Interoperability verified by hash
         run: ARCA="$GITHUB_WORKSPACE/target/debug/arca" bash interop.sh
 
+  # rust-version in Cargo.toml is a promise; this job keeps it honest. Raise
+  # both together when a dependency needs a newer compiler.
+  msrv:
+    name: Minimum supported Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Window dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxrandr-dev
+          libxi-dev libgl1-mesa-dev libxcursor-dev libxinerama-dev
+          libfontconfig1-dev
+      - run: cargo check --workspace --all-targets --locked
+
   build:
     name: Build on ${{ matrix.name }}
     runs-on: ${{ matrix.os }}

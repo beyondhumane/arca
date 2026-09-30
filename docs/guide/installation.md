@@ -44,7 +44,7 @@ sudo mv arca /usr/local/bin/
 
 ## Build from source
 
-You need Rust **1.75 or newer**. The default build also compiles libzstd, so a C compiler (cc, clang or MSVC) must be available.
+You need Rust **1.95 or newer**. The default build also compiles libzstd, so a C compiler (cc, clang or MSVC) must be available.
 
 ```sh
 git clone https://github.com/beyondhumane/arca

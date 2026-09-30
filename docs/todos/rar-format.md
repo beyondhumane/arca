@@ -37,7 +37,7 @@ The README should say so when this lands. A format that shows up when opening bu
 - `unsafe_code = "forbid"` in the workspace lints, the same rule as here.
 - Dependencies: `aes`, `hmac`, `sha1`, `sha2`, `zeroize`, `getrandom`, `aho-corasick` and `rayon`. All pure Rust, and half of them are already in Arca's tree.
 - A `fuzz/` folder with fuzzing targets, which is what you want to see before trusting a parser of foreign archives.
-- `rust-version = "1.87"`, edition 2021. That raises the MSRV from today's 1.75, but much less than the 1.93 that `sevenz-rust2` requires.
+- `rust-version = "1.87"`, edition 2021. The workspace is already on 1.95, so it raises nothing.
 - Covers RAR 1.3 through RAR 7: solid archives, per-file encryption and encrypted headers.
 - **It also writes**, and no flag can leave the writer out of the build. That does not oblige us to anything, since RAR would not appear in the compress dialog, but the code is linked even if never called.
 - Its own README says it started as an agentic development experiment and "could use more testing at volume". Take that at its word: it is the reason for the build flag in phase 1.

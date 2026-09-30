@@ -39,7 +39,7 @@ Facts about `sevenz-rust2`, checked in its `Cargo.toml` and `CHANGELOG.md` rathe
 - Encrypted headers are supported: "Added support for encrypted headers" in 0.6.0 and "Support write encoded header" in 0.4.3. That covers `-mhe=on` for both reading and writing, which is exactly what prompted this document.
 - Encryption: AES-256-SHA-256 only, which is the only one 7-Zip uses in practice. The password is validated while parsing the header, the same way `arca_zip::check_password` works, so the GUI dialog does not change.
 - Its default dependencies include `bzip2` and `zstd`, which are C. If it is adopted, they go behind the existing `codecs-native` feature, and the `--no-default-features` build stays pure Rust.
-- **It raises the MSRV.** It requires `rust-version = "1.93"` and `edition = "2024"`; the workspace is on 1.75 and 2021. A feature flag cannot avoid this: it applies to the whole tree, `windows/arca-shell` included. It is the most real cost of this option and has to be accepted before starting.
+- **It raises the edition.** It requires `rust-version = "1.93"` and `edition = "2024"`; the workspace is on 1.95 and 2021, so the MSRV is already covered (GPUI needs 1.95). The edition is per crate, so Arca's crates can stay on 2021.
 
 Recommendation: adopt it. Writing a correct LZMA2 is not where Arca's value lies, and an almost-correct LZMA2 produces archives nobody else can open.
 
