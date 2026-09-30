@@ -1,0 +1,120 @@
+import { ArrowUp } from 'lucide-react';
+import {
+  CONTRIBUTORS_URL,
+  ISSUES_URL,
+  LICENSE_URL,
+  PULLS_URL,
+  RELEASES_URL,
+  REPO_URL,
+  VERSION,
+} from '@/lib/site';
+import { Container, Logo } from './ui';
+import { GitHubIcon } from './icons';
+
+const COLUMNS: { title: string; links: { label: string; href: string; external?: boolean }[] }[] = [
+  {
+    title: 'Product',
+    links: [
+      { label: 'Features', href: '#features' },
+      { label: 'Product tour', href: '#showcase' },
+      { label: 'Performance', href: '#performance' },
+      { label: 'Download', href: '#download' },
+    ],
+  },
+  {
+    title: 'Documentation',
+    links: [
+      { label: 'Introduction', href: '#/docs/introduction' },
+      { label: 'Installation', href: '#/docs/installation' },
+      { label: 'CLI reference', href: '#/docs/cli-reference' },
+      { label: 'Encryption', href: '#/docs/encryption' },
+      { label: 'Benchmarks', href: '#/docs/benchmarks' },
+    ],
+  },
+  {
+    title: 'Community',
+    links: [
+      { label: 'Repository', href: REPO_URL, external: true },
+      { label: 'Issues', href: ISSUES_URL, external: true },
+      { label: 'Pull requests', href: PULLS_URL, external: true },
+      { label: 'Releases', href: RELEASES_URL, external: true },
+      { label: 'Contributors', href: CONTRIBUTORS_URL, external: true },
+    ],
+  },
+];
+
+export function Footer() {
+  return (
+    <footer className="relative overflow-hidden border-t border-white/[0.06] pt-16 sm:pt-20">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-brand-400/40 to-transparent" />
+      <Container>
+        <div className="grid grid-cols-2 gap-x-8 gap-y-12 sm:grid-cols-3 lg:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,1fr))]">
+          <div className="col-span-2 sm:col-span-3 lg:col-span-1">
+            <a href="#top" aria-label="Arca — back to top" className="inline-block rounded-lg">
+              <Logo />
+            </a>
+            <p className="mt-5 max-w-xs text-sm leading-relaxed text-slate-500">
+              The fast, safe, open-source archiver for every platform. Built in Rust, measured honestly.
+            </p>
+            <div className="mt-6 flex items-center gap-3">
+              <a
+                href={REPO_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+                aria-label="Arca on GitHub"
+                className="flex size-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-slate-400 transition hover:-translate-y-0.5 hover:border-white/20 hover:text-white"
+              >
+                <GitHubIcon className="size-[18px]" />
+              </a>
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-400">
+                <span className="size-1.5 animate-pulse-dot rounded-full bg-emerald-400" />
+                v{VERSION} · stable
+              </span>
+            </div>
+          </div>
+
+          {COLUMNS.map((col) => (
+            <nav key={col.title} aria-label={col.title}>
+              <h2 className="text-sm font-medium text-white">{col.title}</h2>
+              <ul className="mt-4 space-y-3">
+                {col.links.map((l) => (
+                  <li key={l.label}>
+                    <a
+                      href={l.href}
+                      {...(l.external ? { target: '_blank', rel: 'noreferrer noopener' } : {})}
+                      className="text-sm text-slate-500 transition-colors hover:text-white"
+                    >
+                      {l.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          ))}
+        </div>
+
+        <div className="mt-16 flex flex-col-reverse items-start justify-between gap-4 border-t border-white/[0.06] py-8 text-xs text-slate-500 sm:flex-row sm:items-center">
+          <p>
+            © {new Date().getFullYear()} Proyecto Arca. Released under the{' '}
+            <a href={LICENSE_URL} target="_blank" rel="noreferrer noopener" className="text-slate-400 underline decoration-white/20 underline-offset-4 hover:text-white">
+              Apache License 2.0
+            </a>
+            . Not affiliated with 7-Zip, WinRAR or NanaZip.
+          </p>
+          <a href="#top" className="group inline-flex items-center gap-2 text-slate-400 transition hover:text-white">
+            Back to top
+            <span className="flex size-7 items-center justify-center rounded-full border border-white/10 transition group-hover:-translate-y-0.5 group-hover:border-white/25">
+              <ArrowUp className="size-3.5" />
+            </span>
+          </a>
+        </div>
+      </Container>
+
+      <div aria-hidden="true" className="pointer-events-none select-none overflow-hidden">
+        <div className="fade-b -mb-[4vw] text-center text-[26vw] font-semibold leading-[0.8] tracking-[-0.07em] text-transparent [-webkit-text-stroke:1px_rgba(255,255,255,0.07)] sm:-mb-[3vw]">
+          arca
+        </div>
+      </div>
+    </footer>
+  );
+}
