@@ -6,6 +6,9 @@ Zstandard, multi-threaded compression and a command line.
 The container parsers are written in safe Rust with `#![forbid(unsafe_code)]` at
 crate level. A malformed archive produces an error, never memory corruption.
 
+**Website and user guide:** <https://beyondhumane.github.io/arca/>. The guide's
+source lives in [`docs/guide/`](docs/guide/README.md) and reads fine on GitHub.
+
 ## Build
 
 ```sh
