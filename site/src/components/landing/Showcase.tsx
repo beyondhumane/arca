@@ -92,8 +92,8 @@ const COMMANDS: CliCommand[] = [
         <span className="text-emerald-400">PASS</span>
       </span>,
       <span>&nbsp;</span>,
-      <span className="whitespace-pre">{'  R1  cold start: measured from outside, with hyperfine'}</span>,
-      <span className="whitespace-pre text-slate-400">{"      hyperfine --warmup 20 'arca --version'"}</span>,
+      <span className="whitespace-pre">{'  R1  cold start: open and list a one-entry archive, with hyperfine'}</span>,
+      <span className="whitespace-pre text-slate-400">{"      hyperfine -N --warmup 20 'arca list tiny.zip'"}</span>,
     ],
   },
 ];

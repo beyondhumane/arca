@@ -49,8 +49,8 @@ Performance requirements (design document, section 05)
       6000 entries in a 828.8 KB archive
       1.1 ms   target < 200 ms   PASS
 
-  R1  cold start: measured from outside, with hyperfine
-      hyperfine --warmup 20 'arca --version'
+  R1  cold start: open and list a one-entry archive, with hyperfine
+      hyperfine -N --warmup 20 'arca list tiny.zip'
 ```
 
 The published figures for R1, R2 and R3, and the script that reproduces them, are on the [benchmarks](benchmarks.md) page.
