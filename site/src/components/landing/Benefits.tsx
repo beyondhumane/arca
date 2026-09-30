@@ -1,6 +1,7 @@
 import type { ComponentType, SVGProps } from 'react';
 import { ArrowRight, MousePointerClick, ShieldCheck, Terminal, Workflow } from 'lucide-react';
 import { Accent, ButtonLink, Container, Eyebrow, Reveal, SpotlightCard } from '../ui';
+import { MethodLink } from './MethodLink';
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -11,22 +12,25 @@ const BENEFITS: {
   text: string;
   proof: string;
   proofLabel: string;
+  method?: string;
 }[] = [
   {
     persona: 'Developers',
     icon: Terminal,
     title: 'A CLI that stays out of your way',
     text: 'One-letter aliases, predictable flags, a single summary line — and a non-zero exit code the moment anything is wrong. It scripts exactly the way you expect.',
-    proof: '1.6 ms',
+    proof: '0.8 ms',
     proofLabel: 'cold start',
+    method: 'requirements',
   },
   {
     persona: 'CI & release engineering',
     icon: Workflow,
     title: 'Give your pipeline its minutes back',
     text: 'Zstandard plus every core turns packaging into a rounding error, and arca test verifies an artifact end to end without writing a single byte to disk.',
-    proof: '11.9×',
+    proof: '13.2×',
     proofLabel: 'faster than zip -6',
+    method: 'compression',
   },
   {
     persona: 'Security teams',
@@ -100,6 +104,7 @@ export function Benefits() {
                       <div className="shrink-0 border-t border-white/[0.06] pt-5 sm:w-36 sm:border-l sm:border-t-0 sm:pl-6 sm:pt-0 sm:text-right">
                         <div className="brand-text text-4xl font-semibold tracking-[-0.04em]">{b.proof}</div>
                         <div className="mt-1 text-xs leading-snug text-slate-500">{b.proofLabel}</div>
+                        {b.method && <MethodLink section={b.method} className="sm:justify-end" />}
                       </div>
                     </div>
                   </SpotlightCard>

@@ -4,6 +4,7 @@ import { ArrowRight, Scale } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { useInView } from '@/lib/hooks';
 import { Accent, Container, Reveal, SectionHeading } from '../ui';
+import { MethodLink } from './MethodLink';
 
 type Bar = { label: string; value: number; display: string; arca?: boolean; sub?: string };
 type Group = { title?: string; bars: Bar[] };
@@ -12,6 +13,7 @@ type Dataset = {
   tab: string;
   title: string;
   context: string;
+  method: string;
   groups: Group[];
   highlights: { value: string; label: string }[];
 };
@@ -20,22 +22,23 @@ const DATASETS: Dataset[] = [
   {
     id: 'compress',
     tab: 'Compression',
-    title: 'Compressing 81 MB across 120 files',
-    context: 'Xeon 2.80 GHz · 2 cores · Linux · 2 threads',
+    title: 'Compressing the Silesia corpus in 120 files',
+    context: 'Ryzen 9 5900X · Linux · pinned to 2 cores · 212 MB',
+    method: 'compression',
     groups: [
       {
         bars: [
-          { label: 'Arca · zstd', value: 330, display: '330 ms', sub: '26.16 MB', arca: true },
-          { label: 'Arca · deflate', value: 941, display: '941 ms', sub: '28.35 MB', arca: true },
-          { label: 'zip -6', value: 3934, display: '3,934 ms', sub: '27.65 MB' },
-          { label: '7-Zip · zip, 2 threads', value: 5358, display: '5,358 ms', sub: '26.88 MB' },
+          { label: 'Arca · zstd', value: 436, display: '436 ms', sub: '66.87 MB', arca: true },
+          { label: 'Arca · deflate', value: 1012, display: '1,012 ms', sub: '67.62 MB', arca: true },
+          { label: 'zip -6', value: 5746, display: '5,746 ms', sub: '68.34 MB' },
+          { label: '7-Zip · zip -mx5', value: 7877, display: '7,877 ms', sub: '65.81 MB' },
         ],
       },
     ],
     highlights: [
-      { value: '11.9×', label: 'faster than zip -6' },
-      { value: '16.2×', label: 'faster than 7-Zip' },
-      { value: '26.16 MB', label: 'the smallest archive of the four' },
+      { value: '13.2×', label: 'faster than zip -6' },
+      { value: '18.1×', label: 'faster than 7-Zip' },
+      { value: '1.6%', label: 'larger than 7-Zip’s archive, the smallest' },
     ],
   },
   {
@@ -43,6 +46,7 @@ const DATASETS: Dataset[] = [
     tab: 'Parallel extraction',
     title: 'Extracting 287 MB in 16 text files',
     context: 'Windows 11 · 16 threads · best of 3',
+    method: 'parallel-extraction',
     groups: [
       {
         bars: [
@@ -63,6 +67,7 @@ const DATASETS: Dataset[] = [
     tab: 'vs NanaZip · 3.13 GB',
     title: 'A 3.13 GB archive that unpacks to 6.28 GB',
     context: 'Windows 11 · 16 cores · NanaZip 7.0 · DRAM-less SATA SSD',
+    method: 'against-nanazip-on-an-archive-big-enough-to-hurt',
     groups: [
       {
         title: 'Decode only — one core, nothing written',
@@ -89,29 +94,30 @@ const DATASETS: Dataset[] = [
     id: 'startup',
     tab: 'Startup & listing',
     title: 'Cold start and listing 6,000 entries',
-    context: 'Xeon 2.80 GHz · 2 cores · Linux',
+    context: 'Ryzen 9 5900X · Linux · hyperfine mean',
+    method: 'requirements',
     groups: [
       {
-        title: 'R1 · cold start — target < 15 ms',
+        title: 'R1 · cold start, list a one-entry zip — target < 15 ms',
         bars: [
-          { label: 'Arca', value: 1.6, display: '1.6 ms', arca: true },
+          { label: 'Arca', value: 0.8, display: '0.8 ms', arca: true },
           { label: 'unzip', value: 2.0, display: '2.0 ms' },
-          { label: '7z', value: 3.7, display: '3.7 ms' },
+          { label: '7z', value: 2.5, display: '2.5 ms' },
         ],
       },
       {
         title: 'R2 · list 6,000 entries — target < 200 ms',
         bars: [
-          { label: 'Arca', value: 4.5, display: '4.5 ms', arca: true },
-          { label: 'unzip', value: 17.2, display: '17.2 ms' },
-          { label: '7z', value: 45.4, display: '45.4 ms' },
+          { label: 'Arca', value: 3.1, display: '3.1 ms', arca: true },
+          { label: 'unzip', value: 18.6, display: '18.6 ms' },
+          { label: '7z', value: 71.8, display: '71.8 ms' },
         ],
       },
     ],
     highlights: [
-      { value: '10×', label: 'faster listing than 7z' },
-      { value: '1.89×', label: 'R3 scaling on 2 threads' },
-      { value: '94%', label: 'parallel efficiency' },
+      { value: '23×', label: 'faster listing than 7z' },
+      { value: '1.79×', label: 'R3 scaling on 2 threads' },
+      { value: '90%', label: 'parallel efficiency' },
     ],
   },
 ];
@@ -201,7 +207,7 @@ export function Performance() {
               Numbers, not <Accent>adjectives.</Accent>
             </span>
           }
-          description="Every figure here comes from Arca’s README — measured on real machines with the method written down. Including the runs Arca doesn’t win."
+          description="Every figure here links to the command that produced it, run on the machine named next to it. Including the runs Arca doesn’t win."
         />
 
         <Reveal delay={100}>
@@ -247,6 +253,7 @@ export function Performance() {
                   <div>
                     <h3 className="text-lg font-semibold tracking-[-0.02em] text-white sm:text-xl">{ds.title}</h3>
                     <p className="mt-1.5 font-mono text-xs text-slate-500">{ds.context}</p>
+                    <MethodLink section={ds.method} className="mt-2" />
                   </div>
                   <span className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] text-slate-400">Lower is better</span>
                 </div>
@@ -279,7 +286,7 @@ export function Performance() {
                   that wall.
                 </p>
                 <a
-                  href="#/docs/benchmarks"
+                  href="#/docs/benchmarks/deflate-against-deflate-on-windows-11"
                   className="mt-4 inline-flex items-center gap-1 text-sm text-brand-300 transition hover:gap-2 hover:text-brand-200"
                 >
                   Full methodology <ArrowRight className="size-3.5" />

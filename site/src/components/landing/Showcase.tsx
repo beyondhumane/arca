@@ -3,6 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import { AppWindow, MousePointerClick, Terminal } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { useInView, usePrefersReducedMotion } from '@/lib/hooks';
+import { VERSION } from '@/lib/site';
 import { Accent, Container, Reveal, SectionHeading } from '../ui';
 import { Cursor, Prompt, TerminalWindow, colorizeCommand } from '../terminal';
 import { DesktopMock, ExplorerMock } from './ShowcaseMocks';
@@ -17,12 +18,12 @@ const COMMANDS: CliCommand[] = [
     id: 'create',
     alias: 'c',
     blurb: 'Pack files and folders',
-    cmd: 'arca create site.zip public/ -l best',
+    cmd: 'arca create arca.zip arca',
     out: [
       <>
-        <span className="text-white">site.zip</span>: 1204 files, 48.2 MB <span className="text-slate-500">-&gt;</span>{' '}
-        <span className="text-brand-300">12.9 MB</span> <span className="text-emerald-400">(73.2% smaller)</span> in 0.412 s{' '}
-        <span className="text-slate-600">·</span> 117 MB/s <span className="text-slate-600">·</span> 16 threads
+        <span className="text-white">arca.zip</span>: 174 files, 2.3 MB <span className="text-slate-500">-&gt;</span>{' '}
+        <span className="text-brand-300">898.5 KB</span> <span className="text-emerald-400">(61.2% smaller)</span> in 0.008 s{' '}
+        <span className="text-slate-600">·</span> 288 MB/s <span className="text-slate-600">·</span> 24 threads
       </>,
     ],
   },
@@ -30,15 +31,15 @@ const COMMANDS: CliCommand[] = [
     id: 'list',
     alias: 'l',
     blurb: 'See inside without extracting',
-    cmd: 'arca list site.zip --time',
+    cmd: 'arca list arca.zip --time',
     out: [
-      <span className="whitespace-pre text-slate-400">{'       18842  deflate  71.2% index.html'}</span>,
-      <span className="whitespace-pre text-slate-400">{'      412733  deflate  64.9% assets/app.js'}</span>,
-      <span className="whitespace-pre text-slate-400">{'       96120  deflate  78.4% assets/app.css'}</span>,
-      <span className="whitespace-pre text-slate-400">{'      204870    store   0.0% images/hero.webp'}</span>,
+      <span className="whitespace-pre text-slate-400">{'        3453  deflate   62.6%  arca/.github/workflows/ci.yml'}</span>,
+      <span className="whitespace-pre text-slate-400">{'        1250  deflate   58.7%  arca/.github/workflows/pages.yml'}</span>,
+      <span className="whitespace-pre text-slate-400">{'        8287  deflate   63.8%  arca/.github/workflows/release.yml'}</span>,
+      <span className="whitespace-pre text-slate-400">{'         192  deflate   27.6%  arca/.gitignore'}</span>,
       <span className="text-slate-600">…</span>,
       <span className="text-slate-500">
-        1204 entries, 48.2 MB uncompressed, listed in <span className="text-brand-300">1.1 ms</span>
+        174 entries, 2.3 MB uncompressed, listed in <span className="text-brand-300">0.2 ms</span>
       </span>,
     ],
   },
@@ -46,10 +47,10 @@ const COMMANDS: CliCommand[] = [
     id: 'extract',
     alias: 'x',
     blurb: 'Unpack in parallel, safely',
-    cmd: 'arca extract site.zip -o build/ --on-conflict rename',
+    cmd: 'arca extract arca.zip -o build --on-conflict rename',
     out: [
       <>
-        1204 files, <span className="text-brand-300">48.2 MB</span> written in <span className="text-brand-300">0.388 s</span>
+        174 files, <span className="text-brand-300">2.3 MB</span> written in <span className="text-brand-300">0.009 s</span>
       </>,
     ],
   },
@@ -57,43 +58,42 @@ const COMMANDS: CliCommand[] = [
     id: 'test',
     alias: 't',
     blurb: 'Verify every CRC, write nothing',
-    cmd: 'arca test site.zip',
+    cmd: 'arca test arca.zip',
     out: [
       <>
-        <span className="text-emerald-400">1204 entries verified, no errors</span> (0.121 s)
+        <span className="text-emerald-400">174 entries verified, no errors</span> (0.006 s)
       </>,
     ],
   },
   {
     id: 'password',
     blurb: 'Add, change or remove a password',
-    cmd: 'arca password site.zip --new "correct horse"',
+    cmd: 'arca password arca.zip --new "correct horse"',
     out: [
       <>
-        <span className="text-white">site.zip</span>: 1204 entries, 12.9 MB{' '}
-        <span className="text-emerald-400">now encrypted with AES-256</span> in 0.094 s
+        <span className="text-white">arca.zip</span>: 174 entries, 2.3 MB{' '}
+        <span className="text-emerald-400">now encrypted with AES-256</span> in 0.072 s
       </>,
     ],
   },
   {
     id: 'bench',
-    blurb: 'Measure the R1 and R2 requirements',
-    cmd: 'arca bench big.zip',
+    blurb: 'Measure the R2 requirement',
+    cmd: 'arca bench list-6000.zip',
     out: [
       <span className="text-slate-400">Performance requirements (design document, section 05)</span>,
       <span>&nbsp;</span>,
+      <span className="whitespace-pre">{'  R2  list without extracting'}</span>,
+      <span className="whitespace-pre text-slate-400">{'      6000 entries in a 828.8 KB archive'}</span>,
       <span className="whitespace-pre">
-        {'R1  cold start          '}
-        <span className="text-brand-300">1.6 ms</span>
-        {'   < 15 ms    '}
+        {'      '}
+        <span className="text-brand-300">1.0 ms</span>
+        {'   target < 200 ms   '}
         <span className="text-emerald-400">PASS</span>
       </span>,
-      <span className="whitespace-pre">
-        {'R2  list 6000 entries   '}
-        <span className="text-brand-300">4.5 ms</span>
-        {'   < 200 ms   '}
-        <span className="text-emerald-400">PASS</span>
-      </span>,
+      <span>&nbsp;</span>,
+      <span className="whitespace-pre">{'  R1  cold start: measured from outside, with hyperfine'}</span>,
+      <span className="whitespace-pre text-slate-400">{"      hyperfine --warmup 20 'arca --version'"}</span>,
     ],
   },
 ];
@@ -164,7 +164,7 @@ function CliPanel() {
 
         <TerminalWindow title="site — arca — zsh" label={`Terminal running arca ${c.id}`} bodyClassName="min-h-[280px] sm:min-h-[320px]">
           <div className="break-all">
-            <Prompt dir="site" />
+            <Prompt dir="demo" />
             {colorizeCommand(typed)}
             {shown === 0 && <Cursor />}
           </div>
@@ -175,14 +175,14 @@ function CliPanel() {
           ))}
           {done && (
             <div className="mt-1">
-              <Prompt dir="site" />
+              <Prompt dir="demo" />
               <Cursor />
             </div>
           )}
         </TerminalWindow>
       </div>
       <p className="mt-3 px-1 text-xs text-slate-600">
-        Output format mirrors <span className="font-mono">arca-cli</span>; file names, sizes and timings here are illustrative.
+        Real <span className="font-mono">arca {VERSION}</span> output on a copy of this repository, Ryzen 9 5900X, Linux.
       </p>
     </div>
   );

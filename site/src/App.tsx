@@ -68,8 +68,13 @@ export default function App() {
     if (route.view === 'docs') {
       const page = DOC_PAGES.find((p) => p.slug === route.slug);
       document.title = page ? `${page.title} — Arca Docs` : 'Page not found — Arca Docs';
-      window.scrollTo({ top: 0, behavior: 'instant' });
-      return;
+      const section = route.section;
+      const raf = requestAnimationFrame(() => {
+        const el = section ? document.getElementById(section) : null;
+        if (el) el.scrollIntoView({ behavior: 'instant', block: 'start' });
+        else window.scrollTo({ top: 0, behavior: 'instant' });
+      });
+      return () => cancelAnimationFrame(raf);
     }
 
     document.title = HOME_TITLE;

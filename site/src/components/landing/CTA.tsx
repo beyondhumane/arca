@@ -4,6 +4,7 @@ import { CLONE_CMD, DOWNLOADS, RELEASE_URL, VERSION } from '@/lib/site';
 import type { Platform } from '@/lib/site';
 import { Accent, ButtonLink, Container, CopyButton, Reveal } from '../ui';
 import { DownloadButton, PLATFORM_ICONS, useRecommendedDownload } from '../download';
+import { MethodLink } from './MethodLink';
 
 const ORDER: Platform[] = ['windows', 'macos', 'macos-intel', 'linux'];
 
@@ -24,12 +25,13 @@ export function CTA() {
             <div className="relative mx-auto max-w-3xl text-center">
               <p className="font-mono text-xs uppercase tracking-[0.2em] text-brand-300">v{VERSION} · ready when you are</p>
               <h2 id="cta-title" className="mt-5 text-balance text-4xl font-semibold leading-[1.04] tracking-[-0.04em] text-white sm:text-6xl">
-                Your next archive is <Accent>1.6 ms</Accent> away.
+                Your next archive is <Accent>0.8 ms</Accent> away.
               </h2>
               <p className="mx-auto mt-5 max-w-xl text-pretty text-base leading-relaxed text-slate-400 sm:text-lg">
                 Grab a prebuilt binary for your platform, or build it from source with one command. Either way, you’ll
                 feel the difference on the very first run.
               </p>
+              <MethodLink section="requirements" className="justify-center" />
               <div className="mt-9 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
                 <DownloadButton />
                 <ButtonLink href="#/docs" variant="glass" size="lg">

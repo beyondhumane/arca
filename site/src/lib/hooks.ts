@@ -140,13 +140,13 @@ export function useScrollSpy(ids: readonly string[], enabled = true): string | n
 /* ------------------------------------------------------------------ */
 /*  Hash routing                                                       */
 /* ------------------------------------------------------------------ */
-export type Route = { view: 'home'; anchor: string } | { view: 'docs'; slug: string };
+export type Route = { view: 'home'; anchor: string } | { view: 'docs'; slug: string; section?: string };
 
 export function parseHash(hash: string): Route {
   const h = hash.replace(/^#/, '');
   if (h === '/docs' || h.startsWith('/docs/')) {
-    const slug = h.slice('/docs'.length).replace(/^\/+/, '').replace(/\/+$/, '') || 'introduction';
-    return { view: 'docs', slug };
+    const [slug, section] = h.slice('/docs'.length).replace(/^\/+/, '').replace(/\/+$/, '').split('/');
+    return { view: 'docs', slug: slug || 'introduction', section };
   }
   return { view: 'home', anchor: h.replace(/^\/+/, '') };
 }

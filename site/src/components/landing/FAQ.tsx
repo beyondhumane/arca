@@ -55,7 +55,7 @@ const FAQS: { q: string; a: ReactNode }[] = [
       <>
         No, and we say so. With large files Arca compressed 5.7× faster at a 3.7% size cost (deflate vs deflate, Windows
         11). With thousands of small files 7-Zip is slightly ahead at the same size, because file creation on NTFS
-        dominates. The <a href="#/docs/benchmarks" className="text-brand-300 underline decoration-brand-400/40 underline-offset-4 hover:text-brand-200">benchmarks page</a> shows both.
+        dominates. The <a href="#/docs/benchmarks/deflate-against-deflate-on-windows-11" className="text-brand-300 underline decoration-brand-400/40 underline-offset-4 hover:text-brand-200">benchmarks page</a> shows both.
       </>
     ),
   },

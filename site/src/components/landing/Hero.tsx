@@ -10,41 +10,42 @@ import { GitHubIcon } from '../icons';
 import { Cursor, Prompt, TerminalWindow, colorizeCommand } from '../terminal';
 
 /* ------------------------------------------------------------------ */
-/*  Terminal script — output format mirrors arca-cli, numbers are the  */
-/*  ones measured in the project README.                               */
+/*  Terminal script — real arca 0.7.2 output on the Silesia corpus,    */
+/*  Ryzen 9 5900X, Linux. Commands: docs/guide/benchmarks.md.          */
 /* ------------------------------------------------------------------ */
 type Scene = { cmd: string; out: ReactNode[]; hold?: number };
 
 const SCENES: Scene[] = [
   {
-    cmd: 'arca create release.zip dist/ -c zstd',
+    cmd: 'arca create silesia.zip silesia -c zstd',
     out: [
       <>
-        <span className="text-white">release.zip</span>: 120 files, 81.0 MB <span className="text-slate-500">-&gt;</span>{' '}
-        <span className="text-brand-300">26.2 MB</span> <span className="text-emerald-400">(67.7% smaller)</span> in{' '}
-        <span className="text-brand-300">0.330 s</span> <span className="text-slate-600">·</span> 245 MB/s{' '}
-        <span className="text-slate-600">·</span> 2 threads
+        <span className="text-white">silesia.zip</span>: 12 files, 202.1 MB <span className="text-slate-500">-&gt;</span>{' '}
+        <span className="text-brand-300">63.1 MB</span> <span className="text-emerald-400">(68.8% smaller)</span> in{' '}
+        <span className="text-brand-300">0.263 s</span> <span className="text-slate-600">·</span> 770 MB/s{' '}
+        <span className="text-slate-600">·</span> 24 threads
       </>,
     ],
     hold: 2200,
   },
   {
-    cmd: 'arca list release.zip --time',
+    cmd: 'arca list silesia.zip --time',
     out: [
-      <span className="whitespace-pre text-slate-400">{'     1843210     zstd  71.6% dist/app.js'}</span>,
-      <span className="whitespace-pre text-slate-400">{'      402117     zstd  78.9% dist/app.css'}</span>,
-      <span className="whitespace-pre text-slate-400">{'     8121904     zstd  12.4% dist/hero.webp'}</span>,
+      <span className="whitespace-pre text-slate-400">{'    51220480     zstd   64.4%  silesia/mozilla'}</span>,
+      <span className="whitespace-pre text-slate-400">{'    41458703     zstd   70.8%  silesia/webster'}</span>,
+      <span className="whitespace-pre text-slate-400">{'    33553445     zstd   91.6%  silesia/nci'}</span>,
+      <span className="text-slate-600">…</span>,
       <span className="text-slate-500">
-        120 entries, 81.0 MB uncompressed, listed in <span className="text-brand-300">0.4 ms</span>
+        12 entries, 202.1 MB uncompressed, listed in <span className="text-brand-300">0.1 ms</span>
       </span>,
     ],
     hold: 1900,
   },
   {
-    cmd: 'arca extract big.zip -o out',
+    cmd: 'arca extract silesia.zip -o out',
     out: [
       <>
-        16 files, <span className="text-brand-300">287.0 MB</span> written in <span className="text-brand-300">0.207 s</span>
+        12 files, <span className="text-brand-300">202.1 MB</span> written in <span className="text-brand-300">0.067 s</span>
       </>,
     ],
     hold: 2600,
@@ -209,7 +210,7 @@ function FloatingChip({
 
 function RatioCard({ className }: { className?: string }) {
   const [ref, inView] = useInView<HTMLDivElement>();
-  const pct = 67.7;
+  const pct = 68.8;
   const r = 26;
   const c = 2 * Math.PI * r;
   return (
@@ -217,7 +218,7 @@ function RatioCard({ className }: { className?: string }) {
       <div className="animate-float-slow">
         <div className="glass-dark w-[252px] rounded-2xl p-4 shadow-[0_30px_70px_-20px_rgba(0,0,0,0.9)]">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-[11px] text-slate-400">release.zip</span>
+            <span className="font-mono text-[11px] text-slate-400">silesia.zip</span>
             <span className="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-400/20">
               zstd · normal
             </span>
@@ -246,15 +247,15 @@ function RatioCard({ className }: { className?: string }) {
               />
             </svg>
             <div>
-              <div className="text-2xl font-semibold tracking-tight text-white">67.7%</div>
-              <div className="text-xs text-slate-400">smaller · 81.0 → 26.2 MB</div>
+              <div className="text-2xl font-semibold tracking-tight text-white">68.8%</div>
+              <div className="text-xs text-slate-400">smaller · 202.1 → 63.1 MB</div>
             </div>
           </div>
           <div className="mt-3 h-px bg-white/[0.06]" />
           <div className="mt-3 flex justify-between font-mono text-[11px] text-slate-500">
-            <span>0.330 s</span>
-            <span>245 MB/s</span>
-            <span>11.9× zip</span>
+            <span>0.263 s</span>
+            <span>770 MB/s</span>
+            <span>24 threads</span>
           </div>
         </div>
       </div>
@@ -309,7 +310,7 @@ function HeroVisual() {
         style={{ transform: 'rotateX(calc(var(--tilt, 0) * 16deg)) scale(calc(1 - var(--tilt, 0) * 0.05))' }}
       >
         <HeroTerminal />
-        <FloatingChip className="-left-10 top-16 xl:-left-24" icon={Timer} label="Cold start" value="1.6 ms" delay="0s" />
+        <FloatingChip className="-left-10 top-16 xl:-left-24" icon={Timer} label="Cold start" value="0.8 ms" delay="0s" />
         <FloatingChip className="-right-8 top-10 xl:-right-20" icon={Lock} label="Encryption" value="AES-256 · AE-2" delay="-2.4s" />
         <FloatingChip
           className="-left-12 bottom-6 xl:-left-28"
@@ -427,6 +428,12 @@ export function Hero() {
               className="inline-flex items-center gap-1 text-slate-400 underline decoration-white/20 underline-offset-4 transition hover:text-white hover:decoration-brand-400"
             >
               Install guide <ArrowRight className="size-3.5" />
+            </a>
+            <a
+              href="#/docs/benchmarks"
+              className="inline-flex items-center gap-1 text-slate-400 underline decoration-white/20 underline-offset-4 transition hover:text-white hover:decoration-brand-400"
+            >
+              How these numbers were measured <ArrowRight className="size-3.5" />
             </a>
           </div>
         </div>

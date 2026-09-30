@@ -4,6 +4,7 @@ import { Check, Cpu, FileArchive, Keyboard, Lock, ShieldCheck, Timer, Wrench, Za
 import { cn } from '@/utils/cn';
 import { useCountUp, useInView, usePrefersReducedMotion, useScramble } from '@/lib/hooks';
 import { Accent, Container, CopyButton, Kbd, Reveal, SectionHeading, SpotlightCard } from '../ui';
+import { MethodLink } from './MethodLink';
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -105,10 +106,11 @@ function ThreadsVisual() {
       </div>
 
       <div className="mt-6 grid grid-cols-3 gap-3 border-t border-white/[0.06] pt-5">
-        <MiniStat value="1.89×" label="on 2 threads" />
-        <MiniStat value="94%" label="scaling efficiency" />
+        <MiniStat value="1.79×" label="on 2 threads" />
+        <MiniStat value="90%" label="scaling efficiency" />
         <MiniStat value="0.207 s" label="to extract 287 MB" />
       </div>
+      <MethodLink section="requirements" />
     </div>
   );
 }
@@ -185,10 +187,10 @@ function CipherVisual() {
 
 /* ---------------- Zstandard ------------------------------------------ */
 const ZSTD_ROWS = [
-  { label: 'Arca · zstd', ms: 330, arca: true },
-  { label: 'Arca · deflate', ms: 941, arca: true },
-  { label: 'zip -6', ms: 3934, arca: false },
-  { label: '7-Zip, 2 threads', ms: 5358, arca: false },
+  { label: 'Arca · zstd', ms: 436, arca: true },
+  { label: 'Arca · deflate', ms: 1012, arca: true },
+  { label: 'zip -6', ms: 5746, arca: false },
+  { label: '7-Zip -mx5', ms: 7877, arca: false },
 ];
 
 function ZstdVisual() {
@@ -207,12 +209,13 @@ function ZstdVisual() {
                 'h-full rounded-full transition-[width] duration-[1400ms] ease-out',
                 r.arca ? 'bg-linear-to-r from-brand-300 to-brand-500' : 'bg-slate-600',
               )}
-              style={{ width: inView ? `${Math.max(3, (r.ms / 5358) * 100)}%` : '0%', transitionDelay: `${i * 120}ms` }}
+              style={{ width: inView ? `${Math.max(3, (r.ms / 7877) * 100)}%` : '0%', transitionDelay: `${i * 120}ms` }}
             />
           </div>
         </div>
       ))}
-      <p className="pt-1 text-[11px] text-slate-600">81 MB · 120 files · 2 threads · lower is better</p>
+      <p className="pt-1 text-[11px] text-slate-600">Silesia, 212 MB · 120 files · 2 cores · lower is better</p>
+      <MethodLink section="compression" />
     </div>
   );
 }
@@ -220,7 +223,7 @@ function ZstdVisual() {
 /* ---------------- Cold start ----------------------------------------- */
 function ColdStartVisual() {
   const [ref, inView] = useInView<HTMLDivElement>();
-  const v = useCountUp(1.6, inView, { duration: 1300, decimals: 1 });
+  const v = useCountUp(0.8, inView, { duration: 1300, decimals: 1 });
   return (
     <div ref={ref} className="mt-6">
       <div className="flex items-baseline gap-2">
@@ -234,13 +237,14 @@ function ColdStartVisual() {
         </div>
         <div className="flex justify-between border-b border-white/[0.05] pb-2">
           <span>7z</span>
-          <span>3.7 ms</span>
+          <span>2.5 ms</span>
         </div>
         <div className="flex justify-between">
           <span>design target (R1)</span>
           <span>&lt; 15 ms</span>
         </div>
       </div>
+      <MethodLink section="requirements" />
     </div>
   );
 }
@@ -411,7 +415,7 @@ export function Features() {
           <Reveal className="md:col-span-3 lg:col-span-4">
             <SpotlightCard className="h-full p-6 sm:p-8">
               <CardHeader icon={Zap} eyebrow="Codecs" title="Zstandard inside ZIP">
-                Ask for zstd and get the smallest, fastest archive of the bunch. Deflate stays the default so any unzip
+                Ask for zstd and get the fastest archive of the bunch, within 2% of the smallest. Deflate stays the default so any unzip
                 can open it.
               </CardHeader>
               <ZstdVisual />
