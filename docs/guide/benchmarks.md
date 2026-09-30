@@ -11,31 +11,52 @@ These numbers come from specific machines and should not be read as a general ad
 
 ## Requirements
 
-Xeon at 2.80 GHz, 2 cores, Linux.
+Ryzen 9 5900X, Linux. Everything in this section and the next is reproduced by one script, which downloads the [Silesia corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia), pins it by hash and prints the machine and tool versions it ran on:
+
+```sh
+cargo build --release
+nix-shell -p hyperfine zip unzip _7zz --run 'bash bench.sh'
+```
 
 | Requirement | Target | Measured | Others |
 | --- | --- | --- | --- |
-| R1 · cold start | < 15 ms | **1.6 ms** | unzip 2.0 · 7z 3.7 |
-| R2 · list 6,000 entries | < 200 ms | **4.5 ms** | unzip 17.2 · 7z 45.4 |
-| R3 · scaling to 2 threads | ≥ 1.6× | **1.89×** | 94% efficiency |
+| R1 · cold start, list a one-entry zip | < 15 ms | **0.8 ms** | unzip 2.0 · 7z 2.5 |
+| R2 · list 6,000 entries | < 200 ms | **3.1 ms** | unzip 18.6 · 7z 71.8 |
+| R3 · scaling to 2 threads | ≥ 1.6× | **1.79×** | 90% efficiency |
 
 ```sh
-hyperfine --warmup 20 'arca --version'   # R1
-arca bench archive.zip                   # R2, best of 5
+hyperfine -N --warmup 20 'arca list tiny.zip' 'unzip -l tiny.zip' '7zz l tiny.zip'
+hyperfine -N --warmup 5 'arca list list-6000.zip' 'unzip -l list-6000.zip' '7zz l list-6000.zip'
+hyperfine -N --prepare 'rm -f out.zip' \
+  'taskset -c 0,1 arca create out.zip corpus -c deflate -j 1' \
+  'taskset -c 0,1 arca create out.zip corpus -c deflate -j 2'
 ```
 
 ## Compression
 
-81 MB across 120 separate files, 2 threads, same machine.
+The Silesia corpus, 211.9 MB cut into 120 equal files, pinned to two physical cores.
 
 | Tool | Time | Size |
 | --- | --- | --- |
-| **Arca, zstd** | **330 ms** | **26.16 MB** |
-| Arca, deflate | 941 ms | 28.35 MB |
-| zip -6 | 3934 ms | 27.65 MB |
-| 7-Zip zip, 2 threads | 5358 ms | 26.88 MB |
+| **Arca, zstd** | **436 ms** | 66.87 MB |
+| Arca, deflate | 1012 ms | 67.62 MB |
+| zip -6 | 5746 ms | 68.34 MB |
+| 7-Zip zip, -mx5 | 7877 ms | **65.81 MB** |
 
-With Zstandard, Arca was 11.9× faster than `zip` and 16.2× faster than 7-Zip, and produced the smallest archive of the four. With Deflate it was 4.2× faster than `zip` at the cost of 2.5% in size — the known zlib-rs trade.
+```sh
+hyperfine -N --prepare 'rm -f out.zip' \
+  'taskset -c 0,1 arca create out.zip corpus -c zstd' \
+  'taskset -c 0,1 arca create out.zip corpus -c deflate' \
+  'taskset -c 0,1 zip -qr -6 out.zip corpus' \
+  'taskset -c 0,1 7zz a -tzip -mx5 out.zip corpus'
+```
+
+With Zstandard, Arca was 13.2× faster than `zip` and 18.1× faster than 7-Zip; 7-Zip still wrote the smallest archive, 1.6% below Arca’s. With Deflate, Arca was 5.7× faster than `zip` and its archive 1.1% smaller.
+
+> [!NOTE]
+> **Why 120 files**
+>
+> Each entry is compressed on one thread. Silesia’s own twelve files are dominated by a 49 MB one, so on them two threads only reach 1.56× — the corpus, not the code, sets the ceiling.
 
 ### Deflate against deflate on Windows 11
 

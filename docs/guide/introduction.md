@@ -13,12 +13,12 @@ Arca is a cross-platform archiver written in Rust. It creates and extracts ZIP a
 
 Because archive parsers are a classic attack surface, and most of the ones in daily use are written in memory-unsafe languages. Arca’s container parsers are written in safe Rust with `#![forbid(unsafe_code)]` at crate level: **a malformed archive produces an error, never memory corruption.**
 
-And because being careful doesn’t have to mean being slow. On the machine it was measured on, Arca with Zstandard compressed a 120-file corpus 11.9× faster than `zip` and 16.2× faster than 7-Zip, while producing the smallest archive of the four. Where it doesn’t win, the [benchmarks](benchmarks.md) say so.
+And because being careful doesn’t have to mean being slow. On the machine it was measured on, Arca with Zstandard compressed the Silesia corpus 13.2× faster than `zip` and 18.1× faster than 7-Zip, on the same two cores. Where it doesn’t win, the [benchmarks](benchmarks.md) say so.
 
 ## At a glance
 
 - **Formats** — ZIP with Zip64 (store, Deflate over zlib-rs, Zstandard, AES-256), ustar TAR with checksum verification, and `.tar.gz`.
-- **Speed** — multi-threaded compression, parallel extraction of `.zip`, and a 1.6 ms cold start.
+- **Speed** — multi-threaded compression, parallel extraction of `.zip`, and a sub-millisecond cold start.
 - **Safety** — unsafe-free parsers, bounded header reads and a Zip Slip defence on every entry name.
 - **Encryption** — WinZip AE-2 AES-256, interoperable with 7-Zip, WinRAR and NanaZip.
 - **Interfaces** — the `arca` command line, the `arca-gui` window and a Windows 11 Explorer menu.

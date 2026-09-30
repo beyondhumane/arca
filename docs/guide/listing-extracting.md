@@ -16,13 +16,13 @@ arca list <ARCHIVE> [-t | --time]
 Prints one line per entry — uncompressed size, method, ratio and name — without extracting anything.
 
 ```sh
-arca list site.zip --time
+arca list arca.zip --time
 ```
 
 ```text
-      412733  deflate  64.9% assets/app.js
-       96120  deflate  78.4% assets/app.css
-1204 entries, 48.2 MB uncompressed, listed in 1.1 ms
+       22966  deflate   72.6%  arca/arca-cli/src/main.rs
+      114710  deflate   76.8%  arca/arca-zip/src/lib.rs
+174 entries, 2.3 MB uncompressed, listed in 0.1 ms
 ```
 
 With `--time`, the summary goes to standard error, so piping the listing into other tools stays clean.

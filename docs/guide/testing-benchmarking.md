@@ -12,12 +12,12 @@ keywords: test verify crc ci github actions bench benchmark r1 r2 methodology
 Reads every entry and checks its CRC — or its HMAC, when the entry is encrypted — without writing anything to disk.
 
 ```sh
-arca test site.zip
+arca test arca.zip
 arca test secret.zip -p "a password"
 ```
 
 ```text
-1204 entries verified, no errors (0.121 s)
+174 entries verified, no errors (0.006 s)
 ```
 
 Corrupt entries are reported on standard error, and the command exits with status 1 and a count of the entries that failed.
@@ -40,13 +40,20 @@ Measures the design’s performance requirements R1 and R2 against a real archiv
 arca bench big.zip
 ```
 
-| Requirement | Target | Measured | For comparison |
-| --- | --- | --- | --- |
-| R1 · cold start | < 15 ms | **1.6 ms** | unzip 2.0 · 7z 3.7 |
-| R2 · list 6,000 entries | < 200 ms | **4.5 ms** | unzip 17.2 · 7z 45.4 |
-| R3 · scaling to 2 threads | ≥ 1.6× | **1.89×** | 94% efficiency |
+It prints the R2 figure for the archive you give it, and the `hyperfine` command for R1:
 
-Measured on a Xeon at 2.80 GHz with 2 cores, running Linux.
+```text
+Performance requirements (design document, section 05)
+
+  R2  list without extracting
+      6000 entries in a 828.8 KB archive
+      1.1 ms   target < 200 ms   PASS
+
+  R1  cold start: measured from outside, with hyperfine
+      hyperfine --warmup 20 'arca --version'
+```
+
+The published figures for R1, R2 and R3, and the script that reproduces them, are on the [benchmarks](benchmarks.md) page.
 
 ## Benchmarking honestly
 

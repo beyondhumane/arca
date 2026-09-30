@@ -49,7 +49,7 @@ arca create copy.zip my-files/ -j 8
 arca create copy.zip my-files/ -j 0    # every core (the default)
 ```
 
-Scaling measured **1.89× on two threads** — 94% efficiency, against a design requirement (R3) of at least 1.6×.
+Scaling measured **1.79× on two threads** — 90% efficiency, against a design requirement (R3) of at least 1.6×. See [benchmarks](benchmarks.md) for the command.
 
 ## TAR and gzip
 
@@ -78,5 +78,5 @@ See [Encryption](encryption.md) for the scheme, its guarantees and its limits.
 ## Output
 
 ```text
-copy.zip: 120 files, 81.0 MB -> 26.2 MB (67.7% smaller) in 0.330 s · 245 MB/s · 2 threads
+silesia.zip: 12 files, 202.1 MB -> 63.1 MB (68.8% smaller) in 0.282 s · 717 MB/s · 24 threads
 ```
