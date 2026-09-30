@@ -173,7 +173,8 @@ Después de alcanzar la paridad funcional, validar accesibilidad y completar la 
 - **G7.3 hecho** — los widgets internos son los de `gpui-component`: `Input`,
   `Button`, `Dialog` sobre `Root`, menús anclados al disparador, `Table`,
   `Progress`, `Kbd`, `Radio`, `Tree` y la barra de desplazamiento del kit. El
-  detalle por fases está en `docs/todos/migracion-gpui-kit.md`.
+  detalle por fases quedó en el historial de git (`docs/todos/migracion-gpui-kit.md`,
+  borrado al terminar la migración).
 - **G7.4 hecho** — el diálogo de configuración existe en la superficie GPUI:
   idioma y tema en radios, y formato, compresor, nivel y página de códigos en
   menús.
