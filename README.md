@@ -51,7 +51,7 @@ Short aliases: `c`, `l`, `x`, `t`.
 | `arca-tar` | ustar TAR with checksum verification | forbidden |
 | `arca-cli` | The `arca` binary | allowed, unused |
 | `arca-gui` | The `arca-gui` window | forbidden |
-| `arca-setup` | The installer: window, files, registry and uninstaller. Not shipped yet, releases still use Inno Setup (`docs/plans/instalador-propio.md`) | forbidden |
+| `arca-setup` | The installer: window, files, registry and uninstaller. Not shipped yet, releases still use Inno Setup (`docs/plans/custom-installer.md`) | forbidden |
 | `arca-notify` | Tells Windows that `PATH` or the file associations changed | Windows only, for two shell calls |
 | `arca-icons` | The icon the desktop shows for a file type | Windows only, for the shell call |
 | `windows/arca-shell` | Explorer context menu. Outside the workspace so `cargo build` still works on Linux and macOS | required: COM |
