@@ -4,7 +4,86 @@ import { Check, Cpu, FileArchive, Keyboard, Lock, ShieldCheck, Timer, Wrench, Za
 import { cn } from '@/utils/cn';
 import { useCountUp, useInView, usePrefersReducedMotion, useScramble } from '@/lib/hooks';
 import { Accent, Container, CopyButton, Kbd, Reveal, SectionHeading, SpotlightCard } from '../ui';
+import { useCopy } from '@/lib/i18n';
 import { MethodLink } from './MethodLink';
+
+const COPY = {
+  en: {
+    threadsGroup: 'Number of threads',
+    threadLabel: (n: number) => (n === 16 ? 'Every core' : `${n} thread${n > 1 ? 's' : ''}`),
+    all: 'all',
+    onTwo: 'on 2 threads',
+    efficiency: 'scaling efficiency',
+    extract: 'to extract 287 MB',
+    rejected: 'rejected',
+    plain: 'Q3 revenue up 18%, embargoed',
+    verified: 'HMAC verified',
+    decrypted: (p: string) => `Decrypted contents: ${p}`,
+    encrypted: 'Encrypted contents. Activate to decrypt.',
+    tapLock: 'Decrypted. Tap again to lock.',
+    tapOpen: 'Hover or tap to decrypt',
+    zstdCaption: 'Silesia, 212 MB · 120 files · 2 cores · lower is better',
+    target: 'design target (R1)',
+    readOnly: 'ZipCrypto · read-only',
+    shortcuts: ['move', 'open', 'tick', 'tick all', 'back', 'filter'],
+    gpu: 'GPU-rendered with GPUI',
+    profileGroup: 'Build profile',
+    pure: 'pure Rust',
+    notes: ['The default. Links libzstd (C) for the fastest Zstandard.', 'No C toolchain needed. Builds for any target Rust supports.'],
+    copyBuild: (l: string) => `Copy ${l} build command`,
+    eyebrow: 'Features',
+    title: ['An archiver built for ', 'speed', ' and hostile input.'],
+    description: 'A small binary for the terminal and a native window for everyone else, both on the same core.',
+    cards: [
+      ['Multi-threaded', 'Every core, on demand', 'Compression and extraction use every core. A .zip indexes its entries, so each thread opens its own entry and shares nothing with the others. Pick a thread count to see it scale.'],
+      ['Memory-safe', 'Safe by construction', 'Container parsers forbid unsafe code. Malformed input becomes an error, and Zip Slip paths are refused before a byte is written.'],
+      ['Encryption', 'AES-256, authenticated', 'WinZip AE-2 with a fresh salt per entry and an HMAC over every byte. 7-Zip and WinRAR open it, and a tampered entry fails the HMAC check.'],
+      ['Codecs', 'Zstandard inside ZIP', 'Ask for zstd and get the fastest archive of the bunch, within 2% of the smallest. Deflate stays the default so any unzip can open it.'],
+      ['Startup', 'Starts in under a millisecond', 'Built with LTO and one codegen unit, with no runtime to start up.'],
+      ['Formats', 'Speaks the formats you use', 'ZIP with Zip64 for archives over 4 GB, ustar TAR with checksum verification, and gzip on top. Legacy ZipCrypto archives open, and arca password moves them to AES-256.'],
+      ['Desktop', 'A window that respects the keyboard', 'Browse archives like folders, tick with Space, filter with Ctrl+F, and go back with Alt+←. Screen readers get every row.'],
+      ['Portable', 'A pure-Rust build', 'Keep native libzstd for peak speed, or flip one flag for a build with no C dependency at all.'],
+    ],
+  },
+  es: {
+    threadsGroup: 'Número de hilos',
+    threadLabel: (n: number) => (n === 16 ? 'Todos los núcleos' : `${n} hilo${n > 1 ? 's' : ''}`),
+    all: 'todos',
+    onTwo: 'con 2 hilos',
+    efficiency: 'eficiencia de escalado',
+    extract: 'para extraer 287 MB',
+    rejected: 'rechazada',
+    plain: 'Ingresos del T3 +18%, confidencial',
+    verified: 'HMAC verificado',
+    decrypted: (p: string) => `Contenido descifrado: ${p}`,
+    encrypted: 'Contenido cifrado. Actívalo para descifrarlo.',
+    tapLock: 'Descifrado. Toca otra vez para cerrarlo.',
+    tapOpen: 'Pasa el ratón o toca para descifrar',
+    zstdCaption: 'Silesia, 212 MB · 120 archivos · 2 núcleos · menos es mejor',
+    target: 'objetivo de diseño (R1)',
+    readOnly: 'ZipCrypto · solo lectura',
+    shortcuts: ['mover', 'abrir', 'marcar', 'marcar todo', 'atrás', 'filtrar'],
+    gpu: 'Dibujado en GPU con GPUI',
+    profileGroup: 'Perfil de compilación',
+    pure: 'Rust puro',
+    notes: ['El predeterminado. Enlaza libzstd (C) para el Zstandard más rápido.', 'Sin toolchain de C. Compila para cualquier destino que admita Rust.'],
+    copyBuild: (l: string) => `Copiar el comando de compilación ${l}`,
+    eyebrow: 'Funciones',
+    title: ['Un archivador hecho para la ', 'velocidad', ' y la entrada hostil.'],
+    description: 'Un binario pequeño para la terminal y una ventana nativa para todos los demás, sobre el mismo núcleo.',
+    cards: [
+      ['Multihilo', 'Todos los núcleos, cuando quieras', 'Comprimir y extraer usan todos los núcleos. Un .zip indexa sus entradas, así que cada hilo abre la suya y no comparte nada con los demás. Elige un número de hilos para ver cómo escala.'],
+      ['Seguridad de memoria', 'Seguro por construcción', 'Los analizadores de contenedores prohíben el código unsafe. Una entrada malformada se convierte en un error, y las rutas Zip Slip se rechazan antes de escribir un byte.'],
+      ['Cifrado', 'AES-256 autenticado', 'WinZip AE-2 con una sal nueva por entrada y un HMAC sobre cada byte. 7-Zip y WinRAR lo abren, y una entrada manipulada no pasa la comprobación del HMAC.'],
+      ['Códecs', 'Zstandard dentro de ZIP', 'Pide zstd y obtienes el archivo más rápido de todos, a menos de un 2% del más pequeño. Deflate sigue siendo el predeterminado para que cualquier unzip lo abra.'],
+      ['Arranque', 'Arranca en menos de un milisegundo', 'Compilado con LTO y una sola unidad de generación de código, sin runtime que arrancar.'],
+      ['Formatos', 'Habla los formatos que usas', 'ZIP con Zip64 para archivos de más de 4 GB, TAR ustar con verificación de la suma de control y gzip encima. Los archivos con el antiguo ZipCrypto se abren, y arca password los pasa a AES-256.'],
+      ['Escritorio', 'Una ventana que respeta el teclado', 'Navega por los archivos como si fueran carpetas, marca con Space, filtra con Ctrl+F y vuelve atrás con Alt+←. Los lectores de pantalla leen cada fila.'],
+      ['Portable', 'Una compilación en Rust puro', 'Quédate con libzstd nativo para la máxima velocidad, o cambia una opción para compilar sin ninguna dependencia de C.'],
+    ],
+  },
+};
+
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -49,24 +128,25 @@ const THREAD_OPTIONS = [1, 2, 4, 8, 16];
 
 function ThreadsVisual() {
   const [threads, setThreads] = useState(8);
+  const t = useCopy(COPY);
   const [ref, inView] = useInView<HTMLDivElement>();
   return (
     <div ref={ref} className="mt-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div role="group" aria-label="Number of threads" className="inline-flex rounded-full border border-white/10 bg-black/30 p-1">
+        <div role="group" aria-label={t.threadsGroup} className="inline-flex rounded-full border border-white/10 bg-black/30 p-1">
           {THREAD_OPTIONS.map((n) => (
             <button
               key={n}
               type="button"
               aria-pressed={threads === n}
-              aria-label={n === 16 ? 'Every core' : `${n} thread${n > 1 ? 's' : ''}`}
+              aria-label={t.threadLabel(n)}
               onClick={() => setThreads(n)}
               className={cn(
                 'h-8 min-w-10 rounded-full px-3 font-mono text-xs transition-all duration-300',
                 threads === n ? 'bg-white text-ink-950 shadow-[0_4px_14px_-4px_rgba(255,255,255,0.5)]' : 'text-slate-400 hover:text-white',
               )}
             >
-              {n === 16 ? 'all' : n}
+              {n === 16 ? t.all : n}
             </button>
           ))}
         </div>
@@ -106,9 +186,9 @@ function ThreadsVisual() {
       </div>
 
       <div className="mt-6 grid grid-cols-3 gap-3 border-t border-white/[0.06] pt-5">
-        <MiniStat value="1.79×" label="on 2 threads" />
-        <MiniStat value="90%" label="scaling efficiency" />
-        <MiniStat value="0.207 s" label="to extract 287 MB" />
+        <MiniStat value="1.79×" label={t.onTwo} />
+        <MiniStat value="90%" label={t.efficiency} />
+        <MiniStat value="0.207 s" label={t.extract} />
       </div>
       <MethodLink section="requirements" />
     </div>
@@ -125,6 +205,7 @@ const ENTRIES = [
 
 function SafeVisual() {
   const [ref, inView] = useInView<HTMLDivElement>();
+  const t = useCopy(COPY);
   return (
     <div ref={ref} className="relative mt-6 overflow-hidden rounded-2xl border border-white/[0.06] bg-black/30 p-4 font-mono text-[12px]">
       <div className="mb-3 text-violet-300">#![forbid(unsafe_code)]</div>
@@ -140,7 +221,7 @@ function SafeVisual() {
             style={{ transitionDelay: `${300 + i * 180}ms` }}
           >
             <span className={cn('truncate', e.ok ? 'text-slate-400' : 'text-rose-300')}>{e.name}</span>
-            <span className={cn('shrink-0', e.ok ? 'text-emerald-400' : 'text-rose-300')}>{e.ok ? 'ok' : 'rejected'}</span>
+            <span className={cn('shrink-0', e.ok ? 'text-emerald-400' : 'text-rose-300')}>{e.ok ? 'ok' : t.rejected}</span>
           </li>
         ))}
       </ul>
@@ -155,7 +236,8 @@ function SafeVisual() {
 /* ---------------- Encryption ----------------------------------------- */
 function CipherVisual() {
   const [on, setOn] = useState(false);
-  const plain = 'Q3 revenue up 18% — embargoed';
+  const t = useCopy(COPY);
+  const plain = t.plain;
   const text = useScramble(plain, on);
   return (
     <button
@@ -170,7 +252,7 @@ function CipherVisual() {
         <span>report.txt</span>
         <span className={cn('inline-flex items-center gap-1.5 transition-colors duration-300', on ? 'text-emerald-400' : 'text-slate-500')}>
           {on ? <Check className="size-3.5" /> : <Lock className="size-3.5" />}
-          {on ? 'HMAC verified' : 'AES-256-CTR'}
+          {on ? t.verified : 'AES-256-CTR'}
         </span>
       </span>
       <span
@@ -179,8 +261,8 @@ function CipherVisual() {
       >
         {text}
       </span>
-      <span className="sr-only">{on ? `Decrypted contents: ${plain}` : 'Encrypted contents. Activate to decrypt.'}</span>
-      <span className="mt-3 block text-[11px] text-slate-500">{on ? 'Decrypted. Tap again to lock.' : 'Hover or tap to decrypt'}</span>
+      <span className="sr-only">{on ? t.decrypted(plain) : t.encrypted}</span>
+      <span className="mt-3 block text-[11px] text-slate-500">{on ? t.tapLock : t.tapOpen}</span>
     </button>
   );
 }
@@ -195,6 +277,7 @@ const ZSTD_ROWS = [
 
 function ZstdVisual() {
   const [ref, inView] = useInView<HTMLDivElement>();
+  const t = useCopy(COPY);
   return (
     <div ref={ref} className="mt-6 space-y-3">
       {ZSTD_ROWS.map((r, i) => (
@@ -214,7 +297,7 @@ function ZstdVisual() {
           </div>
         </div>
       ))}
-      <p className="pt-1 text-[11px] text-slate-600">Silesia, 212 MB · 120 files · 2 cores · lower is better</p>
+      <p className="pt-1 text-[11px] text-slate-600">{t.zstdCaption}</p>
       <MethodLink section="compression" />
     </div>
   );
@@ -224,6 +307,7 @@ function ZstdVisual() {
 function ColdStartVisual() {
   const [ref, inView] = useInView<HTMLDivElement>();
   const v = useCountUp(0.8, inView, { duration: 1300, decimals: 1 });
+  const t = useCopy(COPY);
   return (
     <div ref={ref} className="mt-6">
       <div className="flex items-baseline gap-2">
@@ -240,7 +324,7 @@ function ColdStartVisual() {
           <span>2.5 ms</span>
         </div>
         <div className="flex justify-between">
-          <span>design target (R1)</span>
+          <span>{t.target}</span>
           <span>&lt; 15 ms</span>
         </div>
       </div>
@@ -250,12 +334,13 @@ function ColdStartVisual() {
 }
 
 /* ---------------- Formats -------------------------------------------- */
-const FORMATS = ['.zip', 'Zip64', '.tar (ustar)', '.tar.gz', '.tgz', 'Deflate', 'Zstandard', 'Store', 'AES-256', 'ZipCrypto · read-only'];
+const FORMATS = ['.zip', 'Zip64', '.tar (ustar)', '.tar.gz', '.tgz', 'Deflate', 'Zstandard', 'Store', 'AES-256'];
 
 function FormatsVisual() {
+  const t = useCopy(COPY);
   return (
     <ul className="mt-6 flex flex-wrap gap-2">
-      {FORMATS.map((f, i) => (
+      {[...FORMATS, t.readOnly].map((f, i) => (
         <li
           key={f}
           className={cn(
@@ -271,19 +356,13 @@ function FormatsVisual() {
 }
 
 /* ---------------- Keyboard ------------------------------------------- */
-const SHORTCUTS: { keys: string[]; label: string }[] = [
-  { keys: ['↑', '↓'], label: 'move' },
-  { keys: ['Enter'], label: 'open' },
-  { keys: ['Space'], label: 'tick' },
-  { keys: ['Ctrl', 'A'], label: 'tick all' },
-  { keys: ['Alt', '←'], label: 'back' },
-  { keys: ['Ctrl', 'F'], label: 'filter' },
-];
+const SHORTCUTS = [['↑', '↓'], ['Enter'], ['Space'], ['Ctrl', 'A'], ['Alt', '←'], ['Ctrl', 'F']];
 
 function KeyboardVisual() {
   const [ref, inView] = useInView<HTMLDivElement>();
   const reduced = usePrefersReducedMotion();
   const [active, setActive] = useState(0);
+  const t = useCopy(COPY);
   useEffect(() => {
     if (!inView || reduced) return;
     const id = window.setInterval(() => setActive((a) => (a + 1) % SHORTCUTS.length), 1100);
@@ -293,29 +372,29 @@ function KeyboardVisual() {
   return (
     <div ref={ref} className="mt-6">
       <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {SHORTCUTS.map((s, i) => (
+        {SHORTCUTS.map((keys, i) => (
           <li
-            key={s.label}
+            key={i}
             className={cn(
               'flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 transition-all duration-500',
               active === i ? 'border-brand-400/35 bg-brand-500/[0.08]' : 'border-white/[0.06] bg-black/20',
             )}
           >
             <span className="flex gap-1">
-              {s.keys.map((k) => (
+              {keys.map((k) => (
                 <Kbd key={k} className={cn('transition-transform duration-300', active === i && 'translate-y-px border-brand-400/40 text-brand-100')}>
                   {k}
                 </Kbd>
               ))}
             </span>
-            <span className="text-xs text-slate-500">{s.label}</span>
+            <span className="text-xs text-slate-500">{t.shortcuts[i]}</span>
           </li>
         ))}
       </ul>
       <div className="mt-4 flex flex-wrap gap-2 text-[11px] text-slate-500">
-        {['GPU-rendered with GPUI', 'AccessKit', 'Narrator', 'NVDA'].map((t) => (
-          <span key={t} className="rounded-full border border-white/[0.06] px-2.5 py-1">
-            {t}
+        {[t.gpu, 'AccessKit', 'Narrator', 'NVDA'].map((tag) => (
+          <span key={tag} className="rounded-full border border-white/[0.06] px-2.5 py-1">
+            {tag}
           </span>
         ))}
       </div>
@@ -325,16 +404,18 @@ function KeyboardVisual() {
 
 /* ---------------- Build profiles ------------------------------------- */
 const PROFILES = [
-  { id: 'native', label: 'codecs-native', cmd: 'cargo build --release', note: 'The default. Links libzstd (C) for the fastest Zstandard.' },
-  { id: 'pure', label: 'pure Rust', cmd: 'cargo build --release --no-default-features', note: 'No C toolchain needed. Builds for any target Rust supports.' },
+  { id: 'native', cmd: 'cargo build --release' },
+  { id: 'pure', cmd: 'cargo build --release --no-default-features' },
 ];
 
 function BuildVisual() {
   const [sel, setSel] = useState(0);
+  const t = useCopy(COPY);
   const p = PROFILES[sel];
+  const labels = ['codecs-native', t.pure];
   return (
     <div className="mt-6">
-      <div role="group" aria-label="Build profile" className="inline-flex rounded-full border border-white/10 bg-black/30 p-1">
+      <div role="group" aria-label={t.profileGroup} className="inline-flex rounded-full border border-white/10 bg-black/30 p-1">
         {PROFILES.map((pr, i) => (
           <button
             key={pr.id}
@@ -346,7 +427,7 @@ function BuildVisual() {
               sel === i ? 'bg-white text-ink-950' : 'text-slate-400 hover:text-white',
             )}
           >
-            {pr.label}
+            {labels[i]}
           </button>
         ))}
       </div>
@@ -356,10 +437,10 @@ function BuildVisual() {
           <span className="text-sky-300">cargo</span> build <span className="text-violet-300">--release</span>
           {p.id === 'pure' && <span className="text-violet-300"> --no-default-features</span>}
         </code>
-        <CopyButton text={p.cmd} label={`Copy ${p.label} build command`} />
+        <CopyButton text={p.cmd} label={t.copyBuild(labels[sel])} />
       </div>
       <p key={`n-${p.id}`} className="mt-3 animate-fade-in text-sm text-slate-500">
-        {p.note}
+        {t.notes[sel]}
       </p>
     </div>
   );
@@ -367,26 +448,27 @@ function BuildVisual() {
 
 /* ---------------- Section -------------------------------------------- */
 export function Features() {
+  const t = useCopy(COPY);
+  const card = (i: number) => ({ eyebrow: t.cards[i][0], title: t.cards[i][1] });
   return (
     <section id="features" aria-labelledby="features-title" className="relative py-24 sm:py-32">
       <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-40 -z-10 h-[500px] bg-[radial-gradient(ellipse_at_center,rgba(47,107,255,0.07),transparent_60%)]" />
       <Container>
         <SectionHeading
-          eyebrow="Features"
+          eyebrow={t.eyebrow}
           title={
             <span id="features-title">
-              An archiver built for <Accent>speed</Accent> and hostile input.
+              {t.title[0]}<Accent>{t.title[1]}</Accent>{t.title[2]}
             </span>
           }
-          description="A small binary for the terminal and a native window for everyone else, both on the same core."
+          description={t.description}
         />
 
         <div className="mt-16 grid grid-cols-1 gap-4 md:grid-cols-6 lg:grid-cols-12">
           <Reveal className="md:col-span-6 lg:col-span-7 lg:row-span-2">
             <SpotlightCard className="h-full p-6 sm:p-8">
-              <CardHeader icon={Cpu} eyebrow="Multi-threaded" title="Every core, on demand">
-                Compression and extraction use every core. A .zip indexes its entries, so each thread opens its own
-                entry and shares nothing with the others. Pick a thread count to see it scale.
+              <CardHeader icon={Cpu} {...card(0)}>
+                {t.cards[0][2]}
               </CardHeader>
               <ThreadsVisual />
             </SpotlightCard>
@@ -394,9 +476,8 @@ export function Features() {
 
           <Reveal className="md:col-span-3 lg:col-span-5" delay={80}>
             <SpotlightCard className="h-full p-6 sm:p-8">
-              <CardHeader icon={ShieldCheck} eyebrow="Memory-safe" title="Safe by construction">
-                Container parsers forbid unsafe code. Malformed input becomes an error, and Zip Slip paths are refused
-                before a byte is written.
+              <CardHeader icon={ShieldCheck} {...card(1)}>
+                {t.cards[1][2]}
               </CardHeader>
               <SafeVisual />
             </SpotlightCard>
@@ -404,9 +485,8 @@ export function Features() {
 
           <Reveal className="md:col-span-3 lg:col-span-5" delay={160}>
             <SpotlightCard className="h-full p-6 sm:p-8">
-              <CardHeader icon={Lock} eyebrow="Encryption" title="AES-256, authenticated">
-                WinZip AE-2 with a fresh salt per entry and an HMAC over every byte. 7-Zip and WinRAR open it, and a
-                tampered entry fails the HMAC check.
+              <CardHeader icon={Lock} {...card(2)}>
+                {t.cards[2][2]}
               </CardHeader>
               <CipherVisual />
             </SpotlightCard>
@@ -414,9 +494,8 @@ export function Features() {
 
           <Reveal className="md:col-span-3 lg:col-span-4">
             <SpotlightCard className="h-full p-6 sm:p-8">
-              <CardHeader icon={Zap} eyebrow="Codecs" title="Zstandard inside ZIP">
-                Ask for zstd and get the fastest archive of the bunch, within 2% of the smallest. Deflate stays the default so any unzip
-                can open it.
+              <CardHeader icon={Zap} {...card(3)}>
+                {t.cards[3][2]}
               </CardHeader>
               <ZstdVisual />
             </SpotlightCard>
@@ -424,8 +503,8 @@ export function Features() {
 
           <Reveal className="md:col-span-3 lg:col-span-4" delay={80}>
             <SpotlightCard className="h-full p-6 sm:p-8">
-              <CardHeader icon={Timer} eyebrow="Startup" title="Starts in under a millisecond">
-                Built with LTO and one codegen unit, with no runtime to start up.
+              <CardHeader icon={Timer} {...card(4)}>
+                {t.cards[4][2]}
               </CardHeader>
               <ColdStartVisual />
             </SpotlightCard>
@@ -433,9 +512,8 @@ export function Features() {
 
           <Reveal className="md:col-span-6 lg:col-span-4" delay={160}>
             <SpotlightCard className="h-full p-6 sm:p-8">
-              <CardHeader icon={FileArchive} eyebrow="Formats" title="Speaks the formats you use">
-                ZIP with Zip64 for archives over 4 GB, ustar TAR with checksum verification, and gzip on top.
-                Legacy ZipCrypto archives open, and <code>arca password</code> moves them to AES-256.
+              <CardHeader icon={FileArchive} {...card(5)}>
+                {t.cards[5][2].split('arca password')[0]}<code>arca password</code>{t.cards[5][2].split('arca password')[1]}
               </CardHeader>
               <FormatsVisual />
             </SpotlightCard>
@@ -443,9 +521,8 @@ export function Features() {
 
           <Reveal className="md:col-span-3 lg:col-span-6">
             <SpotlightCard className="h-full p-6 sm:p-8">
-              <CardHeader icon={Keyboard} eyebrow="Desktop" title="A window that respects the keyboard">
-                Browse archives like folders, tick with Space, filter with Ctrl+F, and go back with Alt+←. Screen readers
-                get every row.
+              <CardHeader icon={Keyboard} {...card(6)}>
+                {t.cards[6][2]}
               </CardHeader>
               <KeyboardVisual />
             </SpotlightCard>
@@ -453,8 +530,8 @@ export function Features() {
 
           <Reveal className="md:col-span-3 lg:col-span-6" delay={80}>
             <SpotlightCard className="h-full p-6 sm:p-8">
-              <CardHeader icon={Wrench} eyebrow="Portable" title="A pure-Rust build">
-                Keep native libzstd for peak speed, or flip one flag for a build with no C dependency at all.
+              <CardHeader icon={Wrench} {...card(7)}>
+                {t.cards[7][2]}
               </CardHeader>
               <BuildVisual />
             </SpotlightCard>

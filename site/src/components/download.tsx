@@ -4,6 +4,7 @@ import { useOS } from '@/lib/hooks';
 import type { OS } from '@/lib/hooks';
 import { DOWNLOADS } from '@/lib/site';
 import type { DownloadAsset, Platform } from '@/lib/site';
+import { useCopy } from '@/lib/i18n';
 import { ButtonLink } from './ui';
 import type { ButtonSize, ButtonVariant } from './ui';
 import { AppleIcon, LinuxIcon, WindowsIcon } from './icons';
@@ -41,6 +42,10 @@ export function DownloadButton({
 }) {
   const { platform, asset } = useRecommendedDownload();
   const Icon: IconType = platform ? PLATFORM_ICONS[platform] : Download;
+  const t = useCopy({
+    en: { forOS: (os: string) => `Download for ${os}`, label: (os: string, f: string) => `Download Arca for ${os} (${f})`, any: 'Download Arca' },
+    es: { forOS: (os: string) => `Descargar para ${os}`, label: (os: string, f: string) => `Descargar Arca para ${os} (${f})`, any: 'Descargar Arca' },
+  });
 
   return (
     <ButtonLink
@@ -48,10 +53,10 @@ export function DownloadButton({
       variant={variant}
       size={size}
       className={className}
-      aria-label={asset ? `Download Arca for ${asset.os} (${asset.file})` : 'Download Arca'}
+      aria-label={asset ? t.label(asset.os, asset.file) : t.any}
     >
       <Icon className="size-[18px]" />
-      {asset ? `Download for ${asset.os}` : 'Download Arca'}
+      {asset ? t.forOS(asset.os) : t.any}
     </ButtonLink>
   );
 }

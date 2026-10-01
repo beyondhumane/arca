@@ -13,13 +13,60 @@ import {
 import { cn } from '@/utils/cn';
 import { usePrefersReducedMotion } from '@/lib/hooks';
 import { NEW_ISSUE_URL, REPO_URL, VERSION } from '@/lib/site';
+import { useCopy, useLang } from '@/lib/i18n';
 import { Kbd } from '../ui';
-import { DOC_GROUPS, DOC_PAGES } from './registry';
+import { DOCS, docGroups } from './registry';
 import { Markdown } from './Markdown';
 
 type TocItem = { id: string; text: string; level: 2 | 3 };
 
+const COPY = {
+  en: {
+    documentation: 'Documentation',
+    search: 'Search docs',
+    searchLabel: 'Search documentation',
+    noMatch: (q: string) => `Nothing matches “${q}”.`,
+    clear: 'Clear search',
+    get: 'Get Arca',
+    breadcrumb: 'Breadcrumb',
+    docs: 'Docs',
+    prevNext: 'Previous and next pages',
+    previous: 'Previous',
+    next: 'Next',
+    notFound: 'This page doesn’t exist.',
+    noPage: 'There’s no docs page called',
+    toIntro: 'Go to the introduction',
+    onThisPage: 'On this page',
+    edit: 'Edit this page',
+    report: 'Report an issue',
+    top: 'Back to top',
+  },
+  es: {
+    documentation: 'Documentación',
+    search: 'Buscar en la guía',
+    searchLabel: 'Buscar en la documentación',
+    noMatch: (q: string) => `Nada coincide con «${q}».`,
+    clear: 'Borrar búsqueda',
+    get: 'Descarga Arca',
+    breadcrumb: 'Ruta',
+    docs: 'Docs',
+    prevNext: 'Página anterior y siguiente',
+    previous: 'Anterior',
+    next: 'Siguiente',
+    notFound: 'Esta página no existe.',
+    noPage: 'No hay ninguna página llamada',
+    toIntro: 'Ir a la introducción',
+    onThisPage: 'En esta página',
+    edit: 'Editar esta página',
+    report: 'Informar de un problema',
+    top: 'Volver arriba',
+  },
+};
+
 export function DocsPage({ slug }: { slug: string }) {
+  const { lang } = useLang();
+  const t = useCopy(COPY);
+  const DOC_PAGES = DOCS[lang];
   const index = DOC_PAGES.findIndex((p) => p.slug === slug);
   const page = index >= 0 ? DOC_PAGES[index] : null;
   const prev = index > 0 ? DOC_PAGES[index - 1] : null;
@@ -65,7 +112,7 @@ export function DocsPage({ slug }: { slug: string }) {
     );
     headings.forEach((h) => io.observe(h));
     return () => io.disconnect();
-  }, [slug]);
+  }, [slug, lang]);
 
   /* "/" focuses search */
   useEffect(() => {
@@ -84,7 +131,7 @@ export function DocsPage({ slug }: { slug: string }) {
   const q = query.trim().toLowerCase();
   const groups = useMemo(
     () =>
-      DOC_GROUPS.map((g) => ({
+      docGroups(DOC_PAGES).map((g) => ({
         title: g,
         pages: DOC_PAGES.filter(
           (p) =>
@@ -92,7 +139,7 @@ export function DocsPage({ slug }: { slug: string }) {
             (!q || p.title.toLowerCase().includes(q) || p.description.toLowerCase().includes(q) || p.keywords.includes(q)),
         ),
       })).filter((g) => g.pages.length > 0),
-    [q],
+    [q, DOC_PAGES],
   );
 
   const scrollToHeading = (id: string) => {
@@ -121,7 +168,7 @@ export function DocsPage({ slug }: { slug: string }) {
           >
             <span className="flex items-center gap-2">
               <Menu className="size-4 text-slate-400" />
-              {page ? page.title : 'Documentation'}
+              {page ? page.title : t.documentation}
             </span>
             <ChevronDown className={cn('size-4 text-slate-500 transition-transform duration-300', navOpen && 'rotate-180')} />
           </button>
@@ -142,14 +189,14 @@ export function DocsPage({ slug }: { slug: string }) {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search docs"
-              aria-label="Search documentation"
+              placeholder={t.search}
+              aria-label={t.searchLabel}
               className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.03] pl-9 pr-10 text-sm text-slate-200 transition placeholder:text-slate-600 focus:border-brand-400/50 focus:bg-white/[0.05] focus:outline-none"
             />
             <Kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2">/</Kbd>
           </div>
 
-          <nav aria-label="Documentation" className="mt-6 space-y-7">
+          <nav aria-label={t.documentation} className="mt-6 space-y-7">
             {groups.map((g) => (
               <div key={g.title}>
                 <h2 className="px-3 font-mono text-[11px] uppercase tracking-[0.16em] text-slate-500">{g.title}</h2>
@@ -180,9 +227,9 @@ export function DocsPage({ slug }: { slug: string }) {
             ))}
             {groups.length === 0 && (
               <p className="px-3 text-sm text-slate-500">
-                Nothing matches “{query}”.{' '}
+                {t.noMatch(query)}{' '}
                 <button type="button" onClick={() => setQuery('')} className="text-brand-300 hover:text-brand-200">
-                  Clear search
+                  {t.clear}
                 </button>
               </p>
             )}
@@ -193,7 +240,7 @@ export function DocsPage({ slug }: { slug: string }) {
             className="group mt-8 block rounded-2xl border border-white/[0.08] bg-linear-to-b from-brand-500/[0.09] to-transparent p-4 transition hover:border-brand-400/30"
           >
             <span className="flex items-center gap-2 text-sm font-medium text-white">
-              <Download className="size-4 text-brand-300" /> Get Arca v{VERSION}
+              <Download className="size-4 text-brand-300" /> {t.get} v{VERSION}
             </span>
             <span className="mt-1 block text-xs text-slate-500">Windows · macOS · Linux · Apache-2.0</span>
           </a>
@@ -203,9 +250,9 @@ export function DocsPage({ slug }: { slug: string }) {
         <main id="main" tabIndex={-1} className="min-w-0 outline-none">
           {page ? (
             <>
-              <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+              <nav aria-label={t.breadcrumb} className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                 <a href="#/docs" className="transition hover:text-slate-200">
-                  Docs
+                  {t.docs}
                 </a>
                 <ChevronRight className="size-3" />
                 <span>{page.group}</span>
@@ -215,24 +262,24 @@ export function DocsPage({ slug }: { slug: string }) {
                 </span>
               </nav>
 
-              <article ref={articleRef} key={page.slug} className="animate-fade-up">
+              <article ref={articleRef} key={`${lang}-${page.slug}`} className="animate-fade-up">
                 <h1 className="mt-4 text-balance text-4xl font-semibold tracking-[-0.035em] text-white sm:text-5xl">{page.title}</h1>
                 <p className="mt-4 max-w-2xl text-pretty text-lg leading-relaxed text-slate-400">{page.description}</p>
                 <div className="mt-8 h-px bg-linear-to-r from-white/10 via-white/[0.06] to-transparent" />
                 <div className="mt-8 max-w-3xl">
-                  <Markdown source={page.body} />
+                  <Markdown source={page.body} ids={page.ids} />
                 </div>
               </article>
 
               {/* Prev / next */}
-              <nav aria-label="Previous and next pages" className="mt-16 grid max-w-3xl gap-3 sm:grid-cols-2">
+              <nav aria-label={t.prevNext} className="mt-16 grid max-w-3xl gap-3 sm:grid-cols-2">
                 {prev ? (
                   <a
                     href={`#/docs/${prev.slug}`}
                     className="group rounded-2xl border border-white/[0.07] p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-white/[0.15] hover:bg-white/[0.02]"
                   >
                     <span className="flex items-center gap-1.5 text-xs text-slate-500">
-                      <ArrowLeft className="size-3.5 transition-transform group-hover:-translate-x-0.5" /> Previous
+                      <ArrowLeft className="size-3.5 transition-transform group-hover:-translate-x-0.5" /> {t.previous}
                     </span>
                     <span className="mt-1 block font-medium text-white transition-colors group-hover:text-brand-200">{prev.title}</span>
                   </a>
@@ -245,7 +292,7 @@ export function DocsPage({ slug }: { slug: string }) {
                     className="group rounded-2xl border border-white/[0.07] p-5 text-right transition-all duration-300 hover:-translate-y-0.5 hover:border-white/[0.15] hover:bg-white/[0.02]"
                   >
                     <span className="flex items-center justify-end gap-1.5 text-xs text-slate-500">
-                      Next <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+                      {t.next} <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
                     </span>
                     <span className="mt-1 block font-medium text-white transition-colors group-hover:text-brand-200">{next.title}</span>
                   </a>
@@ -255,39 +302,39 @@ export function DocsPage({ slug }: { slug: string }) {
           ) : (
             <div className="py-20 text-center">
               <p className="font-mono text-sm text-brand-300">404</p>
-              <h1 className="mt-3 text-4xl font-semibold tracking-[-0.035em] text-white">This page doesn’t exist.</h1>
+              <h1 className="mt-3 text-4xl font-semibold tracking-[-0.035em] text-white">{t.notFound}</h1>
               <p className="mt-4 text-slate-400">
-                There’s no docs page called <span className="font-mono text-slate-200">{slug}</span>.
+                {t.noPage} <span className="font-mono text-slate-200">{slug}</span>.
               </p>
               <a
                 href="#/docs/introduction"
                 className="mt-8 inline-flex items-center gap-1.5 rounded-full bg-white px-5 py-2.5 text-sm font-medium text-ink-950 transition hover:-translate-y-0.5"
               >
-                Go to the introduction <ArrowRight className="size-4" />
+                {t.toIntro} <ArrowRight className="size-4" />
               </a>
             </div>
           )}
         </main>
 
         {/* On this page */}
-        <aside className="hidden xl:block" aria-label="On this page">
+        <aside className="hidden xl:block" aria-label={t.onThisPage}>
           <div className="thin-scrollbar sticky top-24 max-h-[calc(100dvh-7rem)] overflow-y-auto pb-10">
             {toc.length > 0 && (
               <>
-                <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-slate-500">On this page</p>
+                <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-slate-500">{t.onThisPage}</p>
                 <ul className="mt-3 border-l border-white/[0.07]">
-                  {toc.map((t) => (
-                    <li key={t.id}>
+                  {toc.map((item) => (
+                    <li key={item.id}>
                       <button
                         type="button"
-                        onClick={() => scrollToHeading(t.id)}
+                        onClick={() => scrollToHeading(item.id)}
                         className={cn(
                           '-ml-px block w-full border-l py-1.5 text-left text-[13px] leading-snug transition-colors duration-200',
-                          t.level === 3 ? 'pl-6' : 'pl-4',
-                          activeId === t.id ? 'border-brand-400 text-white' : 'border-transparent text-slate-500 hover:text-slate-200',
+                          item.level === 3 ? 'pl-6' : 'pl-4',
+                          activeId === item.id ? 'border-brand-400 text-white' : 'border-transparent text-slate-500 hover:text-slate-200',
                         )}
                       >
-                        {t.text}
+                        {item.text}
                       </button>
                     </li>
                   ))}
@@ -297,23 +344,23 @@ export function DocsPage({ slug }: { slug: string }) {
             <div className="mt-8 space-y-2.5 border-t border-white/[0.06] pt-6 text-[13px]">
               {page && (
                 <a
-                  href={`${REPO_URL}/blob/main/docs/guide/${page.slug}.md`}
+                  href={`${REPO_URL}/blob/main/${page.path}`}
                   target="_blank"
                   rel="noreferrer noopener"
                   className="flex items-center gap-1.5 text-slate-500 transition hover:text-white"
                 >
-                  <ExternalLink className="size-3.5" /> Edit this page
+                  <ExternalLink className="size-3.5" /> {t.edit}
                 </a>
               )}
               <a href={NEW_ISSUE_URL} target="_blank" rel="noreferrer noopener" className="flex items-center gap-1.5 text-slate-500 transition hover:text-white">
-                <ExternalLink className="size-3.5" /> Report an issue
+                <ExternalLink className="size-3.5" /> {t.report}
               </a>
               <button
                 type="button"
                 onClick={() => window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' })}
                 className="flex items-center gap-1.5 text-slate-500 transition hover:text-white"
               >
-                <ArrowUp className="size-3.5" /> Back to top
+                <ArrowUp className="size-3.5" /> {t.top}
               </button>
             </div>
           </div>

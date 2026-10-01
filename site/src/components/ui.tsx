@@ -9,6 +9,7 @@ import type {
 import { Check, Copy } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { useInView } from '@/lib/hooks';
+import { useCopy } from '@/lib/i18n';
 import mark from '../../../brand/arca-monolito.svg';
 
 /* ------------------------------------------------------------------ */
@@ -118,13 +119,18 @@ export function ButtonLink({
 export function CopyButton({
   text,
   className,
-  label = 'Copy to clipboard',
+  label,
 }: {
   text: string;
   className?: string;
   label?: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const t = useCopy({
+    en: { copy: 'Copy to clipboard', copied: 'Copied', done: 'Copied to clipboard' },
+    es: { copy: 'Copiar al portapapeles', copied: 'Copiado', done: 'Copiado al portapapeles' },
+  });
+  label ??= t.copy;
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -156,8 +162,8 @@ export function CopyButton({
     <button
       type="button"
       onClick={copy}
-      aria-label={copied ? 'Copied' : label}
-      title={copied ? 'Copied!' : label}
+      aria-label={copied ? t.copied : label}
+      title={copied ? t.copied : label}
       className={cn(
         'relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white/[0.07] hover:text-white active:scale-90',
         className,
@@ -176,7 +182,7 @@ export function CopyButton({
         )}
       />
       <span className="sr-only" aria-live="polite">
-        {copied ? 'Copied to clipboard' : ''}
+        {copied ? t.done : ''}
       </span>
     </button>
   );

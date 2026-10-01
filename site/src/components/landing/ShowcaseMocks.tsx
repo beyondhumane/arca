@@ -27,9 +27,97 @@ import {
   X,
 } from 'lucide-react';
 import { cn } from '@/utils/cn';
+import { useCopy } from '@/lib/i18n';
 import { Kbd, LogoMark } from '../ui';
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
+
+const COPY = {
+  en: {
+    opened: (n: string) => `Opened ${n}/. Backspace goes up.`,
+    extractedOne: (n: string) => `Extracted ${n} to a temp folder and opened it`,
+    atTop: 'Already at the top of project-assets.zip',
+    encrypted: 'Encrypted',
+    nav: ['Back', 'Forward', 'Up one level'],
+    navHint: (l: string) => `${l}. Also Alt+← / Alt+→ and the mouse side buttons.`,
+    filterLabel: 'Filter entries',
+    filter: 'Filter',
+    removed: 'Password removed without recompressing',
+    applied: 'AES-256 applied without recompressing',
+    removePw: 'Remove password',
+    setPw: 'Set password…',
+    extracting: 'Extracting 9 entries…',
+    extracted: 'Extracted 9 entries to ~/Desktop/project-assets',
+    extractAll: 'Extract all',
+    cols: ['Name', 'Size', 'Packed', 'Method', 'Saved', 'Modified'],
+    rows: 'Entries in project-assets.zip. Arrow keys move, Space ticks, Enter opens.',
+    noMatch: (f: string) => `No entries match “${f}”.`,
+    ticked: (n: number, total: number) => `${n} of ${total} ticked`,
+    notEncrypted: 'Not encrypted',
+    move: 'move',
+    tick: 'tick',
+    all: 'all',
+    menu: ['Open with Arca', 'Extract here', 'Extract to “photos-2026\\”'],
+    window: 'Downloads · File Explorer',
+    thisPc: 'This PC',
+    downloads: 'Downloads',
+    search: 'Search Downloads',
+    folders: 'Explorer folders (illustration)',
+    side: ['Home', 'Desktop', 'Downloads', 'Documents', 'Pictures'],
+    rightClick: ['Right-click ', ' to bring the menu back.'],
+    menuLabel: 'Context menu for photos-2026.zip',
+    properties: 'Properties',
+    more: 'Show more options',
+    done: 'Done',
+    extractingZip: 'Extracting photos-2026.zip',
+    cancel: 'Cancel extraction',
+    filesDone: (n: string) => `${n} files · 6.28 GB`,
+    filesOf: (a: string, b: string) => `${a} of ${b} files`,
+    locale: 'en-US',
+  },
+  es: {
+    opened: (n: string) => `Abierta ${n}/. Retroceso sube un nivel.`,
+    extractedOne: (n: string) => `${n} extraído a una carpeta temporal y abierto`,
+    atTop: 'Ya estás en la raíz de project-assets.zip',
+    encrypted: 'Cifrado',
+    nav: ['Atrás', 'Adelante', 'Subir un nivel'],
+    navHint: (l: string) => `${l}. También con Alt+← / Alt+→ y los botones laterales del ratón.`,
+    filterLabel: 'Filtrar entradas',
+    filter: 'Filtrar',
+    removed: 'Contraseña quitada sin recomprimir',
+    applied: 'AES-256 aplicado sin recomprimir',
+    removePw: 'Quitar contraseña',
+    setPw: 'Poner contraseña…',
+    extracting: 'Extrayendo 9 entradas…',
+    extracted: '9 entradas extraídas en ~/Escritorio/project-assets',
+    extractAll: 'Extraer todo',
+    cols: ['Nombre', 'Tamaño', 'Comprimido', 'Método', 'Ahorro', 'Modificado'],
+    rows: 'Entradas de project-assets.zip. Las flechas mueven, Space marca, Enter abre.',
+    noMatch: (f: string) => `Ninguna entrada coincide con «${f}».`,
+    ticked: (n: number, total: number) => `${n} de ${total} marcadas`,
+    notEncrypted: 'Sin cifrar',
+    move: 'mover',
+    tick: 'marcar',
+    all: 'todo',
+    menu: ['Abrir con Arca', 'Extraer aquí', 'Extraer en «photos-2026\\»'],
+    window: 'Descargas · Explorador de archivos',
+    thisPc: 'Este equipo',
+    downloads: 'Descargas',
+    search: 'Buscar en Descargas',
+    folders: 'Carpetas del Explorador (ilustración)',
+    side: ['Inicio', 'Escritorio', 'Descargas', 'Documentos', 'Imágenes'],
+    rightClick: ['Haz clic derecho en ', ' para volver a abrir el menú.'],
+    menuLabel: 'Menú contextual de photos-2026.zip',
+    properties: 'Propiedades',
+    more: 'Mostrar más opciones',
+    done: 'Hecho',
+    extractingZip: 'Extrayendo photos-2026.zip',
+    cancel: 'Cancelar la extracción',
+    filesDone: (n: string) => `${n} archivos · 6.28 GB`,
+    filesOf: (a: string, b: string) => `${a} de ${b} archivos`,
+    locale: 'es-ES',
+  },
+};
 
 /* ================================================================== */
 /*  Desktop window                                                     */
@@ -107,6 +195,7 @@ export function DesktopMock() {
   const [encrypted, setEncrypted] = useState(false);
   const anchor = useRef(2);
   const { toast, flash, run } = useToast();
+  const tx = useCopy(COPY);
 
   const rows = useMemo(
     () => ENTRIES.filter((e) => e.name.toLowerCase().includes(filter.trim().toLowerCase())),
@@ -123,8 +212,8 @@ export function DesktopMock() {
     });
 
   const open = (e: Entry) => {
-    if (e.kind === 'folder') flash(`Opened ${e.name}/. Backspace goes up.`);
-    else flash(`Extracted ${e.name} to a temp folder and opened it`);
+    if (e.kind === 'folder') flash(tx.opened(e.name));
+    else flash(tx.extractedOne(e.name));
   };
 
   const onKeyDown = (ev: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -180,7 +269,7 @@ export function DesktopMock() {
         break;
       case 'Backspace':
         ev.preventDefault();
-        flash('Already at the top of project-assets.zip');
+        flash(tx.atTop);
         break;
       default:
         if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'a') {
@@ -233,7 +322,7 @@ export function DesktopMock() {
         <div className="mx-auto flex items-center gap-2 text-xs text-slate-400">
           <LogoMark className="size-4" />
           project-assets.zip — Arca
-          {encrypted && <Lock className="size-3 text-emerald-400" aria-label="Encrypted" />}
+          {encrypted && <Lock className="size-3 text-emerald-400" aria-label={tx.encrypted} />}
         </div>
         <div className="w-[52px]" aria-hidden="true" />
       </div>
@@ -242,16 +331,16 @@ export function DesktopMock() {
       <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.06] px-3 py-2.5">
         <div className="flex items-center gap-0.5">
           {[
-            { icon: ArrowLeft, label: 'Back', disabled: false },
-            { icon: ArrowRight, label: 'Forward', disabled: true },
-            { icon: ArrowUp, label: 'Up one level', disabled: false },
+            { icon: ArrowLeft, label: tx.nav[0], disabled: false },
+            { icon: ArrowRight, label: tx.nav[1], disabled: true },
+            { icon: ArrowUp, label: tx.nav[2], disabled: false },
           ].map(({ icon: Icon, label, disabled }) => (
             <button
               key={label}
               type="button"
               aria-label={label}
               disabled={disabled}
-              onClick={() => flash(`${label}. Also Alt+← / Alt+→ and the mouse side buttons.`)}
+              onClick={() => flash(tx.navHint(label))}
               className="inline-flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
             >
               <Icon className="size-4" />
@@ -266,12 +355,12 @@ export function DesktopMock() {
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <label className="relative">
-            <span className="sr-only">Filter entries</span>
+            <span className="sr-only">{tx.filterLabel}</span>
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-500" />
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder="Filter"
+              placeholder={tx.filter}
               className="h-8 w-28 rounded-lg border border-white/10 bg-black/30 pl-8 pr-2 text-xs text-slate-200 transition placeholder:text-slate-600 focus:border-brand-400/50 focus:outline-none sm:w-40"
             />
           </label>
@@ -279,20 +368,20 @@ export function DesktopMock() {
             type="button"
             onClick={() => {
               setEncrypted((v) => !v);
-              flash(encrypted ? 'Password removed without recompressing' : 'AES-256 applied without recompressing');
+              flash(encrypted ? tx.removed : tx.applied);
             }}
             className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
           >
             {encrypted ? <Lock className="size-3.5 text-emerald-400" /> : <KeyRound className="size-3.5" />}
-            <span className="hidden sm:inline">{encrypted ? 'Remove password' : 'Set password…'}</span>
+            <span className="hidden sm:inline">{encrypted ? tx.removePw : tx.setPw}</span>
           </button>
           <button
             type="button"
-            onClick={() => run('Extracting 9 entries…', 'Extracted 9 entries to ~/Desktop/project-assets')}
+            onClick={() => run(tx.extracting, tx.extracted)}
             className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-linear-to-r from-brand-300 to-brand-500 px-3 text-xs font-medium text-ink-950 shadow-[0_6px_20px_-8px_rgba(47,107,255,0.8)] transition hover:brightness-110 active:scale-95"
           >
             <Download className="size-3.5" />
-            Extract all
+            {tx.extractAll}
           </button>
         </div>
       </div>
@@ -303,18 +392,18 @@ export function DesktopMock() {
         className={cn('grid items-center gap-3 border-b border-white/[0.06] px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-slate-500', GRID_COLS)}
       >
         <span />
-        <span>Name</span>
-        <span className="text-right">Size</span>
-        <span className="hidden text-right sm:block">Packed</span>
-        <span className="hidden sm:block">Method</span>
-        <span className="hidden text-right sm:block">Saved</span>
-        <span className="hidden lg:block">Modified</span>
+        <span>{tx.cols[0]}</span>
+        <span className="text-right">{tx.cols[1]}</span>
+        <span className="hidden text-right sm:block">{tx.cols[2]}</span>
+        <span className="hidden sm:block">{tx.cols[3]}</span>
+        <span className="hidden text-right sm:block">{tx.cols[4]}</span>
+        <span className="hidden lg:block">{tx.cols[5]}</span>
       </div>
 
       {/* Rows */}
       <div
         role="listbox"
-        aria-label="Entries in project-assets.zip — arrow keys move, Space ticks, Enter opens"
+        aria-label={tx.rows}
         aria-multiselectable="true"
         aria-activedescendant={activeId}
         tabIndex={0}
@@ -322,7 +411,7 @@ export function DesktopMock() {
         className="h-[318px] overflow-y-auto outline-none thin-scrollbar focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400/50"
       >
         {rows.length === 0 && (
-          <div className="flex h-full items-center justify-center text-sm text-slate-500">No entries match “{filter}”.</div>
+          <div className="flex h-full items-center justify-center text-sm text-slate-500">{tx.noMatch(filter)}</div>
         )}
         {rows.map((e, i) => {
           const { icon: Icon, cls } = KIND_ICON[e.kind];
@@ -376,14 +465,14 @@ export function DesktopMock() {
       {/* Status bar */}
       <div className="flex items-center justify-between gap-3 border-t border-white/[0.06] px-4 py-2 text-[11px] text-slate-500">
         <span>
-          {ticked.size} of {ENTRIES.length} ticked
+          {tx.ticked(ticked.size, ENTRIES.length)}
         </span>
-        <span className="hidden md:inline">{encrypted ? 'AES-256 · WinZip AE-2' : 'Not encrypted'} · 105.6 MB → 103.2 MB</span>
+        <span className="hidden md:inline">{encrypted ? 'AES-256 · WinZip AE-2' : tx.notEncrypted} · 105.6 MB → 103.2 MB</span>
         <span className="hidden items-center gap-1.5 sm:inline-flex">
           <Kbd className="h-5 min-w-5 text-[10px]">↑</Kbd>
-          <Kbd className="h-5 min-w-5 text-[10px]">↓</Kbd> move
-          <Kbd className="ml-1 h-5 text-[10px]">Space</Kbd> tick
-          <Kbd className="ml-1 h-5 text-[10px]">Ctrl A</Kbd> all
+          <Kbd className="h-5 min-w-5 text-[10px]">↓</Kbd> {tx.move}
+          <Kbd className="ml-1 h-5 text-[10px]">Space</Kbd> {tx.tick}
+          <Kbd className="ml-1 h-5 text-[10px]">Ctrl A</Kbd> {tx.all}
         </span>
       </div>
 
@@ -445,6 +534,7 @@ export function ExplorerMock({ onOpenInArca }: { onOpenInArca: () => void }) {
   const [progress, setProgress] = useState<number | null>(null);
   const [finished, setFinished] = useState(false);
   const timers = useRef<number[]>([]);
+  const tx = useCopy(COPY);
 
   useEffect(
     () => () => {
@@ -486,9 +576,9 @@ export function ExplorerMock({ onOpenInArca }: { onOpenInArca: () => void }) {
   };
 
   const menuItems: { label: string; icon: IconType | null; hint?: string; onClick: () => void; brand?: boolean }[] = [
-    { label: 'Open with Arca', icon: null, hint: 'Enter', onClick: onOpenInArca, brand: true },
-    { label: 'Extract here', icon: FolderOpen, onClick: extract },
-    { label: 'Extract to “photos-2026\\”', icon: FolderOpen, onClick: extract },
+    { label: tx.menu[0], icon: null, hint: 'Enter', onClick: onOpenInArca, brand: true },
+    { label: tx.menu[1], icon: FolderOpen, onClick: extract },
+    { label: tx.menu[2], icon: FolderOpen, onClick: extract },
   ];
 
   const files = progress === null ? 0 : Math.round((progress / 100) * TOTAL_FILES);
@@ -502,7 +592,7 @@ export function ExplorerMock({ onOpenInArca }: { onOpenInArca: () => void }) {
       <div className="flex items-center justify-between border-b border-white/[0.06] bg-white/[0.03] pl-4 text-xs text-slate-400">
         <div className="flex items-center gap-2 py-2.5">
           <Folder className="size-4 fill-amber-300/25 text-amber-300" />
-          Downloads — File Explorer
+          {tx.window}
         </div>
         <div className="flex" aria-hidden="true">
           <span className="px-4 py-2.5">—</span>
@@ -514,19 +604,19 @@ export function ExplorerMock({ onOpenInArca }: { onOpenInArca: () => void }) {
       {/* Address bar */}
       <div className="flex items-center gap-2 border-b border-white/[0.06] px-3 py-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md border border-white/[0.08] bg-black/30 px-3 py-1.5 text-xs text-slate-400">
-          <Monitor className="size-3.5 shrink-0" /> This PC <ChevronRight className="size-3" />
-          <span className="truncate text-slate-200">Downloads</span>
+          <Monitor className="size-3.5 shrink-0" /> {tx.thisPc} <ChevronRight className="size-3" />
+          <span className="truncate text-slate-200">{tx.downloads}</span>
         </div>
         <div className="hidden w-44 items-center gap-2 rounded-md border border-white/[0.08] bg-black/30 px-3 py-1.5 text-xs text-slate-600 sm:flex">
-          <Search className="size-3.5" /> Search Downloads
+          <Search className="size-3.5" /> {tx.search}
         </div>
       </div>
 
       <div className="flex min-h-[360px]">
         {/* Nav pane */}
-        <nav aria-label="Explorer folders (illustration)" className="hidden w-44 shrink-0 border-r border-white/[0.06] p-2 text-xs text-slate-400 md:block">
-          {['Home', 'Desktop', 'Downloads', 'Documents', 'Pictures'].map((n) => (
-            <div key={n} className={cn('flex items-center gap-2 rounded-md px-2.5 py-1.5', n === 'Downloads' && 'bg-white/[0.07] text-slate-100')}>
+        <nav aria-label={tx.folders} className="hidden w-44 shrink-0 border-r border-white/[0.06] p-2 text-xs text-slate-400 md:block">
+          {tx.side.map((n, i) => (
+            <div key={n} className={cn('flex items-center gap-2 rounded-md px-2.5 py-1.5', i === 2 && 'bg-white/[0.07] text-slate-100')}>
               <Folder className="size-3.5 fill-amber-300/20 text-amber-300/80" />
               {n}
             </div>
@@ -568,14 +658,16 @@ export function ExplorerMock({ onOpenInArca }: { onOpenInArca: () => void }) {
 
           {!menuOpen && progress === null && (
             <p className="mt-6 text-center text-xs text-slate-500">
-              Right-click <span className="font-mono text-slate-300">photos-2026.zip</span> to bring the menu back.
+              {tx.rightClick[0]}
+              <span className="font-mono text-slate-300">photos-2026.zip</span>
+              {tx.rightClick[1]}
             </p>
           )}
 
           {/* Context menu */}
           <div
             role="menu"
-            aria-label="Context menu for photos-2026.zip"
+            aria-label={tx.menuLabel}
             onClick={(ev) => ev.stopPropagation()}
             className={cn(
               'glass-dark z-20 mt-4 w-full max-w-[290px] origin-top-left rounded-xl p-1.5 shadow-[0_24px_60px_-12px_rgba(0,0,0,0.9)] transition-all duration-300 sm:absolute sm:left-[22%] sm:top-[42%] sm:mt-0',
@@ -606,11 +698,11 @@ export function ExplorerMock({ onOpenInArca }: { onOpenInArca: () => void }) {
             </div>
             <div className="border-t border-white/[0.06] pt-1" aria-hidden="true">
               <div className="flex items-center gap-3 px-2.5 py-2 text-[13px] text-slate-500">
-                <Settings2 className="size-4" /> <span className="flex-1">Properties</span>
+                <Settings2 className="size-4" /> <span className="flex-1">{tx.properties}</span>
                 <span className="text-[11px]">Alt+Enter</span>
               </div>
               <div className="flex items-center gap-3 px-2.5 py-2 text-[13px] text-slate-500">
-                <span className="size-4" /> <span className="flex-1">Show more options</span>
+                <span className="size-4" /> <span className="flex-1">{tx.more}</span>
               </div>
             </div>
           </div>
@@ -628,9 +720,9 @@ export function ExplorerMock({ onOpenInArca }: { onOpenInArca: () => void }) {
               <div className="glass-dark rounded-xl p-4 shadow-[0_24px_60px_-12px_rgba(0,0,0,0.9)]">
                 <div className="flex items-center gap-2 text-xs text-slate-300">
                   <LogoMark className="size-4" />
-                  <span className="flex-1 truncate">{finished ? 'Done' : 'Extracting photos-2026.zip'}</span>
+                  <span className="flex-1 truncate">{finished ? tx.done : tx.extractingZip}</span>
                   {!finished && (
-                    <button type="button" aria-label="Cancel extraction" onClick={cancel} className="rounded p-0.5 text-slate-500 transition hover:bg-white/10 hover:text-white">
+                    <button type="button" aria-label={tx.cancel} onClick={cancel} className="rounded p-0.5 text-slate-500 transition hover:bg-white/10 hover:text-white">
                       <X className="size-3.5" />
                     </button>
                   )}
@@ -642,7 +734,7 @@ export function ExplorerMock({ onOpenInArca }: { onOpenInArca: () => void }) {
                   />
                 </div>
                 <div className="mt-2 flex justify-between font-mono text-[11px] text-slate-500">
-                  <span>{finished ? `${TOTAL_FILES.toLocaleString('en-US')} files · 6.28 GB` : `${files.toLocaleString('en-US')} of ${TOTAL_FILES.toLocaleString('en-US')} files`}</span>
+                  <span>{finished ? tx.filesDone(TOTAL_FILES.toLocaleString(tx.locale)) : tx.filesOf(files.toLocaleString(tx.locale), TOTAL_FILES.toLocaleString(tx.locale))}</span>
                   <span>{finished ? <Check className="inline size-3.5 text-emerald-400" /> : `${Math.round(progress)}%`}</span>
                 </div>
               </div>

@@ -1,7 +1,9 @@
 import { ArrowRight } from 'lucide-react';
 import { cn } from '@/utils/cn';
+import { useCopy } from '@/lib/i18n';
 
 export function MethodLink({ section, className }: { section: string; className?: string }) {
+  const label = useCopy({ en: 'How it was measured', es: 'Cómo se midió' });
   return (
     <a
       href={`#/docs/benchmarks/${section}`}
@@ -10,7 +12,7 @@ export function MethodLink({ section, className }: { section: string; className?
         className,
       )}
     >
-      How it was measured <ArrowRight className="size-3" />
+      {label} <ArrowRight className="size-3" />
     </a>
   );
 }

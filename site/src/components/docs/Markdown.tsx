@@ -3,6 +3,7 @@ import type { Token, Tokens } from 'marked';
 import type { ReactNode } from 'react';
 import { A, C, Callout, CodeBlock, DocTable, H2, H3, Keys, LI, P, Step, Steps, Strong, UL } from './primitives';
 import type { Lang } from './primitives';
+import { headingSlug } from './registry';
 
 const LANGS: Record<string, Lang> = { sh: 'bash', bash: 'bash', text: 'text', yaml: 'yaml', toml: 'toml', rust: 'rust' };
 const CALLOUTS = { NOTE: 'note', TIP: 'tip', WARNING: 'warning' } as const;
@@ -57,11 +58,7 @@ function inline(tokens: Token[]): ReactNode[] {
   return out;
 }
 
-const slug = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
+const HEADING_IDS = new WeakMap<Token, string>();
 
 function block(t: Token, key: number): ReactNode {
   switch (t.type) {
@@ -69,7 +66,7 @@ function block(t: Token, key: number): ReactNode {
       const h = t as Tokens.Heading;
       const H = h.depth <= 2 ? H2 : H3;
       return (
-        <H key={key} id={slug(h.text)}>
+        <H key={key} id={HEADING_IDS.get(t) ?? headingSlug(h.text)}>
           {inline(h.tokens)}
         </H>
       );
@@ -137,6 +134,10 @@ function block(t: Token, key: number): ReactNode {
   }
 }
 
-export function Markdown({ source }: { source: string }) {
-  return <>{marked.lexer(source).map(block)}</>;
+/** `ids` keeps section anchors stable across languages: the nth heading gets the nth id. */
+export function Markdown({ source, ids }: { source: string; ids?: string[] }) {
+  const tokens = marked.lexer(source);
+  const headings = tokens.filter((t) => t.type === 'heading' && (t as Tokens.Heading).depth <= 3);
+  if (ids && ids.length === headings.length) headings.forEach((h, i) => HEADING_IDS.set(h, ids[i]));
+  return <>{tokens.map(block)}</>;
 }

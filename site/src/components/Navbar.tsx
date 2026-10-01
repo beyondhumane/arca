@@ -1,25 +1,74 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FocusEvent as ReactFocusEvent, MouseEvent as ReactMouseEvent } from 'react';
-import { ArrowRight, BookOpen, Menu, Star, X } from 'lucide-react';
+import { ArrowRight, BookOpen, Languages, Menu, Star, X } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { formatCount, useGitHubStars, useScrolled, useScrollSpy } from '@/lib/hooks';
 import { RELEASE_URL, REPO_URL, VERSION } from '@/lib/site';
+import { useCopy, useLang } from '@/lib/i18n';
 import { ButtonLink, Logo } from './ui';
 import { GitHubIcon } from './icons';
 
-const LINKS = [
-  { id: 'features', label: 'Features' },
-  { id: 'showcase', label: 'Product' },
-  { id: 'performance', label: 'Performance' },
-  { id: 'faq', label: 'FAQ' },
-] as const;
+const SPY_IDS = ['features', 'showcase', 'performance', 'faq'];
 
-const SPY_IDS = LINKS.map((l) => l.id);
+const COPY = {
+  en: {
+    links: ['Features', 'Product', 'Performance', 'FAQ'],
+    docs: 'Docs',
+    documentation: 'Documentation',
+    main: 'Main',
+    home: 'Arca, home',
+    release: (v: string) => `Release notes for version ${v}`,
+    star: 'Star',
+    starLabel: (n: number | null) => (n === null ? 'Star Arca on GitHub' : `Star Arca on GitHub, ${n} stars`),
+    download: 'Download',
+    openMenu: 'Open menu',
+    closeMenu: 'Close menu',
+    switchTo: 'Ver en español',
+  },
+  es: {
+    links: ['Funciones', 'Producto', 'Rendimiento', 'Preguntas'],
+    docs: 'Docs',
+    documentation: 'Documentación',
+    main: 'Principal',
+    home: 'Arca, inicio',
+    release: (v: string) => `Notas de la versión ${v}`,
+    star: 'Star',
+    starLabel: (n: number | null) => (n === null ? 'Dar una estrella a Arca en GitHub' : `Dar una estrella a Arca en GitHub, ${n} estrellas`),
+    download: 'Descargar',
+    openMenu: 'Abrir menú',
+    closeMenu: 'Cerrar menú',
+    switchTo: 'View in English',
+  },
+};
+
+function LangToggle({ className }: { className?: string }) {
+  const { lang, setLang } = useLang();
+  const t = useCopy(COPY);
+  const other = lang === 'en' ? 'es' : 'en';
+  return (
+    <button
+      type="button"
+      onClick={() => setLang(other)}
+      title={t.switchTo}
+      aria-label={t.switchTo}
+      lang={other}
+      className={cn(
+        'h-9 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 font-mono text-[12px] uppercase text-slate-300 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white',
+        className,
+      )}
+    >
+      <Languages className="size-3.5" />
+      {other}
+    </button>
+  );
+}
 
 export function Navbar({ view }: { view: 'home' | 'docs' }) {
   const scrolled = useScrolled(16);
   const active = useScrollSpy(SPY_IDS, view === 'home');
   const stars = useGitHubStars();
+  const t = useCopy(COPY);
+  const LINKS = SPY_IDS.map((id, i) => ({ id, label: t.links[i] }));
   const [open, setOpen] = useState(false);
   const listRef = useRef<HTMLUListElement>(null);
   const [pill, setPill] = useState({ left: 0, width: 0, visible: false });
@@ -61,7 +110,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
 
   const mobileLinks = [
     ...LINKS.map((l) => ({ href: `#${l.id}`, label: l.label })),
-    { href: '#/docs', label: 'Documentation' },
+    { href: '#/docs', label: t.documentation },
   ];
 
   return (
@@ -73,7 +122,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
         )}
       >
         <nav
-          aria-label="Main"
+          aria-label={t.main}
           className={cn(
             'relative flex h-14 items-center justify-between gap-4 rounded-2xl border pl-3 pr-2 transition-all duration-500 sm:pl-4',
             solid
@@ -82,7 +131,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
           )}
         >
           <div className="flex items-center gap-3">
-            <a href="#top" aria-label="Arca — home" className="rounded-lg">
+            <a href="#top" aria-label={t.home} className="rounded-lg">
               <Logo />
             </a>
             <a
@@ -90,7 +139,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
               target="_blank"
               rel="noreferrer noopener"
               className="hidden rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 font-mono text-[11px] text-slate-400 transition hover:border-brand-400/40 hover:text-brand-200 sm:inline-flex"
-              aria-label={`Release notes for version ${VERSION}`}
+              aria-label={t.release(VERSION)}
             >
               v{VERSION}
             </a>
@@ -142,7 +191,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
                 )}
               >
                 <BookOpen className="size-3.5" />
-                Docs
+                {t.docs}
               </a>
             </li>
           </ul>
@@ -153,10 +202,10 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
               target="_blank"
               rel="noreferrer noopener"
               className="group hidden h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 text-[13px] text-slate-300 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white sm:inline-flex"
-              aria-label={showStars ? `Star Arca on GitHub — ${stars} stars` : 'Star Arca on GitHub'}
+              aria-label={t.starLabel(showStars ? stars : null)}
             >
               <GitHubIcon className="size-4" />
-              <span>Star</span>
+              <span>{t.star}</span>
               {showStars && stars !== null && (
                 <span className="rounded-full bg-white/[0.08] px-1.5 font-mono text-[11px] text-slate-200">
                   {formatCount(stars)}
@@ -164,15 +213,16 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
               )}
               <Star className="size-3.5 text-slate-500 transition-all duration-500 group-hover:rotate-[72deg] group-hover:fill-brand-400 group-hover:text-brand-400" />
             </a>
+            <LangToggle className="inline-flex" />
             <ButtonLink href="#download" size="sm" className="hidden sm:inline-flex">
-              Download
+              {t.download}
             </ButtonLink>
             <button
               type="button"
               className="inline-flex size-10 items-center justify-center rounded-xl text-slate-300 transition hover:bg-white/[0.06] hover:text-white lg:hidden"
               aria-expanded={open}
               aria-controls="mobile-nav"
-              aria-label={open ? 'Close menu' : 'Open menu'}
+              aria-label={open ? t.closeMenu : t.openMenu}
               onClick={() => setOpen((o) => !o)}
             >
               <span className="relative size-5">
@@ -227,7 +277,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
               GitHub
             </ButtonLink>
             <ButtonLink href="#download" size="md" onClick={() => setOpen(false)}>
-              Download
+              {t.download}
             </ButtonLink>
           </div>
         </div>

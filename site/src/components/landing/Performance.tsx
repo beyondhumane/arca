@@ -4,6 +4,7 @@ import { ArrowRight, Scale } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { useInView } from '@/lib/hooks';
 import { Accent, Container, Reveal, SectionHeading } from '../ui';
+import { useCopy, useLang } from '@/lib/i18n';
 import { MethodLink } from './MethodLink';
 
 type Bar = { label: string; value: number; display: string; arca?: boolean; sub?: string };
@@ -122,7 +123,74 @@ const DATASETS: Dataset[] = [
   },
 ];
 
-function BarGroup({ group, active }: { group: Group; active: boolean }) {
+type Words = { tab: string; title: string; context: string; groups: string[]; highlights: string[] };
+
+const COPY: Record<'en' | 'es', { sets: Words[]; eyebrow: string; title: [string, string]; description: string; tabs: string; lower: string; loses: string; losesText: [string, string, string]; full: string }> = {
+  en: {
+    sets: DATASETS.map((d) => ({
+      tab: d.tab,
+      title: d.title,
+      context: d.context,
+      groups: d.groups.map((g) => g.title ?? ''),
+      highlights: d.highlights.map((h) => h.label),
+    })),
+    eyebrow: 'Performance',
+    title: ['Every number comes with its ', 'command.'],
+    description: 'Each chart names the machine it ran on and links to the command behind it, including the runs Arca loses.',
+    tabs: 'Benchmarks',
+    lower: 'Lower is better',
+    loses: 'Where it doesn’t win',
+    losesText: ['5,358 small source files, deflate vs deflate on Windows 11: ', '7-Zip 0.627 s', ', Arca 0.710 s. With many tiny files, 97% of the time goes to creating files on NTFS, and every tool pays that cost.'],
+    full: 'Full methodology',
+  },
+  es: {
+    sets: [
+      {
+        tab: 'Compresión',
+        title: 'Comprimir el corpus Silesia en 120 archivos',
+        context: 'Ryzen 9 5900X · Linux · fijado a 2 núcleos · 212 MB',
+        groups: [''],
+        highlights: ['más rápido que zip -6', 'más rápido que 7-Zip', 'más grande que el de 7-Zip, el más pequeño'],
+      },
+      {
+        tab: 'Extracción en paralelo',
+        title: 'Extraer 287 MB en 16 archivos de texto',
+        context: 'Windows 11 · 16 hilos · el mejor de 3',
+        groups: [''],
+        highlights: ['más rápido que 7-Zip', 'ganado solo con los hilos', 'entradas decodificadas por separado'],
+      },
+      {
+        tab: 'Contra NanaZip · 3.13 GB',
+        title: 'Un archivo de 3.13 GB que ocupa 6.28 GB al extraerlo',
+        context: 'Windows 11 · 16 núcleos · NanaZip 7.0 · SSD SATA sin DRAM',
+        groups: ['Solo decodificar: un núcleo, sin escribir nada', 'Extracción completa, la mejor ejecución de cada uno'],
+        highlights: ['decodificador deflate más rápido, en el mismo núcleo', 'frente a un techo de disco de 327 MB/s', 'la peor ejecución de Arca, más rápida que la mejor de NanaZip'],
+      },
+      {
+        tab: 'Arranque y listado',
+        title: 'Arranque en frío y listado de 6000 entradas',
+        context: 'Ryzen 9 5900X · Linux · media de hyperfine',
+        groups: ['R1 · arranque en frío, listar un zip de una entrada · objetivo < 15 ms', 'R2 · listar 6000 entradas · objetivo < 200 ms'],
+        highlights: ['listado más rápido que 7z', 'escalado R3 con 2 hilos', 'eficiencia en paralelo'],
+      },
+    ],
+    eyebrow: 'Rendimiento',
+    title: ['Cada cifra viene con su ', 'comando.'],
+    description: 'Cada gráfica dice en qué máquina se midió y enlaza al comando que la produjo, también las pruebas que Arca pierde.',
+    tabs: 'Benchmarks',
+    lower: 'Menos es mejor',
+    loses: 'Dónde no gana',
+    losesText: ['5358 archivos de código pequeños, deflate contra deflate en Windows 11: ', '7-Zip 0.627 s', ', Arca 0.710 s. Con muchos archivos diminutos, el 97% del tiempo se va en crear archivos en NTFS, y todas las herramientas pagan ese coste.'],
+    full: 'Metodología completa',
+  },
+};
+
+// Spanish drops the thousands comma (RAE: no separator up to four digits) and says hilos for threads.
+const localize = (lang: 'en' | 'es', s: string) =>
+  lang === 'en' ? s : s.replace(/(\d),(\d{3})/g, '$1$2').replace(' threads', ' hilos').replace('1 per core', '1 por núcleo');
+
+function BarGroup({ group, title, active }: { group: Group; title?: string; active: boolean }) {
+  const { lang } = useLang();
   const [go, setGo] = useState(false);
   useEffect(() => {
     if (!active) return;
@@ -140,18 +208,16 @@ function BarGroup({ group, active }: { group: Group; active: boolean }) {
 
   return (
     <div>
-      {group.title && (
-        <div className="mb-4 font-mono text-[11px] uppercase tracking-[0.14em] text-slate-500">{group.title}</div>
-      )}
+      {title && <div className="mb-4 font-mono text-[11px] uppercase tracking-[0.14em] text-slate-500">{title}</div>}
       <ul className="space-y-4 sm:space-y-3">
         {group.bars.map((b, i) => (
           <li key={b.label} className="sm:grid sm:grid-cols-[190px_minmax(0,1fr)_92px] sm:items-center sm:gap-4">
             <div className="flex items-baseline justify-between gap-3 sm:block">
               <span className={cn('text-sm', b.arca ? 'font-medium text-white' : 'text-slate-400')}>
-                {b.label}
+                {localize(lang, b.label)}
                 {b.sub && <span className="ml-2 font-mono text-[11px] text-slate-600 sm:ml-0 sm:block">{b.sub}</span>}
               </span>
-              <span className="font-mono text-sm tabular-nums text-slate-200 sm:hidden">{b.display}</span>
+              <span className="font-mono text-sm tabular-nums text-slate-200 sm:hidden">{localize(lang, b.display)}</span>
             </div>
             <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-white/[0.04] sm:mt-0 sm:h-8 sm:rounded-lg">
               <div
@@ -171,7 +237,7 @@ function BarGroup({ group, active }: { group: Group; active: boolean }) {
                 )}
               </div>
             </div>
-            <span className="hidden text-right font-mono text-sm tabular-nums text-slate-200 sm:block">{b.display}</span>
+            <span className="hidden text-right font-mono text-sm tabular-nums text-slate-200 sm:block">{localize(lang, b.display)}</span>
           </li>
         ))}
       </ul>
@@ -183,6 +249,9 @@ export function Performance() {
   const [sel, setSel] = useState(0);
   const [ref, inView] = useInView<HTMLDivElement>();
   const ds = DATASETS[sel];
+  const t = useCopy(COPY);
+  const { lang } = useLang();
+  const w = t.sets[sel];
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     let next = sel;
@@ -201,19 +270,19 @@ export function Performance() {
       </div>
       <Container>
         <SectionHeading
-          eyebrow="Performance"
+          eyebrow={t.eyebrow}
           title={
             <span id="performance-title">
-              Every number comes with its <Accent>command.</Accent>
+              {t.title[0]}<Accent>{t.title[1]}</Accent>
             </span>
           }
-          description="Each chart names the machine it ran on and links to the command behind it, including the runs Arca loses."
+          description={t.description}
         />
 
         <Reveal delay={100}>
           <div
             role="tablist"
-            aria-label="Benchmarks"
+            aria-label={t.tabs}
             onKeyDown={onKeyDown}
             className="no-scrollbar -mx-5 mt-12 flex gap-2 overflow-x-auto px-5 sm:mx-0 sm:flex-wrap sm:justify-center sm:px-0"
           >
@@ -234,7 +303,7 @@ export function Performance() {
                     : 'border-white/10 bg-white/[0.02] text-slate-400 hover:border-white/20 hover:text-white',
                 )}
               >
-                {d.tab}
+                {t.sets[i].tab}
               </button>
             ))}
           </div>
@@ -251,15 +320,15 @@ export function Performance() {
               <div key={ds.id} className="animate-fade-in">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h3 className="text-lg font-semibold tracking-[-0.02em] text-white sm:text-xl">{ds.title}</h3>
-                    <p className="mt-1.5 font-mono text-xs text-slate-500">{ds.context}</p>
+                    <h3 className="text-lg font-semibold tracking-[-0.02em] text-white sm:text-xl">{w.title}</h3>
+                    <p className="mt-1.5 font-mono text-xs text-slate-500">{w.context}</p>
                     <MethodLink section={ds.method} className="mt-2" />
                   </div>
-                  <span className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] text-slate-400">Lower is better</span>
+                  <span className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] text-slate-400">{t.lower}</span>
                 </div>
                 <div className="mt-8 space-y-9">
                   {ds.groups.map((g, i) => (
-                    <BarGroup key={`${ds.id}-${i}`} group={g} active={inView} />
+                    <BarGroup key={`${ds.id}-${i}`} group={g} title={w.groups[i] || undefined} active={inView} />
                   ))}
                 </div>
               </div>
@@ -270,26 +339,26 @@ export function Performance() {
                 <ul key={ds.id} className="space-y-5">
                   {ds.highlights.map((h, i) => (
                     <li key={h.label} className="animate-fade-up" style={{ animationDelay: `${i * 90}ms` }}>
-                      <div className="brand-text text-3xl font-semibold tracking-[-0.04em]">{h.value}</div>
-                      <div className="mt-1 text-sm text-slate-400">{h.label}</div>
+                      <div className="brand-text text-3xl font-semibold tracking-[-0.04em]">{localize(lang, h.value)}</div>
+                      <div className="mt-1 text-sm text-slate-400">{w.highlights[i]}</div>
                     </li>
                   ))}
                 </ul>
               </div>
               <div className="rounded-3xl border border-white/[0.07] bg-white/[0.02] p-6">
                 <div className="flex items-center gap-2 text-sm font-medium text-white">
-                  <Scale className="size-4 text-brand-300" /> Where it doesn’t win
+                  <Scale className="size-4 text-brand-300" /> {t.loses}
                 </div>
                 <p className="mt-3 text-sm leading-relaxed text-slate-400">
-                  5,358 small source files, deflate vs deflate on Windows 11: <span className="text-slate-200">7-Zip 0.627 s</span>,
-                  Arca 0.710 s. With many tiny files, 97% of the time goes to creating files on NTFS, and every tool
-                  pays that cost.
+                  {t.losesText[0]}
+                  <span className="text-slate-200">{t.losesText[1]}</span>
+                  {t.losesText[2]}
                 </p>
                 <a
                   href="#/docs/benchmarks/deflate-against-deflate-on-windows-11"
                   className="mt-4 inline-flex items-center gap-1 text-sm text-brand-300 transition hover:gap-2 hover:text-brand-200"
                 >
-                  Full methodology <ArrowRight className="size-3.5" />
+                  {t.full} <ArrowRight className="size-3.5" />
                 </a>
               </div>
             </div>

@@ -13,11 +13,16 @@ import { Benefits } from '@/components/landing/Benefits';
 import { FAQ } from '@/components/landing/FAQ';
 import { CTA } from '@/components/landing/CTA';
 import { DocsPage } from '@/components/docs/DocsPage';
-import { DOC_PAGES } from '@/components/docs/registry';
+import { DOCS } from '@/components/docs/registry';
+import { useCopy, useLang } from '@/lib/i18n';
 
-const HOME_TITLE = 'Arca — The fast, safe, open-source archiver built in Rust';
+const COPY = {
+  en: { home: 'Arca · Open-source archiver in safe Rust', docs: 'Arca Docs', missing: 'Page not found', skip: 'Skip to content' },
+  es: { home: 'Arca · Archivador de código abierto en Rust seguro', docs: 'Documentación de Arca', missing: 'Página no encontrada', skip: 'Saltar al contenido' },
+};
 
 function SkipLink() {
+  const t = useCopy(COPY);
   const onClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
     const main = document.getElementById('main');
@@ -32,7 +37,7 @@ function SkipLink() {
       onClick={onClick}
       className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-ink-950"
     >
-      Skip to content
+      {t.skip}
     </a>
   );
 }
@@ -55,6 +60,8 @@ function Landing() {
 
 export default function App() {
   const route = useHashRoute();
+  const { lang } = useLang();
+  const t = useCopy(COPY);
   const reduced = usePrefersReducedMotion();
   const prevView = useRef(route.view);
   const firstRun = useRef(true);
@@ -66,8 +73,8 @@ export default function App() {
     firstRun.current = false;
 
     if (route.view === 'docs') {
-      const page = DOC_PAGES.find((p) => p.slug === route.slug);
-      document.title = page ? `${page.title} — Arca Docs` : 'Page not found — Arca Docs';
+      const page = DOCS[lang].find((p) => p.slug === route.slug);
+      document.title = `${page ? page.title : t.missing} · ${t.docs}`;
       const section = route.section;
       const raf = requestAnimationFrame(() => {
         const el = section ? document.getElementById(section) : null;
@@ -77,7 +84,7 @@ export default function App() {
       return () => cancelAnimationFrame(raf);
     }
 
-    document.title = HOME_TITLE;
+    document.title = t.home;
     const id = route.anchor;
     if (!id) {
       if (switched) window.scrollTo({ top: 0, behavior: 'instant' });
@@ -88,7 +95,7 @@ export default function App() {
       if (el) el.scrollIntoView({ behavior: first || switched || reduced ? 'instant' : 'smooth', block: 'start' });
     });
     return () => cancelAnimationFrame(raf);
-  }, [route, reduced]);
+  }, [route, reduced, lang]);
 
   return (
     <div className="relative min-h-screen overflow-x-clip bg-ink-950 text-slate-300">

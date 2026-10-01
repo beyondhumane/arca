@@ -1,6 +1,7 @@
 import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { Info, Lightbulb, TriangleAlert } from 'lucide-react';
 import { cn } from '@/utils/cn';
+import { useCopy } from '@/lib/i18n';
 import { CopyButton, Kbd } from '../ui';
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
@@ -84,13 +85,11 @@ export function Keys({ combo }: { combo: string }) {
 /* ------------------------------------------------------------------ */
 export type Lang = 'bash' | 'text' | 'yaml' | 'toml' | 'rust';
 
-const LANG_LABEL: Record<Lang, string> = {
-  bash: 'Terminal',
-  text: 'Output',
-  yaml: 'YAML',
-  toml: 'TOML',
-  rust: 'Rust',
+const LANG_LABEL: { en: Record<Lang, string>; es: Record<Lang, string> } = {
+  en: { bash: 'Terminal', text: 'Output', yaml: 'YAML', toml: 'TOML', rust: 'Rust' },
+  es: { bash: 'Terminal', text: 'Salida', yaml: 'YAML', toml: 'TOML', rust: 'Rust' },
 };
+const COPY_PREFIX = { en: 'Copy', es: 'Copiar' };
 
 function highlightShell(line: string): ReactNode {
   if (/^\s*#/.test(line)) return <span className="text-slate-500">{line}</span>;
@@ -214,11 +213,14 @@ function highlight(line: string, lang: Lang): ReactNode {
 export function CodeBlock({ code, lang = 'bash', title }: { code: string; lang?: Lang; title?: string }) {
   const clean = code.replace(/^\n+|\n+$/g, '');
   const lines = clean.split('\n');
+  const labels = useCopy(LANG_LABEL);
+  const label = title ?? labels[lang];
+  const copy = useCopy(COPY_PREFIX);
   return (
     <div className="my-6 overflow-hidden rounded-2xl border border-white/[0.08] bg-ink-900/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <div className="flex items-center justify-between border-b border-white/[0.06] bg-white/[0.02] py-1 pl-4 pr-1">
-        <span className="font-mono text-[11px] text-slate-500">{title ?? LANG_LABEL[lang]}</span>
-        <CopyButton text={clean} label={`Copy ${title ?? LANG_LABEL[lang].toLowerCase()}`} />
+        <span className="font-mono text-[11px] text-slate-500">{label}</span>
+        <CopyButton text={clean} label={`${copy} ${label.toLowerCase()}`} />
       </div>
       <pre className="thin-scrollbar overflow-x-auto px-4 py-4 font-mono text-[13px] leading-relaxed">
         <code>
@@ -268,19 +270,25 @@ export function DocTable({ head, rows, minWidth = 520 }: { head: ReactNode[]; ro
 /* ------------------------------------------------------------------ */
 /*  Callouts                                                           */
 /* ------------------------------------------------------------------ */
-const CALLOUTS: Record<'note' | 'tip' | 'warning', { icon: IconType; box: string; icn: string; label: string }> = {
-  note: { icon: Info, box: 'border-sky-400/20 bg-sky-400/[0.05]', icn: 'text-sky-300', label: 'Note' },
-  tip: { icon: Lightbulb, box: 'border-emerald-400/20 bg-emerald-400/[0.05]', icn: 'text-emerald-300', label: 'Tip' },
-  warning: { icon: TriangleAlert, box: 'border-amber-400/25 bg-amber-400/[0.05]', icn: 'text-amber-300', label: 'Heads up' },
+const CALLOUTS: Record<'note' | 'tip' | 'warning', { icon: IconType; box: string; icn: string }> = {
+  note: { icon: Info, box: 'border-sky-400/20 bg-sky-400/[0.05]', icn: 'text-sky-300' },
+  tip: { icon: Lightbulb, box: 'border-emerald-400/20 bg-emerald-400/[0.05]', icn: 'text-emerald-300' },
+  warning: { icon: TriangleAlert, box: 'border-amber-400/25 bg-amber-400/[0.05]', icn: 'text-amber-300' },
+};
+const CALLOUT_LABEL = {
+  en: { note: 'Note', tip: 'Tip', warning: 'Heads up' },
+  es: { note: 'Nota', tip: 'Consejo', warning: 'Atención' },
 };
 
 export function Callout({ type = 'note', title, children }: { type?: 'note' | 'tip' | 'warning'; title?: string; children: ReactNode }) {
   const c = CALLOUTS[type];
+  const labels = useCopy(CALLOUT_LABEL);
+  const label = title ?? labels[type];
   return (
-    <aside className={cn('my-6 flex gap-3 rounded-2xl border p-4 sm:p-5', c.box)} aria-label={title ?? c.label}>
+    <aside className={cn('my-6 flex gap-3 rounded-2xl border p-4 sm:p-5', c.box)} aria-label={label}>
       <c.icon className={cn('mt-0.5 size-5 shrink-0', c.icn)} />
       <div className="min-w-0 text-[15px] leading-7 text-slate-300">
-        <p className="font-medium text-white">{title ?? c.label}</p>
+        <p className="font-medium text-white">{label}</p>
         <div className="mt-1 text-slate-400">{children}</div>
       </div>
     </aside>

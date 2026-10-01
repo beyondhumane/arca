@@ -3,13 +3,14 @@ import type { ReactNode } from 'react';
 import { ArrowUpRight, Plus } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { NEW_ISSUE_URL } from '@/lib/site';
+import { useCopy } from '@/lib/i18n';
 import { Accent, Container, Eyebrow, Reveal } from '../ui';
 
 const Code = ({ children }: { children: ReactNode }) => (
   <code className="rounded-md border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[0.85em] text-brand-200">{children}</code>
 );
 
-const FAQS: { q: string; a: ReactNode }[] = [
+const FAQS_EN: { q: string; a: ReactNode }[] = [
   {
     q: 'Is Arca free to use at work?',
     a: (
@@ -89,6 +90,104 @@ const FAQS: { q: string; a: ReactNode }[] = [
   },
 ];
 
+const FAQS_ES: typeof FAQS_EN = [
+  {
+    q: '¿Puedo usar Arca en el trabajo sin pagar?',
+    a: (
+      <>
+        Sí. Arca se publica bajo la licencia Apache 2.0: úsalo en casa o en el trabajo, modifícalo y distribúyelo dentro
+        de tus propios productos. La licencia incluye además una cesión explícita de patentes. No hay edición de pago.
+      </>
+    ),
+  },
+  {
+    q: '¿Qué formatos admite Arca?',
+    a: (
+      <>
+        ZIP (con Zip64) con Store, Deflate (sobre zlib-rs) y Zstandard; TAR ustar con verificación de la suma de control;
+        y <Code>.tar.gz</Code> / <Code>.tgz</Code>. Los archivos con el antiguo ZipCrypto se pueden abrir. El formato 7z,
+        xz/LZMA2, los enlaces simbólicos, los nombres largos de GNU tar y los archivos sólidos están en la hoja de ruta.
+      </>
+    ),
+  },
+  {
+    q: '¿Otras herramientas abren los archivos que crea Arca?',
+    a: (
+      <>
+        Sí. <Code>interop.sh</Code> lo comprueba en 35 casos verificados por SHA-256: unzip, tar y 7-Zip leen lo que
+        escribe Arca en los cuatro niveles, y Arca lee lo que escriben ellos. Una salvedad: el unzip clásico no lee
+        Zstandard dentro de ZIP (método 93), y por eso <Code>-c auto</Code> usa Deflate para <Code>.zip</Code>.
+      </>
+    ),
+  },
+  {
+    q: '¿Cómo de fuerte es el cifrado?',
+    a: (
+      <>
+        AES-256 con el esquema WinZip AE-2: derivación de clave PBKDF2-HMAC-SHA1, AES-256 en modo CTR, un HMAC-SHA1 sobre
+        el texto cifrado y una sal aleatoria de 16 bytes por entrada, el mismo esquema que escriben 7-Zip, WinRAR y
+        NanaZip. ZIP nunca cifra los nombres de los archivos, así que el listado se ve sin la contraseña.
+      </>
+    ),
+  },
+  {
+    q: '¿Arca es siempre más rápido que 7-Zip?',
+    a: (
+      <>
+        No, y lo decimos. Con archivos grandes Arca comprimió 5,7× más rápido a cambio de un 3,7% más de tamaño (deflate
+        contra deflate, Windows 11). Con miles de archivos pequeños 7-Zip va algo por delante con el mismo tamaño, porque
+        domina el tiempo de crear archivos en NTFS. La{' '}
+        <a href="#/docs/benchmarks/deflate-against-deflate-on-windows-11" className="text-brand-300 underline decoration-brand-400/40 underline-offset-4 hover:text-brand-200">página de benchmarks</a> muestra los dos casos.
+      </>
+    ),
+  },
+  {
+    q: '¿Qué plataformas se admiten?',
+    a: (
+      <>
+        Windows, macOS y Linux, con binarios para Windows x86_64 (instalador), macOS arm64 y x86_64, y Linux x86_64. El
+        menú contextual del Explorador solo existe en Windows 11 por ahora; la integración con el escritorio en Linux y
+        macOS está en la hoja de ruta.
+      </>
+    ),
+  },
+  {
+    q: '¿Puedo usar Arca como biblioteca de Rust?',
+    a: (
+      <>
+        Los crates (<Code>arca-core</Code>, <Code>arca-zip</Code>, <Code>arca-tar</Code>) aún no están en crates.io.
+        Puedes depender de ellos directamente desde el repositorio Git.
+      </>
+    ),
+  },
+  {
+    q: '¿Cómo informo de un fallo o colaboro?',
+    a: (
+      <>
+        Abre un issue en GitHub con la salida de <Code>arca --version</Code>, tu sistema operativo y el comando que
+        ejecutaste. Los pull requests, los benchmarks en tu propio hardware y la ayuda con la hoja de ruta son bienvenidos.
+      </>
+    ),
+  },
+];
+
+const COPY = {
+  en: {
+    faqs: FAQS_EN,
+    title: ['Questions, ', 'answered.'],
+    lead: 'Short answers. The docs have the long ones.',
+    browse: 'Browse the documentation',
+    ask: 'Ask on GitHub Issues',
+  },
+  es: {
+    faqs: FAQS_ES,
+    title: ['Preguntas ', 'frecuentes.'],
+    lead: 'Respuestas cortas. La documentación tiene las largas.',
+    browse: 'Ver la documentación',
+    ask: 'Preguntar en GitHub Issues',
+  },
+};
+
 function FaqItem({ q, a, open, onToggle }: { q: string; a: ReactNode; open: boolean; onToggle: () => void }) {
   const id = useId();
   const btnId = `${id}-q`;
@@ -136,6 +235,7 @@ function FaqItem({ q, a, open, onToggle }: { q: string; a: ReactNode; open: bool
 
 export function FAQ() {
   const [open, setOpen] = useState<number | null>(0);
+  const t = useCopy(COPY);
   return (
     <section id="faq" aria-labelledby="faq-title" className="relative py-24 sm:py-32">
       <Container>
@@ -146,29 +246,29 @@ export function FAQ() {
             </Reveal>
             <Reveal delay={90}>
               <h2 id="faq-title" className="mt-5 text-balance text-[34px] font-semibold leading-[1.06] tracking-[-0.035em] text-white sm:text-5xl">
-                Questions, <Accent>answered.</Accent>
+                {t.title[0]}<Accent>{t.title[1]}</Accent>
               </h2>
             </Reveal>
             <Reveal delay={180}>
               <p className="mt-5 max-w-sm text-base leading-relaxed text-slate-400">
-                Short answers. The docs have the long ones.
+                {t.lead}
               </p>
             </Reveal>
             <Reveal delay={260}>
               <div className="mt-8 flex flex-col gap-2 text-sm">
                 <a href="#/docs" className="inline-flex items-center gap-1.5 text-brand-300 transition hover:gap-2.5 hover:text-brand-200">
-                  Browse the documentation <ArrowUpRight className="size-4" />
+                  {t.browse} <ArrowUpRight className="size-4" />
                 </a>
                 <a href={NEW_ISSUE_URL} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1.5 text-slate-400 transition hover:gap-2.5 hover:text-white">
-                  Ask on GitHub Issues <ArrowUpRight className="size-4" />
+                  {t.ask} <ArrowUpRight className="size-4" />
                 </a>
               </div>
             </Reveal>
           </div>
 
           <div className="space-y-3">
-            {FAQS.map((f, i) => (
-              <Reveal key={f.q} delay={Math.min(i, 5) * 60}>
+            {t.faqs.map((f, i) => (
+              <Reveal key={i} delay={Math.min(i, 5) * 60}>
                 <FaqItem q={f.q} a={f.a} open={open === i} onToggle={() => setOpen((o) => (o === i ? null : i))} />
               </Reveal>
             ))}

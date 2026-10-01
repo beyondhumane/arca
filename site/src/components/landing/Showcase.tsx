@@ -4,6 +4,7 @@ import { AppWindow, MousePointerClick, Terminal } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { useInView, usePrefersReducedMotion } from '@/lib/hooks';
 import { VERSION } from '@/lib/site';
+import { useCopy } from '@/lib/i18n';
 import { Accent, Container, Reveal, SectionHeading } from '../ui';
 import { Cursor, Prompt, TerminalWindow, colorizeCommand } from '../terminal';
 import { DesktopMock, ExplorerMock } from './ShowcaseMocks';
@@ -12,6 +13,55 @@ import { DesktopMock, ExplorerMock } from './ShowcaseMocks';
 /*  CLI panel                                                          */
 /* ------------------------------------------------------------------ */
 type CliCommand = { id: string; alias?: string; blurb: string; cmd: string; out: ReactNode[] };
+
+const COPY = {
+  en: {
+    blurbs: {
+      create: 'Pack files and folders',
+      list: 'See inside without extracting',
+      extract: 'Unpack in parallel, safely',
+      test: 'Verify every CRC, write nothing',
+      password: 'Add, change or remove a password',
+      bench: 'Measure the R2 requirement',
+    } as Record<string, string>,
+    commands: 'Commands',
+    running: (id: string) => `Terminal running arca ${id}`,
+    real: ['Real ', ' output on a copy of this repository, Ryzen 9 5900X, Linux.'],
+    tabs: ['Terminal', 'Desktop app', 'Explorer'],
+    captions: [
+      'Six commands, four one-letter aliases, one line of output.',
+      'Try it: click the list, then use ↑ ↓, Space, Ctrl+A, the filter box or Extract all.',
+      'Windows 11’s modern menu and the classic one. Right-click an archive to extract it. Try it.',
+    ],
+    eyebrow: 'Product',
+    title: ['One core, ', 'three', ' ways in.'],
+    description: 'Script it from the terminal, browse it in a native window, or never leave File Explorer.',
+    ways: 'Ways to use Arca',
+  },
+  es: {
+    blurbs: {
+      create: 'Comprime archivos y carpetas',
+      list: 'Mira dentro sin extraer',
+      extract: 'Extrae en paralelo y con seguridad',
+      test: 'Comprueba cada CRC sin escribir nada',
+      password: 'Pon, cambia o quita una contraseña',
+      bench: 'Mide el requisito R2',
+    } as Record<string, string>,
+    commands: 'Comandos',
+    running: (id: string) => `Terminal ejecutando arca ${id}`,
+    real: ['Salida real de ', ' sobre una copia de este repositorio, Ryzen 9 5900X, Linux.'],
+    tabs: ['Terminal', 'Aplicación', 'Explorador'],
+    captions: [
+      'Seis comandos, cuatro alias de una letra, una línea de salida.',
+      'Pruébalo: haz clic en la lista y usa ↑ ↓, Space, Ctrl+A, el filtro o Extraer todo.',
+      'El menú moderno de Windows 11 y el clásico. Haz clic derecho en un archivo para extraerlo. Pruébalo.',
+    ],
+    eyebrow: 'Producto',
+    title: ['Un núcleo, ', 'tres', ' formas de usarlo.'],
+    description: 'Úsalo desde la terminal, navega en una ventana nativa o no salgas del Explorador de archivos.',
+    ways: 'Formas de usar Arca',
+  },
+};
 
 const COMMANDS: CliCommand[] = [
   {
@@ -102,6 +152,7 @@ function CliPanel() {
   const reduced = usePrefersReducedMotion();
   const [ref, inView] = useInView<HTMLDivElement>();
   const [sel, setSel] = useState(0);
+  const t = useCopy(COPY);
   const [typed, setTyped] = useState('');
   const [shown, setShown] = useState(0);
   const c = COMMANDS[sel];
@@ -137,7 +188,7 @@ function CliPanel() {
   return (
     <div ref={ref}>
       <div className="grid gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
-        <div role="group" aria-label="Commands" className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0">
+        <div role="group" aria-label={t.commands} className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0">
           {COMMANDS.map((cmd, i) => (
             <button
               key={cmd.id}
@@ -157,12 +208,12 @@ function CliPanel() {
                   <span className="rounded bg-white/[0.07] px-1.5 text-[10px] text-slate-500">{cmd.alias}</span>
                 )}
               </span>
-              <span className="mt-0.5 hidden text-xs text-slate-500 sm:block">{cmd.blurb}</span>
+              <span className="mt-0.5 hidden text-xs text-slate-500 sm:block">{t.blurbs[cmd.id]}</span>
             </button>
           ))}
         </div>
 
-        <TerminalWindow title="demo — arca — zsh" label={`Terminal running arca ${c.id}`} bodyClassName="min-h-[280px] sm:min-h-[320px]">
+        <TerminalWindow title="demo — arca — zsh" label={t.running(c.id)} bodyClassName="min-h-[280px] sm:min-h-[320px]">
           <div className="break-all">
             <Prompt dir="demo" />
             {colorizeCommand(typed)}
@@ -182,7 +233,9 @@ function CliPanel() {
         </TerminalWindow>
       </div>
       <p className="mt-3 px-1 text-xs text-slate-600">
-        Real <span className="font-mono">arca {VERSION}</span> output on a copy of this repository, Ryzen 9 5900X, Linux.
+        {t.real[0]}
+        <span className="font-mono">arca {VERSION}</span>
+        {t.real[1]}
       </p>
     </div>
   );
@@ -201,6 +254,7 @@ type TabId = (typeof TABS)[number]['id'];
 
 export function Showcase() {
   const [tab, setTab] = useState<TabId>('cli');
+  const t = useCopy(COPY);
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [indicator, setIndicator] = useState({ left: 0, width: 0 });
 
@@ -235,20 +289,20 @@ export function Showcase() {
     <section id="showcase" aria-labelledby="showcase-title" className="relative py-24 sm:py-32">
       <Container>
         <SectionHeading
-          eyebrow="Product"
+          eyebrow={t.eyebrow}
           title={
             <span id="showcase-title">
-              One core, <Accent>three</Accent> ways in.
+              {t.title[0]}<Accent>{t.title[1]}</Accent>{t.title[2]}
             </span>
           }
-          description="Script it from the terminal, browse it in a native window, or never leave File Explorer."
+          description={t.description}
         />
 
         <Reveal delay={100}>
           <div className="mt-12 flex justify-center">
             <div
               role="tablist"
-              aria-label="Ways to use Arca"
+              aria-label={t.ways}
               onKeyDown={onKeyDown}
               className="glass relative inline-flex max-w-full rounded-full p-1.5"
             >
@@ -257,32 +311,32 @@ export function Showcase() {
                 className="absolute inset-y-1.5 rounded-full bg-white shadow-[0_6px_20px_-6px_rgba(255,255,255,0.5)] transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
                 style={{ left: indicator.left, width: indicator.width }}
               />
-              {TABS.map((t, i) => (
+              {TABS.map((tb, i) => (
                 <button
-                  key={t.id}
+                  key={tb.id}
                   ref={(el) => {
                     tabRefs.current[i] = el;
                   }}
                   type="button"
                   role="tab"
-                  id={`tab-${t.id}`}
-                  aria-selected={tab === t.id}
-                  aria-controls={`panel-${t.id}`}
-                  tabIndex={tab === t.id ? 0 : -1}
-                  onClick={() => setTab(t.id)}
+                  id={`tab-${tb.id}`}
+                  aria-selected={tab === tb.id}
+                  aria-controls={`panel-${tb.id}`}
+                  tabIndex={tab === tb.id ? 0 : -1}
+                  onClick={() => setTab(tb.id)}
                   className={cn(
                     'relative z-10 inline-flex h-10 items-center gap-2 rounded-full px-3.5 text-[13px] font-medium transition-colors duration-300 sm:px-5 sm:text-sm',
-                    tab === t.id ? 'text-ink-950' : 'text-slate-400 hover:text-white',
+                    tab === tb.id ? 'text-ink-950' : 'text-slate-400 hover:text-white',
                   )}
                 >
-                  <t.icon className="hidden size-4 sm:block" />
-                  {t.label}
+                  <tb.icon className="hidden size-4 sm:block" />
+                  {t.tabs[i]}
                 </button>
               ))}
             </div>
           </div>
           <p key={activeTab.id} className="mx-auto mt-5 max-w-xl animate-fade-in text-center text-sm text-slate-500">
-            {activeTab.caption}
+            {t.captions[TABS.indexOf(activeTab)]}
           </p>
         </Reveal>
 

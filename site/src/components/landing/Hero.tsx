@@ -4,6 +4,42 @@ import { ArrowRight, Check, Lock, ShieldCheck, Timer } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { formatCount, useGitHubStars, useInView, usePrefersReducedMotion } from '@/lib/hooks';
 import { RELEASE_URL, REPO_URL, VERSION } from '@/lib/site';
+import { useCopy } from '@/lib/i18n';
+
+const COPY = {
+  en: {
+    terminal: 'Terminal showing Arca creating, listing and extracting archives',
+    smaller: 'smaller',
+    threads: 'threads',
+    coldStart: 'Cold start',
+    encryption: 'Encryption',
+    everyParser: 'Every parser',
+    release: 'Release notes and checksums',
+    words: ['Pack', 'faster.', 'Unpack', 'safer.'],
+    lead: 'Arca is an open-source archiver written in safe Rust. It compresses with Zstandard on every core, encrypts with AES-256, and rejects a malformed archive with an error instead of corrupting memory.',
+    star: 'Star on GitHub',
+    platforms: 'Windows, macOS & Linux',
+    free: 'Free & Apache-2.0',
+    install: 'Install guide',
+    measured: 'How these numbers were measured',
+  },
+  es: {
+    terminal: 'Terminal en la que Arca crea, lista y extrae archivos',
+    smaller: 'menos',
+    threads: 'hilos',
+    coldStart: 'Arranque en frío',
+    encryption: 'Cifrado',
+    everyParser: 'Cada analizador',
+    release: 'Notas de la versión y sumas',
+    words: ['Comprime', 'rápido.', 'Extrae', 'seguro.'],
+    lead: 'Arca es un archivador de código abierto escrito en Rust seguro. Comprime con Zstandard en todos los núcleos, cifra con AES-256 y rechaza un archivo malformado con un error en lugar de corromper la memoria.',
+    star: 'Star en GitHub',
+    platforms: 'Windows, macOS y Linux',
+    free: 'Gratis, Apache-2.0',
+    install: 'Guía de instalación',
+    measured: 'Cómo se midieron estas cifras',
+  },
+};
 import { Accent, ButtonLink, Container } from '../ui';
 import { DownloadButton } from '../download';
 import { GitHubIcon } from '../icons';
@@ -70,6 +106,7 @@ function SceneBlock({ scene, typed, shown, cursor }: { scene: Scene; typed: stri
 }
 
 function HeroTerminal() {
+  const t = useCopy(COPY);
   const reduced = usePrefersReducedMotion();
   const [viewRef, inView] = useInView<HTMLDivElement>();
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -140,7 +177,7 @@ function HeroTerminal() {
     <div ref={viewRef}>
       <TerminalWindow
         bodyRef={bodyRef}
-        label="Terminal showing Arca creating, listing and extracting archives"
+        label={t.terminal}
         bodyClassName="h-[300px] overflow-hidden sm:h-[340px]"
       >
         {staticMode ? (
@@ -209,6 +246,7 @@ function FloatingChip({
 }
 
 function RatioCard({ className }: { className?: string }) {
+  const t = useCopy(COPY);
   const [ref, inView] = useInView<HTMLDivElement>();
   const pct = 68.8;
   const r = 26;
@@ -248,14 +286,14 @@ function RatioCard({ className }: { className?: string }) {
             </svg>
             <div>
               <div className="text-2xl font-semibold tracking-tight text-white">68.8%</div>
-              <div className="text-xs text-slate-400">smaller · 202.1 → 63.1 MB</div>
+              <div className="text-xs text-slate-400">{t.smaller} · 202.1 → 63.1 MB</div>
             </div>
           </div>
           <div className="mt-3 h-px bg-white/[0.06]" />
           <div className="mt-3 flex justify-between font-mono text-[11px] text-slate-500">
             <span>0.263 s</span>
             <span>770 MB/s</span>
-            <span>24 threads</span>
+            <span>24 {t.threads}</span>
           </div>
         </div>
       </div>
@@ -264,6 +302,7 @@ function RatioCard({ className }: { className?: string }) {
 }
 
 function HeroVisual() {
+  const t = useCopy(COPY);
   const tiltRef = useRef<HTMLDivElement>(null);
   const reduced = usePrefersReducedMotion();
 
@@ -310,12 +349,12 @@ function HeroVisual() {
         style={{ transform: 'rotateX(calc(var(--tilt, 0) * 16deg)) scale(calc(1 - var(--tilt, 0) * 0.05))' }}
       >
         <HeroTerminal />
-        <FloatingChip className="-left-10 top-16 xl:-left-24" icon={Timer} label="Cold start" value="0.8 ms" delay="0s" />
-        <FloatingChip className="-right-8 top-10 xl:-right-20" icon={Lock} label="Encryption" value="AES-256 · AE-2" delay="-2.4s" />
+        <FloatingChip className="-left-10 top-16 xl:-left-24" icon={Timer} label={t.coldStart} value="0.8 ms" delay="0s" />
+        <FloatingChip className="-right-8 top-10 xl:-right-20" icon={Lock} label={t.encryption} value="AES-256 · AE-2" delay="-2.4s" />
         <FloatingChip
           className="-left-12 bottom-6 xl:-left-28"
           icon={ShieldCheck}
-          label="Every parser"
+          label={t.everyParser}
           value="#![forbid(unsafe_code)]"
           delay="-4.2s"
           mono
@@ -357,6 +396,7 @@ function Word({ children, delay }: { children: ReactNode; delay: number }) {
 export function Hero() {
   const stars = useGitHubStars();
   const showStars = stars !== null && stars >= 10;
+  const t = useCopy(COPY);
 
   return (
     <section id="top" aria-labelledby="hero-title" className="relative isolate overflow-hidden pb-24 pt-32 sm:pb-32 sm:pt-40">
@@ -372,7 +412,7 @@ export function Hero() {
             <span className="shrink-0 rounded-full bg-linear-to-r from-brand-300 to-brand-500 px-2 py-0.5 text-[11px] font-semibold text-ink-950">
               v{VERSION}
             </span>
-            <span className="truncate">Release notes and checksums</span>
+            <span className="truncate">{t.release}</span>
             <ArrowRight className="size-3.5 shrink-0 text-slate-500 transition group-hover:translate-x-0.5 group-hover:text-brand-300" />
           </a>
 
@@ -381,12 +421,12 @@ export function Hero() {
             className="mt-8 text-[48px] font-semibold leading-[0.98] tracking-[-0.05em] text-white sm:text-7xl lg:text-[92px]"
           >
             <span className="block">
-              <Word delay={120}>Pack</Word> <Word delay={200}>faster.</Word>
+              <Word delay={120}>{t.words[0]}</Word> <Word delay={200}>{t.words[1]}</Word>
             </span>
             <span className="block">
-              <Word delay={320}>Unpack</Word>{' '}
+              <Word delay={320}>{t.words[2]}</Word>{' '}
               <Word delay={430}>
-                <Accent className="tracking-[-0.02em]">safer.</Accent>
+                <Accent className="tracking-[-0.02em]">{t.words[3]}</Accent>
               </Word>
             </span>
           </h1>
@@ -395,8 +435,7 @@ export function Hero() {
             className="mx-auto mt-7 max-w-2xl animate-fade-up text-pretty text-base leading-relaxed text-slate-400 sm:text-lg"
             style={{ animationDelay: '560ms' }}
           >
-            Arca is an open-source archiver written in safe Rust. It compresses with Zstandard on every core,
-            encrypts with AES-256, and rejects a malformed archive with an error instead of corrupting memory.
+            {t.lead}
           </p>
 
           <div
@@ -406,7 +445,7 @@ export function Hero() {
             <DownloadButton />
             <ButtonLink href={REPO_URL} external variant="glass" size="lg">
               <GitHubIcon className="size-[18px]" />
-              Star on GitHub
+              {t.star}
               {showStars && stars !== null && (
                 <span className="rounded-full bg-white/10 px-2 py-0.5 font-mono text-xs text-slate-200">
                   {formatCount(stars)}
@@ -420,22 +459,22 @@ export function Hero() {
             style={{ animationDelay: '800ms' }}
           >
             <span className="inline-flex items-center gap-1.5">
-              <Check className="size-3.5 text-emerald-400" /> Windows, macOS &amp; Linux
+              <Check className="size-3.5 text-emerald-400" /> {t.platforms}
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <Check className="size-3.5 text-emerald-400" /> Free &amp; Apache-2.0
+              <Check className="size-3.5 text-emerald-400" /> {t.free}
             </span>
             <a
               href="#/docs/installation"
               className="inline-flex items-center gap-1 text-slate-400 underline decoration-white/20 underline-offset-4 transition hover:text-white hover:decoration-brand-400"
             >
-              Install guide <ArrowRight className="size-3.5" />
+              {t.install} <ArrowRight className="size-3.5" />
             </a>
             <a
               href="#/docs/benchmarks"
               className="inline-flex items-center gap-1 text-slate-400 underline decoration-white/20 underline-offset-4 transition hover:text-white hover:decoration-brand-400"
             >
-              How these numbers were measured <ArrowRight className="size-3.5" />
+              {t.measured} <ArrowRight className="size-3.5" />
             </a>
           </div>
         </div>

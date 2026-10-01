@@ -4,11 +4,38 @@ import { CLONE_CMD, DOWNLOADS, RELEASE_URL, VERSION } from '@/lib/site';
 import type { Platform } from '@/lib/site';
 import { Accent, ButtonLink, Container, CopyButton, Reveal } from '../ui';
 import { DownloadButton, PLATFORM_ICONS, useRecommendedDownload } from '../download';
+import { useCopy } from '@/lib/i18n';
+
+const COPY = {
+  en: {
+    title: ['Your next archive is ', 'one command', ' away.'],
+    lead: 'Download a prebuilt binary for your platform, or build it from source with one command.',
+    docs: 'Read the docs',
+    download: (f: string) => `Download ${f}`,
+    yours: 'Your system',
+    details: { windows: 'Installer · x86_64', macos: 'Apple silicon · arm64', 'macos-intel': 'Intel · x86_64', linux: 'x86_64' },
+    copyBuild: 'Copy build-from-source command',
+    rust: 'Needs Rust 1.95+.',
+    notes: 'Release notes & checksums',
+  },
+  es: {
+    title: ['Tu próximo archivo está a ', 'un comando', '.'],
+    lead: 'Descarga un binario para tu plataforma o compílalo desde el código fuente con un solo comando.',
+    docs: 'Leer la documentación',
+    download: (f: string) => `Descargar ${f}`,
+    yours: 'Tu sistema',
+    details: { windows: 'Instalador · x86_64', macos: 'Apple silicon · arm64', 'macos-intel': 'Intel · x86_64', linux: 'x86_64' },
+    copyBuild: 'Copiar el comando para compilar',
+    rust: 'Requiere Rust 1.95 o superior.',
+    notes: 'Notas de la versión y sumas',
+  },
+};
 
 const ORDER: Platform[] = ['windows', 'macos', 'macos-intel', 'linux'];
 
 export function CTA() {
   const { platform: recommended } = useRecommendedDownload();
+  const t = useCopy(COPY);
 
   return (
     <section id="download" aria-labelledby="cta-title" className="relative py-24 sm:py-32">
@@ -24,16 +51,16 @@ export function CTA() {
             <div className="relative mx-auto max-w-3xl text-center">
               <p className="font-mono text-xs uppercase tracking-[0.2em] text-brand-300">v{VERSION} · Apache-2.0</p>
               <h2 id="cta-title" className="mt-5 text-balance text-4xl font-semibold leading-[1.04] tracking-[-0.04em] text-white sm:text-6xl">
-                Your next archive is <Accent>one command</Accent> away.
+                {t.title[0]}<Accent>{t.title[1]}</Accent>{t.title[2]}
               </h2>
               <p className="mx-auto mt-5 max-w-xl text-pretty text-base leading-relaxed text-slate-400 sm:text-lg">
-                Download a prebuilt binary for your platform, or build it from source with one command.
+                {t.lead}
               </p>
               <div className="mt-9 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
                 <DownloadButton />
                 <ButtonLink href="#/docs" variant="glass" size="lg">
                   <BookOpen className="size-[18px]" />
-                  Read the docs
+                  {t.docs}
                 </ButtonLink>
               </div>
             </div>
@@ -47,7 +74,7 @@ export function CTA() {
                   <a
                     key={p}
                     href={d.url}
-                    aria-label={`Download ${d.file}`}
+                    aria-label={t.download(d.file)}
                     className={cn(
                       'group relative flex items-center gap-4 rounded-2xl border p-4 text-left transition-all duration-300 hover:-translate-y-1',
                       isRec
@@ -57,7 +84,7 @@ export function CTA() {
                   >
                     {isRec && (
                       <span className="absolute -top-2.5 right-3 rounded-full bg-brand-400 px-2 py-0.5 text-[10px] font-semibold text-ink-950">
-                        Your system
+                        {t.yours}
                       </span>
                     )}
                     <span className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-black/30 text-slate-100 transition-transform duration-300 group-hover:scale-110">
@@ -65,7 +92,7 @@ export function CTA() {
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium text-white">{d.label}</span>
-                      <span className="block truncate text-xs text-slate-500">{d.detail}</span>
+                      <span className="block truncate text-xs text-slate-500">{[t.details[p], d.size].filter(Boolean).join(' · ')}</span>
                     </span>
                     <Download className="size-4 shrink-0 text-slate-500 transition-all duration-300 group-hover:translate-y-0.5 group-hover:text-brand-300" />
                   </a>
@@ -81,12 +108,12 @@ export function CTA() {
                   <span className="text-sky-300">cd</span> arca <span className="text-slate-500">&amp;&amp;</span>{' '}
                   <span className="text-sky-300">cargo</span> build <span className="text-violet-300">--release</span>
                 </code>
-                <CopyButton text={CLONE_CMD} label="Copy build-from-source command" />
+                <CopyButton text={CLONE_CMD} label={t.copyBuild} />
               </div>
               <p className="mt-4 text-center text-xs text-slate-500">
-                Needs Rust 1.95+.{' '}
+                {t.rust}{' '}
                 <a href={RELEASE_URL} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-slate-400 underline decoration-white/20 underline-offset-4 transition hover:text-white">
-                  Release notes & checksums <ArrowRight className="size-3" />
+                  {t.notes} <ArrowRight className="size-3" />
                 </a>
               </p>
             </div>

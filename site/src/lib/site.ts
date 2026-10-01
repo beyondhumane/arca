@@ -19,18 +19,18 @@ export type DownloadAsset = {
   label: string;
   file: string;
   url: string;
-  detail: string;
+  /** Formatted size, e.g. "7.3 MB", or empty when the build has no release data. */
+  size: string;
 };
 
-function asset(os: string, label: string, file: string, detail: string): DownloadAsset {
+function asset(os: string, label: string, file: string): DownloadAsset {
   const bytes = __ARCA_RELEASE__.sizes[file];
-  const size = bytes ? ` · ${(bytes / 1e6).toFixed(1)} MB` : '';
-  return { os, label, file, url: `${DL}/${file}`, detail: detail + size };
+  return { os, label, file, url: `${DL}/${file}`, size: bytes ? `${(bytes / 1e6).toFixed(1)} MB` : '' };
 }
 
 export const DOWNLOADS: Record<Platform, DownloadAsset> = {
-  windows: asset('Windows', 'Windows', `arca-setup-${VERSION}-x86_64.exe`, 'Installer · x86_64'),
-  macos: asset('macOS', 'macOS', `arca-v${VERSION}-macos-arm64.tar.gz`, 'Apple silicon · arm64'),
-  'macos-intel': asset('macOS', 'macOS Intel', `arca-v${VERSION}-macos-x86_64.tar.gz`, 'Intel · x86_64'),
-  linux: asset('Linux', 'Linux', `arca-v${VERSION}-linux-x86_64.tar.gz`, 'x86_64'),
+  windows: asset('Windows', 'Windows', `arca-setup-${VERSION}-x86_64.exe`),
+  macos: asset('macOS', 'macOS', `arca-v${VERSION}-macos-arm64.tar.gz`),
+  'macos-intel': asset('macOS', 'macOS Intel', `arca-v${VERSION}-macos-x86_64.tar.gz`),
+  linux: asset('Linux', 'Linux', `arca-v${VERSION}-linux-x86_64.tar.gz`),
 };
