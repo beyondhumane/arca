@@ -48,10 +48,17 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - run: npm ci
       # Version and download sizes come from the latest published release.
+      # Without one, the site falls back to the Cargo.toml version.
       - name: Latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          latest=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts \
+            --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
+          if [ -z "$latest" ]; then
+            echo "::notice::No published release; using the Cargo.toml version."
+            exit 0
+          fi
           out="$RUNNER_TEMP/release.json"
           gh release view -R "$GITHUB_REPOSITORY" \
             --json tagName,assets > "$out"
