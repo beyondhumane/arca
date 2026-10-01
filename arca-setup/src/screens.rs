@@ -6,7 +6,7 @@ use crate::{
 };
 use gpui::{div, img, prelude::*, px, Context, Div, FontWeight, IntoElement};
 
-const RELEASES: &str = "https://github.com/THIONG/arca/releases/latest";
+const RELEASES: &str = "https://github.com/beyondhumane/arca/releases/latest";
 const ERROR_CHARS: usize = 260;
 
 fn heading(text: &'static str, size: f32) -> Div {

@@ -708,8 +708,8 @@ fn bench(archive: &Path) -> Result<()> {
         pass_fail(r2)
     );
     println!();
-    println!("  R1  cold start: measured from outside, with hyperfine");
-    println!("      hyperfine --warmup 20 'arca --version'");
+    println!("  R1  cold start: open and list a one-entry archive, with hyperfine");
+    println!("      hyperfine -N --warmup 20 'arca list tiny.zip'");
     Ok(())
 }
 

@@ -1,210 +1,209 @@
-# Plan de migración de `arca-gui` a GPUI Kit
+# Migration plan for `arca-gui` to GPUI Kit
 
-## Resumen
+## Summary
 
-Migrar únicamente la interfaz de Arca —no `arca-core`, `arca-zip`, `arca-tar`, CLI ni los formatos— a GPUI Kit, conservando el comportamiento actual y haciendo la transición por fases. La dependencia de GPUI queda fijada por `Cargo.lock` para evitar cambios involuntarios de API.
+Migrate only Arca's interface (not `arca-core`, `arca-zip`, `arca-tar`, the CLI or the formats) to GPUI Kit, keeping the current behaviour and making the transition in phases. The GPUI dependency is pinned by `Cargo.lock` to avoid accidental API changes.
 
-El punto de partida real es `arca-gui`: una ventana de aproximadamente 4.600 líneas en `src/main.rs`, más `theme.rs`, `tree.rs`, `glyphs.rs`, `clipboard.rs`, `i18n.rs` y `build.rs`. La UI actual incluye exploración jerárquica de ZIP/TAR/TAR.GZ, tabla con columnas configurables, selección de filas y carpetas, ordenación/redimensionado, filtro, breadcrumbs, doble clic, atajos, temas claro/oscuro/sistema, inglés/español, progreso, diálogos, drag-and-drop, clipboard Windows y drag-out mediante `arca-drag`.
+The real starting point is `arca-gui`: a window of roughly 4,600 lines in `src/main.rs`, plus `theme.rs`, `tree.rs`, `glyphs.rs`, `clipboard.rs`, `i18n.rs` and `build.rs`. The current UI includes hierarchical browsing of ZIP/TAR/TAR.GZ, a table with configurable columns, row and folder selection, sorting/resizing, filter, breadcrumbs, double click, shortcuts, light/dark/system themes, English/Spanish, progress, dialogs, drag-and-drop, Windows clipboard and drag-out through `arca-drag`.
 
-## Fases
+## Phases
 
-### 1. Línea base y spike de GPUI
+### 1. Baseline and GPUI spike
 
-- Registrar el estado actual con:
+- Record the current state with:
   - `cargo test --workspace`.
   - `cargo build --release`.
-  - compilación/prueba específica en Windows.
-  - prueba manual de ZIP, TAR y TAR.GZ, contraseña, conflictos, selección, clipboard y drag-and-drop.
-- Capturar una matriz de comportamiento y dimensiones mínimas de ventana para usarla como criterio de paridad.
-- Añadir GPUI Kit como dependencia de `arca-gui` desde la versión fijada.
-- Crear una ventana mínima GPUI que compile y arranque en las plataformas soportadas.
-- Verificar en este spike:
-  - versión mínima de Rust requerida;
-  - backend de ventana/renderizado en Windows, Linux y macOS;
-  - texto, fuentes, imágenes, teclado, rueda, selección, menús, diálogos, drag-and-drop y accesibilidad;
-  - integración con `rfd`, `clipboard-win` y `arca-drag`.
-- Si el commit viable no soporta Rust 1.75, elevar `rust-version` y actualizar CI/documentación al mínimo requerido por GPUI. No se mantendrá una compatibilidad artificial con una versión de Rust que GPUI no soporte.
+  - Windows-specific build and test.
+  - manual testing of ZIP, TAR and TAR.GZ, password, conflicts, selection, clipboard and drag-and-drop.
+- Capture a behaviour matrix and minimum window sizes to use as the parity criterion.
+- Add GPUI Kit as a dependency of `arca-gui` from the pinned version.
+- Create a minimal GPUI window that builds and starts on the supported platforms.
+- Verify in this spike:
+  - minimum required Rust version;
+  - window/rendering backend on Windows, Linux and macOS;
+  - text, fonts, images, keyboard, wheel, selection, menus, dialogs, drag-and-drop and accessibility;
+  - integration with `rfd`, `clipboard-win` and `arca-drag`.
+- If the viable commit does not support Rust 1.75, raise `rust-version` and update CI/documentation to the minimum GPUI requires. No artificial compatibility will be kept with a Rust version GPUI does not support.
 
-### 2. Separar el estado de aplicación del toolkit anterior
+### 2. Separate application state from the previous toolkit
 
-Sin reescribir la lógica de compresión:
+Without rewriting the compression logic:
 
-- Extraer de `Arca` un estado/controlador de aplicación independiente del toolkit para:
-  - archivo abierto, entradas, carpeta actual e historial;
-  - selección, cursor, filtro y ordenación;
-  - configuración, idioma, tema y columnas;
-  - trabajos activos, progreso, errores y avisos;
-  - estados pendientes de contraseña, conflicto, borrado y drop.
-- Mantener `Job`, `Message`, `Answer`, `Pending`, `Format`, `Columns`, `SortColumn` y las funciones de archivo en Rust normal, aislados de las APIs visuales.
-- Mantener el controlador desacoplado mediante eventos/acciones explícitos: abrir, extraer, comprimir, borrar, añadir, copiar, pegar, navegar y cancelar.
-- Mantener los workers en hilos separados y el canal de mensajes; GPUI solo recibirá eventos y solicitará actualización de la vista. Ninguna operación de disco o compresión debe bloquear el hilo de UI.
-- Conservar las pruebas existentes de `tree.rs` y de `main.rs`; trasladar a pruebas puras las reglas de selección, navegación, ordenación, nombres libres, progreso y transiciones de diálogos.
+- Extract from `Arca` a toolkit-independent application state/controller for:
+  - open archive, entries, current folder and history;
+  - selection, cursor, filter and sorting;
+  - settings, language, theme and columns;
+  - active jobs, progress, errors and notices;
+  - pending password, conflict, delete and drop states.
+- Keep `Job`, `Message`, `Answer`, `Pending`, `Format`, `Columns`, `SortColumn` and the archive functions in plain Rust, isolated from the visual APIs.
+- Keep the controller decoupled through explicit events/actions: open, extract, compress, delete, add, copy, paste, navigate and cancel.
+- Keep the workers on separate threads with the message channel; GPUI only receives events and requests a view update. No disk or compression operation may block the UI thread.
+- Keep the existing tests of `tree.rs` and `main.rs`; move the rules for selection, navigation, sorting, free names, progress and dialog transitions into pure tests.
 
-### 3. Shell de aplicación GPUI
+### 3. GPUI application shell
 
-G3 queda implementado con GPUI Kit como backend único. El shell usa
-`AppController`, toolbar, tabla y diálogos GPUI. GPUI requiere Rust 1.97.1.
+G3 is implemented with GPUI Kit as the only backend. The shell uses
+`AppController`, a toolbar, a table and GPUI dialogs. GPUI requires Rust 1.97.1.
 
-- Usar el ciclo de aplicación, ventana y root view de GPUI Kit.
-- Preservar:
-  - título dinámico `nombre — Arca`;
-  - tamaño inicial compacto para acciones de línea de comandos;
-  - tamaño inicial normal para navegación;
-  - tamaño mínimo de ventana;
-  - icono incluido mediante `build.rs` en Windows;
-  - cierre automático de operaciones lanzadas desde el shell y ventana de resultados para operaciones interactivas.
-- Crear una única vista raíz GPUI que derive su representación del estado independiente y procese acciones generadas por los componentes.
-- Reemplazar `request_repaint`/`request_repaint_after` por el mecanismo de invalidación/notificación y temporizador de GPUI, manteniendo actualizaciones de progreso aproximadamente cada 100 ms y redibujado continuo solo cuando sea necesario.
+- Use GPUI Kit's application, window and root view lifecycle.
+- Preserve:
+  - dynamic title `name — Arca`;
+  - compact initial size for command-line actions;
+  - normal initial size for browsing;
+  - minimum window size;
+  - icon embedded through `build.rs` on Windows;
+  - automatic close for operations launched from the shell, and a results window for interactive operations.
+- Create a single GPUI root view that derives its rendering from the independent state and processes the actions produced by the components.
+- Replace `request_repaint`/`request_repaint_after` with GPUI's invalidation/notification and timer mechanism, keeping progress updates at roughly 100 ms and continuous redraws only when needed.
 
-### 4. Migración de la UI por superficies
+### 4. UI migration by surface
 
-Implementar y validar cada superficie con GPUI Kit:
+Implement and validate each surface with GPUI Kit:
 
-1. **Toolbar y navegación**
-   - Abrir, comprimir, extraer todo, extraer selección, contraseña y menú de overflow.
-   - Campo de filtro con foco, placeholder y atajos.
-   - Atrás, adelante, subir y breadcrumbs con truncado y menú de carpetas ocultas.
-   - Contador de visibles/seleccionados.
+1. **Toolbar and navigation**
+   - Open, compress, extract all, extract selection, password and overflow menu.
+   - Filter field with focus, placeholder and shortcuts.
+   - Back, forward, up and breadcrumbs with truncation and a menu of hidden folders.
+   - Visible/selected counter.
 
-2. **Listado de archivos**
-   - Usar la lista virtualizada de GPUI para la tabla dentro de `arca-gui`.
-   - Mantener columnas Nombre, Tamaño, Packed, Método, Ahorro, Modificado y CRC32.
-   - Mantener columnas configurables y persistencia en `gui.conf`.
-   - Mantener ordenación, indicador triangular, redimensionado desde cabecera, filas de carpetas antes que archivos y renderizado de iconos.
-   - Mantener selección simple, Ctrl/Cmd, Shift, selección de carpeta, cursor de teclado, Home/End/PageUp/PageDown y scroll al cursor.
-   - Mantener doble clic, Enter, menú contextual, goma de selección y autoscroll durante selección.
+2. **File list**
+   - Use GPUI's virtualized list for the table inside `arca-gui`.
+   - Keep the Name, Size, Packed, Method, Saved, Modified and CRC32 columns.
+   - Keep configurable columns and their persistence in `gui.conf`.
+   - Keep sorting, the triangle indicator, resizing from the header, folder rows before files and icon rendering.
+   - Keep single selection, Ctrl/Cmd, Shift, folder selection, keyboard cursor, Home/End/PageUp/PageDown and scroll to cursor.
+   - Keep double click, Enter, context menu, rubber-band selection and autoscroll while selecting.
 
-3. **Estados vacíos y barra de estado**
-   - Empty state con indicación de drop.
-   - Progreso, archivo actual, errores, avisos y resumen del archivo abierto.
-   - Vista de operación con progreso, duración, resultado y cierre.
+3. **Empty states and status bar**
+   - Empty state with a drop hint.
+   - Progress, current file, errors, notices and a summary of the open archive.
+   - Operation view with progress, duration, result and close.
 
-4. **Diálogos y overlays**
-   - Configuración de idioma, tema, formato, codec, nivel y extracción a subcarpeta.
-   - Contraseña nueva/actual/necesaria, visibilidad de contraseña y Enter/Escape.
-   - Conflicto de destino con Replace/Skip/Rename y variantes “all”.
-   - Confirmación de borrado.
-   - Confirmación de abrir o añadir un archivo arrastrado sobre otro archivo.
-   - Ventana de atajos.
-   - Todos los diálogos serán modales o bloquearán explícitamente las acciones de fondo mientras esperan respuesta.
+4. **Dialogs and overlays**
+   - Settings for language, theme, format, codec, level and extract to subfolder.
+   - New/current/required password, password visibility and Enter/Escape.
+   - Destination conflict with Replace/Skip/Rename and their "all" variants.
+   - Delete confirmation.
+   - Confirmation for opening or adding an archive dropped onto another archive.
+   - Shortcuts window.
+   - Every dialog will be modal or will explicitly block background actions while it waits for an answer.
 
-### 5. Tema, tipografía, iconos y pintura
+### 5. Theme, typography, icons and painting
 
-- Convertir `theme.rs` en tokens de tema propios de Arca: colores, fondos, bordes, selección, cursor, radios, espaciado y tamaños tipográficos.
-- Mantener tema claro, oscuro y sistema, y guardar/cargar la preferencia existente.
-- Reutilizar las fuentes del sistema en Windows y las fuentes de fallback del backend GPUI.
-- Portar `glyphs.rs` a la primitiva de dibujo de GPUI disponible; no añadir una librería de iconos para sustituir ocho figuras ya dibujadas.
-- Portar el icono de tipo de archivo y la caché por extensión. La caché deberá guardar el equivalente GPUI de textura/imagen y recordar fallos igual que ahora.
-- Portar las formas especiales: triángulo de ordenación, cursor, selección de goma, overlay de drop y puntero de autoscroll.
-- Revisar contraste y semántica accesible de botones, filas, menús, campos y diálogos mediante AccessKit/GPUI.
+- Turn `theme.rs` into Arca's own theme tokens: colours, backgrounds, borders, selection, cursor, radii, spacing and type sizes.
+- Keep light, dark and system themes, and save/load the existing preference.
+- Reuse system fonts on Windows and the GPUI backend's fallback fonts.
+- Port `glyphs.rs` to whatever drawing primitive GPUI offers; do not add an icon library to replace eight shapes that are already drawn.
+- Port the file-type icon and the per-extension cache. The cache must store the GPUI equivalent of a texture/image and remember failures as it does now.
+- Port the special shapes: sort triangle, cursor, rubber-band selection, drop overlay and autoscroll pointer.
+- Review contrast and accessible semantics of buttons, rows, menus, fields and dialogs through AccessKit/GPUI.
 
-### 6. Integraciones de plataforma
+### 6. Platform integrations
 
-- Mantener `rfd` para selección de archivos y carpetas.
-- Mantener `clipboard-win` y su implementación CF_HDROP para copiar/cortar/pegar archivos en Windows.
-- Mantener `arca-drag` para drag-out en Windows y preservar su manejo de liberación/cancelación.
-- Mantener drop de archivos hacia la ventana en las plataformas donde GPUI lo exponga; adaptar solo el puente de eventos.
-- Mantener apertura mediante la aplicación del sistema y el comportamiento de archivos temporales.
-- Si una capacidad de GPUI no tiene equivalente directo, encapsular únicamente ese puente en un módulo de plataforma; no contaminar el estado de negocio con APIs GPUI.
+- Keep `rfd` for file and folder selection.
+- Keep `clipboard-win` and its CF_HDROP implementation for copying/cutting/pasting files on Windows.
+- Keep `arca-drag` for drag-out on Windows and preserve its release/cancel handling.
+- Keep dropping files onto the window on the platforms where GPUI exposes it; only adapt the event bridge.
+- Keep opening files with the system application and the temporary-file behaviour.
+- If a GPUI capability has no direct equivalent, wrap only that bridge in a platform module; do not pollute business state with GPUI APIs.
 
-### 7. Rediseño visual posterior con GPUI Kit
+### 7. Visual redesign with GPUI Kit
 
-Después de alcanzar la paridad funcional, validar accesibilidad y completar la matriz de plataforma, hacer un rediseño visual completo de la superficie GPUI usando [GPUI Kit](https://gpui-kit.com/apps/) como referencia de componentes y dirección visual.
+After reaching functional parity, validating accessibility and completing the platform matrix, do a full visual redesign of the GPUI surface using [GPUI Kit](https://gpui-kit.com/apps/) as the reference for components and visual direction.
 
-#### Decisiones tomadas al abrir la fase
+#### Decisions made when the phase opened
 
-- **GPUI Kit pasa a ser dependencia real, no solo referencia.** El pin a un rev de
-  zed se retira: `gpui-component` se construye contra `gpui-pre ^0.3`, y mantener
-  el rev de git dejaba dos copias de GPUI en el grafo, que no enlazan. `arca-gui`
-  depende ahora de `gpui-pre` y `gpui-pre-platform` renombrados a `gpui` y
-  `gpui_platform` en `Cargo.toml`, de modo que ningún `use gpui::...` cambia. La
-  reproducibilidad la da `Cargo.lock`, igual que antes la daba el rev.
-- **Monocromo con tinte de marca.** Seis grises por modo, hue 225 (el azul noche
-  de `brand/BRAND.md`) al 8-12% de saturación, invertidos entre claro y oscuro.
-- **Sin color de acento.** Selección, cursor de teclado y anillo de foco son el
-  color de texto a distinta fuerza, así que el contraste está garantizado por
-  construcción. Los únicos píxeles saturados son `danger` y `warning`, que
-  distinguen "extraído" de "no extraído" y no son decoración.
-- **Radio 4/6 px, fila de 26 px, fuente base 13 px.**
-- Los tokens viven en `arca-gui/src/gpui_theme.rs` y son los de `gpui-component`;
-  Arca no añade una capa de tokens propia.
-- Mantener intactos `AppController`, `AppAction`, workers, formatos de `gui.conf` e integraciones de plataforma.
-- Rediseñar toolbar, navegación, tabla, estados vacíos, progreso, notificaciones, menús y diálogos con un sistema coherente de tokens, espaciado, tipografía, iconos, estados hover/focus/disabled y responsive behavior.
-- Conservar roles AccessKit, foco visible, teclado, contraste y soporte de lector de pantalla; el rediseño no puede degradar la matriz de accesibilidad.
-- Comparar manualmente antes/después en ventanas compactas y normales, con archivos vacíos, listas grandes, errores, progreso y diálogos abiertos.
-- Gestionar esta fase con un modelo especializado en diseño de interfaces y revisión visual, separando decisiones estéticas de cambios de lógica.
+- **GPUI Kit becomes a real dependency, not just a reference.** The pin to a zed
+  rev is dropped: `gpui-component` builds against `gpui-pre ^0.3`, and keeping
+  the git rev left two copies of GPUI in the graph, which do not link.
+  `arca-gui` now depends on `gpui-pre` and `gpui-pre-platform`, renamed to
+  `gpui` and `gpui_platform` in `Cargo.toml`, so no `use gpui::...` changes.
+  Reproducibility comes from `Cargo.lock`, as it came from the rev before.
+- **Monochrome with a brand tint.** Six greys per mode, hue 225 (the night blue
+  of `brand/BRAND.md`) at 8-12% saturation, inverted between light and dark.
+- **No accent colour.** Selection, keyboard cursor and focus ring are the text
+  colour at different strengths, so contrast is guaranteed by construction. The
+  only saturated pixels are `danger` and `warning`, which tell "extracted" from
+  "not extracted" and are not decoration.
+- **4/6 px radius, 26 px row, 13 px base font.**
+- The tokens live in `arca-gui/src/gpui_theme.rs` and are `gpui-component`'s;
+  Arca adds no token layer of its own.
+- Keep `AppController`, `AppAction`, the workers, the `gui.conf` format and the platform integrations intact.
+- Redesign toolbar, navigation, table, empty states, progress, notifications, menus and dialogs with a coherent system of tokens, spacing, typography, icons, hover/focus/disabled states and responsive behaviour.
+- Keep AccessKit roles, visible focus, keyboard, contrast and screen reader support; the redesign must not degrade the accessibility matrix.
+- Compare before/after manually in compact and normal windows, with empty archives, large lists, errors, progress and open dialogs.
+- Run this phase with a model specialized in interface design and visual review, keeping aesthetic decisions separate from logic changes.
 
-#### Estado
+#### Status
 
-- **G7.1 hecho** — dependencia GPUI Kit, `gpui_theme.rs` monocromo claro/oscuro/
-  sistema, y los 67 colores incrustados de `gpui_shell.rs` sustituidos por
-  tokens. `cargo test --workspace` y `cargo test -p arca-gui`
-  en verde.
-- **G7.2 hecho** — layout. La referencia es **Nohrs** (mismo problema: un
-  explorador de ficheros) con la densidad de **DBFlux**. La ventana deja de ser
-  una pila de tiras flotando en padding y pasa a ser regiones a sangre separadas
-  por líneas de 1 px:
+- **G7.1 done**: GPUI Kit dependency, monochrome light/dark/system
+  `gpui_theme.rs`, and the 67 hardcoded colours in `gpui_shell.rs` replaced
+  with tokens. `cargo test --workspace` and `cargo test -p arca-gui` green.
+- **G7.2 done**: layout. The reference is **Nohrs** (same problem: a file
+  explorer) with the density of **DBFlux**. The window stops being a stack of
+  strips floating in padding and becomes full-bleed regions separated by 1 px
+  lines:
 
   ```text
-  ┌─ barra de acciones (40 px) ────────────────── [filtrar] ─┐
-  ├─ ← → ↑ │ ruta (34 px) ─────────────────────────────────┤
-  │ carpetas   │  tabla a sangre                            │
+  ┌─ action bar (40 px) ───────────────────────── [filter] ─┐
+  ├─ ← → ↑ │ path (34 px) ──────────────────────────────────┤
+  │ folders    │  full-bleed table                          │
   │ (224 px)   │                                            │
-  ├────────────┴─────────────────────────────────────────┤
-  │ resumen del archivo            N visibles │ M elegidos │
-  └───────────────────────────────────────────────────┘
+  ├────────────┴────────────────────────────────────────────┤
+  │ archive summary                N visible │ M selected   │
+  └─────────────────────────────────────────────────────────┘
   ```
 
-  - **Barra lateral con el árbol de carpetas del archivo**
-    (`gpui_component::sidebar`). Es contenido nuevo, no cromo: antes un archivo
-    profundo solo se recorría descendiendo a doble clic y volviendo atrás. La
-    rama de la carpeta actual se abre sola; el resto queda cerrado. El árbol se
-    cachea por (ruta del archivo, número de entradas).
-  - **Barra de estado** (`gpui_component::status_bar`) soldada abajo, con el
-    resumen a la izquierda y los contadores a la derecha, que antes vivían en
-    medio de la fila de navegación.
-  - **Botones sin borde**, con el fondo apareciendo solo bajo el puntero. Una
-    fila de siete cajas con contorno se leía como siete cosas compitiendo.
-  - **Flechas con icono** (`IconName`, vía `gpui-kit-assets`) en vez de ‹ › ↑.
-  - **Menús flotantes**: overflow y carpetas ocultas eran `absolute`, antes se
-    dibujaban en el flujo y empujaban media ventana hacia abajo.
-  - **Tabla a sangre**, sin borde ni radio propios, con cabecera fijada y
-    franjas alternas.
-- **G7.3 hecho** — los widgets internos son los de `gpui-component`: `Input`,
-  `Button`, `Dialog` sobre `Root`, menús anclados al disparador, `Table`,
-  `Progress`, `Kbd`, `Radio`, `Tree` y la barra de desplazamiento del kit. El
-  detalle por fases está en `docs/todos/migracion-gpui-kit.md`.
-- **G7.4 hecho** — el diálogo de configuración existe en la superficie GPUI:
-  idioma y tema en radios, y formato, compresor, nivel y página de códigos en
-  menús.
+  - **Sidebar with the archive's folder tree**
+    (`gpui_component::sidebar`). It is new content, not chrome: before, a deep
+    archive could only be walked by double-clicking down and going back. The
+    branch of the current folder opens on its own; the rest stays closed. The
+    tree is cached by (archive path, number of entries).
+  - **Status bar** (`gpui_component::status_bar`) welded to the bottom, with
+    the summary on the left and the counters on the right, which used to sit
+    in the middle of the navigation row.
+  - **Borderless buttons**, with the background appearing only under the
+    pointer. A row of seven outlined boxes read as seven things competing.
+  - **Icon arrows** (`IconName`, via `gpui-kit-assets`) instead of ‹ › ↑.
+  - **Floating menus**: overflow and hidden folders were `absolute`; before,
+    they were drawn in the flow and pushed half the window down.
+  - **Full-bleed table**, with no border or radius of its own, a pinned header
+    and alternating stripes.
+- **G7.3 done**: the internal widgets are `gpui-component`'s: `Input`,
+  `Button`, `Dialog` on `Root`, menus anchored to their trigger, `Table`,
+  `Progress`, `Kbd`, `Radio`, `Tree` and the kit's scrollbar. The per-phase
+  detail is in git history (`docs/todos/migracion-gpui-kit.md`, deleted when
+  the migration finished).
+- **G7.4 done**: the settings dialog exists on the GPUI surface: language and
+  theme as radios, and format, compressor, level and code page as menus.
 
-### 8. Retirada del backend anterior
+### 8. Retiring the previous backend
 
-Cuando la vista GPUI alcance la matriz de paridad:
+When the GPUI view reaches the parity matrix:
 
-- Mantener únicamente GPUI y GPUI Kit en `Cargo.toml` y regenerar `Cargo.lock`.
-- Retirar imports y tipos del toolkit anterior de los módulos de interfaz.
-- Eliminar el adaptador y los tests que dependan de coordenadas del backend anterior; conservar sus invariantes como pruebas del nuevo modelo.
-- Revisar comentarios para documentar GPUI o el comportamiento de Arca, no la implementación anterior.
-- Actualizar README y cualquier documentación de build con la nueva dependencia, MSRV y requisitos de plataforma.
+- Keep only GPUI and GPUI Kit in `Cargo.toml` and regenerate `Cargo.lock`.
+- Remove imports and types of the previous toolkit from the interface modules.
+- Delete the adapter and the tests that depend on the previous backend's coordinates; keep their invariants as tests of the new model.
+- Review comments so they document GPUI or Arca's behaviour, not the previous implementation.
+- Update the README and any build documentation with the new dependency, MSRV and platform requirements.
 
-## Criterios de aceptación
+## Acceptance criteria
 
-- `cargo test --workspace` pasa sin regresiones.
-- `cargo build --release` pasa en las plataformas soportadas y la build Windows conserva icono, clipboard y drag-out.
-- La UI arranca con y sin archivo, y también en los modos `--extract-here`, `--extract-to-folder`, `--test`, `--add` y `--add-quick`.
-- Se conserva la paridad de ZIP, TAR, TAR.GZ, cifrado AES-256, extracción, compresión, test, borrado y adición.
-- Se conserva la matriz de interacción: teclado, ratón, doble clic, selección múltiple, cursor, filtro, ordenación, redimensionado, rueda/autoscroll, menús y Escape.
-- Se conserva la configuración existente de idioma, tema y columnas sin cambiar el formato `gui.conf`.
-- Se validan lectores de pantalla y foco de teclado en Windows.
-- Se comprueba que ninguna operación pesada se ejecuta en el hilo de UI y que el progreso sigue actualizándose durante compresión/extracción.
-- Se realiza una comparación visual manual de toolbar, tabla, diálogos, temas y estados vacíos contra la línea base, aceptando solo diferencias propias de GPUI que no alteren jerarquía ni legibilidad.
+- `cargo test --workspace` passes without regressions.
+- `cargo build --release` passes on the supported platforms, and the Windows build keeps the icon, clipboard and drag-out.
+- The UI starts with and without an archive, and also in the `--extract-here`, `--extract-to-folder`, `--test`, `--add` and `--add-quick` modes.
+- Parity is kept for ZIP, TAR, TAR.GZ, AES-256 encryption, extraction, compression, test, delete and add.
+- The interaction matrix is kept: keyboard, mouse, double click, multiple selection, cursor, filter, sorting, resizing, wheel/autoscroll, menus and Escape.
+- The existing language, theme and column settings are kept without changing the `gui.conf` format.
+- Screen readers and keyboard focus are validated on Windows.
+- It is checked that no heavy operation runs on the UI thread and that progress keeps updating during compression/extraction.
+- A manual visual comparison of toolbar, table, dialogs, themes and empty states is made against the baseline, accepting only GPUI-specific differences that do not alter hierarchy or legibility.
 
-## Supuestos fijados
+## Fixed assumptions
 
-- El alcance es todo `arca-gui`, no una migración de los crates de compresión.
-- Se busca paridad completa, no un prototipo ni una reducción temporal de funciones.
-- La transición será incremental, pero GPUI será el backend final único.
-- GPUI se fijará a un commit/tag reproducible del repositorio de Zed; la selección exacta se hará en el spike de compilación y quedará registrada en `Cargo.toml`/`Cargo.lock`.
-- Se reutilizarán dependencias existentes (`rfd`, `clipboard-win`, `arca-drag`) y no se añadirá una librería de tabla o iconos salvo que el spike demuestre que GPUI no puede cubrir una capacidad imprescindible.
-- No se migrará la lógica de archivos ni se introducirán abstracciones de negocio nuevas: solo se separará el estado mínimo necesario para que la vista no dependa del toolkit.
+- The scope is all of `arca-gui`, not a migration of the compression crates.
+- The goal is full parity, not a prototype or a temporary reduction in features.
+- The transition is incremental, but GPUI will be the single final backend.
+- GPUI will be pinned to a reproducible commit/tag of the Zed repository; the exact choice will be made in the build spike and recorded in `Cargo.toml`/`Cargo.lock`.
+- Existing dependencies (`rfd`, `clipboard-win`, `arca-drag`) will be reused, and no table or icon library will be added unless the spike shows GPUI cannot cover an essential capability.
+- The archive logic will not be migrated and no new business abstractions will be introduced: only the minimum state needed for the view not to depend on the toolkit will be separated.

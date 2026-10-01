@@ -1,0 +1,84 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "brand/**"
+      - "docs/guide/**"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - "brand/**"
+      - "docs/guide/**"
+      - ".github/workflows/pages.yml"
+  # A release made with GITHUB_TOKEN does not fire `release` events in other
+  # workflows, so the site follows the Release workflow instead.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      # Version and download sizes come from the latest published release.
+      # Without one, the site falls back to the Cargo.toml version.
+      - name: Latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts \
+            --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
+          if [ -z "$latest" ]; then
+            echo "::notice::No published release; using the Cargo.toml version."
+            exit 0
+          fi
+          out="$RUNNER_TEMP/release.json"
+          gh release view -R "$GITHUB_REPOSITORY" \
+            --json tagName,assets > "$out"
+          echo "ARCA_RELEASE_JSON=$out" >> "$GITHUB_ENV"
+      - run: npx tsc --noEmit -p .
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

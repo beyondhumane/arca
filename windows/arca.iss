@@ -24,7 +24,7 @@
 
 #define AppName "Arca"
 #define Publisher "Arca Project"
-#define Url "https://github.com/THIONG/arca"
+#define Url "https://github.com/beyondhumane/arca"
 ; Must match CLSID_ARCA_CLASSIC in arca-shell/src/lib.rs.
 #define ClassicClsid "{{B528A7F3-C889-4C98-B052-5D7F7F778E14}"
 

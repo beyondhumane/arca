@@ -1,74 +1,76 @@
 # G0/G1 GPUI spike baseline
 
-Estado: spike aislado; `arca-gui` ya usa GPUI y GPUI Kit.
+Status: isolated spike; `arca-gui` already uses GPUI and GPUI Kit.
 
-## G0 congelado
+## G0 frozen
 
-- Pin de G1: `zed-industries/zed@3384317a9931a21bb5ad8706f0f9d82cb02a71ec`.
-  **Superado en G7**: `arca-gui` ya no depende de ese rev, sino de las cajas
-  publicadas de GPUI Kit (`gpui-pre` / `gpui-pre-platform` / `gpui-component`),
-  porque `gpui-component` se construye contra `gpui-pre ^0.3` y mantener el rev
-  de git dejaba dos copias de GPUI en el grafo. `spikes/gpui` conserva el pin
-  original: es el registro de lo que se validó en G1 y no se reescribe.
-- Toolchain objetivo: Rust `1.97.1` (el árbol actual de Arca declara MSRV
-  `1.75`; este spike no cambia ese contrato).
-- Fixture: `spikes/gpui/fixtures/entries-6000.txt`, generado de forma
-  determinista y validado por `cargo test` del spike.
-- Capturas manuales que deben acompañar la ejecución local: `empty-window`,
-  `fixture-6000`, `filter-ime`, `modal-blocking`, `file-drop` y
-  `accessibility-list`. No se inventan capturas en CI; el resultado se anota
-  en esta matriz con la plataforma, backend y fecha.
+- G1 pin: `zed-industries/zed@3384317a9931a21bb5ad8706f0f9d82cb02a71ec`.
+  **Superseded in G7**: `arca-gui` no longer depends on that rev but on the
+  published GPUI Kit crates (`gpui-pre` / `gpui-pre-platform` /
+  `gpui-component`), because `gpui-component` builds against `gpui-pre ^0.3`
+  and keeping the git rev left two copies of GPUI in the graph. `spikes/gpui`
+  keeps the original pin: it is the record of what was validated in G1 and is
+  not rewritten.
+- Target toolchain: Rust `1.97.1` (Arca's current tree declares MSRV `1.75`;
+  this spike does not change that contract).
+- Fixture: `spikes/gpui/fixtures/entries-6000.txt`, generated
+  deterministically and validated by the spike's `cargo test`.
+- Manual screenshots that must accompany the local run: `empty-window`,
+  `fixture-6000`, `filter-ime`, `modal-blocking`, `file-drop` and
+  `accessibility-list`. Screenshots are not faked in CI; the result is noted in
+  this matrix with platform, backend and date.
 
-### Matriz manual
+### Manual matrix
 
-| Caso | Windows | Linux X11/Wayland | macOS | Resultado/fecha |
+| Case | Windows | Linux X11/Wayland | macOS | Result/date |
 | --- | --- | --- | --- | --- |
-| Ventana vacía y cierre | validado manualmente | pendiente | pendiente | ventana visible y cierre disponible en Windows GNU |
-| 6.000 filas virtualizadas | código + test + validación visual | pendiente | pendiente | ventana ejecutada; lista virtualizada visible |
-| Ctrl/Shift, cursor y scroll al cursor | código | pendiente | pendiente | validación manual completa pendiente |
-| Columnas redimensionables | código | pendiente | pendiente | celdas reales y delta relativo; validación manual pendiente |
-| Filtro: selección, IME, foco y Tab | código + tests + foco observado | pendiente | pendiente | campo Filter visible y editable; IME/Tab manual pendiente |
-| Lector de pantalla: filas/campo/modal/progreso | código | pendiente | pendiente | Narrator/NVDA pendiente |
-| Modal bloquea clicks del fondo y Escape | validado manualmente | pendiente | pendiente | modal apareció, ocultó fondo y Escape lo cerró |
-| PNG RGBA cargado | validado manualmente | pendiente | pendiente | icono cargado en ventana Windows |
-| Explorer/file-drop | pendiente | pendiente | pendiente | pendiente de prueba manual |
-| `arca-drag` virtual, cancelación y extracción diferida | pendiente | N/A | N/A | pendiente de prueba manual Windows |
+| Empty window and close | validated manually | pending | pending | window visible and close available on Windows GNU |
+| 6,000 virtualized rows | code + test + visual validation | pending | pending | window run; virtualized list visible |
+| Ctrl/Shift, cursor and scroll to cursor | code | pending | pending | full manual validation pending |
+| Resizable columns | code | pending | pending | real cells and relative delta; manual validation pending |
+| Filter: selection, IME, focus and Tab | code + tests + focus observed | pending | pending | Filter field visible and editable; IME/Tab manual pending |
+| Screen reader: rows/field/modal/progress | code | pending | pending | Narrator/NVDA pending |
+| Modal blocks background clicks and Escape | validated manually | pending | pending | modal appeared, hid background and Escape closed it |
+| RGBA PNG loaded | validated manually | pending | pending | icon loaded in Windows window |
+| Explorer/file-drop | pending | pending | pending | manual test pending |
+| Virtual `arca-drag`, cancellation and deferred extraction | pending | N/A | N/A | Windows manual test pending |
 
-La ejecución disponible en esta máquina queda registrada así:
+The run available on this machine is recorded as follows:
 
-- Windows GNU: el toolchain `1.97.1-x86_64-pc-windows-gnu` está instalado y pasan
+- Windows GNU: the `1.97.1-x86_64-pc-windows-gnu` toolchain is installed and
   `rustup run 1.97.1 cargo check --manifest-path spikes/gpui/Cargo.toml --locked`,
   `rustup run 1.97.1 cargo test --manifest-path spikes/gpui/Cargo.toml --locked`
-  (4 pruebas) y `rustup run 1.97.1 cargo check --workspace --locked`. También
-  pasan `cargo fmt --manifest-path spikes/gpui/Cargo.toml -- --check`, el check
-  de `platform-probes` y la inspección manual de ventana, filtro, lista, icono,
-  modal y Escape.
-- Linux y macOS: no se marcan como compilados; los targets
-  `x86_64-unknown-linux-gnu` y `x86_64-apple-darwin` no están instalados.
-- Arca: `cargo check --workspace` y `cargo test --workspace` pasan. El
-  `cargo fmt --all -- --check` existente falla en archivos de Arca por drift
-  de formato; no se reformatean esos archivos para no tocar la UI productiva.
+  (4 tests) and `rustup run 1.97.1 cargo check --workspace --locked` pass. So
+  do `cargo fmt --manifest-path spikes/gpui/Cargo.toml -- --check`, the
+  `platform-probes` check and the manual inspection of window, filter, list,
+  icon, modal and Escape.
+- Linux and macOS: not marked as compiled; the `x86_64-unknown-linux-gnu` and
+  `x86_64-apple-darwin` targets are not installed.
+- Arca: `cargo check --workspace` and `cargo test --workspace` pass. The
+  existing `cargo fmt --all -- --check` fails on Arca files because of
+  formatting drift; those files are not reformatted so the production UI is
+  left untouched.
 
-No se marca una plataforma como validada sin prueba manual real.
+No platform is marked as validated without a real manual test.
 
-## Defecto de persistencia de `columns` (resuelto)
+## `columns` persistence defect (resolved)
 
-`arca-gui/src/main.rs::Settings::save` escribía `columns = ...` y
-`Settings::load` no leía esa clave, así que los cambios de columnas se perdían
-al reiniciar aunque `gui.conf` conservara la línea. Registrado aquí durante G1
-y **no** corregido entonces a propósito: la UI productiva y el formato
-`gui.conf` no debían cambiar durante el spike.
+`arca-gui/src/main.rs::Settings::save` wrote `columns = ...` and
+`Settings::load` did not read that key, so column changes were lost on restart
+even though `gui.conf` kept the line. It was recorded here during G1 and
+deliberately **not** fixed then: the production UI and the `gui.conf` format
+were not to change during the spike.
 
-`Settings::load` ya lee la clave. El formato de `gui.conf` no cambió.
+`Settings::load` now reads the key. The `gui.conf` format did not change.
 
-## G1 aislado
+## Isolated G1
 
-El binario está en `spikes/gpui`, fuera del workspace. Solo añade `gpui` y
-`gpui_platform` desde el pin anterior; `gpui_platform` usa features por target.
-El binario no importa crates productivos en su camino normal, no toca la
-ventana productiva y no materializa entradas para drag-out. El feature
-`platform-probes` mantiene probes de compilación Windows aislados para `rfd`,
-`clipboard-win` y `arca-drag`; el check realizado demuestra que sus APIs
-públicas compilan juntas, pero no sustituye una prueba interactiva de OLE,
-clipboard o diálogos. Si falla input/IME, AccessKit, file-drop, `arca-drag` o
-el loop de UI, se detiene la migración.
+The binary lives in `spikes/gpui`, outside the workspace. It only adds `gpui`
+and `gpui_platform` from the pin above; `gpui_platform` uses per-target
+features. The binary imports no production crates on its normal path, does not
+touch the production window and does not materialize entries for drag-out. The
+`platform-probes` feature keeps isolated Windows compile probes for `rfd`,
+`clipboard-win` and `arca-drag`; the check performed shows that their public
+APIs compile together, but it does not replace an interactive test of OLE,
+clipboard or dialogs. If input/IME, AccessKit, file-drop, `arca-drag` or the UI
+loop fails, the migration stops.

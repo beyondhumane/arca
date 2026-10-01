@@ -10,3 +10,5 @@ windows/salida/
 /dist
 
 windows/salida-setup/
+site/node_modules/
+site/dist/
