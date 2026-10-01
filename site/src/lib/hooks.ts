@@ -226,6 +226,29 @@ export function useOS(): OS {
   return os;
 }
 
+export type MacArch = 'arm' | 'x86';
+
+type HighEntropyUAData = { getHighEntropyValues?: (hints: string[]) => Promise<{ architecture?: string }> };
+
+export function useMacArch(enabled: boolean): MacArch | null {
+  const [arch, setArch] = useState<MacArch | null>(null);
+  useEffect(() => {
+    const data = (navigator as Navigator & { userAgentData?: HighEntropyUAData }).userAgentData;
+    if (!enabled || !data?.getHighEntropyValues) return;
+    let alive = true;
+    data
+      .getHighEntropyValues(['architecture'])
+      .then(({ architecture }) => {
+        if (alive && (architecture === 'arm' || architecture === 'x86')) setArch(architecture);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [enabled]);
+  return arch;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Text scramble (used for the "decrypt" micro-interaction)           */
 /* ------------------------------------------------------------------ */

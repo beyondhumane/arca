@@ -1,7 +1,7 @@
 import type { ComponentType, SVGProps } from 'react';
 import { Download } from 'lucide-react';
-import { useOS } from '@/lib/hooks';
-import type { OS } from '@/lib/hooks';
+import { useMacArch, useOS } from '@/lib/hooks';
+import type { MacArch, OS } from '@/lib/hooks';
 import { DOWNLOADS } from '@/lib/site';
 import type { DownloadAsset, Platform } from '@/lib/site';
 import { useCopy } from '@/lib/i18n';
@@ -18,16 +18,18 @@ export const PLATFORM_ICONS: Record<Platform, IconType> = {
   linux: LinuxIcon,
 };
 
-export function platformForOS(os: OS): Platform | null {
+export function platformForOS(os: OS, macArch: MacArch | null): Platform | null {
   if (os === 'windows') return 'windows';
-  if (os === 'macos') return 'macos';
+  if (os === 'macos' && macArch === 'arm') return 'macos';
+  if (os === 'macos' && macArch === 'x86') return 'macos-intel';
   if (os === 'linux') return 'linux';
   return null;
 }
 
 export function useRecommendedDownload(): { platform: Platform | null; asset: DownloadAsset | null } {
   const os = useOS();
-  const platform = platformForOS(os);
+  const macArch = useMacArch(os === 'macos');
+  const platform = platformForOS(os, macArch);
   return { platform, asset: platform ? DOWNLOADS[platform] : null };
 }
 
