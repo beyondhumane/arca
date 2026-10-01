@@ -1,5 +1,5 @@
 #!/bin/bash
-# Reproduces the Linux figures in README.md and docs/guide/benchmarks.md.
+# Reproduces the Linux figures in docs/guide/benchmarks.md.
 # Needs hyperfine, zip, unzip and 7zz on PATH, for example:
 #   cargo build --release
 #   nix-shell -p hyperfine zip unzip _7zz --run 'bash bench.sh'
