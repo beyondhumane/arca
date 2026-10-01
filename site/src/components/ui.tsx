@@ -125,10 +125,11 @@ export function CopyButton({
   className?: string;
   label?: string;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const copied = status === 'copied';
   const t = useCopy({
-    en: { copy: 'Copy to clipboard', copied: 'Copied', done: 'Copied to clipboard' },
-    es: { copy: 'Copiar al portapapeles', copied: 'Copiado', done: 'Copiado al portapapeles' },
+    en: { copy: 'Copy to clipboard', copied: 'Copied', done: 'Copied to clipboard', failed: 'Could not copy' },
+    es: { copy: 'Copiar al portapapeles', copied: 'Copiado', done: 'Copiado al portapapeles', failed: 'No se pudo copiar' },
   });
   label ??= t.copy;
   const timer = useRef<number | undefined>(undefined);
@@ -136,6 +137,7 @@ export function CopyButton({
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
   const copy = async () => {
+    let ok = true;
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -147,23 +149,23 @@ export function CopyButton({
       document.body.appendChild(ta);
       ta.select();
       try {
-        document.execCommand('copy');
+        ok = document.execCommand('copy');
       } catch {
-        /* nothing else to try */
+        ok = false;
       }
       document.body.removeChild(ta);
     }
-    setCopied(true);
+    setStatus(ok ? 'copied' : 'failed');
     window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setCopied(false), 1800);
+    timer.current = window.setTimeout(() => setStatus('idle'), 1800);
   };
 
   return (
     <button
       type="button"
       onClick={copy}
-      aria-label={copied ? t.copied : label}
-      title={copied ? t.copied : label}
+      aria-label={copied ? t.copied : status === 'failed' ? t.failed : label}
+      title={copied ? t.copied : status === 'failed' ? t.failed : label}
       className={cn(
         'relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white/[0.07] hover:text-white active:scale-90',
         className,
@@ -182,7 +184,7 @@ export function CopyButton({
         )}
       />
       <span className="sr-only" aria-live="polite">
-        {copied ? t.done : ''}
+        {copied ? t.done : status === 'failed' ? t.failed : ''}
       </span>
     </button>
   );
