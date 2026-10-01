@@ -18,7 +18,7 @@ Arca is a cross-platform archiver written in Rust. The workspace contains:
 - `arca-net`: networking support.
 - `windows/arca-shell`: Windows Explorer integration; it is outside the workspace.
 
-Read `README.md` before making broad changes. Design rationale and project history live in `Claude outputs/CLAUDE.md` and `docs/plans/`.
+Read `README.md` before making broad changes. Design rationale lives in `docs/plans/design-rationale.md`; other plans and project history live in `docs/plans/`.
 
 ## General rules
 
