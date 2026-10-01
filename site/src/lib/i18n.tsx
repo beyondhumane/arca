@@ -4,6 +4,9 @@ import type { ReactNode } from 'react';
 export const LANGS = ['en', 'es'] as const;
 export type Lang = (typeof LANGS)[number];
 
+/** Each language named in itself, so a reader can find theirs whatever is showing. */
+export const LANG_NAMES: Record<Lang, string> = { en: 'English', es: 'Español' };
+
 const KEY = 'arca-lang';
 
 function stored(): Lang | null {

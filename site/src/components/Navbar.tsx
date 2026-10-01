@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FocusEvent as ReactFocusEvent, MouseEvent as ReactMouseEvent } from 'react';
-import { ArrowRight, BookOpen, Languages, Menu, Star, X } from 'lucide-react';
+import type { FocusEvent as ReactFocusEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
+import { ArrowRight, BookOpen, Check, ChevronDown, Languages, Menu, Star, X } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { formatCount, useGitHubStars, useScrolled, useScrollSpy } from '@/lib/hooks';
 import { RELEASE_URL, REPO_URL, VERSION } from '@/lib/site';
-import { useCopy, useLang } from '@/lib/i18n';
+import { LANG_NAMES, LANGS, useCopy, useLang } from '@/lib/i18n';
+import type { Lang } from '@/lib/i18n';
 import { ButtonLink, Logo } from './ui';
 import { GitHubIcon } from './icons';
 
@@ -23,7 +24,7 @@ const COPY = {
     download: 'Download',
     openMenu: 'Open menu',
     closeMenu: 'Close menu',
-    switchTo: 'Ver en español',
+    language: 'Language',
   },
   es: {
     links: ['Funciones', 'Producto', 'Rendimiento', 'Preguntas'],
@@ -37,29 +38,94 @@ const COPY = {
     download: 'Descargar',
     openMenu: 'Abrir menú',
     closeMenu: 'Cerrar menú',
-    switchTo: 'View in English',
+    language: 'Idioma',
   },
 };
 
-function LangToggle({ className }: { className?: string }) {
+function LangMenu({ className }: { className?: string }) {
   const { lang, setLang } = useLang();
   const t = useCopy(COPY);
-  const other = lang === 'en' ? 'es' : 'en';
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const items = () => Array.from(root.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []);
+
+  useEffect(() => {
+    if (!open) return;
+    items().find((b) => b.getAttribute('aria-checked') === 'true')?.focus();
+    const onDown = (e: PointerEvent) => {
+      if (!root.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      root.current?.querySelector<HTMLButtonElement>('[aria-haspopup]')?.focus();
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const onMenuKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const list = items();
+    const i = list.indexOf(document.activeElement as HTMLButtonElement);
+    list[(i + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length]?.focus();
+  };
+
+  const choose = (l: Lang) => {
+    setLang(l);
+    setOpen(false);
+    root.current?.querySelector<HTMLButtonElement>('[aria-haspopup]')?.focus();
+  };
+
   return (
-    <button
-      type="button"
-      onClick={() => setLang(other)}
-      title={t.switchTo}
-      aria-label={t.switchTo}
-      lang={other}
-      className={cn(
-        'h-9 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 font-mono text-[12px] uppercase text-slate-300 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white',
-        className,
-      )}
-    >
-      <Languages className="size-3.5" />
-      {other}
-    </button>
+    <div ref={root} className={cn('relative', className)}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`${t.language}: ${LANG_NAMES[lang]}`}
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex h-9 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 font-mono text-[12px] uppercase text-slate-300 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white"
+      >
+        <Languages className="size-3.5" />
+        {lang}
+        <ChevronDown className={cn('size-3 text-slate-500 transition-transform duration-300', open && 'rotate-180')} />
+      </button>
+      <div
+        role="menu"
+        aria-label={t.language}
+        onKeyDown={onMenuKey}
+        className={cn(
+          'glass-dark absolute right-0 top-full mt-2 min-w-44 origin-top-right rounded-xl p-1.5 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] transition-all duration-200',
+          open ? 'visible scale-100 opacity-100' : 'invisible scale-95 opacity-0',
+        )}
+      >
+        {LANGS.map((l) => (
+          <button
+            key={l}
+            type="button"
+            role="menuitemradio"
+            aria-checked={l === lang}
+            lang={l}
+            tabIndex={open ? 0 : -1}
+            onClick={() => choose(l)}
+            className={cn(
+              'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors focus:outline-none focus-visible:bg-white/[0.07]',
+              l === lang ? 'text-white' : 'text-slate-400 hover:bg-white/[0.06] hover:text-white',
+            )}
+          >
+            <span className="flex-1">{LANG_NAMES[l]}</span>
+            <span className="font-mono text-[11px] uppercase text-slate-500">{l}</span>
+            <Check className={cn('size-3.5 text-brand-300', l !== lang && 'invisible')} />
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -213,7 +279,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
               )}
               <Star className="size-3.5 text-slate-500 transition-all duration-500 group-hover:rotate-[72deg] group-hover:fill-brand-400 group-hover:text-brand-400" />
             </a>
-            <LangToggle className="inline-flex" />
+            <LangMenu />
             <ButtonLink href="#download" size="sm" className="hidden sm:inline-flex">
               {t.download}
             </ButtonLink>
