@@ -179,7 +179,11 @@ function fetchStars(): Promise<number | null> {
         }
         return null;
       })
-      .catch(() => null);
+      .catch(() => null)
+      .then((n) => {
+        if (n === null) starsPromise = null;
+        return n;
+      });
   }
   return starsPromise;
 }
