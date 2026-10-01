@@ -30,12 +30,6 @@ A cross-platform archiver in Rust. ZIP and TAR, Zstandard on every core, AES-256
 | **Interfaces** | `arca` command line, `arca-gui` desktop window, Windows 11 Explorer menu |
 | **Platforms** | Windows, macOS (Apple silicon and Intel), Linux |
 
-<br>
-
-<div align="center">
-<img src="docs/images/features.webp" alt="Arca features" width="900">
-</div>
-
 ## Install
 
 Grab the file for your platform from the **[latest release](https://github.com/beyondhumane/arca/releases/latest)** (Windows installer or portable zip, macOS and Linux tarballs), or build it:
@@ -92,10 +86,6 @@ Measured on one machine and reproducible with `bash bench.sh`. The [benchmarks](
 </td>
 </tr>
 </table>
-
-<div align="center">
-<a href="https://beyondhumane.github.io/arca/#/docs/introduction"><img src="docs/images/docs.webp" alt="The Arca guide on the website" width="900"></a>
-</div>
 
 ## Contributing
 
