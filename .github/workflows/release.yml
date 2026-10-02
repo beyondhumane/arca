@@ -43,7 +43,7 @@ jobs:
             target: aarch64-apple-darwin
             native: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -144,7 +144,7 @@ jobs:
           FILE=$(ls dist/arca-setup-*.exe)
           sha256sum "$FILE" | sed 's#dist/##' >> "dist/$(basename "$FILE").sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: |
@@ -160,7 +160,7 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # If the tag and the workspace version disagree, the Release would go out
       # lying about what it contains.
@@ -171,7 +171,7 @@ jobs:
           echo "tag=$TAG  Cargo.toml=$VERSION"
           test "$TAG" = "$VERSION"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
