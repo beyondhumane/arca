@@ -180,7 +180,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
   ];
 
   return (
-    <header className="fixed inset-x-0 top-0 z-50">
+    <header className="pointer-events-none fixed inset-x-0 top-0 z-50">
       <div
         className={cn(
           'mx-auto max-w-7xl px-3 transition-[padding] duration-500 sm:px-6 lg:px-8',
@@ -190,7 +190,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
         <nav
           aria-label={t.main}
           className={cn(
-            'relative flex h-14 items-center justify-between gap-4 rounded-2xl border pl-3 pr-2 transition-all duration-500 sm:pl-4',
+            'pointer-events-auto relative flex h-14 items-center justify-between gap-4 rounded-2xl border pl-3 pr-2 transition-all duration-500 sm:pl-4',
             solid
               ? 'glass-dark border-white/10 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.7)]'
               : 'border-transparent bg-transparent',
@@ -312,7 +312,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
         <div
           id="mobile-nav"
           className={cn(
-            'glass-dark mt-2 origin-top overflow-hidden rounded-2xl p-2 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] transition-all duration-500 ease-out lg:hidden',
+            'glass-dark pointer-events-auto mt-2 origin-top overflow-hidden rounded-2xl p-2 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] transition-all duration-500 ease-out lg:hidden',
             open ? 'visible translate-y-0 scale-100 opacity-100' : 'invisible -translate-y-2 scale-[0.98] opacity-0',
           )}
         >
@@ -352,7 +352,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
       {open && (
         <div
           aria-hidden="true"
-          className="fixed inset-0 -z-10 bg-ink-950/60 backdrop-blur-sm lg:hidden"
+          className="pointer-events-auto fixed inset-0 -z-10 bg-ink-950/60 backdrop-blur-sm lg:hidden"
           onClick={() => setOpen(false)}
         />
       )}
