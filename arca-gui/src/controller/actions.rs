@@ -57,6 +57,7 @@ pub(crate) enum View {
 
 pub(crate) enum AppAction {
     Open(PathBuf),
+    Refresh,
     Run(Job),
     ExtractTo { only_checked: bool, dest: PathBuf },
     PrepareCompress(Vec<PathBuf>),

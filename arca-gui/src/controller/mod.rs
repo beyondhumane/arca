@@ -41,6 +41,7 @@ impl AppController {
     pub(crate) fn dispatch(&mut self, action: AppAction) {
         match action {
             AppAction::Open(path) => self.open(path),
+            AppAction::Refresh => self.refresh(),
             AppAction::Run(job) => self.run_job(job),
             AppAction::ExtractTo { only_checked, dest } => {
                 self.start_extract_to(only_checked, dest)
@@ -503,7 +504,10 @@ impl AppController {
     // of the fifteen hundred files inside it, and the Explorer pastes a folder
     // rather than a heap of loose files.
     pub(crate) fn cancel_password(&mut self) {
-        let was_job = matches!(self.state.waiting_on_password, Some(Pending::Extract(_)));
+        let was_job = matches!(
+            self.state.waiting_on_password,
+            Some(Pending::Extract(_) | Pending::TestArchive(_))
+        );
         self.state.waiting_on_password = None;
         self.state.password_input.clear();
         // Only a job left the window on the running view with nothing running.
@@ -533,8 +537,7 @@ impl AppController {
             self.state.error = true;
             return;
         }
-        self.open(archive);
-        self.state.archive_password = pw;
+        self.open_with_password(archive, pw);
     }
 
     // Reads the names in the archive again under another code page.
@@ -1226,8 +1229,7 @@ impl AppController {
             if let Some((path, pw, dir)) = self.state.reread_after.take() {
                 let notice = std::mem::take(&mut self.state.notice);
                 self.state.reread_dir = Some(dir);
-                self.open(path);
-                self.state.archive_password = pw;
+                self.open_with_password(path, pw);
                 self.state.notice = notice;
                 self.state.view = View::Browse;
             }
@@ -1518,7 +1520,11 @@ impl AppController {
 
     // The file being looked at, in its own window over the list.
     pub(crate) fn open(&mut self, path: PathBuf) {
-        self.state.archive_password = None;
+        self.open_with_password(path, None);
+    }
+
+    fn open_with_password(&mut self, path: PathBuf, password: Option<String>) {
+        self.state.archive_password = password;
         // Whatever was cut belonged to the listing being replaced, and so did
         // whatever the status bar was saying: the summary of the archive being
         // closed sat there over the one that had just opened.
@@ -1529,6 +1535,13 @@ impl AppController {
         self.state.error = false;
         self.remember(&path);
         self.load_listing(path);
+    }
+
+    fn refresh(&mut self) {
+        if let Some(path) = self.state.archive.clone() {
+            let password = self.state.archive_password.clone();
+            self.open_with_password(path, password);
+        }
     }
 
     fn load_listing(&mut self, path: PathBuf) {

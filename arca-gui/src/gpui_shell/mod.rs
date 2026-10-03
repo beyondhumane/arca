@@ -1925,15 +1925,7 @@ impl GpuiShell {
                     }));
                 }
             }
-            Shortcut::Refresh => {
-                if let Some(path) = archive {
-                    // Rereading must not ask again for the password of an
-                    // archive that has already been unlocked.
-                    let keep = self.controller.state.archive_password.clone();
-                    self.controller.dispatch(AppAction::Open(path));
-                    self.controller.state.archive_password = keep;
-                }
-            }
+            Shortcut::Refresh => self.controller.dispatch(AppAction::Refresh),
             Shortcut::Invert => self.controller.dispatch(AppAction::InvertVisible),
             // Escape backs out of the innermost thing there is to back out of,
             // and while the list is running itself that is the running.

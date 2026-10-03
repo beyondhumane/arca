@@ -18,7 +18,7 @@ fn settle(controller: &mut AppController) {
 }
 
 #[test]
-fn encrypted_header_listing_prompts_then_retries_in_a_worker() {
+fn encrypted_header_listing_prompts_retries_and_refreshes_in_a_worker() {
     let mut controller = AppController::new(Settings::default());
     let archive = fixture("headers.rar");
     controller.load_listing(archive.clone());
@@ -48,10 +48,63 @@ fn encrypted_header_listing_prompts_then_retries_in_a_worker() {
     assert!(controller.state.waiting_on_password.is_none());
     assert!(!controller.state.password_wrong);
     assert!(controller.state.window_title.contains("read-only"));
-    controller.load_listing(archive);
+    controller.dispatch(AppAction::Refresh);
     settle(&mut controller);
     assert!(controller.state.waiting_on_password.is_none());
     assert!(!controller.state.error);
+    assert_eq!(controller.state.archive.as_ref(), Some(&archive));
+    assert_eq!(
+        controller.state.archive_password.as_deref(),
+        Some("arca-test-only")
+    );
+    assert_eq!(
+        controller
+            .state
+            .entries
+            .iter()
+            .filter(|e| !e.is_dir)
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn opening_another_archive_does_not_reuse_the_cached_password() {
+    let mut controller = AppController::new(Settings::default());
+    controller.state.archive = Some(fixture("encrypted.rar"));
+    controller.state.archive_password = Some("arca-test-only".into());
+    controller.dispatch(AppAction::Open(fixture("headers.rar")));
+    settle(&mut controller);
+    assert!(matches!(
+        controller.state.waiting_on_password,
+        Some(Pending::ListArchive(_))
+    ));
+    assert!(controller.state.archive_password.is_none());
+    assert!(controller.state.entries.is_empty());
+}
+
+#[test]
+fn cancelling_standalone_encrypted_test_returns_to_browsing() {
+    let mut controller = AppController::new(Settings::default());
+    controller.dispatch(AppAction::Run(Job::Test {
+        archive: fixture("headers.rar"),
+        only: None,
+        password: None,
+    }));
+    settle(&mut controller);
+    assert!(matches!(
+        controller.state.waiting_on_password,
+        Some(Pending::TestArchive(_))
+    ));
+    assert!(matches!(controller.state.view, View::Running));
+    controller.dispatch(AppAction::SetPasswordInput("unfinished".into()));
+    controller.dispatch(AppAction::CancelPassword);
+    assert!(matches!(controller.state.view, View::Browse));
+    assert!(controller.state.waiting_on_password.is_none());
+    assert!(controller.state.password_input.is_empty());
+    assert!(!controller.state.busy);
+    assert!(controller.state.archive.is_none());
+    assert!(controller.state.archive_password.is_none());
 }
 
 #[test]
