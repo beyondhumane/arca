@@ -6,7 +6,7 @@ export const SEO = {
   en: {
     home: 'Arca · Open-source archiver in safe Rust',
     description:
-      'Arca is an open-source, cross-platform archiver in safe Rust: ZIP and TAR, multi-threaded Zstandard, AES-256 encryption and a native desktop window.',
+      'Arca is an open-source, cross-platform archiver in safe Rust: ZIP, 7z and TAR, multi-threaded Zstandard, AES-256 encryption and a native desktop window.',
     tagline: 'Arca · Pack faster. Unpack safer.',
     docs: 'Arca Docs',
     missing: 'Page not found',
@@ -17,7 +17,7 @@ export const SEO = {
   es: {
     home: 'Arca · Archivador de código abierto en Rust seguro',
     description:
-      'Arca es un archivador de código abierto y multiplataforma en Rust seguro: ZIP y TAR, Zstandard multihilo, cifrado AES-256 y una ventana nativa.',
+      'Arca es un archivador de código abierto y multiplataforma en Rust seguro: ZIP, 7z y TAR, Zstandard multihilo, cifrado AES-256 y una ventana nativa.',
     tagline: 'Arca · Comprime rápido. Extrae seguro.',
     docs: 'Documentación de Arca',
     missing: 'Página no encontrada',

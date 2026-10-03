@@ -31,12 +31,13 @@ Create an archive. The format is taken from the extension of the output file.
 
 | Argument / option | Default | Description |
 | --- | --- | --- |
-| `<OUT>` | required | Output archive: .zip, .tar, .tar.gz (or .tgz). |
+| `<OUT>` | required | Output archive: .zip, .7z, .tar, .tar.gz (or .tgz). |
 | `<INPUTS>...` | required | Files or directories to include. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
-| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd. auto uses Deflate in .zip for compatibility. |
-| `-j, --threads <N>` | 0 | Threads to use. 0 means every core. |
-| `-p, --password <PASSWORD>` | — | Encrypt with AES-256. Other tools will ask for it to open the archive. |
+| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto uses Deflate in .zip, LZMA2 in .7z. |
+| `-j, --threads <N>` | 0 | ZIP threads; 0 means every core. 7z creation is sequential. |
+| `-p, --password <PASSWORD>` | none | Encrypt with AES-256. Other tools will ask for it to open the archive. |
+| `--hide-names` | off | 7z only: encrypt headers; requires a nonempty password. |
 
 ## list · l
 
@@ -46,6 +47,7 @@ List the contents without extracting them.
 | --- | --- | --- |
 | `<ARCHIVE>` | required | Archive to read. |
 | `-t, --time` | off | Report how long it took (on standard error). |
+| `-p, --password <PASSWORD>` | none | Password for encrypted 7z headers; not needed for visible names. |
 
 ## extract · x
 
@@ -57,7 +59,7 @@ Extract the contents.
 | `-o, --dest <DEST>` | . | Destination directory. |
 | `--on-conflict <POLICY>` | overwrite | overwrite · skip · rename. What to do when the file is already there. |
 | `-j, --threads <N>` | 0 | Threads to use. 0 means every core. Only .zip can go parallel. |
-| `-p, --password <PASSWORD>` | — | Password of an encrypted archive (AES-256 or ZipCrypto). |
+| `-p, --password <PASSWORD>` | none | Password of an encrypted archive (AES-256 or ZipCrypto). |
 
 ## test · t
 
@@ -66,17 +68,19 @@ Check integrity without writing to disk.
 | Argument / option | Default | Description |
 | --- | --- | --- |
 | `<ARCHIVE>` | required | Archive to check. |
-| `-p, --password <PASSWORD>` | — | Password of an encrypted archive (AES-256 or ZipCrypto). |
+| `-p, --password <PASSWORD>` | none | Password of an encrypted archive (AES-256 or ZipCrypto). |
 
 ## password
 
 Rewrite a `.zip` with a different password, or with none. Entries aren’t compressed again, because WinZip AES encrypts the already-compressed bytes.
 
+7z password changes and archive mutation are unsupported. See [Creating archives](creating-archives.md#7z) for codec restrictions and empty-only encryption.
+
 | Argument / option | Default | Description |
 | --- | --- | --- |
 | `<ARCHIVE>` | required | Archive to rewrite (.zip). |
-| `-p, --password <PASSWORD>` | — | Current password, if the archive has one. |
-| `--new <NEW>` | — | New password. Leave it out to remove the encryption. |
+| `-p, --password <PASSWORD>` | none | Current password, if the archive has one. |
+| `--new <NEW>` | none | New password. Leave it out to remove the encryption. |
 | `-o, --out <PATH>` | in place | Write here instead of replacing the archive in place. |
 
 ## bench
@@ -92,4 +96,5 @@ Measure the R1 and R2 performance requirements against an archive.
 | Status | Meaning |
 | --- | --- |
 | `0` | Success. |
-| `1` | Any error. The message is printed to standard error as `arca: <message>`. |
+| `1` | Archive/I/O error, including wrong password or corrupted encrypted data. Printed to standard error as `arca: <message>`. |
+| `2` | Invalid command-line syntax/options, reported by the argument parser. |

@@ -8,15 +8,16 @@ keywords: create compress level codec zstd deflate store threads tar gzip -l -c 
 # Creating archives
 
 ```text
-arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD]
+arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [--hide-names]
 ```
 
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
 | `-l, --level` | store · fast · normal · best | normal | Compression level. |
-| `-c, --codec` | auto · store · deflate · zstd | auto | Compressor. auto uses Deflate in .zip for compatibility. |
-| `-j, --threads` | a number | 0 | Threads to use. 0 means every core. |
-| `-p, --password` | text | — | Encrypt with AES-256. .zip only. |
+| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate in .zip, LZMA2 in .7z. |
+| `-j, --threads` | a number | 0 | ZIP thread limit. 0 means every core; 7z is sequential. |
+| `-p, --password` | text | none | Encrypt ZIP or 7z with AES-256. |
+| `--hide-names` | flag | off | Encrypt 7z headers too; requires a nonempty password. |
 
 ## Levels
 
@@ -51,6 +52,28 @@ arca create copy.zip my-files/ -j 0    # every core (the default)
 
 Scaling measured 1.79× on two threads, 90% efficiency, against a design requirement (R3) of at least 1.6×. See [benchmarks](benchmarks.md) for the command.
 
+## 7z
+
+```sh
+arca create copy.7z my-files/ -l normal
+arca create stored.7z my-files/ -c store
+arca create secret.7z my-files/ -c lzma2 -p "a password" --hide-names
+```
+
+The levels `store`, `fast`, `normal` and `best` select Copy or LZMA2 levels 1, 6
+and 9. `-c store` overrides the level. Only `auto`, `store` and `lzma2` are
+accepted for 7z; explicit Deflate/Zstandard codec selection applies to ZIP,
+not 7z. TAR ignores those codec choices and `.tar.gz` always uses gzip;
+`lzma2` is rejected outside 7z.
+Creation is sequential regardless of `-j`, with one independent block per file,
+not solid compression. Reading existing solid archives is supported.
+
+7z includes empty files and directories and rejects symlink/reparse-point and
+special-file inputs rather than following them. Creation writes a temporary
+archive beside the output and replaces it only on success; failure preserves an
+existing output. The output's parent must exist. If all inputs are empty, 7z
+encryption requires `--hide-names` so the password can actually be checked.
+
 ## TAR and gzip
 
 ```sh
@@ -65,7 +88,7 @@ The gzip layer honours the chosen level. TAR has nowhere to put encryption, so `
 - Directories are walked recursively in sorted order, so the same input always produces the same entry order.
 - Paths are stored relative to the parent of each input: `arca create a.zip ~/work/site` stores entries as `site/…`.
 - Modification times are preserved.
-- Only regular files are added. Symbolic links are skipped for now (see the [roadmap](roadmap.md)).
+- ZIP/TAR add regular files and skip symbolic links. 7z also preserves empty directories and rejects symbolic links (see above).
 
 ## Encrypting while you create
 

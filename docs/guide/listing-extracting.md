@@ -10,7 +10,7 @@ keywords: list extract unpack parallel conflict overwrite skip rename zip slip -
 ## Listing
 
 ```text
-arca list <ARCHIVE> [-t | --time]
+arca list <ARCHIVE> [-t | --time] [-p PASSWORD]
 ```
 
 Prints one line per entry (uncompressed size, method, ratio and name) without extracting anything.
@@ -38,7 +38,7 @@ arca extract <ARCHIVE> [-o DIR] [--on-conflict POLICY] [-j THREADS] [-p PASSWORD
 | `-o, --dest` | `.` | Destination directory. Created if it doesn’t exist. |
 | `--on-conflict` | overwrite | What to do when a file already exists: overwrite, skip or rename. |
 | `-j, --threads` | 0 | Threads to use. 0 means every core. Only .zip can go parallel. |
-| `-p, --password` | — | Password of an encrypted archive (AES-256 or ZipCrypto). |
+| `-p, --password` | none | Password of an encrypted archive (AES-256 or ZipCrypto). |
 
 ### Conflicts
 
@@ -48,7 +48,7 @@ arca extract <ARCHIVE> [-o DIR] [--on-conflict POLICY] [-j THREADS] [-p PASSWORD
 | `skip` | Leave the existing file alone and move on. |
 | `rename` | Write it next to the other one as name (1).ext. |
 
-Destinations are decided up front, on a single thread, before anything is written, so two entries with the same name can never race for the same free name.
+ZIP destinations are decided up front on one thread. 7z resolves conflicts sequentially while processing blocks; duplicate names cannot race for the same free name.
 
 ## Parallel extraction
 
@@ -64,6 +64,32 @@ A `.zip` is random access: the central directory says where every entry starts, 
 > **Many small files**
 >
 > Splitting changes nothing when there are thousands of tiny files: extracting 5,358 source files took 4.5 s, but decompressing those same 55 MB took 0.128 s. 97% of the time goes into creating files on NTFS, and 7-Zip took 4.6 s on the same files.
+
+## 7z, passwords and solid blocks
+
+```sh
+arca list secret.7z -p "a password"
+arca test secret.7z -p "a password"
+arca extract secret.7z -o restored/ -p "a password" --on-conflict rename
+```
+
+Plain and clear-header encrypted 7z archives can be listed without a password.
+Hidden headers require one even to list. Listing does not validate file contents;
+use `test` for that. In a solid block, only the first member reports the packed
+size, so per-file ratios are not independent compression measurements.
+
+7z extraction is sequential, including selected entries in the desktop window.
+Skipped solid data still has to be decoded. For any encrypted 7z, Arca validates
+all contents before any destination directory/file creation or replacement, then
+extracts selected contents in a second pass. A wrong password or failed encrypted
+checksum leaves the destination untouched. CRC is not authentication: the error
+can also mean corruption, and the source must stay unchanged between passes.
+
+Existing destination symlinks and reparse points are refused, and replacements
+are staged rather than truncating existing hard links. This does not eliminate
+concurrent filesystem replacement races. Plain extraction can fail after earlier
+entries have been written; there is no whole-directory rollback. See
+[Architecture](architecture.md#7z-boundaries) for resource and codec limits.
 
 ## Safe paths
 

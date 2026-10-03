@@ -7,15 +7,20 @@ keywords: interop compatibility 7-zip unzip tar winrar nanazip sha-256
 
 # Interoperability
 
-An archiver is only useful if other tools can open what it writes. `interop.sh` checks 35 cases, verifying the SHA-256 of the contents every time.
+An archiver is only useful if other tools can open what it writes. `interop.sh`
+round-trips contents and compares hashes; it also checks rejection and cleanup.
+Its final summary reports the count for the selected build and available tools.
 
 ## What interop.sh checks
 
 - What Arca writes is read by `unzip`, `tar` and 7-Zip, at all four levels.
 - What `zip`, `tar` and 7-Zip write is read by Arca without losing a byte.
 - An archive Arca encrypted with AES-256 opens in 7-Zip, and the other way round.
-- Adding and removing the password of an existing archive, Arca’s own or 7-Zip’s.
-- An altered byte is caught by the CRC, or by the HMAC when encrypted.
+- Adding and removing the password of an existing ZIP archive, Arca’s own or 7-Zip’s.
+- An altered ZIP byte is caught by the CRC, or by the AE-2 HMAC when encrypted.
+- 7z Copy/LZMA2 at all levels, passwords and hidden headers in both directions.
+- External solid LZMA/LZMA2 inputs, Unicode names, empty entries and conflict handling.
+- Wrong-password 7z extraction leaves the destination absent or unchanged.
 - An entry with `../../` is rejected instead of writing outside the destination.
 
 ```sh
@@ -28,8 +33,26 @@ Zstandard is ZIP method 93: registered in the specification, but not yet read by
 
 ## Encryption
 
-AES-256 archives use WinZip AE-2, the scheme 7-Zip, WinRAR and NanaZip write. Legacy ZipCrypto archives from other tools open with their password and can be upgraded with `arca password`.
+ZIP AES-256 uses WinZip AE-2. Legacy ZipCrypto archives open with their password
+and can be upgraded with `arca password`. 7z uses AES-256-CBC/SHA-256 with CRC,
+not authenticated encryption; encrypted CRC failure can also mean corruption.
 
 ```sh
 7z t -p"a password" secret.zip        # 7-Zip reads what Arca encrypted
 ```
+
+## Parser regression checks
+
+```sh
+cargo test -p arca-7z
+cargo test -p arca-cli --test sevenz
+cargo test -p arca-7z --test interop -- --ignored
+cargo test -p arca-gui -- --ignored
+```
+
+The ignored tests require `7z`. The automated suites test every truncated prefix
+of representative plain, solid, encrypted and hidden-header fixtures and require
+errors, not panics. They also exercise malformed headers and resource limits.
+This is regression coverage, not a claim that every malicious archive is covered.
+No new 7z performance numbers are claimed. Platform/UI validation must be run
+separately from these shell checks.
