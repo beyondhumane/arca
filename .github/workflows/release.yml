@@ -1,34 +1,99 @@
 name: Release
 
-# Fires on pushing a vX.Y.Z tag. Also by hand, to rehearse the process without
-# publishing anything for real.
+# release-please keeps a release pull request open with the next version and
+# its CHANGELOG.md entry, worked out from the Conventional Commits on main.
+# Merging it tags the commit and creates the release, and the jobs below then
+# build and attach the files. By hand, the build runs as a rehearsal and
+# publishes nothing.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  release-please:
+    name: Release pull request
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      # With GITHUB_TOKEN, CI does not run on the release pull request; a
+      # RELEASE_PLEASE_TOKEN secret (a token with Contents and Pull requests
+      # write) makes it run.
+      - id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+
+  # A tag that disagrees with the workspace version fails here, in seconds,
+  # and not after every platform has spent its build on it. By hand the
+  # rehearsal is named after the workspace version, so `main` or a branch
+  # name with a slash never ends up in a file name.
+  version:
+    name: Version
+    needs: release-please
+    if: >-
+      !cancelled() && (github.event_name == 'workflow_dispatch' ||
+      needs.release-please.outputs.created == 'true')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: version
+        env:
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ -n "$TAG" ]; then
+            echo "tag=${TAG#v}  Cargo.toml=$VERSION"
+            test "${TAG#v}" = "$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
   binaries:
     name: ${{ matrix.name }}
+    needs: version
+    if: ${{ !cancelled() && needs.version.result == 'success' }}
     runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Built on the oldest Ubuntu runner on purpose: a binary asks for the
+          # glibc it was linked against. From 24.04, arca-gui needed glibc
+          # 2.39 and only started on 24.04, Debian 13 or Fedora 40 onwards;
+          # from 22.04 it asks for 2.35, which Debian 12 and Ubuntu 22.04 have.
           - name: linux-x86_64
-            os: ubuntu-latest
+            os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             native: true
+            tests: true
+          - name: linux-arm64
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            native: true
+            tests: true
           - name: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
             native: true
+            tests: true
           # The Intel binary is cross-compiled from the ARM runner. With
           # `macos-13`, the last Intel one left, a job spent 40 minutes waiting
           # for a runner: GitHub is retiring them and there is a queue. The
@@ -42,6 +107,7 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
             native: true
+            tests: true
     steps:
       - uses: actions/checkout@v7
 
@@ -55,7 +121,7 @@ jobs:
       # ventana a GPUI el CI se actualizo y esto no. Resultado: la 0.7.0
       # compilo en Windows y en macOS, fallo en Linux, y no se publico nada.
       - name: Window dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         run: >-
           sudo apt-get update && sudo apt-get install -y
           libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxrandr-dev
@@ -63,18 +129,21 @@ jobs:
           libfontconfig1-dev
 
       # A binary that does not pass the tests does not get published. The tag
-      # can point at a commit CI never saw.
+      # can point at a commit CI never saw. The Intel Mac job skips them: it
+      # runs on the same ARM runner as the arm64 one, so it would compile and
+      # run the very same tests a second time.
       - name: Tests
-        run: cargo test --workspace
+        if: matrix.tests
+        run: cargo test --workspace --locked
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Check the binary starts
         if: matrix.native
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if [ "$RUNNER_OS" = "Windows" ]; then
             BIN="target/${{ matrix.target }}/release/arca.exe"
             test -f "target/${{ matrix.target }}/release/arca-gui.exe"
           else
@@ -88,9 +157,9 @@ jobs:
         shell: bash
         run: |
           set -eu
-          NAME="arca-${{ github.ref_name }}-${{ matrix.name }}"
+          NAME="arca-v$VERSION-${{ matrix.name }}"
           mkdir -p "dist/$NAME"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if [ "$RUNNER_OS" = "Windows" ]; then
             cp "target/${{ matrix.target }}/release/arca.exe" "dist/$NAME/"
             cp "target/${{ matrix.target }}/release/arca-gui.exe" "dist/$NAME/"
           else
@@ -99,7 +168,7 @@ jobs:
           fi
           cp README.md LICENSE "dist/$NAME/"
           cd dist
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if [ "$RUNNER_OS" = "Windows" ]; then
             7z a -tzip "$NAME.zip" "$NAME" > /dev/null
             FILE="$NAME.zip"
           else
@@ -116,15 +185,14 @@ jobs:
       # Only on Windows: a real setup.exe, with its uninstaller in Installed
       # apps. The zip above is just loose binaries and installs no menus.
       - name: Windows installer
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         shell: bash
         run: |
           set -eu
-          VERSION="${GITHUB_REF_NAME#v}"
           # arca-shell is excluded from the workspace, so --manifest-path
           # builds it into its own target directory and not the root one.
           # Pointing the installer at the root target is what broke v0.3.0.
-          cargo build --release --target ${{ matrix.target }} \
+          cargo build --release --locked --target ${{ matrix.target }} \
             --manifest-path windows/arca-shell/Cargo.toml
           DLL="windows/arca-shell/target/${{ matrix.target }}/release/arca_shell.dll"
           test -f "$DLL" || { echo "the shell extension is not at $DLL"; exit 1; }
@@ -156,21 +224,20 @@ jobs:
 
   publish:
     name: Publish the Release
-    needs: binaries
+    needs: [release-please, binaries]
+    if: >-
+      !cancelled() && needs.binaries.result == 'success' &&
+      needs.release-please.outputs.created == 'true'
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      actions: write
+    env:
+      TAG: ${{ needs.release-please.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v7
-
-      # If the tag and the workspace version disagree, the Release would go out
-      # lying about what it contains.
-      - name: The tag must match the workspace version
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          echo "tag=$TAG  Cargo.toml=$VERSION"
-          test "$TAG" = "$VERSION"
-
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
@@ -183,42 +250,139 @@ jobs:
           ls -la publish
           cat publish/SHA256SUMS.txt
 
+      # Signed build provenance, kept by GitHub: anyone can check that a file
+      # came out of this workflow at this commit with `gh attestation verify`.
+      # It is not a code signature, so SmartScreen and Gatekeeper ignore it.
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: publish/*
+
       # With `gh`, which already ships on the runner and uses the workflow's own
       # token: one third-party action fewer in the supply chain of a project
       # that defines itself by not trusting what reaches it.
-      - name: Publish
+      - name: Upload the files
+        run: gh release upload "$TAG" publish/* -R "$GITHUB_REPOSITORY"
+
+      # release-please wrote the CHANGELOG.md entry as the body; the downloads
+      # go under it.
+      - name: Release notes
+        run: |
+          set -eu
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json body --jq .body > notes.md
+          V="${TAG#v}"
+          cat >> notes.md <<END
+
+          ## Downloads
+
+          | Platform | File |
+          | --- | --- |
+          | Windows installer | \`arca-setup-$V-x86_64.exe\` |
+          | Windows portable | \`arca-$TAG-windows-x86_64.zip\` |
+          | macOS, Apple silicon | \`arca-$TAG-macos-arm64.tar.gz\` |
+          | macOS, Intel | \`arca-$TAG-macos-x86_64.tar.gz\` |
+          | Linux x86_64 (glibc 2.35+) | \`arca-$TAG-linux-x86_64.tar.gz\` |
+          | Linux arm64 (glibc 2.35+) | \`arca-$TAG-linux-arm64.tar.gz\` |
+
+          Verify a download with \`sha256sum -c SHA256SUMS.txt --ignore-missing\`
+          (\`shasum -a 256 -c\` on macOS) or \`gh attestation verify <file> -R $GITHUB_REPOSITORY\`.
+
+          ## Unsigned binaries
+
+          Windows SmartScreen asks for confirmation: **More info**, then **Run anyway**.
+          On macOS clear the quarantine flag with \`xattr -d com.apple.quarantine arca arca-gui\`.
+          The Windows 11 context menu needs Developer Mode; the classic one, under
+          **Show more options**, works without it.
+          See the [installation guide](https://arca.beyondhumane.com/docs/installation/).
+          END
+          cat notes.md
+          gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file notes.md
+
+      # A release made with GITHUB_TOKEN fires no events in other workflows,
+      # but a dispatch does: the site picks up the new version and sizes.
+      - name: Update the site
+        run: gh workflow run pages.yml -R "$GITHUB_REPOSITORY" --ref main
+
+  # Package managers, once the files are public. Each channel stays off until
+  # its secret exists, so a fork or a new repository publishes nothing; see
+  # packaging/README.md for what each one needs.
+  packages:
+    name: Package managers
+    needs: [release-please, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.release-please.outputs.tag }}
+      PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+      AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+      GIT_AUTHOR_NAME: github-actions[bot]
+      GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+      GIT_COMMITTER_NAME: github-actions[bot]
+      GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Manifests
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat > notes.md <<'END'
-          ## Binaries
+          set -eu
+          gh release download "$VERSION" -R "$GITHUB_REPOSITORY" -p SHA256SUMS.txt
+          packaging/render.sh "${VERSION#v}" SHA256SUMS.txt out
 
-          Unpack and put `arca` on your PATH. Check the download against
-          `SHA256SUMS.txt`:
+      - name: Homebrew tap
+        if: env.PACKAGES_TOKEN != ''
+        run: |
+          set -eu
+          git clone --depth 1 "https://x-access-token:$PACKAGES_TOKEN@github.com/beyondhumane/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp out/homebrew/arca.rb tap/Formula/arca.rb
+          git -C tap add Formula/arca.rb
+          git -C tap commit -m "arca $VERSION"
+          git -C tap push
 
-          ```sh
-          sha256sum -c SHA256SUMS.txt --ignore-missing
-          ```
+      - name: Scoop bucket
+        if: env.PACKAGES_TOKEN != ''
+        run: |
+          set -eu
+          git clone --depth 1 "https://x-access-token:$PACKAGES_TOKEN@github.com/beyondhumane/scoop-bucket.git" bucket
+          mkdir -p bucket/bucket
+          cp out/scoop/arca.json bucket/bucket/arca.json
+          git -C bucket add bucket/arca.json
+          git -C bucket commit -m "arca $VERSION"
+          git -C bucket push
 
-          ## Windows
+      - name: AUR (arca-bin)
+        if: env.AUR_SSH_KEY != ''
+        run: |
+          set -eu
+          mkdir -p ~/.ssh
+          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes"
+          git clone ssh://aur@aur.archlinux.org/arca-bin.git aur
+          cp out/aur/PKGBUILD out/aur/.SRCINFO aur/
+          git -C aur add PKGBUILD .SRCINFO
+          git -C aur commit -m "arca $VERSION"
+          git -C aur push origin HEAD:master
 
-          Use the installer, `arca-setup-*.exe`. It puts Arca in Installed apps
-          with its own uninstaller, adds both Explorer context menus, the file
-          associations and the PATH entry. The .zip is just the loose binaries
-          and integrates with nothing.
-
-          ## Not signed
-
-          These binaries carry no code signature. Windows will show a
-          SmartScreen warning and macOS a Gatekeeper one; on macOS clear it
-          with `xattr -d com.apple.quarantine arca`. Signing needs a paid
-          certificate and is on the pending list.
-
-          The modern Windows 11 menu also needs Developer Mode, because it is
-          registered as an unsigned sparse MSIX package. Without it the classic
-          menu, under "Show more options", still works.
-          END
-          gh release create "$GITHUB_REF_NAME" \
-            --title "Arca $GITHUB_REF_NAME" \
-            --notes-file notes.md \
-            publish/*
+      # Komac is the tool winget-pkgs maintainers point to. It opens the pull
+      # request from a fork of microsoft/winget-pkgs owned by WINGET_FORK_OWNER;
+      # the first version of the package has to be submitted by hand.
+      - name: WinGet
+        if: env.WINGET_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          KOMAC_FORK_OWNER: ${{ vars.WINGET_FORK_OWNER }}
+        run: |
+          set -eu
+          gh release download -R russellbanks/Komac -p 'komac-*-x86_64-unknown-linux-gnu.tar.gz' -p SHA256SUMS -D komac
+          (cd komac && sha256sum -c --ignore-missing SHA256SUMS && tar xzf komac-*.tar.gz)
+          KOMAC=$(find komac -type f -name komac -perm -u+x | head -1)
+          V="${VERSION#v}"
+          "$KOMAC" update BeyondHumane.Arca --version "$V" --submit \
+            --urls "https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/arca-setup-$V-x86_64.exe"
