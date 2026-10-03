@@ -23,6 +23,7 @@ pub(crate) enum Job {
         // the whole archive and skipping what is not in the set: the entries
         // have to be read in the order they are filed anyway.
         only: Option<HashSet<String>>,
+        password: Option<String>,
     },
     // Rewriting an archive with a different password, or with none.
     Password {
@@ -168,6 +169,7 @@ pub(crate) fn parse_args() -> Startup {
         "--test" if !rest.is_empty() => Startup::Run(Job::Test {
             archive: rest[0].clone(),
             only: None,
+            password: None,
         }),
         "--add" if !rest.is_empty() => Startup::Add(rest),
         "--add-quick" if !rest.is_empty() => Startup::Run(Job::Compress {
@@ -273,6 +275,18 @@ pub(crate) fn run_job_blocking(
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     ask: &dyn Fn(&Path) -> Answer,
 ) -> std::result::Result<String, String> {
+    let mutation = match &job {
+        Job::Password { archive, .. }
+        | Job::Delete { archive, .. }
+        | Job::Rename { archive, .. }
+        | Job::Move { archive, .. }
+        | Job::NewFolder { archive, .. }
+        | Job::Add { archive, .. } => Some(archive),
+        _ => None,
+    };
+    if mutation.is_some_and(|p| detect(p) == Some(Format::Rar)) {
+        return Err(arca_rar::read_only().to_string());
+    }
     match job {
         Job::Extract {
             archives,
@@ -305,12 +319,16 @@ pub(crate) fn run_job_blocking(
                 ],
             ))
         }
-        Job::Test { archive, only } => {
+        Job::Test {
+            archive,
+            only,
+            password,
+        } => {
             if detect(&archive).is_none() {
                 return Err(s.unknown_format.to_string());
             }
-            let (good, bad) =
-                test_archive(&archive, only.as_ref(), notify).map_err(|e| e.to_string())?;
+            let (good, bad) = test_archive(&archive, only.as_ref(), password.as_deref(), notify)
+                .map_err(|e| e.to_string())?;
             if bad.is_empty() {
                 Ok(fill(s.verified_ok, &[("n", &good.to_string())]))
             } else {

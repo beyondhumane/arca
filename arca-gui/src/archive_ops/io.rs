@@ -22,7 +22,11 @@ pub(crate) fn open_source(archive: &Path, format: Format) -> std::io::Result<Box
     })
 }
 
-pub(crate) fn list_entries(archive: &Path) -> arca_core::Result<Vec<Entry>> {
+pub(crate) fn list_entries(
+    archive: &Path,
+    password: Option<&str>,
+    notify: &arca_rar::Progress<'_>,
+) -> arca_core::Result<Vec<Entry>> {
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported(format!(
             "unrecognized extension in '{}'",
@@ -30,8 +34,15 @@ pub(crate) fn list_entries(archive: &Path) -> arca_core::Result<Vec<Entry>> {
         )));
     };
     match format {
+        Format::Rar => {
+            let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
+            if password.is_some() && a.entries().iter().any(|e| e.encrypted) {
+                a.test(password, notify)?;
+            }
+            Ok(a.entries().to_vec())
+        }
         Format::Zip => Ok(ZipArchive::open(File::open(archive)?)?.entries().to_vec()),
-        _ => {
+        Format::Tar | Format::TarGz => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let mut v = Vec::new();
             while let Some(e) = r.next_entry()? {
@@ -45,7 +56,14 @@ pub(crate) fn list_entries(archive: &Path) -> arca_core::Result<Vec<Entry>> {
 
 // Only the central directory is read, which is a few kilobytes at the tail of
 // the file. A .tar has no encryption to look for.
-pub(crate) fn is_encrypted(archive: &Path) -> bool {
+pub(crate) fn is_encrypted(archive: &Path, notify: &arca_rar::Progress<'_>) -> bool {
+    if detect(archive) == Some(Format::Rar) {
+        return match arca_rar::RarArchive::open_with_progress(archive, None, notify) {
+            Ok(a) => a.entries().iter().any(|e| e.encrypted),
+            Err(arca_core::Error::PasswordRequired) => true,
+            Err(_) => false,
+        };
+    }
     if detect(archive) != Some(Format::Zip) {
         return false;
     }
@@ -118,11 +136,15 @@ pub(crate) fn read_entry(
         return Err(arca_core::Error::Unsupported("unknown format".into()));
     };
     match format {
+        Format::Rar => {
+            let a = arca_rar::RarArchive::open(archive, password)?;
+            *out = a.read_entry(index, password)?;
+        }
         Format::Zip => {
             let mut a = ZipArchive::open(File::open(archive)?)?;
             a.extract_to_with(index, out, password)?;
         }
-        _ => {
+        Format::Tar | Format::TarGz => {
             // A tar has no index, so the only way to one entry is through all
             // the ones before it.
             let mut r = TarReader::new(open_source(archive, format)?);
@@ -151,6 +173,22 @@ pub(crate) fn extract_one(
     let room = std::env::temp_dir()
         .join("Arca")
         .join(archive_stem(archive));
+    if detect(archive) == Some(Format::Rar) {
+        let a = arca_rar::RarArchive::open(archive, password)?;
+        let index = usize::try_from(entry.offset)
+            .map_err(|_| arca_core::Error::Format("invalid RAR entry index".into()))?;
+        if a.entries().get(index).is_none_or(|e| e.name != entry.name) {
+            return Err(arca_core::Error::Format(
+                "RAR entry changed since listing".into(),
+            ));
+        }
+        let mut wanted = vec![false; a.entries().len()];
+        wanted[index] = true;
+        a.extract(&room, &wanted, password, &|_, _, _| true, &|_| {
+            arca_rar::Conflict::Overwrite
+        })?;
+        return Ok(room.join(arca_core::safe_name(&entry.name)?));
+    }
     let path = room.join(arca_core::safe_name(&entry.name)?);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -161,11 +199,12 @@ pub(crate) fn extract_one(
     };
     let mut out = BufWriter::with_capacity(BUF, File::create(&path)?);
     match format {
+        Format::Rar => return Err(arca_rar::read_only()),
         Format::Zip => {
             let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
             arca_zip::extract_entry_with(&mut source, entry, &mut out, password)?;
         }
-        _ => {
+        Format::Tar | Format::TarGz => {
             // A tar has no index, so the only way to one entry is through all
             // the ones before it.
             let mut r = TarReader::new(open_source(archive, format)?);
@@ -339,11 +378,21 @@ pub(crate) fn extract(
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported("unknown format".into()));
     };
+    if format == Format::Rar {
+        let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
+        return a.extract(dest, wanted, password, notify, &|path| match ask(path) {
+            Answer::Replace | Answer::ReplaceAll => arca_rar::Conflict::Overwrite,
+            Answer::Skip | Answer::SkipAll => arca_rar::Conflict::Skip,
+            Answer::Rename | Answer::RenameAll => arca_rar::Conflict::Rename,
+            Answer::Cancel => arca_rar::Conflict::Cancel,
+        });
+    }
     fs::create_dir_all(dest)?;
     let mut bytes = 0u64;
     let mut claimed: HashSet<PathBuf> = HashSet::new();
 
     match format {
+        Format::Rar => return Err(arca_rar::read_only()),
         Format::Zip => {
             let a = ZipArchive::open(File::open(archive)?)?;
             let mut jobs: Vec<(Entry, PathBuf)> = Vec::new();
@@ -375,7 +424,7 @@ pub(crate) fn extract(
             bytes = written.iter().sum();
             let _ = notify(total, total, "");
         }
-        _ => {
+        Format::Tar | Format::TarGz => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let total = wanted.len();
             let mut i = 0usize;
@@ -407,6 +456,7 @@ pub(crate) fn extract(
 pub(crate) fn test_archive(
     archive: &Path,
     only: Option<&HashSet<String>>,
+    password: Option<&str>,
     // Told how far along this is, and answers whether to carry on. False is
     // somebody pressing stop.
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
@@ -418,6 +468,11 @@ pub(crate) fn test_archive(
     let mut bad = Vec::new();
 
     match format {
+        Format::Rar => {
+            let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
+            a.test(password, notify)?;
+            good = a.entries().iter().filter(|e| !e.is_dir).count();
+        }
         Format::Zip => {
             let mut a = ZipArchive::open(File::open(archive)?)?;
             let total = a.len();
@@ -429,14 +484,14 @@ pub(crate) fn test_archive(
                 if a.entries()[i].is_dir || only.is_some_and(|set| !set.contains(&name)) {
                     continue;
                 }
-                match a.extract_to(i, std::io::sink()) {
+                match a.extract_to_with(i, std::io::sink(), password) {
                     Ok(_) => good += 1,
                     Err(e) => bad.push(format!("{name}: {e}")),
                 }
             }
             let _ = notify(total, total, "");
         }
-        _ => {
+        Format::Tar | Format::TarGz => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let mut i = 0usize;
             while let Some(e) = r.next_entry()? {
@@ -507,6 +562,9 @@ pub(crate) fn compress(
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     password: Option<&str>,
 ) -> arca_core::Result<(u64, u64)> {
+    if !format.can_write() || detect(out) == Some(Format::Rar) {
+        return Err(arca_rar::read_only());
+    }
     if password.is_some() && format != Format::Zip {
         return Err(arca_core::Error::Unsupported(
             "encryption only exists in .zip".into(),
@@ -517,6 +575,7 @@ pub(crate) fn compress(
     let mut source_bytes = 0u64;
 
     match format {
+        Format::Rar => return Err(arca_rar::read_only()),
         // Cada entrada de un zip se comprime por su cuenta, asi que esto entrega
         // la lista entera y deja que corra en todos los nucleos. Es la misma
         // llamada que hace la linea de ordenes: hay una, no dos.
@@ -545,7 +604,7 @@ pub(crate) fn compress(
             }
             arca_zip::create_zip(out, &sources, 0, password, notify)?;
         }
-        _ => {
+        Format::Tar | Format::TarGz => {
             let raw = BufWriter::with_capacity(BUF, File::create(out)?);
             let sink: Box<dyn Write> = if format == Format::TarGz {
                 Box::new(flate2::write::GzEncoder::new(
