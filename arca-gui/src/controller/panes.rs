@@ -375,6 +375,39 @@ mod tests {
     }
 
     #[test]
+    fn inactive_pane_drag_roots_match_its_selection_without_changing_active_commands() {
+        let mut c = controller();
+        c.select_all_visible();
+        let roots = c.selected_roots();
+        c.go_to("a/b/".into());
+        c.select_all_visible();
+        let active = c.selected_roots();
+        assert_eq!(c.pane_selected_roots(0), roots);
+        assert_eq!(c.selected_roots(), active);
+        assert_eq!(c.state.current_dir, "a/b/");
+        assert!(c.pane_selected_roots(usize::MAX).is_empty());
+        assert!(c.activate_pane(0));
+        assert_eq!(c.selected_roots(), roots);
+    }
+
+    #[test]
+    fn navigating_a_column_with_only_a_cursor_leaves_ancestor_markers_unselected() {
+        let mut c = controller();
+        for (pane, target) in ["a/", "a/b/", "a/b/c/"].into_iter().enumerate() {
+            let cursor = c.pane_rows(pane).iter().position(|row| row.path == target);
+            c.clear_picked();
+            c.set_pane_cursor(pane, cursor);
+            assert!(c.enter_folder_from_pane(pane, target));
+            assert_eq!(c.opened_descendant(pane), Some(target));
+            assert!(c.pane_selected_roots(pane).is_empty());
+        }
+        for pane in 0..3 {
+            c.activate_pane(pane);
+            assert!(c.selected_names().is_empty());
+        }
+    }
+
+    #[test]
     fn history_view_switching_and_flat_mode_preserve_location_and_valid_selection() {
         let mut c = controller();
         c.go_to("a/".into());

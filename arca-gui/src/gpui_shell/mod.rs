@@ -272,6 +272,19 @@ impl RowAction {
         )
     }
 
+    fn destination(self, row: Option<&Row>, directory: &str) -> Option<String> {
+        matches!(self, Self::Paste | Self::NewFolder).then(|| {
+            row.filter(|row| row.is_dir)
+                .map_or(directory, |row| row.path.as_str())
+                .to_string()
+        })
+    }
+
+    fn destination_label(self, label: &str, row: Option<&Row>, directory: &str) -> String {
+        self.destination(row, directory)
+            .map_or_else(|| label.to_string(), |path| format!("{label}: /{path}"))
+    }
+
     /// What it is called, and the keys that do the same thing. A menu that does
     /// not name the shortcut is a menu nobody graduates from.
     fn label(self, s: &'static Strings) -> (&'static str, &'static str) {
@@ -465,6 +478,7 @@ impl GpuiShell {
                     TableEvent::RightClickedRow(Some(row)) => {
                         if let Some(target) = shell.controller.visible_rows().get(*row).cloned() {
                             if !shell.controller.is_checked(&target) {
+                                shell.controller.clear_picked();
                                 shell.controller.dispatch(AppAction::SetChecked {
                                     row: target,
                                     value: true,
@@ -1276,6 +1290,17 @@ impl GpuiShell {
         }
         let rows = self.controller.visible_rows();
         let row = rows.get(index).cloned();
+        if row.as_ref().is_some_and(|row| row.up) && !action.about_the_place() {
+            return;
+        }
+        if let Some(destination) =
+            action.destination(row.as_ref(), &self.controller.state.current_dir)
+        {
+            if destination != self.controller.state.current_dir {
+                self.controller.go_to(destination);
+                self.route_changed(cx);
+            }
+        }
         match action {
             RowAction::Open => {
                 if let Some(row) = row {
@@ -1821,7 +1846,7 @@ impl GpuiShell {
     }
 
     fn clipboard_focus_is_safe(&self, window: &Window, cx: &mut Context<Self>) -> bool {
-        !self.filter.read(cx).focus_handle(cx).is_focused(window) && self.modal_kind().is_none()
+        !self.typing(window, cx) && self.modal_kind().is_none()
     }
 
     fn dispatch_clipboard(&mut self, cut: bool, window: &Window, cx: &mut Context<Self>) {
@@ -3016,7 +3041,7 @@ fn shortcut_for(
             "e" => Some(Shortcut::ExtractAll),
             "t" => Some(Shortcut::Test),
             "i" => Some(Shortcut::Invert),
-            "z" => Some(Shortcut::Undo),
+            "z" if !typing => Some(Shortcut::Undo),
             _ => None,
         };
     }
@@ -3479,10 +3504,45 @@ mod tests {
 
     #[test]
     fn history_shortcuts_yield_to_text_editing() {
+        assert_eq!(shortcut_for(true, false, false, "z", true), None);
         for (key, action) in [("left", Shortcut::Back), ("right", Shortcut::Forward)] {
             assert_eq!(shortcut_for(false, false, true, key, false), Some(action));
             assert_eq!(shortcut_for(false, false, true, key, true), None);
             assert_eq!(shortcut_for(false, false, false, key, false), None);
+        }
+    }
+
+    #[test]
+    fn context_destinations_name_the_clicked_folder_or_containing_directory() {
+        let mut row = crate::up_row("parent/child/");
+        for action in [RowAction::Paste, RowAction::NewFolder] {
+            assert_eq!(
+                action.destination(Some(&row), "parent/child/"),
+                Some("parent/".into())
+            );
+            row.up = false;
+            row.path = "parent/child/".into();
+            assert_eq!(
+                action.destination(Some(&row), "parent/"),
+                Some(row.path.clone())
+            );
+            row.is_dir = false;
+            assert_eq!(
+                action.destination(Some(&row), "parent/"),
+                Some("parent/".into())
+            );
+            assert_eq!(action.destination(None, ""), Some(String::new()));
+            for lang in [super::super::Lang::En, super::super::Lang::Es] {
+                let (label, _) = action.label(super::super::strings(lang));
+                assert_eq!(
+                    action.destination_label(label, None, ""),
+                    format!("{label}: /")
+                );
+            }
+            row = crate::up_row("parent/child/");
+        }
+        for action in [RowAction::Delete, RowAction::Rename, RowAction::Copy] {
+            assert!(action.destination(Some(&row), "parent/child/").is_none());
         }
     }
 

@@ -286,10 +286,20 @@ impl TableDelegate for FileTable {
         // A folder takes what is dropped on it and the entries move there,
         // which is a rewrite of the archive and not a copy out of it. Dropping
         // a folder into itself is not a move, so it is refused.
-        if row.is_dir && self.idle {
+        if row.is_dir && self.idle && self.writable {
             let target = row.path.clone();
+            let external = target.clone();
+            let external_shell = self.shell.clone();
             let shell = self.shell.clone();
             item = item
+                .drag_over::<ExternalPaths>(|style, _, _, cx| style.bg(cx.theme().drop_target))
+                .on_drop(move |paths: &ExternalPaths, window, cx| {
+                    let _ = external_shell.update(cx, |shell, cx| {
+                        shell.controller.go_to(external.clone());
+                        shell.drop_external(paths.paths().to_vec(), window, cx);
+                    });
+                    cx.stop_propagation();
+                })
                 .drag_over::<DraggedRows>(|style, _, _, cx| {
                     style
                         .bg(cx.theme().drop_target)
@@ -304,15 +314,17 @@ impl TableDelegate for FileTable {
                         if !carried.is_empty() && !into_itself {
                             shell.controller.move_into(&carried, &target);
                         }
+                        shell.carrying = false;
                         cx.notify();
                     });
+                    cx.stop_propagation();
                 });
         }
         // GPUI owns the threshold and the gesture's lifetime. Where the drag is
         // going is not decided here: a folder of this archive takes it as a
         // move, and leaving the list hands it to arca-drag's lazy IDataObject,
         // so no archive bytes are extracted merely to begin a drag.
-        if self.idle {
+        if self.idle && !row.up {
             let shell = self.shell.clone();
             let dragged = row.clone();
             item = item.on_drag(DraggedRows, move |_, offset, _, app| {
@@ -356,6 +368,7 @@ impl TableDelegate for FileTable {
         // The shell marks a press that landed past the last row with an index
         // no row has, which is how the menu of the folder gets asked for.
         let empty_space = self.rows.get(row_ix).is_none();
+        let row = self.rows.get(row_ix);
         let writable = self.writable;
         let strings = self.strings;
         let shell = self.shell.clone();
@@ -369,7 +382,7 @@ impl TableDelegate for FileTable {
         for action in offered.into_iter().filter(|action| {
             action.offered()
                 && (!action.writable_only() || writable)
-                && (*action != RowAction::NewFolder || (empty_space && writable))
+                && (!row.is_some_and(|row| row.up) || action.about_the_place())
                 && (*action != RowAction::Rename || writable)
                 && (*action != RowAction::View || is_file)
         }) {
@@ -380,13 +393,14 @@ impl TableDelegate for FileTable {
             }
             drawn = true;
             let (label, keys) = action.label(strings);
+            let label = action.destination_label(label, row, &self.root);
             let icon = row_action_icon(action);
             let shell = shell.clone();
             let item = PopupMenuItem::element(move |_, cx| {
                 // Two children rather than one string with a tab in it:
                 // GPUI lays out text and a tab is nothing at all there.
                 let mut row = div().flex().w_full().gap_4().items_center();
-                row = row.child(div().flex_1().truncate().child(label));
+                row = row.child(div().flex_1().truncate().child(label.clone()));
                 if !keys.is_empty() {
                     row = row.child(
                         div()

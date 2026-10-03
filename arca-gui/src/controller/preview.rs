@@ -440,6 +440,7 @@ mod tests {
                 ("first.txt", b"first\nline".as_slice()),
                 ("second.txt", b"second"),
                 ("empty.txt", b""),
+                ("nested/deep/child.txt", b"child"),
             ] {
                 zip.add_with_password(
                     name,
@@ -672,6 +673,94 @@ mod tests {
         assert!(c.poll_preview());
         assert!(matches!(c.state.preview.status, PreviewStatus::Error(_)));
         assert!(!c.poll_preview());
+    }
+
+    #[test]
+    fn dropping_preview_cancels_the_worker_clock_and_pending_request() {
+        let fixture = Fixture::zip(None);
+        let mut c = fixture.controller();
+        let tx = fake_running(&mut c);
+        c.request_preview(0);
+        let clock = c.state.preview.clock.clone();
+        let generation = c.state.preview.generation;
+        drop(c);
+        assert_ne!(clock.load(Ordering::Relaxed), generation);
+        assert!(tx.send(fake_content(generation)).is_err());
+    }
+
+    #[test]
+    fn refresh_keeps_the_nested_directory_but_rebuilds_selection_and_preview() {
+        let fixture = Fixture::zip(None);
+        let mut c = fixture.controller();
+        c.go_to("nested/deep/".into());
+        c.select_all_visible();
+        c.request_preview(3);
+        settle(&mut c);
+        c.refresh();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while c.state.busy {
+            c.receive();
+            assert!(Instant::now() < deadline, "refresh did not finish");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(c.state.current_dir, "nested/deep/");
+        assert_eq!(c.state.browser.panes.len(), 3);
+        assert!(c.selected_names().is_empty());
+        assert!(c.state.viewing.is_none());
+        assert_eq!(c.state.preview.status, PreviewStatus::Hidden);
+    }
+
+    #[test]
+    fn readonly_mutations_are_rejected_before_starting_a_job_or_cancelling_preview() {
+        for name in ["readonly.rar", "readonly.tar", "readonly.tar.gz"] {
+            let mut c = AppController::new(Settings::default());
+            c.state.preview.status = PreviewStatus::Empty;
+            let archive = PathBuf::from(name);
+            for job in [
+                Job::Password {
+                    archive: archive.clone(),
+                    current: None,
+                    new: None,
+                },
+                Job::Delete {
+                    archive: archive.clone(),
+                    names: vec![],
+                    password: None,
+                },
+                Job::Rename {
+                    archive: archive.clone(),
+                    from: "a".into(),
+                    to: "b".into(),
+                    folder: false,
+                    password: None,
+                },
+                Job::Move {
+                    archive: archive.clone(),
+                    moves: vec![],
+                    password: None,
+                },
+                Job::NewFolder {
+                    archive: archive.clone(),
+                    name: "new/".into(),
+                    password: None,
+                },
+                Job::Add {
+                    archive: archive.clone(),
+                    inputs: vec![],
+                    dir: String::new(),
+                    codec: Codec::Store,
+                    level: Level::Store,
+                    password: None,
+                },
+            ] {
+                c.run_job(job);
+                assert!(c.state.error);
+                assert!(!c.state.busy);
+                assert!(c.state.channel.is_none());
+                assert!(c.state.undo.is_none());
+                assert_eq!(c.state.preview.status, PreviewStatus::Empty);
+            }
+        }
     }
 
     #[test]

@@ -304,7 +304,6 @@ impl GpuiShell {
                                     let _ = flat_owner.update(cx, |this, cx| {
                                         let flat = !this.controller.state.settings.flat;
                                         this.switch_view(false, flat, cx);
-                                        this.controller.dispatch(AppAction::ClearSelection);
                                         cx.notify();
                                     });
                                 }),

@@ -49,13 +49,16 @@ pub(super) fn breadcrumb_indices(count: usize, width: f32) -> (Vec<usize>, Vec<u
 
 impl GpuiShell {
     pub(super) fn sync_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.workspace_width = f32::from(window.viewport_size().width);
+        let width = f32::from(window.viewport_size().width);
+        let resized = self.workspace_width != width;
+        self.workspace_width = width;
         self.workspace_height = f32::from(window.viewport_size().height);
         let mut layout = decide(self.workspace_width, &self.controller.state.settings);
         layout.preview &= self.controller.state.archive.is_some();
-        if self.effective_layout != Some(layout) {
+        if resized || self.effective_layout != Some(layout) {
             if !layout.preview {
                 self.controller.cancel_preview();
+                self.viewer_image = None;
             }
             self.sidebar_state = cx.new(|_| ResizableState::default());
             self.preview_state = cx.new(|_| ResizableState::default());
@@ -101,6 +104,7 @@ impl GpuiShell {
                 .child(
                     resizable_panel()
                         .size(px(width))
+                        .flex_none()
                         .size_range(px(280.)..px(800.))
                         .child(panel),
                 )
@@ -132,6 +136,7 @@ impl GpuiShell {
                     .child(
                         resizable_panel()
                             .size(px(self.controller.state.settings.sidebar))
+                            .flex_none()
                             .size_range(px(SIDEBAR_LEAST)..px(SIDEBAR_MOST))
                             .child(sidebar),
                     )

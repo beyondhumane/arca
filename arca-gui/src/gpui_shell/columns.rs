@@ -108,6 +108,7 @@ impl GpuiShell {
             panels.push(
                 resizable_panel()
                     .size(px(self.pane_surfaces[pane].width))
+                    .flex_none()
                     .size_range(px(220.)..px(560.))
                     .child(content),
             );
@@ -472,17 +473,22 @@ impl GpuiShell {
             );
         }
         if enabled {
-            item = item.on_click(cx.listener(move |this, event, window, cx| {
+            item = item.on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.activate_column(pane, window, cx);
-                this.select_row(index, event, window, cx);
-                if target.is_dir && event.click_count() == 1 && !event.modifiers().modified() {
+                if target.is_dir && event.standard_click() && !event.modifiers().modified() {
+                    this.controller.clear_picked();
+                    this.controller.set_pane_cursor(pane, Some(index));
+                    window.focus(&this.list_focus, cx);
                     this.controller.enter_folder_from_pane(pane, &target.path);
                     this.route_changed(cx);
+                } else {
+                    this.select_row(index, event, window, cx);
                 }
             }));
         }
         let owner = cx.weak_entity();
         let context_row = row.clone();
+        let context_path = self.controller.state.browser.panes[pane].directory.clone();
         let writable = self.controller.state.format == Format::Zip;
         let idle = self.background_idle();
         let menu = move |mut menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
@@ -496,6 +502,7 @@ impl GpuiShell {
                 let owner = owner.clone();
                 let row = context_row.clone();
                 let (label, _) = action.label(s);
+                let label = action.destination_label(label, Some(&row), &context_path);
                 menu = menu.item(PopupMenuItem::new(label).disabled(!idle).on_click(
                     move |_, window, cx| {
                         let _ = owner.update(cx, |this, cx| {
@@ -515,8 +522,8 @@ impl GpuiShell {
         if self.background_idle() {
             let dragged = row.clone();
             let owner = cx.weak_entity();
-            let roots = if active && checked {
-                self.controller.selected_roots()
+            let roots = if checked {
+                self.controller.pane_selected_roots(pane)
             } else {
                 vec![row.path.clone()]
             };

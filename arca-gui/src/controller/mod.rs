@@ -431,6 +431,22 @@ impl AppController {
         }
     }
     pub(crate) fn selected_roots(&self) -> Vec<String> {
+        self.selection_roots(&self.state.current_dir, |index| {
+            self.state.checked.get(index).copied().unwrap_or(false)
+        })
+    }
+
+    pub(crate) fn pane_selected_roots(&self, pane: usize) -> Vec<String> {
+        if pane == self.state.browser.active {
+            return self.selected_roots();
+        }
+        let Some(pane) = self.state.browser.panes.get(pane) else {
+            return Vec::new();
+        };
+        self.selection_roots(&pane.directory, |index| pane.selected.contains(&index))
+    }
+
+    fn selection_roots(&self, directory: &str, checked: impl Fn(usize) -> bool) -> Vec<String> {
         let names: Vec<String> = self
             .state
             .entries
@@ -445,7 +461,7 @@ impl AppController {
         let mut seen: HashSet<String> = HashSet::new();
 
         for (i, full) in names.iter().enumerate() {
-            if !self.state.checked.get(i).copied().unwrap_or(false) {
+            if !checked(i) {
                 continue;
             }
             let trimmed = full.trim_end_matches('/');
@@ -456,7 +472,7 @@ impl AppController {
             while let Some(cut) = trimmed[at..].find('/') {
                 at += cut + 1;
                 let prefix = &trimmed[..at];
-                if !self.state.settings.flat && prefix.len() <= self.state.current_dir.len() {
+                if !self.state.settings.flat && prefix.len() <= directory.len() {
                     continue;
                 }
                 let all = *whole.entry(prefix.to_string()).or_insert_with(|| {
@@ -464,7 +480,7 @@ impl AppController {
                         .iter()
                         .enumerate()
                         .filter(|(_, n)| n.starts_with(prefix))
-                        .all(|(j, _)| self.state.checked.get(j).copied().unwrap_or(false))
+                        .all(|(j, _)| checked(j))
                 });
                 if all {
                     root = prefix.trim_end_matches('/').to_string();
@@ -1550,7 +1566,11 @@ impl AppController {
     }
 
     fn refresh(&mut self) {
+        if self.state.busy {
+            return;
+        }
         if let Some(path) = self.state.archive.clone() {
+            self.state.reread_dir = Some(self.state.current_dir.clone());
             let password = self.state.archive_password.clone();
             self.open_with_password(path, password);
         }
@@ -1575,6 +1595,20 @@ impl AppController {
 
     pub(crate) fn run_job(&mut self, mut job: Job) {
         if self.state.busy {
+            return;
+        }
+        let mutation = match &job {
+            Job::Password { archive, .. }
+            | Job::Delete { archive, .. }
+            | Job::Rename { archive, .. }
+            | Job::Move { archive, .. }
+            | Job::NewFolder { archive, .. }
+            | Job::Add { archive, .. } => Some(archive),
+            _ => None,
+        };
+        if mutation.is_some_and(|archive| detect(archive) != Some(Format::Zip)) {
+            self.state.error = true;
+            self.state.notice = self.s().only_zip_can_change.into();
             return;
         }
         if reread_target(&job, &self.state.current_dir).is_some() {
