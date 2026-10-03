@@ -1,0 +1,27 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "include-component-in-tag": false,
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "arca",
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "fix", "section": "Bug fixes" },
+        { "type": "perf", "section": "Performance" },
+        { "type": "revert", "section": "Reverts" },
+        { "type": "docs", "section": "Documentation" },
+        { "type": "refactor", "section": "Maintenance", "hidden": true },
+        { "type": "build", "section": "Maintenance", "hidden": true },
+        { "type": "ci", "section": "Maintenance", "hidden": true },
+        { "type": "chore", "section": "Maintenance", "hidden": true },
+        { "type": "test", "section": "Maintenance", "hidden": true },
+        { "type": "style", "section": "Maintenance", "hidden": true }
+      ],
+      "extra-files": [
+        { "type": "toml", "path": "Cargo.toml", "jsonpath": "$.workspace.package.version" },
+        { "type": "toml", "path": "Cargo.lock", "jsonpath": "$.package[?(@.name.startsWith('arca-'))].version" }
+      ]
+    }
+  }
+}

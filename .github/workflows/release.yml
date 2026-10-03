@@ -1,10 +1,13 @@
 name: Release
 
-# Fires on pushing a vX.Y.Z tag. Also by hand, to rehearse the process without
-# publishing anything for real.
+# release-please keeps a release pull request open with the next version and
+# its CHANGELOG.md entry, worked out from the Conventional Commits on main.
+# Merging it tags the commit and creates the release, and the jobs below then
+# build and attach the files. By hand, the build runs as a rehearsal and
+# publishes nothing.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -14,12 +17,35 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  release-please:
+    name: Release pull request
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      # With GITHUB_TOKEN, CI does not run on the release pull request; a
+      # RELEASE_PLEASE_TOKEN secret (a token with Contents and Pull requests
+      # write) makes it run.
+      - id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+
   # A tag that disagrees with the workspace version fails here, in seconds,
   # and not after every platform has spent its build on it. By hand the
   # rehearsal is named after the workspace version, so `main` or a branch
   # name with a slash never ends up in a file name.
   version:
     name: Version
+    needs: release-please
+    if: >-
+      !cancelled() && (github.event_name == 'workflow_dispatch' ||
+      needs.release-please.outputs.created == 'true')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -28,17 +54,20 @@ jobs:
         with:
           persist-credentials: false
       - id: version
+        env:
+          TAG: ${{ needs.release-please.outputs.tag }}
         run: |
           VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            echo "tag=${GITHUB_REF_NAME#v}  Cargo.toml=$VERSION"
-            test "${GITHUB_REF_NAME#v}" = "$VERSION"
+          if [ -n "$TAG" ]; then
+            echo "tag=${TAG#v}  Cargo.toml=$VERSION"
+            test "${TAG#v}" = "$VERSION"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
   binaries:
     name: ${{ matrix.name }}
     needs: version
+    if: ${{ !cancelled() && needs.version.result == 'success' }}
     runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -195,21 +224,20 @@ jobs:
 
   publish:
     name: Publish the Release
-    needs: binaries
+    needs: [release-please, binaries]
+    if: >-
+      !cancelled() && needs.binaries.result == 'success' &&
+      needs.release-please.outputs.created == 'true'
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
       id-token: write
       attestations: write
+      actions: write
+    env:
+      TAG: ${{ needs.release-please.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          # The fallback changelog below walks the history back to the
-          # previous tag.
-          fetch-depth: 0
-
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
@@ -229,34 +257,19 @@ jobs:
         with:
           subject-path: publish/*
 
-      # "What's Changed" comes from GitHub's own generator, grouped by the
-      # labels in .github/release.yml. It only sees merged pull requests, so
-      # when a release has none (commits pushed straight to main) the commit
-      # subjects stand in for them. Squash merges end in "(#N)"; if any is in
-      # the range, GitHub's list stands even when `skip-changelog` emptied it.
+      # With `gh`, which already ships on the runner and uses the workflow's own
+      # token: one third-party action fewer in the supply chain of a project
+      # that defines itself by not trusting what reaches it.
+      - name: Upload the files
+        run: gh release upload "$TAG" publish/* -R "$GITHUB_REPOSITORY"
+
+      # release-please wrote the CHANGELOG.md entry as the body; the downloads
+      # go under it.
       - name: Release notes
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          PREV=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
-          ARGS=(-f "tag_name=$GITHUB_REF_NAME")
-          [ -n "$PREV" ] && ARGS+=(-f "previous_tag_name=$PREV")
-          gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-            "${ARGS[@]}" --jq .body > generated.md
-          if git log --format=%s "${PREV:+$PREV..}$GITHUB_REF_NAME" | grep -qE '\(#[0-9]+\)$'; then
-            cat generated.md > notes.md
-          else
-            {
-              echo "## What's Changed"
-              echo
-              git log --no-merges --format='* %s (%h)' "${PREV:+$PREV..}$GITHUB_REF_NAME" \
-                | grep -v '^\* chore(release)' || true
-              echo
-              cat generated.md
-            } > notes.md
-          fi
-          V="${GITHUB_REF_NAME#v}"
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json body --jq .body > notes.md
+          V="${TAG#v}"
           cat >> notes.md <<END
 
           ## Downloads
@@ -264,11 +277,11 @@ jobs:
           | Platform | File |
           | --- | --- |
           | Windows installer | \`arca-setup-$V-x86_64.exe\` |
-          | Windows portable | \`arca-$GITHUB_REF_NAME-windows-x86_64.zip\` |
-          | macOS, Apple silicon | \`arca-$GITHUB_REF_NAME-macos-arm64.tar.gz\` |
-          | macOS, Intel | \`arca-$GITHUB_REF_NAME-macos-x86_64.tar.gz\` |
-          | Linux x86_64 (glibc 2.35+) | \`arca-$GITHUB_REF_NAME-linux-x86_64.tar.gz\` |
-          | Linux arm64 (glibc 2.35+) | \`arca-$GITHUB_REF_NAME-linux-arm64.tar.gz\` |
+          | Windows portable | \`arca-$TAG-windows-x86_64.zip\` |
+          | macOS, Apple silicon | \`arca-$TAG-macos-arm64.tar.gz\` |
+          | macOS, Intel | \`arca-$TAG-macos-x86_64.tar.gz\` |
+          | Linux x86_64 (glibc 2.35+) | \`arca-$TAG-linux-x86_64.tar.gz\` |
+          | Linux arm64 (glibc 2.35+) | \`arca-$TAG-linux-arm64.tar.gz\` |
 
           Verify a download with \`sha256sum -c SHA256SUMS.txt --ignore-missing\`
           (\`shasum -a 256 -c\` on macOS) or \`gh attestation verify <file> -R $GITHUB_REPOSITORY\`.
@@ -282,29 +295,23 @@ jobs:
           See the [installation guide](https://arca.beyondhumane.com/docs/installation/).
           END
           cat notes.md
+          gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file notes.md
 
-      # With `gh`, which already ships on the runner and uses the workflow's own
-      # token: one third-party action fewer in the supply chain of a project
-      # that defines itself by not trusting what reaches it.
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "Arca $GITHUB_REF_NAME" \
-            --notes-file notes.md \
-            --verify-tag \
-            publish/*
+      # A release made with GITHUB_TOKEN fires no events in other workflows,
+      # but a dispatch does: the site picks up the new version and sizes.
+      - name: Update the site
+        run: gh workflow run pages.yml -R "$GITHUB_REPOSITORY" --ref main
 
   # Package managers, once the files are public. Each channel stays off until
   # its secret exists, so a fork or a new repository publishes nothing; see
   # packaging/README.md for what each one needs.
   packages:
     name: Package managers
-    needs: publish
+    needs: [release-please, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ github.ref_name }}
+      VERSION: ${{ needs.release-please.outputs.tag }}
       PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
       AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
       WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
@@ -322,7 +329,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p SHA256SUMS.txt
+          gh release download "$VERSION" -R "$GITHUB_REPOSITORY" -p SHA256SUMS.txt
           packaging/render.sh "${VERSION#v}" SHA256SUMS.txt out
 
       - name: Homebrew tap
