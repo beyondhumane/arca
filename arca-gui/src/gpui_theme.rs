@@ -182,14 +182,15 @@ fn paint(mode: ThemeMode, theme: &mut Theme) {
     theme.table_foot_foreground = hex(p.muted);
     theme.table_even = alpha(p.focus, 0.025);
     theme.table_hover = hex(p.raised);
-    theme.table_active = hex(p.selected);
+    // The kit paints this over the cells, not just behind the row.
+    theme.table_active = alpha(p.focus, 0.12);
     theme.table_active_border = hex(p.focus);
     theme.table_row_border = alpha(p.background, 0.0);
     theme.colors.list = hex(p.background);
     theme.list_head = hex(p.surface);
     theme.list_even = theme.table_even;
     theme.list_hover = theme.table_hover;
-    theme.list_active = theme.table_active;
+    theme.list_active = hex(p.selected);
     theme.list_active_border = theme.table_active_border;
 
     theme.scrollbar = alpha(p.background, 0.0);
@@ -367,12 +368,34 @@ mod tests {
             assert_eq!(theme.tokens.background.color, theme.background);
             assert_eq!(theme.tokens.button_primary.color, hex(BLUE));
             assert_eq!(theme.tokens.button_primary_foreground.color, hex(WHITE));
-            assert_eq!(theme.tokens.table_active.color, hex(p.selected));
-            assert_eq!(theme.tokens.list_active.color, theme.table_active);
+            assert_eq!(theme.tokens.table_active.color, alpha(p.focus, 0.12));
+            assert_eq!(theme.tokens.list_active.color, hex(p.selected));
             assert_eq!(theme.tokens.ring.color, hex(p.focus));
             assert_eq!(theme.tokens.progress_bar.color, hex(p.spark));
             assert_eq!(theme.tokens.danger.color, hex(p.danger));
             assert_eq!(theme.tokens.popover.color, hex(p.surface));
+        }
+    }
+
+    #[test]
+    fn table_selection_overlay_keeps_cells_legible() {
+        let over = |foreground: u32, background: u32, opacity: f32| {
+            [16, 8, 0].into_iter().fold(0, |result, shift| {
+                let front = ((foreground >> shift) & 0xFF) as f32;
+                let back = ((background >> shift) & 0xFF) as f32;
+                result | (((front * opacity + back * (1.0 - opacity)).round() as u32) << shift)
+            })
+        };
+        for (mode, p) in [(ThemeMode::Light, LIGHT), (ThemeMode::Dark, DARK)] {
+            let mut theme = Theme::default();
+            paint(mode, &mut theme);
+            let opacity = theme.tokens.table_active.color.a;
+            assert!(opacity > 0.0 && opacity <= 0.2);
+            let row = over(p.focus, p.background, theme.table_active.a);
+            let selected = over(p.focus, row, opacity);
+            for ink in [p.text, p.muted] {
+                assert!(contrast(over(p.focus, ink, opacity), selected) >= 4.5);
+            }
         }
     }
 }
