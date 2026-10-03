@@ -45,6 +45,26 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
+fn brand_button(id: impl Into<ElementId>) -> Button {
+    Button::new(id)
+        .font_family(gpui_theme::display_font())
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+}
+
+fn heading(label: impl Into<gpui::SharedString>) -> gpui::Div {
+    div()
+        .font_family(gpui_theme::display_font())
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .child(label.into())
+}
+
+fn brand_mark(width: f32) -> gpui::Img {
+    gpui::img("brand/mark.svg")
+        .w(px(width))
+        .h(px(width * 139. / 220.))
+        .flex_none()
+}
+
 /// The ring GPUI paints around whatever the keyboard is on.
 ///
 /// One function rather than seven copies of the same closure, because a focus
@@ -52,8 +72,8 @@ use std::time::Duration;
 /// It reads the tokens once and carries them into the closure, since
 /// `focus_visible` runs without a context.
 fn focus_ring(cx: &App) -> impl FnOnce(gpui::StyleRefinement) -> gpui::StyleRefinement {
-    let (ring, accent) = (cx.theme().ring, cx.theme().accent);
-    move |style: gpui::StyleRefinement| style.border_2().border_color(ring).bg(accent)
+    let ring = cx.theme().ring;
+    move |style: gpui::StyleRefinement| style.border_2().border_color(ring)
 }
 
 /// The room a folder row has inside a sidebar `width` wide, before it has to be
@@ -677,9 +697,18 @@ impl GpuiShell {
             .role(Role::Tree)
             .aria_label(folders)
             .child(
+                heading(folders)
+                    .px_2()
+                    .py_2()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground),
+            )
+            .child(
                 div()
                     .id("archive-folders-scroll")
-                    .size_full()
+                    .w_full()
+                    .flex_1()
+                    .min_h_0()
                     .overflow_x_scrollbar()
                     .child(
                         tree(&self.folders, move |_, entry, selected, _, cx| {
@@ -770,7 +799,7 @@ impl GpuiShell {
                                                 .flex_none()
                                                 .children(chevron.map(|icon| icon.small())),
                                         )
-                                        .child(Icon::new(icon).small())
+                                        .child(Icon::new(icon).small().text_color(cx.theme().link))
                                         // The name is typed over where it is
                                         // read, so the branch does not move
                                         // under the hand mid-rename.
@@ -985,7 +1014,11 @@ impl GpuiShell {
             }
             _ => {}
         }
-        if let Some(return_focus) = self.dialog_return_focus.take() {
+        let return_focus = match self.modal_kind() {
+            Some(kind) => self.modal_text_field(kind, cx),
+            None => self.dialog_return_focus.take(),
+        };
+        if let Some(return_focus) = return_focus {
             window.on_next_frame(move |window, cx| window.focus(&return_focus, cx));
         }
         cx.notify();
@@ -1019,7 +1052,7 @@ impl GpuiShell {
         accessible_name: String,
         enabled: bool,
     ) -> Button {
-        Button::new(id)
+        brand_button(id)
             .label(label)
             .accessibility_label(accessible_name)
             .ghost()
@@ -1041,7 +1074,7 @@ impl GpuiShell {
         accessible_name: String,
         enabled: bool,
     ) -> Button {
-        Button::new(id)
+        brand_button(id)
             .icon(icon.into().size_4())
             .accessibility_label(accessible_name.clone())
             .tooltip(accessible_name)
@@ -1114,6 +1147,7 @@ impl GpuiShell {
     fn modal_text_field(&self, kind: ModalKind, cx: &App) -> Option<FocusHandle> {
         match kind {
             ModalKind::Password => Some(self.password.read(cx).focus_handle(cx).clone()),
+            ModalKind::Add => Some(self.output_name.read(cx).focus_handle(cx).clone()),
             ModalKind::NewFolder | ModalKind::Mask => {
                 Some(self.name_input.read(cx).focus_handle(cx).clone())
             }
@@ -2285,15 +2319,15 @@ impl GpuiShell {
         self.controller.state.settings.widths[slot] = width.max(Settings::least(slot));
     }
 
-    fn kind_icon(kind: Kind) -> (IconName, u32) {
+    fn kind_icon(kind: Kind, cx: &App) -> (IconName, gpui::Hsla) {
         match kind {
-            Kind::Dir => (IconName::Folder, 0xF4B740),
-            Kind::Image => (IconName::GalleryVerticalEnd, 0xC084FC),
-            Kind::Text => (IconName::FileText, 0x60A5FA),
-            Kind::Archive => (IconName::File, 0xFB923C),
-            Kind::Audio => (IconName::File, 0xF472B6),
-            Kind::Video => (IconName::Play, 0xF87171),
-            Kind::Other => (IconName::File, 0x94A3B8),
+            Kind::Dir => (IconName::Folder, cx.theme().link),
+            Kind::Image => (IconName::GalleryVerticalEnd, cx.theme().link),
+            Kind::Text => (IconName::FileText, cx.theme().muted_foreground),
+            Kind::Archive => (IconName::Inbox, cx.theme().progress_bar),
+            Kind::Audio => (IconName::File, cx.theme().muted_foreground),
+            Kind::Video => (IconName::Play, cx.theme().link),
+            Kind::Other => (IconName::File, cx.theme().muted_foreground),
         }
     }
 }
@@ -2700,7 +2734,8 @@ impl Render for GpuiShell {
             IconName::FolderOpen,
             format!("{} (Ctrl+O)", s.open),
             idle,
-        );
+        )
+        .when(!has_archive, |button| button.primary());
         toolbar = toolbar.child(open.on_click(cx.listener(|this, _, _, cx| {
             if this.background_idle() {
                 this.begin_dialog(DialogKind::Open, cx);
@@ -2728,7 +2763,8 @@ impl Render for GpuiShell {
             IconName::PanelBottomOpen,
             format!("{} (Ctrl+E)", s.extract_all),
             can_extract,
-        );
+        )
+        .when(has_archive, |button| button.primary());
         toolbar = toolbar.child(extract_all.on_click(cx.listener(|this, _, _, cx| {
             if !this.background_idle() {
                 return;
@@ -2859,7 +2895,7 @@ impl Render for GpuiShell {
         toolbar = toolbar.child(div().px_1().child(Separator::vertical().h(px(16.))));
 
         let settings_owner = owner.clone();
-        let overflow = Button::new("overflow")
+        let overflow = brand_button("overflow")
             .icon(IconName::Ellipsis)
             .accessibility_label(s.more_word)
             .tooltip(s.more_word)
@@ -3178,7 +3214,7 @@ impl Render for GpuiShell {
                     },
                 )
             });
-        let settings = Button::new("settings")
+        let settings = brand_button("settings")
             .icon(IconName::Settings)
             .accessibility_label(s.settings)
             .tooltip(s.settings)
@@ -3201,7 +3237,7 @@ impl Render for GpuiShell {
                 .size(px(6.))
                 .flex_none()
                 .rounded_full()
-                .bg(cx.theme().accent)
+                .bg(cx.theme().progress_bar)
         } else {
             div().id("update-indicator").size_0()
         };
@@ -3290,7 +3326,7 @@ impl Render for GpuiShell {
                     .collect();
                 let menu_owner = cx.entity().downgrade();
                 nav = nav.child(
-                    Button::new("crumb-more")
+                    brand_button("crumb-more")
                         .label("…")
                         .accessibility_label(s.hidden_folders)
                         .tooltip(s.hidden_folders)
@@ -3322,7 +3358,12 @@ impl Render for GpuiShell {
             }
             let (name, path) = &breadcrumbs[*index];
             if *index + 1 == breadcrumbs.len() {
-                nav = nav.child(div().text_color(cx.theme().foreground).child(name.clone()));
+                nav = nav.child(
+                    div()
+                        .text_color(cx.theme().link)
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child(name.clone()),
+                );
             } else {
                 let path = path.clone();
                 let crumb = Self::button(
@@ -3355,8 +3396,8 @@ impl Render for GpuiShell {
         let toolbar_bar = div()
             .id("toolbar-bar")
             .flex_none()
-            .h(px(40.))
-            .px_2()
+            .h(px(44.))
+            .px_3()
             .flex()
             .items_center()
             .bg(cx.theme().title_bar)
@@ -3366,8 +3407,8 @@ impl Render for GpuiShell {
         let nav_bar = div()
             .id("nav-bar")
             .flex_none()
-            .h(px(34.))
-            .px_2()
+            .h(px(36.))
+            .px_3()
             .flex()
             .items_center()
             .bg(cx.theme().background)
@@ -3416,11 +3457,13 @@ impl Render for GpuiShell {
                 .role(Role::Heading)
                 .flex()
                 .items_center()
+                .gap_2()
+                .min_w_0()
                 .h_full()
                 .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .truncate()
-                .child(self.controller.state.window_title.clone()),
+                .text_color(cx.theme().foreground)
+                .child(brand_mark(22.))
+                .child(heading(self.controller.state.window_title.clone()).truncate()),
         );
 
         // Abierta desde el menu del Explorador para anadir, la ventana existe
@@ -3765,31 +3808,83 @@ impl Render for GpuiShell {
             });
         } else if !has_archive {
             content = content.child({
-                let mut empty = div()
+                div()
                     .id("empty-state")
+                    .when(!self.background_blocked(), |empty| empty.role(Role::Region))
                     .aria_label(if self.controller.state.error {
                         s.cannot_open
                     } else {
                         s.drop_here
                     })
                     .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(if self.controller.state.error {
-                        cx.theme().danger
-                    } else {
-                        cx.theme().muted_foreground
-                    })
-                    .child(if self.controller.state.error {
-                        s.cannot_open
-                    } else {
-                        s.drop_here
-                    });
-                if !self.background_blocked() {
-                    empty = empty.role(Role::Region);
-                }
-                empty
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .child(
+                        div()
+                            .h_full()
+                            .min_h(px(224.))
+                            .p_4()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap_3()
+                            .child(brand_mark(72.))
+                            .child(
+                                heading(if self.controller.state.error {
+                                    s.cannot_open
+                                } else {
+                                    "Arca"
+                                })
+                                .text_xl()
+                                .text_color(
+                                    if self.controller.state.error {
+                                        cx.theme().danger
+                                    } else {
+                                        cx.theme().foreground
+                                    },
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(s.drop_here),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        brand_button("welcome-open")
+                                            .icon(IconName::FolderOpen)
+                                            .label(s.open)
+                                            .primary()
+                                            .disabled(!idle)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                if this.background_idle() {
+                                                    this.begin_dialog(DialogKind::Open, cx);
+                                                }
+                                            })),
+                                    )
+                                    .child(
+                                        brand_button("welcome-compress")
+                                            .icon(IconName::Inbox)
+                                            .label(s.compress)
+                                            .outline()
+                                            .disabled(!idle)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                if this.background_idle() {
+                                                    this.controller.dispatch(
+                                                        AppAction::PrepareCompress(Vec::new()),
+                                                    );
+                                                    cx.notify();
+                                                }
+                                            })),
+                                    ),
+                            ),
+                    )
             });
         } else if visible == 0 {
             let message = if self.controller.state.error {
@@ -3813,14 +3908,26 @@ impl Render for GpuiShell {
                     ))
                     .flex_1()
                     .flex()
+                    .flex_col()
                     .items_center()
                     .justify_center()
+                    .gap_3()
                     .text_color(if self.controller.state.error {
                         cx.theme().danger
                     } else {
                         cx.theme().muted_foreground
                     })
-                    .child(message);
+                    .child(
+                        Icon::new(if self.controller.state.error {
+                            IconName::CircleX
+                        } else if self.controller.state.filter.trim().is_empty() {
+                            IconName::Inbox
+                        } else {
+                            IconName::Search
+                        })
+                        .size(px(28.)),
+                    )
+                    .child(heading(message).text_sm());
                 if !self.background_blocked() {
                     empty = empty.role(Role::Region);
                 }
@@ -4042,7 +4149,7 @@ fn pick<T: Copy + PartialEq + 'static>(
         .find(|(candidate, _)| *candidate == current)
         .map(|(_, label)| *label)
         .unwrap_or_default();
-    Button::new(id)
+    brand_button(id)
         .label(label)
         .accessibility_label(name)
         .dropdown_caret(true)
@@ -4141,15 +4248,34 @@ fn level_pick(
     )
 }
 
+fn dialog_dimensions(
+    kind: ModalKind,
+    viewport: gpui::Size<gpui::Pixels>,
+) -> (gpui::Size<gpui::Pixels>, gpui::Pixels) {
+    let preferred_width = match kind {
+        ModalKind::Conflict | ModalKind::Settings => 560.,
+        ModalKind::Shortcuts => 720.,
+        ModalKind::Add => 600.,
+        ModalKind::Viewer => 800.,
+        _ => 448.,
+    };
+    let top = (viewport.height / 10.).min(px(48.));
+    let width = px(preferred_width).min((viewport.width - px(32.)).max(px(1.)));
+    let height = (viewport.height - top - px(16.)).max(px(1.));
+    (size(width, height), top)
+}
+
 fn build_dialog(
     kind: ModalKind,
     shell: &Entity<GpuiShell>,
     dialog: Dialog,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut App,
 ) -> Dialog {
     let s = shell.read(cx).controller.s();
     let weak = shell.downgrade();
+    let (bounds, top) = dialog_dimensions(kind, window.viewport_size());
+    let dialog = dialog.w(bounds.width).max_h(bounds.height).margin_top(top);
     // Escape, the backdrop and the close button all leave the controller still
     // asking the question, and the next frame would reopen the dialog.
     // Answering for the user keeps the two in step -- but only while the state
@@ -4170,7 +4296,7 @@ fn build_dialog(
     // button instead of an X.
     let cancel_button = |id: &'static str, label: &'static str| {
         let weak = weak.clone();
-        Button::new(id)
+        brand_button(id)
             .label(label)
             .outline()
             .on_click(move |_, _, cx| {
@@ -4191,7 +4317,7 @@ fn build_dialog(
                 .unwrap_or_default();
             let confirm = weak.clone();
             dialog
-                .title(s.delete_word)
+                .title(heading(s.delete_word))
                 .child(
                     DialogDescription::new()
                         .child(fill(s.confirm_delete, &[("n", &names.len().to_string())])),
@@ -4204,11 +4330,12 @@ fn build_dialog(
                     DialogFooter::new()
                         .child(
                             DialogClose::new()
-                                .child(Button::new("delete-cancel").label(s.cancel).outline()),
+                                .child(brand_button("delete-cancel").label(s.cancel).outline()),
                         )
                         .child(
-                            DialogAction::new()
-                                .child(Button::new("delete-confirm").label(s.delete_word).danger()),
+                            DialogAction::new().child(
+                                brand_button("delete-confirm").label(s.delete_word).danger(),
+                            ),
                         ),
                 )
                 .on_ok(move |_, _, cx| {
@@ -4232,7 +4359,7 @@ fn build_dialog(
             // dialog down. Nothing here has to close it by hand.
             let choice = |id: &'static str, label: &'static str, answer: Answer| {
                 let weak = weak.clone();
-                Button::new(id).label(label).on_click(move |_, _, cx| {
+                brand_button(id).label(label).on_click(move |_, _, cx| {
                     let _ = weak.update(cx, |this, cx| {
                         this.answer_conflict(answer);
                         cx.notify();
@@ -4241,8 +4368,7 @@ fn build_dialog(
             };
             let enter = weak.clone();
             dialog
-                .title(s.conflict_title)
-                .w(px(560.))
+                .title(heading(s.conflict_title))
                 .child(DialogDescription::new().child(format!("{} {path}", s.already_there)))
                 .footer(
                     DialogFooter::new()
@@ -4289,7 +4415,7 @@ fn build_dialog(
                 .join(", ");
             let choice = |id: &'static str, label: &'static str, choice: DropChoice| {
                 let weak = weak.clone();
-                Button::new(id).label(label).on_click(move |_, _, cx| {
+                brand_button(id).label(label).on_click(move |_, _, cx| {
                     let _ = weak.update(cx, |this, cx| {
                         this.controller.dispatch(AppAction::AnswerDrop(choice));
                         cx.notify();
@@ -4298,7 +4424,7 @@ fn build_dialog(
             };
             let enter = weak.clone();
             dialog
-                .title(s.drop_title)
+                .title(heading(s.drop_title))
                 .child(DialogDescription::new().child(format!("{} {names}", s.dropped_word)))
                 .footer(
                     DialogFooter::new()
@@ -4376,7 +4502,7 @@ fn build_dialog(
             };
             // No close button of its own: the kit's own close, escape and
             // backdrop are the way out of every dialog now.
-            dialog.title(s.shortcuts_title).w(px(720.)).child(
+            dialog.title(heading(s.shortcuts_title)).child(
                 div()
                     .flex()
                     .gap_8()
@@ -4421,7 +4547,7 @@ fn build_dialog(
             let mut footer = DialogFooter::new().child(cancel_button("password-cancel", s.cancel));
             if removable {
                 footer = footer.child(
-                    Button::new("password-remove")
+                    brand_button("password-remove")
                         .label(s.remove_password)
                         .on_click(move |_, _, cx| {
                             let _ = remove.update(cx, |this, cx| {
@@ -4433,11 +4559,11 @@ fn build_dialog(
                 );
             }
             dialog
-                .title(if opening {
+                .title(heading(if opening {
                     s.password_needed
                 } else {
                     s.set_password
-                })
+                }))
                 .child(DialogDescription::new().child(if setting {
                     s.new_password
                 } else if shell.read(cx).controller.state.password_wrong {
@@ -4456,7 +4582,7 @@ fn build_dialog(
                             // asked for is the one the archive already has,
                             // pressing this only brings up the second half of
                             // the question.
-                            Button::new("password-submit")
+                            brand_button("password-submit")
                                 .label(if setting {
                                     s.set_password
                                 } else if opening {
@@ -4542,7 +4668,7 @@ fn build_dialog(
                     .justify_between()
                     .gap_2()
                     .child(
-                        Button::new("add-pick")
+                        brand_button("add-pick")
                             .label(s.add_word)
                             .icon(IconName::ChevronDown)
                             .dropdown_menu(move |menu, _, _| {
@@ -4584,7 +4710,7 @@ fn build_dialog(
                             )
                             .child({
                                 let empty = weak.clone();
-                                Button::new("add-clear")
+                                brand_button("add-clear")
                                     .label(s.remove_all)
                                     .ghost()
                                     .disabled(count == 0)
@@ -4599,8 +4725,7 @@ fn build_dialog(
             );
             body = body.child(pending_list(shell, &weak, s, cx));
             dialog
-                .title(s.add_to_archive)
-                .w(px(600.))
+                .title(heading(s.add_to_archive))
                 .child(DialogDescription::new().child(s.defaults_title))
                 .child(body)
                 .footer(
@@ -4608,7 +4733,7 @@ fn build_dialog(
                         .child(cancel_button("add-cancel", s.cancel))
                         .child(
                             DialogAction::new().child(
-                                Button::new("add-start")
+                                brand_button("add-start")
                                     .label(s.start)
                                     .primary()
                                     .disabled(count == 0),
@@ -4659,7 +4784,7 @@ fn build_dialog(
                 }
                 let weak = weak.clone();
                 tabs = tabs.child(
-                    Button::new(("viewer-tab", index))
+                    brand_button(("viewer-tab", index))
                         .label(label)
                         .selected(look == candidate)
                         .on_click(move |_, _, cx| {
@@ -4738,8 +4863,7 @@ fn build_dialog(
                 }
             };
             dialog
-                .title(name)
-                .w(px(800.))
+                .title(heading(name))
                 .child(DialogDescription::new().child(s.view_word))
                 .child(
                     div()
@@ -4857,8 +4981,7 @@ fn build_dialog(
                     })
             };
             dialog
-                .title(s.settings)
-                .w(px(560.))
+                .title(heading(s.settings))
                 .child(DialogDescription::new().child(s.defaults_title))
                 .child(
                     div()
@@ -4906,7 +5029,8 @@ fn build_dialog(
                                 .gap_2()
                                 .text_sm()
                                 .text_color(muted)
-                                .child(format!("Arca {}", env!("CARGO_PKG_VERSION")))
+                                .child(brand_mark(28.))
+                                .child(heading(format!("Arca {}", env!("CARGO_PKG_VERSION"))))
                                 .children(
                                     shell
                                         .read(cx)
@@ -4943,7 +5067,7 @@ fn build_dialog(
             let field = shell.read(cx).name_input.clone();
             let ok = weak.clone();
             dialog
-                .title(title)
+                .title(heading(title))
                 .child(DialogDescription::new().child(hint))
                 .child(Input::new(&field))
                 .footer(
@@ -4951,7 +5075,7 @@ fn build_dialog(
                         .child(cancel_button("name-cancel", s.cancel))
                         .child(
                             DialogAction::new()
-                                .child(Button::new("name-ok").label(confirm).primary()),
+                                .child(brand_button("name-ok").label(confirm).primary()),
                         ),
                 )
                 .on_ok(move |_, _, cx| {
@@ -5037,7 +5161,7 @@ fn pending_list(
                 )
                 .child(div().flex_1().truncate().child(path.display().to_string()))
                 .child(
-                    Button::new(("add-drop-input", index))
+                    brand_button(("add-drop-input", index))
                         .icon(IconName::Close)
                         .accessibility_label(s.remove_input.to_string())
                         .tooltip(s.remove_input)
@@ -5388,11 +5512,11 @@ impl TableDelegate for FileTable {
                 .text_color(ink)
                 .child(column_text(row, column, self.strings, &self.root));
         }
-        let (icon, color) = GpuiShell::kind_icon(row.kind);
+        let (icon, color) = GpuiShell::kind_icon(row.kind, cx);
         let icon = div()
             .w(px(18.))
             .flex_none()
-            .child(Icon::new(icon).size(px(16.)).text_color(gpui::rgb(color)));
+            .child(Icon::new(icon).size(px(16.)).text_color(color));
         // Keep the editor in the name column instead of turning the whole row
         // into a form. Its width follows the current name, like Explorer.
         if self.renaming == Some(row_ix) {
@@ -5830,6 +5954,35 @@ mod tests {
         assert_eq!(shell_size(false), NORMAL_SIZE);
         assert!(MINIMUM_SIZE.0 <= NORMAL_SIZE.0);
         assert!(MINIMUM_SIZE.1 <= NORMAL_SIZE.1);
+    }
+
+    #[test]
+    fn dialogs_fit_compact_and_normal_viewports() {
+        for (width, height) in [MINIMUM_SIZE, COMPACT_SIZE, NORMAL_SIZE, (480., 280.)] {
+            let viewport = size(px(width), px(height));
+            for kind in [
+                ModalKind::Add,
+                ModalKind::Settings,
+                ModalKind::Viewer,
+                ModalKind::Shortcuts,
+                ModalKind::Conflict,
+                ModalKind::Password,
+            ] {
+                let (bounds, top) = dialog_dimensions(kind, viewport);
+                assert!(bounds.width <= viewport.width - px(32.));
+                assert!(top + bounds.height <= viewport.height - px(16.));
+                assert!(bounds.height > px(200.));
+            }
+        }
+        let viewport = size(px(NORMAL_SIZE.0), px(NORMAL_SIZE.1));
+        assert_eq!(
+            dialog_dimensions(ModalKind::Add, viewport).0.width,
+            px(600.)
+        );
+        assert_eq!(
+            dialog_dimensions(ModalKind::Settings, viewport).0.width,
+            px(560.)
+        );
     }
 
     #[test]
