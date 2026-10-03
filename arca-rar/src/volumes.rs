@@ -2,7 +2,7 @@ use super::{reader, Progress};
 use arca_core::{Error, Result};
 use rars::{Archive, ArchiveMember, ArchiveMemberDetail, ArchiveReader, ReadCancellation};
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
 const MAX_VOLUMES: usize = 256;
@@ -158,13 +158,20 @@ fn discover(
     // The selected path must exist, even if a differently cased alias exists.
     fs::symlink_metadata(path).map_err(|e| reader::at_path(e.into(), path))?;
     let mut paths = Vec::new();
+    let selected_index = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| naming.index(n));
     for index in 1..=candidates.keys().next_back().copied().unwrap_or(1) {
         let expected = parent.join(naming.name(index));
-        paths.push(
-            candidates
-                .remove(&index)
-                .ok_or_else(|| invalid(&expected, "missing volume"))?,
-        );
+        let candidate = candidates
+            .remove(&index)
+            .ok_or_else(|| invalid(&expected, "missing volume"))?;
+        paths.push(if Some(index) == selected_index {
+            path.to_owned()
+        } else {
+            candidate
+        });
     }
     let next = parent.join(naming.name(paths.len() + 1));
     Ok((paths, Some(next)))
@@ -257,6 +264,75 @@ fn header_usage(archive: &Archive, length: u64) -> Result<(u64, u64)> {
     Ok((count, bytes))
 }
 
+#[cfg(any(windows, test))]
+fn is_reparse_point(attributes: u32) -> bool {
+    attributes & 0x400 != 0
+}
+
+fn regular_input(path: &Path, meta: &fs::Metadata) -> Result<()> {
+    let regular = meta.file_type().is_file();
+    #[cfg(windows)]
+    let regular = {
+        use std::os::windows::fs::MetadataExt;
+        regular && !is_reparse_point(meta.file_attributes())
+    };
+    if !regular {
+        return Err(invalid(
+            path,
+            "expected a regular file in the selected directory, not a link or reparse point",
+        ));
+    }
+    Ok(())
+}
+
+fn read_archive(
+    path: &Path,
+    password: Option<&str>,
+    token: &ReadCancellation,
+    headers: &mut u64,
+    bytes: &mut u64,
+) -> Result<Archive> {
+    check(token)?;
+    let meta = fs::symlink_metadata(path).map_err(|e| reader::at_path(e.into(), path))?;
+    regular_input(path, &meta)?;
+    let mut open = OpenOptions::new();
+    open.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        open.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = open
+        .open(path)
+        .map_err(|e| reader::at_path(e.into(), path))?;
+    let meta = file
+        .metadata()
+        .map_err(|e| reader::at_path(e.into(), path))?;
+    regular_input(path, &meta)?;
+    let archive = ArchiveReader::read_reader_with_options(
+        file,
+        reader::options(password, token)
+            .with_max_header_count(*headers)
+            .with_max_header_bytes(*bytes),
+    )
+    .map_err(|e| reader::at_path(reader::error(e), path))?;
+    let (count, size) = header_usage(&archive, meta.len()).map_err(|e| reader::at_path(e, path))?;
+    *headers = headers.checked_sub(count).ok_or_else(|| {
+        Error::Limit(format!(
+            "RAR headers exceed {MAX_HEADERS} across the set at '{}'",
+            path.display()
+        ))
+    })?;
+    *bytes = bytes.checked_sub(size).ok_or_else(|| {
+        Error::Limit(format!(
+            "RAR non-file bytes exceed 64 MiB across the set at '{}'",
+            path.display()
+        ))
+    })?;
+    Ok(archive)
+}
+
 impl Volumes {
     pub fn open(
         path: &Path,
@@ -264,44 +340,37 @@ impl Volumes {
         progress: &Progress<'_>,
         token: &ReadCancellation,
     ) -> Result<Self> {
-        let (paths, next) = discover(path, progress, token)?;
-        let mut archives: Vec<Archive> = Vec::new();
         let mut headers = MAX_HEADERS;
         let mut bytes = MAX_HEADER_BYTES;
+        if !progress(0, 0, &path.to_string_lossy()) {
+            return Err(Error::Cancelled);
+        }
+        let selected = read_archive(path, password, token, &mut headers, &mut bytes)?;
+        let needs_volumes = properties(&selected)?.volume
+            || selected
+                .members()
+                .any(|m| m.meta.is_split_before || m.meta.is_split_after)
+            || next_volume(&selected).map_err(|e| reader::at_path(e, path))?;
+        let (paths, next) = if needs_volumes {
+            discover(path, progress, token)?
+        } else {
+            (vec![path.to_owned()], None)
+        };
+        let selected_path = path;
+        let mut selected = Some(selected);
+        let mut archives: Vec<Archive> = Vec::new();
         for (index, path) in paths.iter().enumerate() {
             check(token)?;
             if !progress(index, paths.len(), &path.to_string_lossy()) {
                 return Err(Error::Cancelled);
             }
-            let meta = fs::symlink_metadata(path).map_err(|e| reader::at_path(e.into(), path))?;
-            if !meta.file_type().is_file() {
-                return Err(invalid(
-                    path,
-                    "expected a regular file in the selected directory, not a link",
-                ));
-            }
-            let file = File::open(path).map_err(|e| reader::at_path(e.into(), path))?;
-            let archive = ArchiveReader::read_reader_with_options(
-                file,
-                reader::options(password, token)
-                    .with_max_header_count(headers)
-                    .with_max_header_bytes(bytes),
-            )
-            .map_err(|e| reader::at_path(reader::error(e), path))?;
-            let (count, size) =
-                header_usage(&archive, meta.len()).map_err(|e| reader::at_path(e, path))?;
-            headers = headers.checked_sub(count).ok_or_else(|| {
-                Error::Limit(format!(
-                    "RAR headers exceed {MAX_HEADERS} across the set at '{}'",
-                    path.display()
-                ))
-            })?;
-            bytes = bytes.checked_sub(size).ok_or_else(|| {
-                Error::Limit(format!(
-                    "RAR non-file bytes exceed 64 MiB across the set at '{}'",
-                    path.display()
-                ))
-            })?;
+            let archive = if path == selected_path {
+                selected
+                    .take()
+                    .ok_or_else(|| invalid(path, "duplicate selected volume"))?
+            } else {
+                read_archive(path, password, token, &mut headers, &mut bytes)?
+            };
             let props = properties(&archive)?;
             if let Some(first) = archives.first() {
                 if archive.family() != first.family() || props != properties(first)? {
@@ -518,4 +587,14 @@ fn validate_fragment(first: &ArchiveMember, next: &ArchiveMember) -> Result<()> 
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rejects_all_windows_reparse_tags_not_only_symlinks() {
+        assert!(!super::is_reparse_point(0x20));
+        assert!(super::is_reparse_point(0x420));
+        assert!(super::is_reparse_point(0x410));
+    }
 }

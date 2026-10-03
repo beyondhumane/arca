@@ -28,6 +28,40 @@ const NAMES: [&str; 4] = [
     "volume.part4.rar",
 ];
 
+#[test]
+fn standalone_metadata_does_not_discover_volume_like_names_or_unrelated_siblings() {
+    for source in ["plain.rar", "headers.rar"] {
+        for name in [
+            "book.rar",
+            "book.part10.rar",
+            "book.part00.rar",
+            "book.part999999999999999999999.rar",
+            "book.r00",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            for sibling in ["book.rar", "book.r00", "book.part01.rar", "book.part1.rar"] {
+                fs::write(dir.path().join(sibling), b"unrelated").unwrap();
+            }
+            let selected = dir.path().join(name);
+            fs::copy(fixture(source), &selected).unwrap();
+            let password = (source == "headers.rar").then_some("arca-test-only");
+            let archive = RarArchive::open(&selected, password).unwrap();
+            assert_eq!(archive.entries().len(), 4);
+            archive.test(password, &|_, _, _| true).unwrap();
+            let out = dir.path().join("out");
+            archive
+                .extract(&out, &[], password, &|_, _, _| true, &|_| {
+                    Conflict::Overwrite
+                })
+                .unwrap();
+            assert_eq!(
+                fs::read(out.join("first.txt")).unwrap(),
+                b"Arca RAR fixture alpha\n".repeat(64)
+            );
+        }
+    }
+}
+
 fn failure_leaves_destination_untouched(path: &Path, affected: &str) {
     let dir = tempfile::tempdir().unwrap();
     let dest = dir.path().join("out");
@@ -200,6 +234,31 @@ fn sibling_symlinks_cannot_redirect_discovery_outside_the_selected_directory() {
     fs::remove_file(dir.path().join(NAMES[1])).unwrap();
     std::os::unix::fs::symlink(fixture(NAMES[1]), dir.path().join(NAMES[1])).unwrap();
     failure_leaves_destination_untouched(&dir.path().join(NAMES[0]), NAMES[1]);
+}
+
+#[cfg(unix)]
+#[test]
+fn selected_symlinks_are_rejected_before_parsing_or_discovery() {
+    for target in ["plain.rar", NAMES[3]] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("selected.part4.rar");
+        std::os::unix::fs::symlink(fixture(target), &path).unwrap();
+        failure_leaves_destination_untouched(&path, "selected.part4.rar");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires Windows symbolic-link permission; run on a developer-mode or elevated host"]
+fn windows_reparse_inputs_cannot_redirect_selected_or_discovered_volumes() {
+    let dir = tempfile::tempdir().unwrap();
+    let selected = dir.path().join("selected.rar");
+    std::os::windows::fs::symlink_file(fixture("plain.rar"), &selected).unwrap();
+    failure_leaves_destination_untouched(&selected, "selected.rar");
+    copy_set(dir.path(), &NAMES);
+    fs::remove_file(dir.path().join(NAMES[1])).unwrap();
+    std::os::windows::fs::symlink_file(fixture(NAMES[1]), dir.path().join(NAMES[1])).unwrap();
+    failure_leaves_destination_untouched(&dir.path().join(NAMES[3]), NAMES[1]);
 }
 
 #[test]
@@ -382,6 +441,23 @@ fn header_counts_non_file_bytes_and_output_limits_apply_to_the_whole_set() {
             .expect("aggregate limit accepted");
         assert!(matches!(error, Error::Limit(_)), "{limit}: {error}");
     }
+}
+
+#[test]
+fn selected_later_volume_is_charged_once_against_aggregate_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..2 {
+        let path = dir.path().join(format!("set.part{}.rar", i + 1));
+        fs::write(&path, synthetic_volume(i, i == 0, 1, 0)).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_len(24 * 1024 * 1024)
+            .unwrap();
+    }
+    let archive = RarArchive::open(&dir.path().join("set.part2.rar"), None).unwrap();
+    assert_eq!(archive.entries().len(), 2);
 }
 
 #[test]
