@@ -63,7 +63,8 @@ Phase::{Validate, Extract, Test, Create}
 - Names pass `arca_core::safe_name` plus checks for absolute, ADS/drive,
   reserved-device, trailing-dot/space, duplicate normalized names, anti-items,
   links and reparse entries. Callbacks must still use `safe_name` when joining
-  paths and prevent existing destination symlinks from escaping the root.
+  paths and prevent destination symlinks from escaping the root. CLI/GUI use
+  `arca_core::extraction::Destination` for handle-relative, staged filesystem writes.
 - `Entry.offset` is the entry index, not a byte offset. `raw_name` is UTF-8
   decoded from 7z UTF-16, not ZIP bytes. A solid block's compressed size belongs
   only to its first entry; later entries report zero. `Entry.encrypted` describes

@@ -1,11 +1,10 @@
-use super::{human, resolve_conflict, CodecArg, OnConflict, BUF};
+use super::{human, CodecArg, OnConflict};
 use arca_7z::{create_7z, CreateOptions, SevenZArchive, Source};
+use arca_core::extraction::{Conflict, Destination};
 use arca_core::{Error, Level, Result};
-use std::collections::HashSet;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufWriter, Write};
+use std::fs::{self, File};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 pub(super) fn create(
@@ -111,68 +110,6 @@ fn is_link(meta: &fs::Metadata) -> bool {
     meta.file_type().is_symlink()
 }
 
-fn reject_links(path: &Path) -> Result<()> {
-    for ancestor in path.ancestors() {
-        match fs::symlink_metadata(ancestor) {
-            Ok(meta) if is_link(&meta) => {
-                return Err(Error::Format(format!(
-                    "refusing to extract through a symlink or reparse point: '{}'",
-                    ancestor.display()
-                )))
-            }
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
-}
-
-struct StagedFile {
-    path: PathBuf,
-    committed: bool,
-}
-
-impl StagedFile {
-    fn new(parent: &Path, target: &Path) -> Result<(Self, File)> {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        for _ in 0..10_000 {
-            let path = parent.join(format!(
-                ".arca-{}-{}.tmp",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            if path == target {
-                continue;
-            }
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(file) => {
-                    return Ok((
-                        Self {
-                            path,
-                            committed: false,
-                        },
-                        file,
-                    ))
-                }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(e.into()),
-            }
-        }
-        Err(Error::Limit(
-            "cannot allocate an extraction temporary file".into(),
-        ))
-    }
-}
-
-impl Drop for StagedFile {
-    fn drop(&mut self) {
-        if !self.committed {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-}
-
 pub(super) fn extract(
     archive: &Path,
     dest: &Path,
@@ -182,7 +119,7 @@ pub(super) fn extract(
     let t0 = Instant::now();
     let mut archive = SevenZArchive::open(File::open(archive)?, password)?;
     let indices = (0..archive.len()).collect::<Vec<_>>();
-    let mut claimed = HashSet::new();
+    let mut destination = Destination::new(dest);
     let mut files = 0;
     let mut bytes = 0;
     archive.extract(
@@ -190,36 +127,19 @@ pub(super) fn extract(
         &mut |_, entry, reader| {
             // Encrypted archives validate every block before the first callback.
             // No destination creation or truncation may move above this barrier.
-            let path = dest.join(arca_core::safe_name(&entry.name)?);
-            reject_links(&path)?;
-            if entry.is_dir {
-                fs::create_dir_all(&path)?;
-                return Ok(());
+            if let Some(written) = destination.write_entry(
+                &entry.name,
+                entry.is_dir,
+                reader,
+                &mut |_| match policy {
+                    OnConflict::Overwrite => Conflict::Overwrite,
+                    OnConflict::Skip => Conflict::Skip,
+                    OnConflict::Rename => Conflict::Rename,
+                },
+            )? {
+                bytes += written;
+                files += 1;
             }
-            let original = path.clone();
-            let Some(path) = resolve_conflict(path, policy, &mut claimed) else {
-                return Ok(());
-            };
-            if policy == OnConflict::Rename && path == original && path.exists() {
-                return Err(Error::Limit("no free extraction name available".into()));
-            }
-            reject_links(&path)?;
-            let parent = path
-                .parent()
-                .ok_or_else(|| Error::Format("missing destination parent".into()))?;
-            fs::create_dir_all(parent)?;
-            reject_links(parent)?;
-            let (mut staged, file) = StagedFile::new(parent, &path)?;
-            let mut writer = BufWriter::with_capacity(BUF, file);
-            let written = io::copy(reader, &mut writer)?;
-            writer.flush()?;
-            drop(writer);
-            // Replace the directory entry, not the contents of an existing hard link.
-            reject_links(&path)?;
-            fs::rename(&staged.path, &path)?;
-            staged.committed = true;
-            bytes += written;
-            files += 1;
             Ok(())
         },
         &mut |_| true,

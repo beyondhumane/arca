@@ -306,20 +306,29 @@ impl<R: Read + Seek> SevenZArchive<R> {
             }
             let mut index = self.archive.stream_map.block_first_file_index[block];
             let mut callback_error = None;
-            let result =
-                BlockDecoder::new(1, block, &self.archive, &self.password, &mut self.source)
-                    .for_each_entries(&mut |_, reader| {
-                        if let Err(error) = visit(index, reader) {
-                            callback_error = Some(error);
-                            return Ok(false);
-                        }
-                        index += 1;
-                        Ok(true)
-                    });
+            let no_password = Password::empty();
+            let block_encrypted = self.archive.blocks[block]
+                .coders
+                .iter()
+                .any(|coder| coder.encoder_method_id() == M::ID_AES256_SHA256);
+            let password = if block_encrypted {
+                &self.password
+            } else {
+                &no_password
+            };
+            let result = BlockDecoder::new(1, block, &self.archive, password, &mut self.source)
+                .for_each_entries(&mut |_, reader| {
+                    if let Err(error) = visit(index, reader) {
+                        callback_error = Some(error);
+                        return Ok(false);
+                    }
+                    index += 1;
+                    Ok(true)
+                });
             if let Some(error) = callback_error {
                 return Err(error);
             }
-            result.map_err(|e| upstream(e, self.encrypted))?;
+            result.map_err(|e| upstream(e, block_encrypted))?;
         }
         for (index, &yes) in selected.iter().enumerate() {
             if yes && self.archive.stream_map.file_block_index[index].is_none() {

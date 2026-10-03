@@ -70,10 +70,17 @@ whole-destination rollback. Sink I/O errors stay I/O errors.
 
 ## Filesystem and creation boundaries
 
-CLI/GUI recheck safe names and refuse destination symlinks/reparse points;
-staged replacement avoids truncating an existing hard link. These checks are
-not race-free handles against a hostile process replacing paths concurrently.
-Callers own conflict prompts, overwrite/skip/rename policy, and temp cleanup.
+CLI/GUI share `arca_core::extraction::Destination`, built on `cap-std` and
+`cap-fs-ext`. It opens each destination component without following links and
+retains directory handles for relative directory creation, staging, replacement,
+and cleanup. Unix operations stay attached to the opened directories if their
+names are replaced; Windows handles deny directory deletion/renaming while open.
+Staged replacement avoids truncating existing hard links. Destination setup is
+lazy so failed password validation cannot create even an empty directory.
+Callers supply conflict prompts and overwrite/skip/rename policy. This does not
+prevent a process with write access from modifying extracted files or moving an
+already-open directory elsewhere on Unix; it prevents redirection through a
+substituted pathname or symlink.
 
 Creation recursively enumerates regular files/directories in the interfaces.
 The core takes explicit nonrecursive `Source` entries and rejects links/special

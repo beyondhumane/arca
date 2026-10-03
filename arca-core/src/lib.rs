@@ -3,6 +3,7 @@ use std::io;
 
 mod format;
 pub use format::Format;
+pub mod extraction;
 
 pub mod limits {
     pub const MAX_NAME: usize = 4096;

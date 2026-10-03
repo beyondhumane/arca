@@ -214,11 +214,11 @@ pub(crate) fn extract_one(
                 "7z entry changed since listing".into(),
             ));
         }
-        let mut claimed = HashSet::new();
+        let mut destination = arca_core::extraction::Destination::new(&room);
         a.extract(
             &[index],
             &mut |_, e, reader| {
-                write_sevenz_entry(&room, e, reader, &|_| Answer::Replace, &mut claimed).map(|_| ())
+                write_sevenz_entry(&mut destination, e, reader, &|_| Answer::Replace).map(|_| ())
             },
             &mut |p| notify(p.entries_done, p.entries_total, p.name),
         )?;
@@ -399,32 +399,6 @@ pub(crate) fn dest_path(
     Ok(Some(chosen))
 }
 
-fn reject_symlinks(path: &Path) -> arca_core::Result<()> {
-    fn is_link(meta: &fs::Metadata) -> bool {
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-            if meta.file_attributes() & 0x400 != 0 {
-                return true;
-            }
-        }
-        meta.file_type().is_symlink()
-    }
-    for part in path.ancestors() {
-        match fs::symlink_metadata(part) {
-            Ok(meta) if is_link(&meta) => {
-                return Err(arca_core::Error::Format(
-                    "extraction destination contains a symbolic link or reparse point".into(),
-                ));
-            }
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn creation_output(
     out: &Path,
     ask: &dyn Fn(&Path) -> Answer,
@@ -448,31 +422,26 @@ pub(crate) fn creation_output(
 }
 
 fn write_sevenz_entry(
-    dest: &Path,
+    destination: &mut arca_core::extraction::Destination,
     entry: &Entry,
     reader: &mut dyn Read,
     ask: &dyn Fn(&Path) -> Answer,
-    claimed: &mut HashSet<PathBuf>,
 ) -> arca_core::Result<u64> {
     // This callback runs only after encrypted content has been validated.
-    reject_symlinks(&dest.join(arca_core::safe_name(&entry.name)?))?;
-    let Some(path) = dest_path(dest, &entry.name, entry.is_dir, ask, claimed)? else {
-        return Ok(0);
-    };
-    reject_symlinks(&path)?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| arca_core::Error::Format("missing destination parent".into()))?;
-    let staged = tempfile::NamedTempFile::new_in(parent)?;
-    let mut out = BufWriter::with_capacity(BUF, staged.as_file());
-    let written = std::io::copy(reader, &mut out)?;
-    out.flush()?;
-    drop(out);
-    reject_symlinks(&path)?;
-    staged
-        .persist(&path)
-        .map_err(|e| arca_core::Error::Io(e.error))?;
-    Ok(written)
+    use arca_core::extraction::Conflict;
+    destination
+        .write_entry(
+            &entry.name,
+            entry.is_dir,
+            reader,
+            &mut |path| match ask(path) {
+                Answer::Replace | Answer::ReplaceAll => Conflict::Overwrite,
+                Answer::Skip | Answer::SkipAll => Conflict::Skip,
+                Answer::Rename | Answer::RenameAll => Conflict::Rename,
+                Answer::Cancel => Conflict::Cancel,
+            },
+        )
+        .map(|written| written.unwrap_or(0))
 }
 
 // A .zip is random access: the central directory says where every entry starts,
@@ -515,13 +484,14 @@ pub(crate) fn extract(
     match format {
         Format::SevenZ => {
             let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let mut destination = arca_core::extraction::Destination::new(dest);
             let indices: Vec<_> = (0..a.len())
                 .filter(|&i| wanted.is_empty() || wanted.get(i).copied().unwrap_or(false))
                 .collect();
             a.extract(
                 &indices,
                 &mut |_, e, reader| {
-                    bytes += write_sevenz_entry(dest, e, reader, ask, &mut claimed)?;
+                    bytes += write_sevenz_entry(&mut destination, e, reader, ask)?;
                     Ok(())
                 },
                 &mut |p| notify(p.entries_done, p.entries_total, p.name),
@@ -691,7 +661,7 @@ fn collect_sources(
         let rel = p.strip_prefix(base).unwrap_or(p);
         let name = rel.to_string_lossy().replace('\\', "/");
         if meta.is_dir() {
-            if directories {
+            if directories && rel.components().any(|c| c != std::path::Component::CurDir) {
                 out.push((p.to_path_buf(), format!("{name}/")));
             }
             let mut children: Vec<_> = fs::read_dir(p)?.collect::<std::io::Result<Vec<_>>>()?;

@@ -73,6 +73,63 @@ fn encrypted() -> &'static [u8] {
 }
 
 #[test]
+fn corrupt_plain_lzma_block_never_requests_password_in_a_mixed_archive() {
+    use sevenz_rust2::encoder_options::LzmaOptions;
+    for hidden in [false, true] {
+        let mut writer = ArchiveWriter::new(Cursor::new(Vec::new())).unwrap();
+        writer.set_content_methods(vec![LzmaOptions::from_level(1).into()]);
+        writer
+            .push_archive_entry(
+                ArchiveEntry::new_file("plain"),
+                Some(b"plain contents".as_slice()),
+            )
+            .unwrap();
+        writer.set_content_methods(vec![
+            AesEncoderOptions {
+                password: Password::from("secret"),
+                iv: [7; 16],
+                salt: [11; 16],
+                num_cycles_power: 1,
+            }
+            .into(),
+            Lzma2Options::from_level(1).into(),
+        ]);
+        writer.set_encrypt_header(hidden);
+        writer
+            .push_archive_entry(
+                ArchiveEntry::new_file("encrypted"),
+                Some(b"secret contents".as_slice()),
+            )
+            .unwrap();
+        let mut data = writer.finish().unwrap().into_inner();
+        SevenZArchive::open(Cursor::new(&data), Some("secret"))
+            .unwrap()
+            .test(&mut |_| true)
+            .unwrap();
+        // LZMA's range decoder requires a zero leading byte, read during construction.
+        assert_eq!(data[32], 0);
+        data[32] = 0xff;
+        let mut archive = SevenZArchive::open(Cursor::new(&data), Some("secret")).unwrap();
+        assert!(archive.has_encrypted());
+        let error = archive.test(&mut |_| true).unwrap_err();
+        assert!(!password_required(&error), "{error:?}");
+        assert!(matches!(error, Error::Format(_)));
+        let mut called = false;
+        assert!(archive
+            .extract(
+                &[0],
+                &mut |_, _, _| {
+                    called = true;
+                    Ok(())
+                },
+                &mut |_| true
+            )
+            .is_err());
+        assert!(!called);
+    }
+}
+
+#[test]
 fn plain_and_solid_selection_is_block_sequential() {
     for solid in [false, true] {
         let data = fixture(solid, None, false);

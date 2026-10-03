@@ -134,7 +134,7 @@ jobs:
 
       - name: Experimental RAR reader
         run: |
-          cargo test -p arca-rar -p arca-cli --features rar --locked
+          cargo test -p arca-core -p arca-7z -p arca-rar -p arca-cli --features rar --locked
           cargo check -p arca-gui --features rar --locked
 
       - name: Shell extension

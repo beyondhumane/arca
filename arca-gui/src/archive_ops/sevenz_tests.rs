@@ -269,6 +269,51 @@ fn sevenz_creation_levels_and_options_are_forwarded_without_zip_codes() {
     assert!(!out.exists());
 }
 
+#[test]
+fn sevenz_creation_from_current_directory_preserves_children_and_empty_directories() {
+    const OUTPUT: &str = "ARCA_TEST_CURRENT_DIRECTORY_OUTPUT";
+    if let Some(out) = std::env::var_os(OUTPUT) {
+        for input in [".", "./", ".//."] {
+            compress(
+                Path::new(&out),
+                &[PathBuf::from(input)],
+                Format::SevenZ,
+                Codec::Store,
+                Level::Store,
+                &|_, _, _| true,
+                (None, false),
+            )
+            .unwrap();
+            let entries = list_entries(Path::new(&out), None, &|_, _, _| true).unwrap();
+            let names: Vec<_> = entries
+                .iter()
+                .map(|e| arca_core::safe_name(&e.name).unwrap())
+                .collect();
+            assert_eq!(names, [PathBuf::from("empty"), PathBuf::from("file")]);
+            assert!(entries[0].is_dir);
+            let mut contents = Vec::new();
+            read_entry(Path::new(&out), 1, &mut contents, None, &|_, _, _| true).unwrap();
+            assert_eq!(contents, b"contents");
+        }
+        return;
+    }
+    let room = Room::new();
+    fs::create_dir_all(room.path("input/empty")).unwrap();
+    fs::write(room.path("input/file"), b"contents").unwrap();
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "archive_ops::sevenz_tests::sevenz_creation_from_current_directory_preserves_children_and_empty_directories", "--nocapture"])
+        .current_dir(room.path("input"))
+        .env(OUTPUT, room.path("out.7z"))
+        .output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(room.path("out.7z").is_file());
+}
+
 #[cfg(unix)]
 #[test]
 fn sevenz_extraction_rejects_existing_destination_symlinks() {
@@ -289,6 +334,76 @@ fn sevenz_extraction_rejects_existing_destination_symlinks() {
     )
     .is_err());
     assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn sevenz_destination_swap_between_entries_cannot_create_outside_paths() {
+    let room = Room::new();
+    let archive = room.archive(None, false);
+    let dest = room.path("out");
+    let moved = room.path("moved");
+    let outside = room.path("outside");
+    fs::create_dir(&outside).unwrap();
+    let swapped = std::sync::atomic::AtomicBool::new(false);
+    extract(
+        &archive,
+        &dest,
+        &[],
+        &|_, _, name| {
+            if name == "source/b.txt" && !swapped.swap(true, Ordering::Relaxed) {
+                fs::rename(&dest, &moved).unwrap();
+                std::os::unix::fs::symlink(&outside, &dest).unwrap();
+            }
+            true
+        },
+        &|_| Answer::Replace,
+        None,
+    )
+    .unwrap();
+    assert!(swapped.load(Ordering::Relaxed));
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+    assert!(moved.join("source/empty").is_dir());
+    assert_eq!(
+        fs::read(moved.join("source/a.txt")).unwrap(),
+        b"first contents"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sevenz_destination_swap_in_conflict_dialog_cannot_redirect_writes() {
+    let room = Room::new();
+    let archive = room.archive(None, false);
+    let dest = room.path("out");
+    let moved = room.path("moved");
+    let outside = room.path("outside");
+    fs::create_dir_all(dest.join("source")).unwrap();
+    fs::create_dir_all(outside.join("source")).unwrap();
+    fs::write(dest.join("source/a.txt"), b"existing").unwrap();
+    fs::write(outside.join("source/a.txt"), b"untouched").unwrap();
+    extract(
+        &archive,
+        &dest,
+        &[],
+        &|_, _, _| true,
+        &|_| {
+            fs::rename(&dest, &moved).unwrap();
+            std::os::unix::fs::symlink(&outside, &dest).unwrap();
+            Answer::Replace
+        },
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read(outside.join("source/a.txt")).unwrap(),
+        b"untouched"
+    );
+    assert_eq!(fs::read_dir(outside.join("source")).unwrap().count(), 1);
+    assert_eq!(
+        fs::read(moved.join("source/a.txt")).unwrap(),
+        b"first contents"
+    );
 }
 
 #[cfg(unix)]
