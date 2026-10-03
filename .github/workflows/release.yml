@@ -21,9 +21,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Built on the oldest Ubuntu runner on purpose: a binary asks for the
+          # glibc it was linked against. From 24.04, arca-gui needed glibc
+          # 2.39 and only started on 24.04, Debian 13 or Fedora 40 onwards;
+          # from 22.04 it asks for 2.35, which Debian 12 and Ubuntu 22.04 have.
           - name: linux-x86_64
-            os: ubuntu-latest
+            os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            native: true
+          - name: linux-arm64
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
             native: true
           - name: windows-x86_64
             os: windows-latest
@@ -55,7 +63,7 @@ jobs:
       # ventana a GPUI el CI se actualizo y esto no. Resultado: la 0.7.0
       # compilo en Windows y en macOS, fallo en Linux, y no se publico nada.
       - name: Window dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         run: >-
           sudo apt-get update && sudo apt-get install -y
           libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxrandr-dev
@@ -74,7 +82,7 @@ jobs:
         if: matrix.native
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if [ "$RUNNER_OS" = "Windows" ]; then
             BIN="target/${{ matrix.target }}/release/arca.exe"
             test -f "target/${{ matrix.target }}/release/arca-gui.exe"
           else
@@ -90,7 +98,7 @@ jobs:
           set -eu
           NAME="arca-${{ github.ref_name }}-${{ matrix.name }}"
           mkdir -p "dist/$NAME"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if [ "$RUNNER_OS" = "Windows" ]; then
             cp "target/${{ matrix.target }}/release/arca.exe" "dist/$NAME/"
             cp "target/${{ matrix.target }}/release/arca-gui.exe" "dist/$NAME/"
           else
@@ -99,7 +107,7 @@ jobs:
           fi
           cp README.md LICENSE "dist/$NAME/"
           cd dist
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if [ "$RUNNER_OS" = "Windows" ]; then
             7z a -tzip "$NAME.zip" "$NAME" > /dev/null
             FILE="$NAME.zip"
           else
@@ -116,7 +124,7 @@ jobs:
       # Only on Windows: a real setup.exe, with its uninstaller in Installed
       # apps. The zip above is just loose binaries and installs no menus.
       - name: Windows installer
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         shell: bash
         run: |
           set -eu
