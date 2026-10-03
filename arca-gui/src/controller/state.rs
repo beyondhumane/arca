@@ -12,6 +12,8 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::Instant;
 
 pub(crate) struct AppState {
+    pub(crate) browser: super::BrowserState,
+    pub(crate) preview: super::PreviewState,
     pub(crate) view: View,
     pub(crate) settings: Settings,
     pub(crate) archive: Option<PathBuf>,
