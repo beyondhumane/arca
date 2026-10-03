@@ -1,6 +1,7 @@
 use super::*;
 use crate::test_support::Room;
 use arca_core::Error;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
 fn sevenz_detection_and_stems_are_case_insensitive() {
@@ -278,6 +279,84 @@ fn sevenz_creation_rejects_symlinks_instead_of_silently_omitting_sources() {
     )
     .is_err());
     assert!(!out.exists());
+}
+
+#[test]
+fn sevenz_replacement_does_not_truncate_existing_hardlinks() {
+    for password in [None, Some("secret")] {
+        let room = Room::new();
+        let archive = room.archive(password, password.is_some());
+        let dest = room.path("out");
+        let outside = room.path("outside");
+        fs::create_dir_all(dest.join("source")).unwrap();
+        fs::write(&outside, b"preserve the other link").unwrap();
+        fs::hard_link(&outside, dest.join("source/a.txt")).unwrap();
+        extract(
+            &archive,
+            &dest,
+            &[],
+            &|_, _, _| true,
+            &|_| Answer::Replace,
+            password,
+        )
+        .unwrap();
+        assert_eq!(fs::read(&outside).unwrap(), b"preserve the other link");
+        assert_eq!(
+            fs::read(dest.join("source/a.txt")).unwrap(),
+            b"first contents"
+        );
+        assert_eq!(fs::read_dir(dest.join("source")).unwrap().count(), 3);
+    }
+}
+
+#[test]
+fn sevenz_cancelled_file_preserves_target_and_removes_staging_file() {
+    let room = Room::new();
+    let input = room.path("large.bin");
+    fs::write(&input, vec![0x61; 256 * 1024]).unwrap();
+    let archive = room.path("plain.7z");
+    compress(
+        &archive,
+        &[input],
+        Format::SevenZ,
+        Codec::Store,
+        Level::Store,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let dest = room.path("out");
+    fs::create_dir(&dest).unwrap();
+    for exists in [false, true] {
+        if exists {
+            fs::write(dest.join("large.bin"), b"original").unwrap();
+        }
+        let calls = AtomicUsize::new(0);
+        let notify = |_, _, _: &str| calls.fetch_add(1, Ordering::Relaxed) < 2;
+        assert!(matches!(
+            extract(&archive, &dest, &[], &notify, &|_| Answer::Replace, None),
+            Err(Error::Cancelled)
+        ));
+        assert_eq!(fs::read_dir(&dest).unwrap().count(), usize::from(exists));
+        if exists {
+            assert_eq!(fs::read(dest.join("large.bin")).unwrap(), b"original");
+        }
+    }
+}
+
+#[test]
+fn exhausted_extraction_rename_does_not_fall_back_to_overwrite() {
+    let room = Room::new();
+    let original = room.path("a.txt");
+    fs::write(&original, b"original").unwrap();
+    let mut claimed = (1..10_000)
+        .map(|n| room.path(&format!("a ({n}).txt")))
+        .collect();
+    assert!(matches!(
+        dest_path(&room.0, "a.txt", false, &|_| Answer::Rename, &mut claimed),
+        Err(Error::Limit(_))
+    ));
+    assert_eq!(fs::read(original).unwrap(), b"original");
 }
 
 #[test]

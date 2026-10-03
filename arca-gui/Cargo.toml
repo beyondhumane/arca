@@ -18,6 +18,7 @@ arca-tar.workspace = true
 arca-7z.workspace = true
 arca-icons.workspace = true
 rayon.workspace = true
+tempfile = "3"
 
 # Dialogos de fichero nativos. Es lo unico que toca la plataforma.
 rfd = "0.15"

@@ -343,7 +343,15 @@ pub(crate) fn dest_path(
     let chosen = match ask(&path) {
         Answer::Replace | Answer::ReplaceAll => path,
         Answer::Skip | Answer::SkipAll => return Ok(None),
-        Answer::Rename | Answer::RenameAll => free_name(&path, claimed),
+        Answer::Rename | Answer::RenameAll => {
+            let renamed = free_name(&path, claimed);
+            if renamed == path {
+                return Err(arca_core::Error::Limit(
+                    "no free extraction name available".into(),
+                ));
+            }
+            renamed
+        }
         Answer::Cancel => return Err(arca_core::Error::Format("cancelled".into())),
     };
     claimed.insert(chosen.clone());
@@ -351,11 +359,21 @@ pub(crate) fn dest_path(
 }
 
 fn reject_symlinks(path: &Path) -> arca_core::Result<()> {
+    fn is_link(meta: &fs::Metadata) -> bool {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            if meta.file_attributes() & 0x400 != 0 {
+                return true;
+            }
+        }
+        meta.file_type().is_symlink()
+    }
     for part in path.ancestors() {
         match fs::symlink_metadata(part) {
-            Ok(meta) if meta.file_type().is_symlink() => {
+            Ok(meta) if is_link(&meta) => {
                 return Err(arca_core::Error::Format(
-                    "extraction destination contains a symbolic link".into(),
+                    "extraction destination contains a symbolic link or reparse point".into(),
                 ));
             }
             Ok(_) => {}
@@ -375,7 +393,15 @@ pub(crate) fn creation_output(
     }
     match ask(out) {
         Answer::Replace | Answer::ReplaceAll => Ok(out.to_path_buf()),
-        Answer::Rename | Answer::RenameAll => Ok(free_name(out, &HashSet::new())),
+        Answer::Rename | Answer::RenameAll => {
+            let renamed = free_name(out, &HashSet::new());
+            if renamed == out {
+                return Err(arca_core::Error::Limit(
+                    "no free archive name available".into(),
+                ));
+            }
+            Ok(renamed)
+        }
         _ => Err(arca_core::Error::Cancelled),
     }
 }
@@ -393,9 +419,18 @@ fn write_sevenz_entry(
         return Ok(0);
     };
     reject_symlinks(&path)?;
-    let mut out = BufWriter::with_capacity(BUF, File::create(&path)?);
+    let parent = path
+        .parent()
+        .ok_or_else(|| arca_core::Error::Format("missing destination parent".into()))?;
+    let staged = tempfile::NamedTempFile::new_in(parent)?;
+    let mut out = BufWriter::with_capacity(BUF, staged.as_file());
     let written = std::io::copy(reader, &mut out)?;
     out.flush()?;
+    drop(out);
+    reject_symlinks(&path)?;
+    staged
+        .persist(&path)
+        .map_err(|e| arca_core::Error::Io(e.error))?;
     Ok(written)
 }
 
