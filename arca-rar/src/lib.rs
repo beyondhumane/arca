@@ -25,8 +25,9 @@ pub struct RarArchive {
 }
 
 impl RarArchive {
-    /// Opens a complete set from any volume, resolving siblings only in the
-    /// selected directory. Numbered and legacy names resolve to volume one.
+    /// Opens a standalone archive or a complete set from any volume. Siblings
+    /// are resolved only in the selected directory when the selected archive's
+    /// metadata requires volumes. Numbered and legacy sets resolve to volume one.
     ///
     /// Available volume numbers/flags and split metadata are checked; checksums
     /// are verified while decoding. RAR has no universal set identifier, so
