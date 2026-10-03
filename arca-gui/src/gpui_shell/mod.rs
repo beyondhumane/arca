@@ -1007,7 +1007,11 @@ impl GpuiShell {
             }
             _ => {}
         }
-        if let Some(return_focus) = self.dialog_return_focus.take() {
+        let return_focus = match self.modal_kind() {
+            Some(kind) => self.modal_text_field(kind, cx),
+            None => self.dialog_return_focus.take(),
+        };
+        if let Some(return_focus) = return_focus {
             window.on_next_frame(move |window, cx| window.focus(&return_focus, cx));
         }
         cx.notify();
@@ -1136,6 +1140,7 @@ impl GpuiShell {
     fn modal_text_field(&self, kind: ModalKind, cx: &App) -> Option<FocusHandle> {
         match kind {
             ModalKind::Password => Some(self.password.read(cx).focus_handle(cx).clone()),
+            ModalKind::Add => Some(self.output_name.read(cx).focus_handle(cx).clone()),
             ModalKind::NewFolder | ModalKind::Mask => {
                 Some(self.name_input.read(cx).focus_handle(cx).clone())
             }
@@ -4238,15 +4243,34 @@ fn level_pick(
     )
 }
 
+fn dialog_dimensions(
+    kind: ModalKind,
+    viewport: gpui::Size<gpui::Pixels>,
+) -> (gpui::Size<gpui::Pixels>, gpui::Pixels) {
+    let preferred_width = match kind {
+        ModalKind::Conflict | ModalKind::Settings => 560.,
+        ModalKind::Shortcuts => 720.,
+        ModalKind::Add => 600.,
+        ModalKind::Viewer => 800.,
+        _ => 448.,
+    };
+    let top = (viewport.height / 10.).min(px(48.));
+    let width = px(preferred_width).min((viewport.width - px(32.)).max(px(1.)));
+    let height = (viewport.height - top - px(16.)).max(px(1.));
+    (size(width, height), top)
+}
+
 fn build_dialog(
     kind: ModalKind,
     shell: &Entity<GpuiShell>,
     dialog: Dialog,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut App,
 ) -> Dialog {
     let s = shell.read(cx).controller.s();
     let weak = shell.downgrade();
+    let (bounds, top) = dialog_dimensions(kind, window.viewport_size());
+    let dialog = dialog.w(bounds.width).max_h(bounds.height).margin_top(top);
     // Escape, the backdrop and the close button all leave the controller still
     // asking the question, and the next frame would reopen the dialog.
     // Answering for the user keeps the two in step -- but only while the state
@@ -4340,7 +4364,6 @@ fn build_dialog(
             let enter = weak.clone();
             dialog
                 .title(heading(s.conflict_title))
-                .w(px(560.))
                 .child(DialogDescription::new().child(format!("{} {path}", s.already_there)))
                 .footer(
                     DialogFooter::new()
@@ -4474,7 +4497,7 @@ fn build_dialog(
             };
             // No close button of its own: the kit's own close, escape and
             // backdrop are the way out of every dialog now.
-            dialog.title(heading(s.shortcuts_title)).w(px(720.)).child(
+            dialog.title(heading(s.shortcuts_title)).child(
                 div()
                     .flex()
                     .gap_8()
@@ -4693,7 +4716,6 @@ fn build_dialog(
             body = body.child(pending_list(shell, &weak, s, cx));
             dialog
                 .title(heading(s.add_to_archive))
-                .w(px(600.))
                 .child(DialogDescription::new().child(s.defaults_title))
                 .child(body)
                 .footer(
@@ -4832,7 +4854,6 @@ fn build_dialog(
             };
             dialog
                 .title(heading(name))
-                .w(px(800.))
                 .child(DialogDescription::new().child(s.view_word))
                 .child(
                     div()
@@ -4951,7 +4972,6 @@ fn build_dialog(
             };
             dialog
                 .title(heading(s.settings))
-                .w(px(560.))
                 .child(DialogDescription::new().child(s.defaults_title))
                 .child(
                     div()
@@ -5924,6 +5944,35 @@ mod tests {
         assert_eq!(shell_size(false), NORMAL_SIZE);
         assert!(MINIMUM_SIZE.0 <= NORMAL_SIZE.0);
         assert!(MINIMUM_SIZE.1 <= NORMAL_SIZE.1);
+    }
+
+    #[test]
+    fn dialogs_fit_compact_and_normal_viewports() {
+        for (width, height) in [MINIMUM_SIZE, COMPACT_SIZE, NORMAL_SIZE, (480., 280.)] {
+            let viewport = size(px(width), px(height));
+            for kind in [
+                ModalKind::Add,
+                ModalKind::Settings,
+                ModalKind::Viewer,
+                ModalKind::Shortcuts,
+                ModalKind::Conflict,
+                ModalKind::Password,
+            ] {
+                let (bounds, top) = dialog_dimensions(kind, viewport);
+                assert!(bounds.width <= viewport.width - px(32.));
+                assert!(top + bounds.height <= viewport.height - px(16.));
+                assert!(bounds.height > px(200.));
+            }
+        }
+        let viewport = size(px(NORMAL_SIZE.0), px(NORMAL_SIZE.1));
+        assert_eq!(
+            dialog_dimensions(ModalKind::Add, viewport).0.width,
+            px(600.)
+        );
+        assert_eq!(
+            dialog_dimensions(ModalKind::Settings, viewport).0.width,
+            px(560.)
+        );
     }
 
     #[test]
