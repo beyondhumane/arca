@@ -94,4 +94,4 @@ Pull request titles should follow the same format. The description should state 
 - Put architectural plans in `docs/plans/`.
 - Keep `README.md` focused on user-facing usage, supported formats, interoperability, and reproducible checks.
 - Keep brand rules in `brand/BRAND.md`.
-- Do not tag a release until the tag version matches `Cargo.toml` and CI is green.
+- Releases come from release-please: merge its release pull request once CI is green. Do not tag or edit `CHANGELOG.md` and the version by hand.
