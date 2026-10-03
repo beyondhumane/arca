@@ -5,6 +5,7 @@
     ".": {
       "release-type": "simple",
       "package-name": "arca",
+      "bump-minor-pre-major": true,
       "changelog-sections": [
         {
           "type": "feat",
