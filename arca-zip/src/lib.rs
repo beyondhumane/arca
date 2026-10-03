@@ -1321,11 +1321,8 @@ fn resolve_threads(requested: usize) -> usize {
 
 #[cfg(feature = "codecs-native")]
 fn zstd_workers(threads: usize) -> u32 {
-    match resolve_threads(threads) {
-        // A zstd worker runs alongside the caller; zero compresses on the caller.
-        1 => 0,
-        n => n.min(u32::MAX as usize) as u32,
-    }
+    // Reserve the caller's thread; zero workers compresses on the caller.
+    (resolve_threads(threads) - 1).min(u32::MAX as usize) as u32
 }
 
 // Writes a copy of `archive` at `out` carrying a different password, or none.
@@ -1741,7 +1738,8 @@ type Block = (usize, Vec<u8>, Method, u32);
 ///
 /// Files are read in batches so that the memory held at once stays bounded, and
 /// one too big for the whole budget is streamed straight through instead.
-/// Streaming deflate uses a single core; zstd uses the requested thread count.
+/// Streaming deflate uses a single core; zstd shares the requested thread budget
+/// with the streaming caller.
 ///
 /// Sealing happens inside the worker on purpose: deriving the key is a thousand
 /// rounds of PBKDF2 per entry, and doing it back in the writer would put all of
@@ -1798,7 +1796,8 @@ fn write_zip(
 ///
 /// Files are read in batches so that the memory held at once stays bounded, and
 /// one too big for the whole budget is streamed straight through instead.
-/// Streaming deflate uses a single core; zstd uses the requested thread count.
+/// Streaming deflate uses a single core; zstd shares the requested thread budget
+/// with the streaming caller.
 ///
 /// Sealing happens inside the worker on purpose: deriving the key is a thousand
 /// rounds of PBKDF2 per entry, and doing it back in the writer would put all of
@@ -2519,18 +2518,15 @@ mod tests {
 
     #[cfg(feature = "codecs-native")]
     #[test]
-    fn zstd_worker_count_honors_explicit_and_automatic_threads() {
+    fn zstd_worker_count_includes_caller_in_thread_budget() {
         assert_eq!(resolve_threads(1), 1);
         assert_eq!(resolve_threads(2), 2);
         assert_eq!(zstd_workers(1), 0);
-        assert_eq!(zstd_workers(2), 2);
-        assert_eq!(zstd_workers(8), 8);
+        assert_eq!(zstd_workers(2), 1);
+        assert_eq!(zstd_workers(8), 7);
         let available = std::thread::available_parallelism().unwrap().get();
         assert_eq!(resolve_threads(0), available);
-        assert_eq!(
-            zstd_workers(0),
-            if available == 1 { 0 } else { available as u32 }
-        );
+        assert_eq!(zstd_workers(0) as usize + 1, available);
         assert_eq!(ZipWriter::new(IoCursor::new(Vec::new())).stream_threads, 0);
     }
 
@@ -2553,13 +2549,11 @@ mod tests {
             level: Level::Normal,
         }];
 
-        for threads in [1, 2] {
+        for (threads, workers) in [(1, 0), (2, 1)] {
             assert!(files[0].size > IN_FLIGHT_PER_THREAD * threads as u64);
             let mut reference =
                 zstd::stream::write::Encoder::new(Vec::new(), Level::Normal.to_zstd()).unwrap();
-            reference
-                .multithread(if threads == 1 { 0 } else { threads as u32 })
-                .unwrap();
+            reference.multithread(workers).unwrap();
             for chunk in body.chunks(STREAM_BUF) {
                 reference.write_all(chunk).unwrap();
             }
