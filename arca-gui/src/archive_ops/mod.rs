@@ -1,6 +1,8 @@
 //! Blocking archive jobs and their command-line entry points.
 
 mod io;
+#[cfg(test)]
+mod sevenz_tests;
 pub(crate) use io::*;
 
 use crate::i18n::Strings;
@@ -19,6 +21,7 @@ pub(crate) enum Job {
     },
     Test {
         archive: PathBuf,
+        password: Option<String>,
         // The names to check, or all of them. A selection is checked by walking
         // the whole archive and skipping what is not in the set: the entries
         // have to be read in the order they are filed anyway.
@@ -82,6 +85,7 @@ pub(crate) enum Job {
         codec: Codec,
         level: Level,
         password: Option<String>,
+        hide_names: bool,
     },
     // Putting files in. Same rebuild as Delete, and for the same reason: the
     // central directory is at the end of the file.
@@ -168,6 +172,7 @@ pub(crate) fn parse_args() -> Startup {
         "--test" if !rest.is_empty() => Startup::Run(Job::Test {
             archive: rest[0].clone(),
             only: None,
+            password: None,
         }),
         "--add" if !rest.is_empty() => Startup::Add(rest),
         "--add-quick" if !rest.is_empty() => Startup::Run(Job::Compress {
@@ -177,6 +182,7 @@ pub(crate) fn parse_args() -> Startup {
             codec: Codec::Deflate,
             level: Level::Normal,
             password: None,
+            hide_names: false,
         }),
         other if !other.starts_with("--") => Startup::Browse(Some(PathBuf::from(other))),
         _ => Startup::Browse(None),
@@ -305,12 +311,16 @@ pub(crate) fn run_job_blocking(
                 ],
             ))
         }
-        Job::Test { archive, only } => {
+        Job::Test {
+            archive,
+            only,
+            password,
+        } => {
             if detect(&archive).is_none() {
                 return Err(s.unknown_format.to_string());
             }
-            let (good, bad) =
-                test_archive(&archive, only.as_ref(), notify).map_err(|e| e.to_string())?;
+            let (good, bad) = test_archive(&archive, only.as_ref(), password.as_deref(), notify)
+                .map_err(|e| e.to_string())?;
             if bad.is_empty() {
                 Ok(fill(s.verified_ok, &[("n", &good.to_string())]))
             } else {
@@ -331,6 +341,9 @@ pub(crate) fn run_job_blocking(
             current,
             new,
         } => {
+            if detect(&archive) != Some(Format::Zip) {
+                return Err(s.only_zip_can_change.to_string());
+            }
             let temp = archive.with_file_name(format!(
                 "{}.arca-new",
                 archive
@@ -501,6 +514,7 @@ pub(crate) fn run_job_blocking(
             codec,
             level,
             password,
+            hide_names,
         } => {
             if inputs.is_empty() {
                 return Err(s.nothing_to_do.to_string());
@@ -512,7 +526,7 @@ pub(crate) fn run_job_blocking(
                 codec,
                 level,
                 notify,
-                password.as_deref(),
+                (password.as_deref(), hide_names),
             )
             .map_err(|e| e.to_string())?;
             let pct = if from == 0 {
