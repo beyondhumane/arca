@@ -121,50 +121,6 @@ pub(crate) fn step_aside(archive: &Path) -> std::io::Result<()> {
     fs::rename(archive, &keep)
 }
 
-// One entry straight into memory, for looking at rather than for keeping.
-//
-// The same walk as `extract_one` without the file at the end of it: a viewer
-// that wrote to the temporary folder on the way would have extracted the thing
-// it was only supposed to show.
-pub(crate) fn read_entry(
-    archive: &Path,
-    index: usize,
-    out: &mut Vec<u8>,
-    password: Option<&str>,
-) -> arca_core::Result<()> {
-    let Some(format) = detect(archive) else {
-        return Err(arca_core::Error::Unsupported("unknown format".into()));
-    };
-    match format {
-        Format::Rar => {
-            let a = arca_rar::RarArchive::open(archive, password)?;
-            *out = a.read_entry(index, password)?;
-        }
-        Format::Zip => {
-            let mut a = ZipArchive::open(File::open(archive)?)?;
-            a.extract_to_with(index, out, password)?;
-        }
-        Format::Tar | Format::TarGz => {
-            // A tar has no index, so the only way to one entry is through all
-            // the ones before it.
-            let mut r = TarReader::new(open_source(archive, format)?);
-            let mut at = 0usize;
-            while let Some(e) = r.next_entry()? {
-                if at == index {
-                    r.copy_data(&e, out)?;
-                    return Ok(());
-                }
-                r.skip_data(&e)?;
-                at += 1;
-            }
-            return Err(arca_core::Error::Format(
-                "that entry is not in the archive any more".into(),
-            ));
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn extract_one(
     archive: &Path,
     entry: &Entry,

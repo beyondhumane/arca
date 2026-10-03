@@ -5,42 +5,46 @@ order: 8
 keywords: gui window arca-gui desktop app gpui accessibility nvda narrator
 ---
 
-# The desktop window
+# The desktop workspace
 
-The `arca-gui` window opens archives like folders. It’s GPU-rendered with GPUI and designed so it can be driven entirely from the keyboard.
+`arca-gui` browses archives in a native GPUI window. The title bar keeps the Arca branding and window controls; one navigation band contains history, breadcrumbs, view selection, filtering, extraction, testing and the **More** menu.
 
-## Browsing
+## Navigation and layout
 
-- Double-click a folder to go into it.
-- Double-click a file to pull that one entry out to a temporary folder and hand it to whatever your system opens it with.
-- The whole row answers to the mouse, not only the name, and the cursor changes to show it.
+**Open** and **Create** are in the sidebar, alongside recent archives and the current archive's folder tree. The sidebar button cycles between expanded, icon rail and hidden. Drag the divider to resize the expanded sidebar. **More > View** also controls its visibility.
 
-## Navigation
+The default **Columns** view keeps a directory in each vertical pane. Click a folder to open its child pane; ancestors remain to the left. Choosing another folder replaces only the descendants. Each pane retains its own cursor, selection, scrolling, filter and sort order. Click or focus a pane before working on its contents. Drag pane dividers to resize them, and scroll horizontally to reach ancestors. The active pane is revealed when navigation changes it.
 
-The mouse back and forward buttons move through where you’ve been, and so do <kbd>Alt+←</kbd> and <kbd>Alt+→</kbd>. The three arrows on the toolbar do the same thing, plus one level up.
+Breadcrumbs navigate to the archive root or a parent folder. A menu exposes middle segments when the path is too long. The tree and breadcrumbs follow the active pane. Back/forward buttons and **Alt+Left/Right** use the same history.
 
-## Native file icons
+**Details** retains the sortable metadata table. Right-click its header to choose metadata columns. **More > View > Flat view** switches to Details and lists entries without the folder hierarchy. Switching views keeps the location and selection that remains valid.
 
-Each row carries the icon your desktop shows for that kind of file, so a listing looks like the file manager next to it. On Windows that’s a single shell call, asked by name without opening anything, because the entries don’t exist on disk. Elsewhere the window draws its own icons.
+Layout choices and widths are remembered. Narrow windows temporarily reduce the sidebar to a rail and suspend the preview before squeezing the browser; widening restores the preferred panels.
 
-## Selecting
+## Selection and archive actions
 
-- Click for one entry, Ctrl+click to add or drop one, Shift+click for everything in between.
-- Press on the list and drag for a rectangle that takes whatever it touches.
-- From the keyboard: <kbd>Space</kbd> ticks a row, <kbd>Shift+↓</kbd> ticks a run, and <kbd>Ctrl+A</kbd> ticks everything, or unticks it if it’s all ticked.
+- Click a file to select it; Ctrl+click toggles and Shift+click selects a range. Use these modifiers to select folders without opening them in Columns.
+- **Space** toggles the cursor row; **Ctrl+A** selects visible rows. Selection commands operate only in the active pane. The parent row in Details is never a command target.
+- Right-click a row for extraction, preview, rename, delete and other applicable actions. Right-click empty pane space for destination actions.
+- Drag entries onto a folder or directory pane to move them within a writable ZIP. Drop external files onto a directory to add them. The target highlights during a drag.
+- New-folder dialogs and paste menus name their destination. ZIP mutations are serialized; RAR remains read-only.
+- File clipboard copy/cut/paste and drag-out retain their existing Windows integration. **Ctrl+Shift+C** copies names as text.
+- **More** includes selection tools, password changes, verification, undo, settings and shortcut help.
 
-## Columns and context menus
+Double-clicking a file, or pressing **Enter** on it, explicitly extracts it to a temporary location and opens it with the system application. Previewing does not do this.
 
-Right-click a row for what can be done to it. Right-click the header to switch columns on or off (size, packed, method, saved, modified and CRC32), and your choice is remembered between runs. Name always stays, so the list never shows sizes without names.
+## Integrated preview
 
-## Passwords
+The right panel follows the active file cursor. **F3** enables preview; its close button hides it and returns focus. The footer can show it again. Drag its divider to change its remembered width.
 
-The create dialog has a password field. Opening an encrypted archive asks for the password before extracting, and the toolbar offers **Remove password** or **Set password…** depending on the archive.
+The panel shows the filename, size, date and type, with unavailable metadata labelled explicitly. Text uses a monospaced, line-numbered list; hexadecimal and supported-image views are available in the same panel. Images fit the panel.
 
-## Deliberately missing
+Loading, empty, password-required, wrong-password, unsupported, oversized and error states are shown in place. Reads, text preparation and image decoding run in a bounded background worker, independently of mutation jobs. Navigation or selection changes invalidate old results. Passwords and preview contents are not written to settings.
 
-<kbd>Ctrl+V</kbd> isn’t there, and neither is <kbd>Ctrl+C</kbd> copying files onto the clipboard. Pasting means adding to an archive that already exists, which the writer can’t do yet; copying files out means handing the shell an object it can pull bytes from on demand. Both need real work beyond a key binding, so they’re left out until they work.
+## Jobs and keyboard access
 
-## Accessibility
+Progress, pause, cancel, completion and errors remain visible without a browsing modal when the operation permits navigation. Mutation commands cannot start another job while one is running. Explorer one-shot operations retain their existing completion behavior.
 
-The window declares itself through AccessKit, so Narrator and NVDA can read it. Every action has a keyboard path; see [Keyboard shortcuts](keyboard-shortcuts.md).
+The footer reports the active directory, visible/selected counts and job status, with **F1** help. Tab reaches navigation, sidebar, browser, preview controls and footer. Text fields keep their editing keys; closing dialogs restores focus. Controls expose AccessKit labels and focus/selection indicators.
+
+See [Keyboard shortcuts](keyboard-shortcuts.md).
