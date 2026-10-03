@@ -11,6 +11,10 @@ The vendored dependency itself uses its original edition 2024 / MSRV 1.93.
 
 Local changes:
 
+- Build only an `rlib`: Arca consumes this as a Rust dependency, not a C ABI.
+  The upstream `cdylib` collides between Cargo's abort and unwind artifacts in
+  release integration tests; removing that unused output keeps release tests
+  compatible with Arca's unchanged `panic = "abort"` release profile.
 - Pin `lzma-rust2 =0.21.0` and disable its `optimization` feature. Exact upstream
   LZMA source contains unsafe optimization/SIMD code; disabling this feature
   activates its own `forbid(unsafe_code)` guard. Add the same guard to sevenz.

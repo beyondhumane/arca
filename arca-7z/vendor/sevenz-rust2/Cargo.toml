@@ -73,7 +73,6 @@ zstd = ["dep:zstd"]
 [lib]
 name = "sevenz_rust2"
 crate-type = [
-    "cdylib",
     "rlib",
 ]
 path = "src/lib.rs"
