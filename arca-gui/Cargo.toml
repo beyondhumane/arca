@@ -15,6 +15,7 @@ path = "src/main.rs"
 arca-core.workspace = true
 arca-zip.workspace = true
 arca-tar.workspace = true
+arca-7z.workspace = true
 arca-icons.workspace = true
 rayon.workspace = true
 
@@ -82,3 +83,7 @@ path = "../arca-drag"
 # contesta una maquina sin red.
 [dependencies.arca-net]
 path = "../arca-net"
+
+[features]
+default = ["codecs-native"]
+codecs-native = ["arca-zip/codecs-native", "arca-7z/codecs-native"]

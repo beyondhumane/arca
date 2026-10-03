@@ -25,6 +25,8 @@ pub enum Error {
         name: String,
     },
     Unsupported(String),
+    PasswordRequired,
+    PasswordOrCorrupt,
     // Somebody pressed stop. Not a failure: nothing is wrong with the archive
     // and nothing needs reporting, so callers that clean up after themselves
     // can tell this apart from a real error and say so plainly.
@@ -50,6 +52,8 @@ impl fmt::Display for Error {
                 "'{name}' did not pass its authentication code: the archive was altered after it was encrypted"
             ),
             Error::Unsupported(m) => write!(f, "unsupported: {m}"),
+            Error::PasswordRequired => write!(f, "a password is required for this archive"),
+            Error::PasswordOrCorrupt => write!(f, "wrong password or corrupt encrypted archive"),
             Error::Cancelled => write!(f, "cancelled"),
         }
     }
@@ -77,6 +81,10 @@ pub enum Method {
     Store,
     Deflate,
     Zstd,
+    Lzma,
+    Lzma2,
+    Bzip2,
+    Other7z,
 }
 
 impl Method {
@@ -85,14 +93,20 @@ impl Method {
             Method::Store => "store",
             Method::Deflate => "deflate",
             Method::Zstd => "zstd",
+            Method::Lzma => "lzma",
+            Method::Lzma2 => "lzma2",
+            Method::Bzip2 => "bzip2",
+            Method::Other7z => "7z",
         }
     }
 
-    pub fn code(self) -> u16 {
+    /// The ZIP method code, only for codecs supported by Arca's ZIP writer.
+    pub fn code(self) -> Result<u16> {
         match self {
-            Method::Store => 0,
-            Method::Deflate => 8,
-            Method::Zstd => 93,
+            Method::Store => Ok(0),
+            Method::Deflate => Ok(8),
+            Method::Zstd => Ok(93),
+            _ => Err(Error::Unsupported(format!("{} in ZIP", self.name()))),
         }
     }
 }

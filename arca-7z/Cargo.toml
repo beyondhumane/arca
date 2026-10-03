@@ -1,0 +1,22 @@
+[package]
+name = "arca-7z"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Bounded, safe Rust 7z reading and writing for Arca"
+
+[dependencies]
+arca-core.workspace = true
+sevenz-rust2 = { version = "=0.23.0", default-features = false, features = ["aes256", "compress", "deflate"] }
+crc32fast.workspace = true
+tempfile = "3"
+getrandom = "0.4"
+
+[features]
+default = ["codecs-native"]
+codecs-native = ["sevenz-rust2/bzip2", "sevenz-rust2/zstd"]
+
+[lints.rust]
+unsafe_code = "forbid"
