@@ -1,0 +1,26 @@
+# Categories for GitHub's generated release notes, the "What's Changed" of
+# every Release. Pull requests get their label from the Conventional Commit
+# type in their title (see workflows/pr-labels.yml).
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: Features
+      labels:
+        - enhancement
+    - title: Bug fixes
+      labels:
+        - bug
+    - title: Performance
+      labels:
+        - performance
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Maintenance
+      labels:
+        - maintenance
+    - title: Other changes
+      labels:
+        - "*"
