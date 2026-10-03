@@ -232,7 +232,8 @@ jobs:
       # "What's Changed" comes from GitHub's own generator, grouped by the
       # labels in .github/release.yml. It only sees merged pull requests, so
       # when a release has none (commits pushed straight to main) the commit
-      # subjects stand in for them.
+      # subjects stand in for them. Squash merges end in "(#N)"; if any is in
+      # the range, GitHub's list stands even when `skip-changelog` emptied it.
       - name: Release notes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -243,7 +244,7 @@ jobs:
           [ -n "$PREV" ] && ARGS+=(-f "previous_tag_name=$PREV")
           gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
             "${ARGS[@]}" --jq .body > generated.md
-          if grep -q '^\* ' generated.md; then
+          if git log --format=%s "${PREV:+$PREV..}$GITHUB_REF_NAME" | grep -qE '\(#[0-9]+\)$'; then
             cat generated.md > notes.md
           else
             {

@@ -29,8 +29,10 @@ jobs:
             perf) LABEL=performance ;;
             docs) LABEL=documentation ;;
             build|chore|ci|refactor|revert|style|test) LABEL=maintenance ;;
-            *) echo "no Conventional Commit type in: $TITLE"; exit 0 ;;
+            # A title that lost its type also loses the category it had.
+            *) echo "no Conventional Commit type in: $TITLE"; LABEL= ;;
           esac
           OTHERS=$(printf '%s\n' enhancement bug performance documentation maintenance \
-            | grep -vx "$LABEL" | paste -sd, -)
-          gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --add-label "$LABEL" --remove-label "$OTHERS"
+            | grep -vx "${LABEL:-none}" | paste -sd, -)
+          gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --remove-label "$OTHERS" \
+            ${LABEL:+--add-label "$LABEL"}
