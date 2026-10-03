@@ -9,7 +9,12 @@ if [ ! -x "$ARCA" ]; then
   echo "binary not found at $ARCA (build it with: cargo build --release)" >&2
   exit 1
 fi
-W=/tmp/interop; rm -rf $W; mkdir -p $W/src $W/out; cd $W
+for tool in zip unzip tar 7z python3; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "required tool not found: $tool" >&2; exit 1; }
+done
+W=$(mktemp -d "${TMPDIR:-/tmp}/arca-interop.XXXXXX") || exit 1
+trap 'rm -rf "$W"' EXIT
+mkdir -p "$W/src" "$W/out"; cd "$W" || exit 1
 OK=0; KO=0
 ok(){ printf "  \033[32mOK\033[0m   %s\n" "$1"; OK=$((OK+1)); }
 ko(){ printf "  \033[31mFALLO\033[0m %s\n" "$1"; KO=$((KO+1)); }
@@ -155,6 +160,122 @@ else
   $ARCA extract out/slip.zip -o y >/dev/null 2>&1 && ko "extracted an archive that escapes the destination" || ok "rejects the path escaping the destination"
   # Beside the destination and not inside it, which is where the entry aimed.
   if [ -f PWNED ]; then ko "WROTE OUTSIDE THE DESTINATION"; rm -f PWNED; else ok "nothing was written outside the destination"; fi
+fi
+
+echo
+echo "G) 7z: Arca writes, 7-Zip verifies and extracts"
+python3 - <<'PY'
+from pathlib import Path
+root = Path('src7')
+(root / 'nested' / 'empty-dir').mkdir(parents=True)
+(root / 'empty').touch()
+(root / 'first.txt').write_bytes(b'first solid contents\n' * 2000)
+(root / 'second.txt').write_bytes(b'second solid contents\n' * 2000)
+(root / 'nested' / '\u00f1-\U0001f680.txt').write_bytes(bytes(range(256)) * 16)
+PY
+compare_trees() {
+  python3 - "$1" "$2" <<'PY'
+from pathlib import Path
+import sys
+def tree(name):
+    root = Path(name)
+    if not root.is_dir():
+        raise RuntimeError(f'missing extracted directory: {root}')
+    return {str(p.relative_to(root)): None if p.is_dir() else p.read_bytes()
+            for p in root.rglob('*')}
+sys.exit(0 if tree(sys.argv[1]) == tree(sys.argv[2]) else 1)
+PY
+}
+unchanged_wrong_password() {
+  # Check contents, directory entries and mtimes, not just whether extraction failed.
+  python3 - "$ARCA" "$1" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+def snapshot(root):
+    return {str(p.relative_to(root)): (p.stat().st_mtime_ns, None if p.is_dir() else p.read_bytes())
+            for p in [root, *root.rglob('*')]}
+
+with tempfile.TemporaryDirectory(dir='.') as room:
+    root = Path(room)
+    dest = root / 'existing'
+    (dest / 'src7').mkdir(parents=True)
+    (dest / 'src7' / 'first.txt').write_bytes(b'keep this file')
+    (dest / 'src7' / 'empty').write_bytes(b'do not truncate')
+    for policy in ['overwrite', 'skip', 'rename']:
+        for output in [dest, root / 'absent' / 'nested']:
+            before = snapshot(root)
+            result = subprocess.run([sys.argv[1], 'extract', sys.argv[2], '-p', 'wrong',
+                                     '-o', str(output), '--on-conflict', policy], capture_output=True)
+            assert result.returncode == 1, result
+            assert b'password' in result.stderr.lower(), result.stderr
+            assert snapshot(root) == before, 'destination changed after wrong password'
+PY
+}
+
+for mode in plain visible hidden; do
+  arca_pw=(); seven_pw=(); hide=()
+  if [ "$mode" != plain ]; then arca_pw=(-p "$PW"); seven_pw=("-p$PW"); fi
+  if [ "$mode" = hidden ]; then hide=(--hide-names); fi
+  for level in store fast normal best; do
+    archive="out/arca-$mode-$level.7z"
+    if ! "$ARCA" create "$archive" src7 -l "$level" "${arca_pw[@]}" "${hide[@]}" >/dev/null 2>&1; then
+      ko "Arca creates 7z ($mode, $level)"; continue
+    fi
+    7z t "$archive" "${seven_pw[@]}" </dev/null >/dev/null 2>&1 && ok "7-Zip verifies Arca 7z ($mode, $level)" || ko "7-Zip rejects Arca 7z ($mode, $level)"
+    rm -rf x7
+    if 7z x -y -ox7 "$archive" "${seven_pw[@]}" </dev/null >/dev/null 2>&1 && compare_trees src7 x7/src7; then
+      ok "7-Zip extracts identical bytes and empty directories ($mode, $level)"
+    else
+      ko "7-Zip extraction differs ($mode, $level)"
+    fi
+    if [ "$mode" != plain ]; then
+      unchanged_wrong_password "$archive" && ok "wrong password leaves destinations untouched ($mode, $level)" || ko "wrong password touched destinations ($mode, $level)"
+    fi
+  done
+done
+
+echo
+echo "H) 7z: external solid and mixed encrypted/plain archives"
+for mode in plain visible hidden; do
+  arca_pw=(); seven_pw=(); hide=()
+  if [ "$mode" != plain ]; then arca_pw=(-p "$PW"); seven_pw=("-p$PW"); fi
+  if [ "$mode" = hidden ]; then hide=(-mhe=on); fi
+  archive="out/seven-$mode.7z"
+  if ! 7z a -t7z -m0=LZMA2 -ms=on "$archive" src7 "${seven_pw[@]}" "${hide[@]}" </dev/null >/dev/null 2>&1; then
+    ko "7-Zip creates solid $mode archive"; continue
+  fi
+  7z l -slt "$archive" "${seven_pw[@]}" </dev/null | grep -q 'Solid = +' && ok "external $mode input is actually solid" || ko "external $mode input is not solid"
+  7z t "$archive" "${seven_pw[@]}" </dev/null >/dev/null 2>&1 && ok "7-Zip verifies external $mode input" || ko "external $mode fixture is invalid"
+  "$ARCA" list "$archive" "${arca_pw[@]}" >/dev/null 2>&1 && ok "Arca lists external $mode input" || ko "Arca cannot list external $mode input"
+  "$ARCA" test "$archive" "${arca_pw[@]}" >/dev/null 2>&1 && ok "Arca tests external $mode input" || ko "Arca cannot test external $mode input"
+  rm -rf y7
+  if "$ARCA" extract "$archive" -o y7 "${arca_pw[@]}" >/dev/null 2>&1 && compare_trees src7 y7/src7; then
+    ok "Arca extracts identical solid bytes and Unicode paths ($mode)"
+  else
+    ko "Arca solid extraction differs ($mode)"
+  fi
+  if [ "$mode" = hidden ]; then
+    "$ARCA" list "$archive" >/dev/null 2>&1 && ko "hidden names visible without password" || ok "hidden names require password"
+  else
+    "$ARCA" list "$archive" >/dev/null 2>&1 && ok "visible names list without password ($mode)" || ko "cannot list visible names ($mode)"
+  fi
+  if [ "$mode" != plain ]; then
+    unchanged_wrong_password "$archive" && ok "wrong password leaves solid destinations untouched ($mode)" || ko "wrong password touched solid destinations ($mode)"
+  fi
+done
+if 7z a -t7z out/mixed.7z src7/first.txt src7/empty >/dev/null 2>&1 &&
+   7z a -t7z -p"$PW" -mhe=off out/mixed.7z src7/second.txt >/dev/null 2>&1; then
+  7z l -slt out/mixed.7z > out/mixed-list.txt
+  if grep -q 'Encrypted = +' out/mixed-list.txt && grep -q 'Encrypted = -' out/mixed-list.txt; then
+    unchanged_wrong_password out/mixed.7z && ok "mixed plain/encrypted archive leaves destinations untouched" || ko "mixed archive touched destinations on wrong password"
+  else
+    ko "mixed fixture does not contain both encryption modes"
+  fi
+else
+  ko "could not create mixed plain/encrypted fixture"
 fi
 
 echo
