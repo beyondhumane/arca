@@ -118,3 +118,49 @@ fn passwords_work_for_listing_testing_and_extraction() {
     .success());
     assert!(!dest.exists());
 }
+
+#[cfg(feature = "rar")]
+#[test]
+fn later_modern_and_legacy_volumes_use_the_complete_set() {
+    let dir = tempfile::tempdir().unwrap();
+    for (i, name) in ["volume.rar", "volume.r00", "volume.r01", "volume.r02"]
+        .iter()
+        .enumerate()
+    {
+        std::fs::copy(
+            fixture(&format!("volume.part{}.rar", i + 1)),
+            dir.path().join(name),
+        )
+        .unwrap();
+    }
+    for archive in [fixture("volume.part4.rar"), dir.path().join("volume.r02")] {
+        for verb in ["list", "test"] {
+            let result = run(&[verb.as_ref(), archive.as_os_str()]);
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+        let out = tempfile::tempdir().unwrap();
+        let result = run(&[
+            "extract".as_ref(),
+            archive.as_os_str(),
+            "-o".as_ref(),
+            out.path().as_os_str(),
+        ]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(
+            std::fs::read(out.path().join("first.txt")).unwrap(),
+            b"Arca RAR fixture alpha\n".repeat(64)
+        );
+        assert_eq!(
+            std::fs::read(out.path().join("folder/second.txt")).unwrap(),
+            b"Arca RAR fixture beta\n".repeat(64)
+        );
+    }
+}

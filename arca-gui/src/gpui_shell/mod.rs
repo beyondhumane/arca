@@ -913,18 +913,22 @@ impl GpuiShell {
         self.dialog = Some(rx);
         std::thread::spawn(move || {
             let result = match kind {
-                DialogKind::Open => DialogResult::Open(
-                    rfd::FileDialog::new()
-                        .add_filter(
-                            "Archives",
-                            if cfg!(feature = "rar") {
-                                &["zip", "tar", "gz", "tgz", "rar", "cbr"][..]
-                            } else {
-                                &["zip", "tar", "gz", "tgz"][..]
-                            },
-                        )
-                        .pick_file(),
-                ),
+                DialogKind::Open => {
+                    let dialog = rfd::FileDialog::new().add_filter(
+                        "Archives",
+                        if cfg!(feature = "rar") {
+                            &["zip", "tar", "gz", "tgz", "rar", "cbr"][..]
+                        } else {
+                            &["zip", "tar", "gz", "tgz"][..]
+                        },
+                    );
+                    let dialog = if cfg!(feature = "rar") {
+                        dialog.add_filter("All files (including RAR volumes)", &["*"])
+                    } else {
+                        dialog
+                    };
+                    DialogResult::Open(dialog.pick_file())
+                }
                 DialogKind::PickInputs { folders } => DialogResult::Inputs(if folders {
                     rfd::FileDialog::new().pick_folders()
                 } else {

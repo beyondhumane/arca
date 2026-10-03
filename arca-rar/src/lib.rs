@@ -5,6 +5,8 @@ use std::path::Path;
 
 #[cfg(feature = "rar")]
 mod reader;
+#[cfg(feature = "rar")]
+mod volumes;
 
 pub type Progress<'a> = dyn Fn(usize, usize, &str) -> bool + Sync + 'a;
 
@@ -19,10 +21,17 @@ pub enum Conflict {
 pub struct RarArchive {
     entries: Vec<Entry>,
     #[cfg(feature = "rar")]
-    inner: rars::Archive,
+    inner: volumes::Volumes,
 }
 
 impl RarArchive {
+    /// Opens a complete set from any volume, resolving siblings only in the
+    /// selected directory. Numbered and legacy names resolve to volume one.
+    ///
+    /// Available volume numbers/flags and split metadata are checked; checksums
+    /// are verified while decoding. RAR has no universal set identifier, so
+    /// unrelated unsplit volumes with matching metadata cannot always be
+    /// distinguished. Older families also lack reliable volume ordinals.
     pub fn open(path: &Path, password: Option<&str>) -> Result<Self> {
         Self::open_with_progress(path, password, &|_, _, _| true)
     }
