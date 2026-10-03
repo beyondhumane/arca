@@ -1,10 +1,14 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
+mod panes;
+mod preview;
 #[cfg(all(test, feature = "rar"))]
 mod rar_tests;
 mod state;
 pub(crate) use actions::*;
+pub(crate) use panes::{BrowserState, DirectoryPane};
+pub(crate) use preview::{PreviewState, PreviewStatus};
 pub(crate) use state::AppState;
 
 use crate::archive_ops::*;
@@ -47,7 +51,7 @@ impl AppController {
                 self.start_extract_to(only_checked, dest)
             }
             AppAction::PrepareCompress(paths) => self.prepare_compress(paths),
-            AppAction::SetFilter(filter) => self.state.filter = filter,
+            AppAction::SetFilter(filter) => self.set_pane_filter(self.state.browser.active, filter),
             AppAction::SelectAllVisible => self.select_all_visible(),
             AppAction::InvertVisible => self.invert_visible(),
             AppAction::Add(paths) => self.add_files(paths),
@@ -124,14 +128,18 @@ impl AppController {
     }
 
     pub(crate) fn sort_by(&mut self, column: SortColumn) {
-        if self.state.order.0 == column {
-            self.state.order.1 = !self.state.order.1;
+        let order = if self.state.order.0 == column {
+            (column, !self.state.order.1)
         } else {
-            self.state.order = (column, true);
-        }
+            (column, true)
+        };
+        self.set_pane_order(self.state.browser.active, order);
     }
 
     pub(crate) fn start_extract_to(&mut self, only_checked: bool, mut dest: PathBuf) {
+        if self.state.busy {
+            return;
+        }
         let Some(archive) = self.state.archive.clone() else {
             return;
         };
@@ -278,16 +286,20 @@ impl AppController {
         self.state.view = View::Add;
     }
     pub(crate) fn select_all_visible(&mut self) {
+        self.cancel_preview();
         for row in self.visible_rows() {
-            self.set_checked(&row, true);
+            self.set_checked_projection(&row, true);
         }
+        self.snapshot_active_pane();
     }
     pub(crate) fn invert_visible(&mut self) {
         let rows = self.visible_rows();
         let values: Vec<bool> = rows.iter().map(|r| !self.is_checked(r)).collect();
+        self.cancel_preview();
         for (r, v) in rows.iter().zip(values) {
-            self.set_checked(r, v);
+            self.set_checked_projection(r, v);
         }
+        self.snapshot_active_pane();
     }
     pub(crate) fn request_delete(&mut self) {
         let names = self.selected_names();
@@ -387,6 +399,8 @@ impl AppController {
                 cut_pending: None,
                 show_shortcuts: false,
                 quiet: false,
+                browser: BrowserState::default(),
+                preview: PreviewState::default(),
             },
         }
     }
@@ -413,9 +427,7 @@ impl AppController {
     pub(crate) fn go_back(&mut self) {
         if self.can_go_back() {
             self.state.here -= 1;
-            self.state.current_dir = self.state.history[self.state.here].clone();
-            self.state.filter.clear();
-            self.clear_picked();
+            self.navigate_panes(self.state.history[self.state.here].clone());
         }
     }
     pub(crate) fn selected_roots(&self) -> Vec<String> {
@@ -444,6 +456,9 @@ impl AppController {
             while let Some(cut) = trimmed[at..].find('/') {
                 at += cut + 1;
                 let prefix = &trimmed[..at];
+                if !self.state.settings.flat && prefix.len() <= self.state.current_dir.len() {
+                    continue;
+                }
                 let all = *whole.entry(prefix.to_string()).or_insert_with(|| {
                     names
                         .iter()
@@ -473,17 +488,17 @@ impl AppController {
     // ever happened, and removing them on the guess that it did would lose them
     // for good the moment somebody changed their mind.
     pub(crate) fn clear_picked(&mut self) {
+        self.cancel_preview();
         self.state.checked.iter_mut().for_each(|c| *c = false);
         self.state.cursor = None;
         // A row number means something else in the folder now on screen.
         self.state.last_click = None;
+        self.snapshot_active_pane();
     }
     pub(crate) fn go_forward(&mut self) {
         if self.can_go_forward() {
             self.state.here += 1;
-            self.state.current_dir = self.state.history[self.state.here].clone();
-            self.state.filter.clear();
-            self.clear_picked();
+            self.navigate_panes(self.state.history[self.state.here].clone());
         }
     }
     pub(crate) fn s(&self) -> &'static Strings {
@@ -524,6 +539,9 @@ impl AppController {
     // Lives on the controller rather than in a view because there is nothing
     // about it that belongs to a toolkit, and both surfaces offer it.
     pub(crate) fn undo_last(&mut self) {
+        if self.state.busy {
+            return;
+        }
         let Some((archive, _)) = self.state.undo.take() else {
             return;
         };
@@ -561,6 +579,7 @@ impl AppController {
         self.state.current_dir.clear();
         self.state.history = vec![String::new()];
         self.state.here = 0;
+        self.reset_browser_panes();
         self.state.notice = self.summary();
         self.state.error = false;
     }
@@ -717,10 +736,12 @@ impl AppController {
     /// The tree points at folders the list may not be showing, so the pick is
     /// made from the path and not from a row on screen.
     pub(crate) fn pick_folder(&mut self, path: &str) {
+        self.go_to(parent_of(&normalized_dir(path)));
         self.clear_picked();
         for i in entries_under(&self.state.entries, path) {
             self.state.checked[i] = true;
         }
+        self.snapshot_active_pane();
     }
 
     pub(crate) fn set_checked(&mut self, row: &Row, value: bool) {
@@ -730,8 +751,28 @@ impl AppController {
         if row.up {
             return;
         }
+        if !self
+            .visible_rows()
+            .iter()
+            .any(|r| r.path == row.path && r.entry == row.entry)
+        {
+            return;
+        }
+        self.cancel_preview();
+        self.set_checked_projection(row, value);
+        self.snapshot_active_pane();
+    }
+
+    fn set_checked_projection(&mut self, row: &Row, value: bool) {
+        if row.up {
+            return;
+        }
         match row.entry {
-            Some(i) => self.state.checked[i] = value,
+            Some(i) => {
+                if let Some(on) = self.state.checked.get_mut(i) {
+                    *on = value;
+                }
+            }
             None => {
                 for i in entries_under(&self.state.entries, &row.path) {
                     self.state.checked[i] = value;
@@ -771,15 +812,8 @@ impl AppController {
     // thought better of costs nothing, and a drag of six gigabytes starts as
     // fast as a drag of one file.
     pub(crate) fn go_to(&mut self, path: String) {
-        if self.state.history.get(self.state.here) == Some(&path) {
-            return;
-        }
-        self.state.history.truncate(self.state.here + 1);
-        self.state.history.push(path.clone());
-        self.state.here = self.state.history.len() - 1;
-        self.state.current_dir = path;
-        self.state.filter.clear();
-        self.clear_picked();
+        self.navigate_panes(path);
+        self.record_pane_history();
     }
 
     // Every folder starts with nothing picked, the way the Explorer does.
@@ -933,6 +967,9 @@ impl AppController {
     // The exception is dropping an archive onto an archive, which is honestly
     // both, so it asks instead of picking one and being wrong half the time.
     pub(crate) fn copy_to_clipboard(&mut self, cut: bool) {
+        if self.state.busy {
+            return;
+        }
         let s: &'static Strings = self.s();
         let Some(archive) = self.state.archive.clone() else {
             return;
@@ -1032,6 +1069,9 @@ impl AppController {
     // this can be wrong leaves the archive untouched, which is the side to be
     // wrong on when there is no undo.
     pub(crate) fn open_file(&mut self, index: usize) {
+        if self.state.busy {
+            return;
+        }
         let Some(archive) = self.state.archive.clone() else {
             return;
         };
@@ -1065,6 +1105,7 @@ impl AppController {
     // changing folder changes the list under the cursor, so it is clamped here
     // rather than tracked separately.
     pub(crate) fn receive(&mut self) -> bool {
+        self.poll_preview();
         // The answer about a newer version, if it ever came. Its own channel,
         // because it is not a job and must not make the window look busy.
         if let Some(rx) = &self.state.update_rx {
@@ -1078,140 +1119,145 @@ impl AppController {
         // Set when the installer is down and checked, and answered as "close
         // the window": running it is Inno replacing the program that is open.
         let mut installing = false;
-        if let Some(rx) = &self.state.channel {
-            while let Ok(m) = rx.try_recv() {
-                match m {
-                    Message::Listing(path, v) => {
-                        if v.iter().any(|e| e.encrypted) && self.state.archive_password.is_none() {
-                            self.state.password_input.clear();
-                            self.state.password_wrong = false;
-                            self.state.archive_password = None;
-                            self.state.waiting_on_password =
-                                Some(if detect(&path) == Some(Format::Rar) {
-                                    Pending::ListArchive(path.clone())
-                                } else {
-                                    Pending::OpenArchive
-                                });
-                        }
-                        // Nothing picked to begin with. It used to be
-                        // everything, which was invisible while the ticks were
-                        // the only sign of it; now that a picked row is painted
-                        // it would open as a wall of blue, and "everything is
-                        // selected" is not what a list means when you open it.
-                        // The buttons that work on the whole archive never
-                        // looked at the ticks anyway.
-                        self.state.checked = vec![false; v.len()];
-                        self.state.folders = tree::folders_of(&v);
-                        self.state.entries = v;
-                        if let Some(f) = detect(&path) {
-                            self.state.format = f;
-                        }
-                        // The name of what is open goes where every other
-                        // program puts it, which frees a whole row above the
-                        // list for nothing at all.
-                        self.state.window_title = format!(
-                            "{} - Arca{}",
-                            path.file_name()
-                                .map(|x| x.to_string_lossy().to_string())
-                                .unwrap_or_default(),
-                            if detect(&path) == Some(Format::Rar) {
-                                " (RAR: experimental, read-only)"
-                            } else {
-                                ""
-                            }
-                        );
-                        self.state.archive = Some(path);
-                        let restore_dir = self.state.reread_dir.take();
-                        self.state.history = vec![String::new()];
-                        self.state.here = 0;
-                        self.state.current_dir = restore_dir
-                            .map(|dir| nearest_existing_dir(&self.state.entries, &dir))
-                            .unwrap_or_default();
-                        if !self.state.current_dir.is_empty() {
-                            self.state.history = vec![self.state.current_dir.clone()];
-                        }
-                        self.state.busy = false;
-                        close = true;
-                    }
-                    Message::JobPasswordNeeded(job) => {
-                        self.state.busy = false;
+        let messages: Vec<_> = self
+            .state
+            .channel
+            .as_ref()
+            .map(|rx| rx.try_iter().collect())
+            .unwrap_or_default();
+        for m in messages {
+            match m {
+                Message::Listing(path, v) => {
+                    if v.iter().any(|e| e.encrypted) && self.state.archive_password.is_none() {
                         self.state.password_input.clear();
                         self.state.password_wrong = false;
+                        self.state.archive_password = None;
                         self.state.waiting_on_password =
-                            Some(if matches!(*job, Job::Test { .. }) {
-                                Pending::TestArchive(job)
+                            Some(if detect(&path) == Some(Format::Rar) {
+                                Pending::ListArchive(path.clone())
                             } else {
-                                Pending::Extract(job)
+                                Pending::OpenArchive
                             });
                     }
-                    Message::PasswordNeeded(path, wrong) => {
-                        self.state.archive = Some(path.clone());
-                        self.state.format = Format::Rar;
-                        self.state.entries.clear();
-                        self.state.checked.clear();
-                        self.state.folders = tree::Folder::default();
-                        self.state.archive_password = None;
-                        self.state.password_input.clear();
-                        self.state.password_wrong = wrong;
-                        self.state.waiting_on_password = Some(Pending::ListArchive(path));
-                        self.state.busy = false;
-                        close = true;
+                    // Nothing picked to begin with. It used to be
+                    // everything, which was invisible while the ticks were
+                    // the only sign of it; now that a picked row is painted
+                    // it would open as a wall of blue, and "everything is
+                    // selected" is not what a list means when you open it.
+                    // The buttons that work on the whole archive never
+                    // looked at the ticks anyway.
+                    self.state.checked = vec![false; v.len()];
+                    self.state.folders = tree::folders_of(&v);
+                    self.state.entries = v;
+                    if let Some(f) = detect(&path) {
+                        self.state.format = f;
                     }
-                    Message::Conflict(path) => {
-                        self.state.conflict = Some(path);
-                    }
-                    Message::Progress(done, total, name) => {
-                        self.state.done_count = done;
-                        self.state.total_count = total;
-                        self.state.current_file = name;
-                    }
-                    Message::Done(text) => {
-                        self.state.notice = text;
-                        self.state.busy = false;
-                        close = true;
-                        finished_ok = true;
-                    }
-                    Message::Failed(text) => {
-                        self.state.reread_dir = None;
-                        // Stopping is not failing. Nothing is wrong with the
-                        // archive and there is nothing to report in red: the
-                        // rewrite gave up before it swapped anything.
-                        let quit = text == arca_core::Error::Cancelled.to_string();
-                        self.state.notice = if quit {
-                            self.s().stopped.to_string()
+                    // The name of what is open goes where every other
+                    // program puts it, which frees a whole row above the
+                    // list for nothing at all.
+                    self.state.window_title = format!(
+                        "{} - Arca{}",
+                        path.file_name()
+                            .map(|x| x.to_string_lossy().to_string())
+                            .unwrap_or_default(),
+                        if detect(&path) == Some(Format::Rar) {
+                            " (RAR: experimental, read-only)"
                         } else {
-                            text
-                        };
-                        self.state.error = !quit;
-                        self.state.busy = false;
-                        close = true;
+                            ""
+                        }
+                    );
+                    self.state.archive = Some(path);
+                    let restore_dir = self.state.reread_dir.take();
+                    self.state.history = vec![String::new()];
+                    self.state.here = 0;
+                    self.state.current_dir = restore_dir
+                        .map(|dir| nearest_existing_dir(&self.state.entries, &dir))
+                        .unwrap_or_default();
+                    if !self.state.current_dir.is_empty() {
+                        self.state.history = vec![self.state.current_dir.clone()];
                     }
-                    // The installer is down and checked. It is run silently and
-                    // Arca stands aside: Inno Setup closes the program it is
-                    // about to replace and opens it again when it finishes,
-                    // which is how something that is running gets updated.
-                    Message::Downloaded(path) => {
-                        self.state.busy = false;
-                        close = true;
-                        let version = self
-                            .state
-                            .update
-                            .as_ref()
-                            .map(|r| r.tag.clone())
-                            .unwrap_or_default();
-                        self.state.notice =
-                            fill(self.s().update_installing, &[("version", &version)]);
-                        match install_update(&path) {
-                            Ok(()) => installing = true,
-                            Err(e) => {
-                                self.state.notice = e;
-                                self.state.error = true;
-                            }
+                    self.reset_browser_panes();
+                    self.state.busy = false;
+                    close = true;
+                }
+                Message::JobPasswordNeeded(job) => {
+                    self.state.busy = false;
+                    self.state.password_input.clear();
+                    self.state.password_wrong = false;
+                    self.state.waiting_on_password = Some(if matches!(*job, Job::Test { .. }) {
+                        Pending::TestArchive(job)
+                    } else {
+                        Pending::Extract(job)
+                    });
+                }
+                Message::PasswordNeeded(path, wrong) => {
+                    self.state.archive = Some(path.clone());
+                    self.state.format = Format::Rar;
+                    self.state.entries.clear();
+                    self.state.checked.clear();
+                    self.state.folders = tree::Folder::default();
+                    self.state.current_dir.clear();
+                    self.reset_browser_panes();
+                    self.state.archive_password = None;
+                    self.state.password_input.clear();
+                    self.state.password_wrong = wrong;
+                    self.state.waiting_on_password = Some(Pending::ListArchive(path));
+                    self.state.busy = false;
+                    close = true;
+                }
+                Message::Conflict(path) => {
+                    self.state.conflict = Some(path);
+                }
+                Message::Progress(done, total, name) => {
+                    self.state.done_count = done;
+                    self.state.total_count = total;
+                    self.state.current_file = name;
+                }
+                Message::Done(text) => {
+                    self.state.notice = text;
+                    self.state.busy = false;
+                    close = true;
+                    finished_ok = true;
+                }
+                Message::Failed(text) => {
+                    self.state.reread_dir = None;
+                    // Stopping is not failing. Nothing is wrong with the
+                    // archive and there is nothing to report in red: the
+                    // rewrite gave up before it swapped anything.
+                    let quit = text == arca_core::Error::Cancelled.to_string();
+                    self.state.notice = if quit {
+                        self.s().stopped.to_string()
+                    } else {
+                        text
+                    };
+                    self.state.error = !quit;
+                    self.state.busy = false;
+                    close = true;
+                }
+                // The installer is down and checked. It is run silently and
+                // Arca stands aside: Inno Setup closes the program it is
+                // about to replace and opens it again when it finishes,
+                // which is how something that is running gets updated.
+                Message::Downloaded(path) => {
+                    self.state.busy = false;
+                    close = true;
+                    let version = self
+                        .state
+                        .update
+                        .as_ref()
+                        .map(|r| r.tag.clone())
+                        .unwrap_or_default();
+                    self.state.notice = fill(self.s().update_installing, &[("version", &version)]);
+                    match install_update(&path) {
+                        Ok(()) => installing = true,
+                        Err(e) => {
+                            self.state.notice = e;
+                            self.state.error = true;
                         }
                     }
-                    Message::CutReady => {
-                        self.state.cut_pending = self.state.cut_armed.take();
-                    }
+                }
+                Message::CutReady => {
+                    self.state.cut_pending = self.state.cut_armed.take();
                 }
             }
         }
@@ -1274,14 +1320,34 @@ impl AppController {
     }
 
     pub(crate) fn visible_rows(&self) -> Vec<Row> {
-        let filter = self.state.filter.trim().to_lowercase();
+        self.rows_for(
+            &self.state.current_dir,
+            &self.state.filter,
+            self.state.order,
+            self.state.settings.flat,
+            !self.state.browser.columns,
+        )
+    }
+
+    fn rows_for(
+        &self,
+        directory: &str,
+        filter: &str,
+        order: (SortColumn, bool),
+        flat: bool,
+        up: bool,
+    ) -> Vec<Row> {
+        let filter = filter.trim().to_lowercase();
         // A search reaches down through the folders, so it starts where you
         // are: from the root it still walks the whole archive, and inside a
         // folder it stays under that folder. The flat view is the same list
         // without a name to look for, and it always starts at the root.
-        let flat = self.state.settings.flat;
         let mut rows = if !filter.is_empty() {
-            search_under(&self.state.entries, self.row_root(), &filter)
+            search_under(
+                &self.state.entries,
+                if flat { "" } else { directory },
+                &filter,
+            )
         } else if flat {
             self.state
                 .entries
@@ -1315,10 +1381,10 @@ impl AppController {
                 })
                 .collect()
         } else {
-            children_of(&self.state.entries, &self.state.current_dir)
+            children_of(&self.state.entries, directory)
         };
 
-        let (col, asc) = self.state.order;
+        let (col, asc) = order;
         rows.sort_by(|x, y| {
             if x.is_dir != y.is_dir {
                 return if x.is_dir {
@@ -1365,8 +1431,8 @@ impl AppController {
         });
         // Put on after the sort, because it belongs at the top whichever column
         // the list is held by and whichever way round.
-        if !flat && filter.is_empty() && !self.state.current_dir.is_empty() {
-            rows.insert(0, up_row(&self.state.current_dir));
+        if up && !flat && filter.is_empty() && !directory.is_empty() {
+            rows.insert(0, up_row(directory));
         }
         rows
     }
@@ -1458,64 +1524,7 @@ impl AppController {
     // is held over the window it says which. Guessing in silence is what made
     // the old behaviour surprising in the first place.
     pub(crate) fn view_entry(&mut self, index: usize) {
-        let Some(archive) = self.state.archive.clone() else {
-            return;
-        };
-        let Some(entry) = self.state.entries.get(index).cloned() else {
-            return;
-        };
-        let s = self.s();
-        if entry.is_dir {
-            return;
-        }
-        if entry.size > VIEW_LIMIT {
-            self.state.notice = fill(s.too_big_to_view, &[("size", &human(VIEW_LIMIT))]);
-            self.state.error = true;
-            return;
-        }
-        let mut bytes = Vec::with_capacity(entry.size as usize);
-        if let Err(e) = read_entry(
-            &archive,
-            index,
-            &mut bytes,
-            self.state.archive_password.as_deref(),
-        ) {
-            self.state.notice = e.to_string();
-            self.state.error = true;
-            return;
-        }
-
-        let name = entry.name.rsplit(['/', '\\']).next().unwrap_or(&entry.name);
-        // Asked once, and only of the names that claim to be pictures: handing
-        // every unknown file to a decoder to find out is a decoder run on
-        // whatever happens to be in the archive.
-        let picture = looks_like_picture(name)
-            && image::guess_format(&bytes).is_ok_and(|f| {
-                image::ImageReader::new(std::io::Cursor::new(&bytes))
-                    .with_guessed_format()
-                    .is_ok_and(|r| r.format() == Some(f))
-            });
-        let look = if picture {
-            Look::Picture
-        } else if looks_like_text(&bytes) {
-            Look::Text
-        } else {
-            Look::Hex
-        };
-        // Split now, once. The text is drawn a line at a time and only the
-        // lines on screen are laid out, so a log of a million lines opens as
-        // fast as a note of three.
-        let lines = String::from_utf8_lossy(&bytes)
-            .lines()
-            .map(|l| l.to_string())
-            .collect();
-        self.state.viewing = Some(Viewed {
-            name: name.to_string(),
-            bytes: bytes.into(),
-            look,
-            lines,
-            picture,
-        });
+        self.request_preview(index);
     }
 
     // The file being looked at, in its own window over the list.
@@ -1524,6 +1533,9 @@ impl AppController {
     }
 
     fn open_with_password(&mut self, path: PathBuf, password: Option<String>) {
+        if self.state.busy {
+            return;
+        }
         self.state.archive_password = password;
         // Whatever was cut belonged to the listing being replaced, and so did
         // whatever the status bar was saying: the summary of the archive being
@@ -1545,6 +1557,7 @@ impl AppController {
     }
 
     fn load_listing(&mut self, path: PathBuf) {
+        self.cancel_preview();
         let password = self.state.archive_password.clone();
         let stop = self.state.stop.clone();
         stop.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -1561,6 +1574,12 @@ impl AppController {
     }
 
     pub(crate) fn run_job(&mut self, mut job: Job) {
+        if self.state.busy {
+            return;
+        }
+        if reread_target(&job, &self.state.current_dir).is_some() {
+            self.cancel_preview();
+        }
         if let Job::Test {
             archive, password, ..
         } = &mut job
@@ -1704,10 +1723,13 @@ impl AppController {
             return false;
         }
         match row.entry {
-            Some(i) => self.state.checked[i],
+            Some(i) => self.state.checked.get(i).copied().unwrap_or(false),
             None => {
                 let under = entries_under(&self.state.entries, &row.path);
-                !under.is_empty() && under.iter().all(|&i| self.state.checked[i])
+                !under.is_empty()
+                    && under
+                        .iter()
+                        .all(|&i| self.state.checked.get(i).copied().unwrap_or(false))
             }
         }
     }
