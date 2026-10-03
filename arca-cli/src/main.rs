@@ -9,6 +9,8 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+mod sevenz;
+
 const BUF: usize = 256 * 1024;
 
 #[derive(Parser)]
@@ -27,7 +29,7 @@ struct Cli {
 enum Cmd {
     #[command(visible_alias = "c", about = "Create an archive")]
     Create {
-        #[arg(help = "Output archive (.zip, .tar, .tar.gz)")]
+        #[arg(help = "Output archive (.zip, .7z, .tar, .tar.gz)")]
         out: PathBuf,
         #[arg(required = true, help = "Files or directories to include")]
         inputs: Vec<PathBuf>,
@@ -35,13 +37,13 @@ enum Cmd {
               help = "Compression level")]
         level: LevelArg,
         #[arg(short, long, value_enum, default_value_t = CodecArg::Auto,
-              help = "Compressor. 'auto' uses deflate in .zip for compatibility")]
+              help = "Compressor. 'auto' uses deflate in .zip and LZMA2 in .7z")]
         codec: CodecArg,
         #[arg(
             short = 'j',
             long,
             default_value_t = 0,
-            help = "Threads to use. 0 means every core"
+            help = "Threads to use. 0 means every core. .7z creation is sequential"
         )]
         threads: usize,
         #[arg(
@@ -50,6 +52,11 @@ enum Cmd {
             help = "Encrypt with AES-256. Other tools will ask for it to open the archive"
         )]
         password: Option<String>,
+        #[arg(
+            long,
+            help = "Encrypt file names too (.7z only; requires a nonempty password)"
+        )]
+        hide_names: bool,
     },
     #[command(
         visible_alias = "l",
@@ -60,6 +67,8 @@ enum Cmd {
         archive: PathBuf,
         #[arg(short, long, help = "Report how long it took")]
         time: bool,
+        #[arg(short = 'p', long, help = "Password to read encrypted .7z headers")]
+        password: Option<String>,
     },
     #[command(visible_alias = "x", about = "Extract the contents")]
     Extract {
@@ -122,11 +131,13 @@ enum Cmd {
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
 enum CodecArg {
-    #[value(help = "Deflate in .zip so anything can read it, zstd where possible")]
+    #[value(help = "Deflate in .zip, LZMA2 in .7z")]
     Auto,
     Store,
     Deflate,
     Zstd,
+    #[value(name = "lzma2", help = "LZMA2 (.7z only)")]
+    Lzma2,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -161,6 +172,7 @@ impl From<LevelArg> for Level {
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum Format {
     Zip,
+    SevenZ,
     Tar,
     TarGz,
 }
@@ -169,13 +181,15 @@ fn detect(p: &Path) -> Result<Format> {
     let n = p.to_string_lossy().to_ascii_lowercase();
     if n.ends_with(".zip") {
         Ok(Format::Zip)
+    } else if n.ends_with(".7z") {
+        Ok(Format::SevenZ)
     } else if n.ends_with(".tar.gz") || n.ends_with(".tgz") {
         Ok(Format::TarGz)
     } else if n.ends_with(".tar") {
         Ok(Format::Tar)
     } else {
         Err(Error::Unsupported(format!(
-            "unrecognized extension in '{}' (.zip, .tar and .tar.gz are supported)",
+            "unrecognized extension in '{}' (.zip, .7z, .tar and .tar.gz are supported)",
             p.display()
         )))
     }
@@ -198,6 +212,7 @@ fn run(cli: Cli) -> Result<()> {
             codec,
             threads,
             password,
+            hide_names,
         } => create(
             &out,
             &inputs,
@@ -205,8 +220,13 @@ fn run(cli: Cli) -> Result<()> {
             codec,
             threads,
             password.as_deref(),
+            hide_names,
         ),
-        Cmd::List { archive, time } => list(&archive, time),
+        Cmd::List {
+            archive,
+            time,
+            password,
+        } => list(&archive, time, password.as_deref()),
         Cmd::Extract {
             archive,
             dest,
@@ -272,16 +292,17 @@ fn resolve_threads(requested: usize) -> usize {
         .unwrap_or(1)
 }
 
-fn resolve_codec(c: CodecArg, format_kind: Format) -> Codec {
-    match c {
+fn resolve_codec(c: CodecArg, format_kind: Format) -> Result<Codec> {
+    Ok(match c {
         CodecArg::Store => Codec::Store,
         CodecArg::Deflate => Codec::Deflate,
         CodecArg::Zstd => Codec::Zstd,
+        CodecArg::Lzma2 => return Err(Error::Unsupported("LZMA2 creation requires .7z".into())),
         CodecArg::Auto => match format_kind {
             Format::Zip => Codec::Deflate,
             _ => Codec::Deflate,
         },
-    }
+    })
 }
 
 fn create(
@@ -291,14 +312,23 @@ fn create(
     codec_arg: CodecArg,
     requested_threads: usize,
     password: Option<&str>,
+    hide_names: bool,
 ) -> Result<()> {
     let format_kind = detect(out)?;
-    if password.is_some() && format_kind != Format::Zip {
+    if format_kind == Format::SevenZ {
+        return sevenz::create(out, inputs, level, codec_arg, password, hide_names);
+    }
+    if hide_names {
         return Err(Error::Unsupported(
-            "encryption only exists in .zip; .tar and .tar.gz have no place to put it".into(),
+            "--hide-names requires .7z and a nonempty password".into(),
         ));
     }
-    let codec = resolve_codec(codec_arg, format_kind);
+    if password.is_some() && format_kind != Format::Zip {
+        return Err(Error::Unsupported(
+            "encryption requires .zip or .7z; .tar and .tar.gz have no place to put it".into(),
+        ));
+    }
+    let codec = resolve_codec(codec_arg, format_kind)?;
     let threads = resolve_threads(requested_threads);
     let raw_list = collect_files(inputs)?;
     if raw_list.is_empty() {
@@ -322,6 +352,7 @@ fn create(
 
     let t0 = Instant::now();
     match format_kind {
+        Format::SevenZ => unreachable!(),
         // Nothing to report while it runs -- the summary is printed at the end
         // -- so the answer to "carry on?" is always yes.
         Format::Zip => arca_zip::create_zip(out, &files, threads, password, &|_, _, _| true)?,
@@ -371,7 +402,7 @@ fn create(
     Ok(())
 }
 
-fn list(archive: &Path, time: bool) -> Result<()> {
+fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
     let t0 = Instant::now();
     let format_kind = detect(archive)?;
     let mut n = 0u64;
@@ -379,6 +410,21 @@ fn list(archive: &Path, time: bool) -> Result<()> {
 
     let mut out = BufWriter::new(io::stdout().lock());
     match format_kind {
+        Format::SevenZ => {
+            let a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            for e in a.entries() {
+                writeln!(
+                    out,
+                    "{:>12}  {:>7}  {:>5.1}%  {}",
+                    e.size,
+                    e.method.name(),
+                    e.ratio() * 100.0,
+                    e.name
+                )?;
+                n += 1;
+                bytes += e.size;
+            }
+        }
         Format::Zip => {
             let a = ZipArchive::open(File::open(archive)?)?;
             for e in a.entries() {
@@ -479,6 +525,9 @@ fn extract(
     password: Option<&str>,
 ) -> Result<()> {
     let format_kind = detect(archive)?;
+    if format_kind == Format::SevenZ {
+        return sevenz::extract(archive, dest, policy, password);
+    }
     fs::create_dir_all(dest)?;
     let t0 = Instant::now();
     let mut n = 0u64;
@@ -486,6 +535,7 @@ fn extract(
     let threads = resolve_threads(requested_threads);
 
     match format_kind {
+        Format::SevenZ => unreachable!(),
         Format::Zip => {
             let a = ZipArchive::open(File::open(archive)?)?;
             // Directories and conflicts are settled here, single threaded: two
@@ -581,7 +631,7 @@ fn change_password(
 ) -> Result<()> {
     if detect(archive)? != Format::Zip {
         return Err(Error::Unsupported(
-            "only .zip carries encryption; .tar and .tar.gz have nowhere to put it".into(),
+            "changing passwords is supported only for .zip; .7z password changes require rewriting blocks and are not supported".into(),
         ));
     }
     let entries = ZipArchive::open(File::open(archive)?)?.entries().to_vec();
@@ -640,6 +690,11 @@ fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
     let mut failures = 0u64;
 
     match format_kind {
+        Format::SevenZ => {
+            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            a.test(&mut |_| true)?;
+            n = a.len() as u64;
+        }
         Format::Zip => {
             let mut a = ZipArchive::open(File::open(archive)?)?;
             for i in 0..a.len() {
