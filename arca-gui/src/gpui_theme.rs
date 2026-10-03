@@ -79,10 +79,12 @@ fn alpha(value: u32, a: f32) -> Hsla {
 
 pub fn init(cx: &mut App) {
     gpui_component::init(cx);
-    let _ = cx
-        .text_system()
-        .add_fonts(FONT_FILES.iter().map(|font| Cow::Borrowed(*font)).collect());
-    let installed = cx.text_system().all_font_names();
+    let _ = FONTS.set(load_fonts(cx.text_system()));
+}
+
+fn load_fonts(text_system: &gpui::TextSystem) -> Fonts {
+    let _ = text_system.add_fonts(FONT_FILES.iter().map(|font| Cow::Borrowed(*font)).collect());
+    let installed = text_system.all_font_names();
     let pick = |wanted: &str| {
         if installed.iter().any(|name| name == wanted) {
             SharedString::from(wanted.to_string())
@@ -90,10 +92,10 @@ pub fn init(cx: &mut App) {
             system_ui().into()
         }
     };
-    let _ = FONTS.set(Fonts {
+    Fonts {
         display: pick("Sora"),
         text: pick("Inter"),
-    });
+    }
 }
 
 pub fn display_font() -> SharedString {
@@ -294,6 +296,29 @@ fn system_mono() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a native display server"]
+    fn native_brand_fonts_resolve_without_fallback() {
+        let app = gpui_platform::application();
+        let text_system = app.text_system();
+        let fonts = load_fonts(&text_system);
+        assert_eq!(fonts.display.as_ref(), "Sora");
+        assert_eq!(fonts.text.as_ref(), "Inter");
+        for (family, weight) in [
+            (fonts.display, gpui::FontWeight::SEMIBOLD),
+            (fonts.text, gpui::FontWeight::NORMAL),
+        ] {
+            let mut font = gpui::font(family.clone());
+            font.weight = weight;
+            let id = text_system.resolve_font(&font);
+            let resolved = text_system.get_font_for_id(id).unwrap();
+            assert_eq!(resolved.family, family);
+            for ch in "Arca A\u{f1}adir configuraci\u{f3}n".chars() {
+                assert!(text_system.advance(id, px(16.), ch).is_ok());
+            }
+        }
+    }
 
     fn luminance(value: u32) -> f32 {
         let channel = |shift: u32| {
