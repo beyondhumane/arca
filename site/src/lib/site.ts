@@ -1,4 +1,6 @@
 export const VERSION = __ARCA_RELEASE__.version;
+export const STARS = __ARCA_STARS__;
+export const SITE_URL = 'https://arca.beyondhumane.com';
 export const REPO_URL = 'https://github.com/beyondhumane/arca';
 export const ISSUES_URL = `${REPO_URL}/issues`;
 export const NEW_ISSUE_URL = `${REPO_URL}/issues/new`;

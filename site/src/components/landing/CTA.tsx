@@ -4,7 +4,8 @@ import { CLONE_CMD, DOWNLOADS, RELEASE_URL, VERSION } from '@/lib/site';
 import type { Platform } from '@/lib/site';
 import { Accent, ButtonLink, Container, CopyButton, Reveal } from '../ui';
 import { DownloadButton, PLATFORM_ICONS, useRecommendedDownload } from '../download';
-import { useCopy } from '@/lib/i18n';
+import { useCopy, useLang } from '@/lib/i18n';
+import { docPath } from '@/lib/router';
 
 const COPY = {
   en: {
@@ -34,6 +35,7 @@ const COPY = {
 const ORDER: Platform[] = ['windows', 'macos', 'macos-intel', 'linux'];
 
 export function CTA() {
+  const { lang } = useLang();
   const { platform: recommended } = useRecommendedDownload();
   const t = useCopy(COPY);
 
@@ -58,7 +60,7 @@ export function CTA() {
               </p>
               <div className="mt-9 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
                 <DownloadButton />
-                <ButtonLink href="#/docs" variant="glass" size="lg">
+                <ButtonLink href={docPath(lang)} variant="glass" size="lg">
                   <BookOpen className="size-[18px]" />
                   {t.docs}
                 </ButtonLink>

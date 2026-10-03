@@ -41,6 +41,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          # Full history gives every guide page its real last-modified date.
+          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -63,6 +65,13 @@ jobs:
           gh release view -R "$GITHUB_REPOSITORY" \
             --json tagName,assets > "$out"
           echo "ARCA_RELEASE_JSON=$out" >> "$GITHUB_ENV"
+      # Read the star count here so visitors never call the rate-limited API.
+      - name: Star count
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stars=$(gh api "repos/$GITHUB_REPOSITORY" --jq .stargazers_count) || exit 0
+          echo "ARCA_STARS=$stars" >> "$GITHUB_ENV"
       - run: npx tsc --noEmit -p .
       - run: npm run build
       - uses: actions/upload-pages-artifact@v5

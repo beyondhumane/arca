@@ -92,7 +92,7 @@ const LANG_LABEL: { en: Record<Lang, string>; es: Record<Lang, string> } = {
 const COPY_PREFIX = { en: 'Copy', es: 'Copiar' };
 
 function highlightShell(line: string): ReactNode {
-  if (/^\s*#/.test(line)) return <span className="text-slate-500">{line}</span>;
+  if (/^\s*#/.test(line)) return <span className="text-slate-400">{line}</span>;
   let code = line;
   let comment = '';
   const m = /\s+#\s.*$/.exec(line);
@@ -107,7 +107,7 @@ function highlightShell(line: string): ReactNode {
     if (t === '&&' || t === '|') {
       expectCmd = true;
       return (
-        <span key={i} className="text-slate-500">
+        <span key={i} className="text-slate-400">
           {t}
         </span>
       );
@@ -128,34 +128,34 @@ function highlightShell(line: string): ReactNode {
   return (
     <>
       {nodes}
-      {comment && <span className="text-slate-500">{comment}</span>}
+      {comment && <span className="text-slate-400">{comment}</span>}
     </>
   );
 }
 
 function highlightYaml(line: string): ReactNode {
-  if (/^\s*#/.test(line)) return <span className="text-slate-500">{line}</span>;
+  if (/^\s*#/.test(line)) return <span className="text-slate-400">{line}</span>;
   const m = /^(\s*-?\s*)([\w.-]+)(:)(.*)$/.exec(line);
   if (!m) return <span className="text-slate-200">{line}</span>;
   return (
     <>
       {m[1]}
       <span className="text-sky-300">{m[2]}</span>
-      <span className="text-slate-500">{m[3]}</span>
+      <span className="text-slate-400">{m[3]}</span>
       <span className="text-emerald-300/90">{m[4]}</span>
     </>
   );
 }
 
 function highlightToml(line: string): ReactNode {
-  if (/^\s*#/.test(line)) return <span className="text-slate-500">{line}</span>;
+  if (/^\s*#/.test(line)) return <span className="text-slate-400">{line}</span>;
   if (/^\s*\[.*\]\s*$/.test(line)) return <span className="text-violet-300">{line}</span>;
   const m = /^(\s*[\w."*-]+)(\s*=\s*)(.*)$/.exec(line);
   if (!m) return <span className="text-slate-200">{line}</span>;
   return (
     <>
       <span className="text-sky-300">{m[1]}</span>
-      <span className="text-slate-500">{m[2]}</span>
+      <span className="text-slate-400">{m[2]}</span>
       <span className="text-emerald-300/90">{m[3]}</span>
     </>
   );
@@ -171,7 +171,7 @@ function highlightRust(line: string): ReactNode {
     return (
       <>
         <span className="text-violet-300">{code}</span>
-        {comment && <span className="text-slate-500">{comment}</span>}
+        {comment && <span className="text-slate-400">{comment}</span>}
       </>
     );
   }
@@ -190,7 +190,7 @@ function highlightRust(line: string): ReactNode {
           </span>
         );
       })}
-      {comment && <span className="text-slate-500">{comment}</span>}
+      {comment && <span className="text-slate-400">{comment}</span>}
     </>
   );
 }
@@ -219,7 +219,7 @@ export function CodeBlock({ code, lang = 'bash', title }: { code: string; lang?:
   return (
     <div className="my-6 overflow-hidden rounded-2xl border border-white/[0.08] bg-ink-900/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <div className="flex items-center justify-between border-b border-white/[0.06] bg-white/[0.02] py-1 pl-4 pr-1">
-        <span className="font-mono text-[11px] text-slate-500">{label}</span>
+        <span className="font-mono text-[11px] text-slate-400">{label}</span>
         <CopyButton text={clean} label={`${copy} ${label.toLowerCase()}`} />
       </div>
       <pre className="thin-scrollbar overflow-x-auto px-4 py-4 font-mono text-[13px] leading-relaxed">

@@ -6,6 +6,7 @@ import { useInView } from '@/lib/hooks';
 import { Accent, Container, Reveal, SectionHeading } from '../ui';
 import { useCopy, useLang } from '@/lib/i18n';
 import { MethodLink } from './MethodLink';
+import { docPath } from '@/lib/router';
 
 type Bar = { label: string; value: number; display: string; arca?: boolean; sub?: string };
 type Group = { title?: string; bars: Bar[] };
@@ -355,7 +356,7 @@ export function Performance() {
                   {t.losesText[2]}
                 </p>
                 <a
-                  href="#/docs/benchmarks/deflate-against-deflate-on-windows-11"
+                  href={docPath(lang, 'benchmarks', 'deflate-against-deflate-on-windows-11')}
                   className="mt-4 inline-flex items-center gap-1 text-sm text-brand-300 transition hover:gap-2 hover:text-brand-200"
                 >
                   {t.full} <ArrowRight className="size-3.5" />

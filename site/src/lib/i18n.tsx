@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 import type { ReactNode } from 'react';
 
 export const LANGS = ['en', 'es'] as const;
@@ -9,7 +9,7 @@ export const LANG_NAMES: Record<Lang, string> = { en: 'English', es: 'Español' 
 
 const KEY = 'arca-lang';
 
-function stored(): Lang | null {
+export function storedLang(): Lang | null {
   try {
     const v = localStorage.getItem(KEY);
     return LANGS.includes(v as Lang) ? (v as Lang) : null;
@@ -18,32 +18,20 @@ function stored(): Lang | null {
   }
 }
 
-export function detectLang(): Lang {
-  const saved = stored();
-  if (saved) return saved;
-  const prefs = typeof navigator === 'undefined' ? [] : (navigator.languages ?? [navigator.language]);
-  for (const p of prefs) {
-    const base = p?.slice(0, 2).toLowerCase();
-    if (LANGS.includes(base as Lang)) return base as Lang;
+export function storeLang(l: Lang) {
+  try {
+    localStorage.setItem(KEY, l);
+  } catch {
+    /* private mode: the choice lasts until reload */
   }
-  return 'en';
 }
 
 const LangContext = createContext<{ lang: Lang; setLang: (l: Lang) => void }>({ lang: 'en', setLang: () => {} });
 
-export function LangProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>(detectLang);
+export function LangProvider({ lang, setLang, children }: { lang: Lang; setLang: (l: Lang) => void; children: ReactNode }) {
   useEffect(() => {
     document.documentElement.lang = lang;
   }, [lang]);
-  const setLang = (l: Lang) => {
-    setLangState(l);
-    try {
-      localStorage.setItem(KEY, l);
-    } catch {
-      /* private mode: the choice lasts until reload */
-    }
-  };
   return <LangContext.Provider value={{ lang, setLang }}>{children}</LangContext.Provider>;
 }
 
