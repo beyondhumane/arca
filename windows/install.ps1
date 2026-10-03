@@ -27,6 +27,7 @@ $UninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\Arca"
 # extension to a ProgID, and the ProgID to a command.
 $Formats = @{
     ".zip"    = @{ ProgId = "Arca.zip";    Text = "ZIP archive" }
+    ".7z"     = @{ ProgId = "Arca.7z";     Text = "7z archive" }
     ".tar"    = @{ ProgId = "Arca.tar";    Text = "TAR archive" }
     ".gz"     = @{ ProgId = "Arca.targz";  Text = "Compressed TAR archive" }
     ".tgz"    = @{ ProgId = "Arca.tgz";    Text = "Compressed TAR archive" }

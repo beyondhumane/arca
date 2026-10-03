@@ -23,8 +23,9 @@ const PUBLISHER: &str = "Arca Project";
 const URL: &str = "https://github.com/beyondhumane/arca";
 const POWERSHELL_TIMEOUT: Duration = Duration::from_secs(90);
 
-const ASSOCIATIONS: [(&str, &str, &str); 4] = [
+const ASSOCIATIONS: [(&str, &str, &str); 5] = [
     (".zip", "Arca.zip", "ZIP archive"),
+    (".7z", "Arca.7z", "7z archive"),
     (".tar", "Arca.tar", "TAR archive"),
     (".gz", "Arca.targz", "Compressed TAR archive"),
     (".tgz", "Arca.tgz", "Compressed TAR archive"),

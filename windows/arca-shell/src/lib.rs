@@ -107,7 +107,7 @@ fn archive_stem(p: &std::path::Path) -> String {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     let lower = name.to_ascii_lowercase();
-    for ext in [".tar.gz", ".tgz", ".zip", ".tar"] {
+    for ext in [".tar.gz", ".tgz", ".zip", ".tar", ".7z"] {
         if lower.ends_with(ext) {
             return name[..name.len() - ext.len()].to_string();
         }
@@ -120,7 +120,7 @@ fn archive_stem(p: &std::path::Path) -> String {
 // with an archive is hand its path to arca.exe.
 fn is_archive(p: &std::path::Path) -> bool {
     let n = p.to_string_lossy().to_ascii_lowercase();
-    [".zip", ".tar", ".tar.gz", ".tgz"]
+    [".zip", ".tar", ".tar.gz", ".tgz", ".7z"]
         .iter()
         .any(|e| n.ends_with(e))
 }
@@ -632,6 +632,8 @@ mod tests {
     fn the_folder_in_the_label_is_the_one_that_gets_created() {
         for (file, folder) in [
             (r"C:\x\game.zip", "game"),
+            (r"C:\x\game.7z", "game"),
+            (r"C:\x\UPPER.7Z", "UPPER"),
             (r"C:\x\backup.tar.gz", "backup"),
             (r"C:\x\backup.tgz", "backup"),
             (r"C:\x\plain.tar", "plain"),
@@ -725,6 +727,22 @@ mod tests {
                 Action::CompressZip
             ]
         );
+    }
+
+    #[test]
+    fn sevenz_offers_read_actions_and_creates_new_archives() {
+        let archive = [PathBuf::from(r"C:\x\backup.7Z")];
+        assert_eq!(
+            applicable_actions(&archive),
+            vec![
+                Action::Open,
+                Action::ExtractHere,
+                Action::ExtractToFolder,
+                Action::AddToArchive,
+                Action::CompressZip
+            ]
+        );
+        assert_eq!(quick_output_name(&archive), "backup.zip");
     }
 
     #[test]

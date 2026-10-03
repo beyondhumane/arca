@@ -65,12 +65,12 @@ Name: "addtopath"; Description: "{cm:TaskAddToPath}"; GroupDescription: "{cm:Gro
 
 [CustomMessages]
 english.TaskShellMenu=Add Arca to the Explorer context menu
-english.TaskFileAssoc=Let Arca open .zip, .tar, .gz and .tgz files
+english.TaskFileAssoc=Let Arca open .zip, .7z, .tar, .gz and .tgz files
 english.TaskAddToPath=Add the arca command to PATH
 english.GroupIntegration=System integration:
 english.RestartExplorer=The Explorer needs to restart for the context menu to appear. Restart it now?
 spanish.TaskShellMenu=Anadir Arca al menu contextual del Explorador
-spanish.TaskFileAssoc=Permitir que Arca abra ficheros .zip, .tar, .gz y .tgz
+spanish.TaskFileAssoc=Permitir que Arca abra ficheros .zip, .7z, .tar, .gz y .tgz
 spanish.TaskAddToPath=Anadir el comando arca al PATH
 spanish.GroupIntegration=Integracion con el sistema:
 spanish.RestartExplorer=El Explorador tiene que reiniciarse para que aparezca el menu contextual. Reiniciarlo ahora?
@@ -113,6 +113,9 @@ Root: HKCU; Subkey: "Software\Classes\Directory\shellex\ContextMenuHandlers\Arca
 Root: HKCU; Subkey: "Software\Classes\Arca.zip"; ValueType: string; ValueName: ""; ValueData: "ZIP archive"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.zip\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.zip\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.7z"; ValueType: string; ValueName: ""; ValueData: "7z archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.7z\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.7z\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.tar"; ValueType: string; ValueName: ""; ValueData: "TAR archive"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.tar\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.tar\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
@@ -124,6 +127,7 @@ Root: HKCU; Subkey: "Software\Classes\Arca.tgz\DefaultIcon"; ValueType: string; 
 Root: HKCU; Subkey: "Software\Classes\Arca.tgz\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
 
 Root: HKCU; Subkey: "Software\Classes\.zip\OpenWithProgids"; ValueType: string; ValueName: "Arca.zip"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\.7z\OpenWithProgids"; ValueType: string; ValueName: "Arca.7z"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\.tar\OpenWithProgids"; ValueType: string; ValueName: "Arca.tar"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\.gz\OpenWithProgids"; ValueType: string; ValueName: "Arca.targz"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\.tgz\OpenWithProgids"; ValueType: string; ValueName: "Arca.tgz"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
@@ -134,6 +138,7 @@ Root: HKCU; Subkey: "Software\Classes\.tgz\OpenWithProgids"; ValueType: string; 
 Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "Arca"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".zip"; ValueData: ""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".7z"; ValueData: ""; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".tar"; ValueData: ""; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".gz"; ValueData: ""; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".tgz"; ValueData: ""; Tasks: fileassoc
@@ -141,6 +146,7 @@ Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes";
 Root: HKCU; Subkey: "Software\Arca\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "Arca"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Arca\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "Fast, safe archiver"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".zip"; ValueData: "Arca.zip"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".7z"; ValueData: "Arca.7z"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tar"; ValueData: "Arca.tar"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".gz"; ValueData: "Arca.targz"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tgz"; ValueData: "Arca.tgz"; Tasks: fileassoc
@@ -290,7 +296,7 @@ end;
 // extension back to whatever Windows decides on its own.
 procedure ForgetDefaults();
 var
-  Exts: array[0..3] of string;
+  Exts: array[0..4] of string;
   Key, ProgId: string;
   I: Integer;
 begin
@@ -298,7 +304,8 @@ begin
   Exts[1] := '.tar';
   Exts[2] := '.gz';
   Exts[3] := '.tgz';
-  for I := 0 to 3 do
+  Exts[4] := '.7z';
+  for I := 0 to 4 do
   begin
     Key := 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\' + Exts[I] + '\UserChoice';
     if RegQueryStringValue(HKCU, Key, 'ProgId', ProgId) then
