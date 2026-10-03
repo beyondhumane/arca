@@ -1,6 +1,9 @@
 use std::fmt;
 use std::io;
 
+mod format;
+pub use format::Format;
+
 pub mod limits {
     pub const MAX_NAME: usize = 4096;
     pub const MAX_ENTRIES: u64 = 10_000_000;
@@ -25,6 +28,8 @@ pub enum Error {
         name: String,
     },
     Unsupported(String),
+    PasswordRequired,
+    BadPassword,
     // Somebody pressed stop. Not a failure: nothing is wrong with the archive
     // and nothing needs reporting, so callers that clean up after themselves
     // can tell this apart from a real error and say so plainly.
@@ -50,6 +55,8 @@ impl fmt::Display for Error {
                 "'{name}' did not pass its authentication code: the archive was altered after it was encrypted"
             ),
             Error::Unsupported(m) => write!(f, "unsupported: {m}"),
+            Error::PasswordRequired => write!(f, "password required to open this archive"),
+            Error::BadPassword => write!(f, "incorrect archive password"),
             Error::Cancelled => write!(f, "cancelled"),
         }
     }
@@ -77,6 +84,7 @@ pub enum Method {
     Store,
     Deflate,
     Zstd,
+    Rar,
 }
 
 impl Method {
@@ -85,14 +93,18 @@ impl Method {
             Method::Store => "store",
             Method::Deflate => "deflate",
             Method::Zstd => "zstd",
+            Method::Rar => "rar",
         }
     }
 
-    pub fn code(self) -> u16 {
+    pub fn code(self) -> Result<u16> {
         match self {
-            Method::Store => 0,
-            Method::Deflate => 8,
-            Method::Zstd => 93,
+            Method::Store => Ok(0),
+            Method::Deflate => Ok(8),
+            Method::Zstd => Ok(93),
+            Method::Rar => Err(Error::Unsupported(
+                "RAR is not a ZIP compression method".into(),
+            )),
         }
     }
 }
@@ -154,7 +166,7 @@ pub struct Entry {
     pub size: u64,
     pub compressed_size: u64,
     pub method: Method,
-    pub crc32: u32,
+    pub crc32: Option<u32>,
     pub is_dir: bool,
     pub mtime: Option<i64>,
     // When the file was made and when it was last read. A zip only carries

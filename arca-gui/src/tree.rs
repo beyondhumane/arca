@@ -50,7 +50,7 @@ pub struct Row {
     pub created: Option<i64>,
     pub accessed: Option<i64>,
     pub attributes: u8,
-    pub crc32: u32,
+    pub crc32: Option<u32>,
     // The way out of the folder, the row every file list keeps at the top. It
     // is not an entry and nothing in the archive answers to it: it cannot be
     // picked, counted, renamed or taken out, and sorting leaves it where it is.
@@ -131,7 +131,7 @@ pub fn children_of(entries: &[Entry], dir: &str) -> Vec<Row> {
             created: None,
             accessed: None,
             attributes: 0,
-            crc32: 0,
+            crc32: None,
             count,
             up: false,
         })
@@ -227,7 +227,7 @@ pub fn search_under(entries: &[Entry], dir: &str, needle: &str) -> Vec<Row> {
             created: None,
             accessed: None,
             attributes: 0,
-            crc32: 0,
+            crc32: None,
             count,
             up: false,
         })
@@ -266,7 +266,7 @@ mod tests {
             size,
             compressed_size: size,
             method: Method::Store,
-            crc32: 0,
+            crc32: None,
             is_dir,
             mtime: None,
             created: None,
@@ -448,7 +448,7 @@ mod folder_tests {
             compressed_size: 0,
             method: arca_core::Method::Store,
             mtime: None,
-            crc32: 0,
+            crc32: None,
             is_dir,
             created: None,
             accessed: None,

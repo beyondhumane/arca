@@ -137,7 +137,7 @@ impl<R: Read> TarReader<R> {
             size,
             compressed_size: size,
             method: Method::Store,
-            crc32: 0,
+            crc32: None,
             is_dir,
             mtime: Some(mtime),
             // A tar header has a creation and an access time in the pax and

@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 pub(crate) enum Message {
     Listing(PathBuf, Vec<Entry>),
+    PasswordNeeded(PathBuf, bool),
+    JobPasswordNeeded(Box<Job>),
     // The installer is down and checked. It ends in a file to run rather than
     // in a text to read, which is why it is not a `Done`.
     Downloaded(PathBuf),
@@ -41,6 +43,8 @@ pub(crate) struct Cut {
 pub(crate) enum Pending {
     Extract(Box<Job>),
     OpenArchive,
+    ListArchive(PathBuf),
+    TestArchive(Box<Job>),
     CurrentPassword(Box<Job>),
     NewPassword(Box<Job>),
 }
@@ -53,6 +57,7 @@ pub(crate) enum View {
 
 pub(crate) enum AppAction {
     Open(PathBuf),
+    Refresh,
     Run(Job),
     ExtractTo { only_checked: bool, dest: PathBuf },
     PrepareCompress(Vec<PathBuf>),
@@ -521,7 +526,7 @@ pub(crate) fn up_row(dir: &str) -> Row {
         created: None,
         accessed: None,
         attributes: 0,
-        crc32: 0,
+        crc32: None,
         up: true,
     }
 }

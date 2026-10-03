@@ -1,6 +1,8 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
+#[cfg(all(test, feature = "rar"))]
+mod rar_tests;
 mod state;
 pub(crate) use actions::*;
 pub(crate) use state::AppState;
@@ -39,6 +41,7 @@ impl AppController {
     pub(crate) fn dispatch(&mut self, action: AppAction) {
         match action {
             AppAction::Open(path) => self.open(path),
+            AppAction::Refresh => self.refresh(),
             AppAction::Run(job) => self.run_job(job),
             AppAction::ExtractTo { only_checked, dest } => {
                 self.start_extract_to(only_checked, dest)
@@ -146,10 +149,12 @@ impl AppController {
         self.state.close_when_done = false;
         let (reply_tx, reply_rx) = channel::<Answer>();
         self.state.replies = Some(reply_tx);
+        let stop = self.state.stop.clone();
+        stop.store(false, std::sync::atomic::Ordering::Relaxed);
         self.spawn(total, move |tx| {
             let notify = |i: usize, n: usize, name: &str| {
                 let _ = tx.send(Message::Progress(i, n, name.to_string()));
-                true
+                !stop.load(std::sync::atomic::Ordering::Relaxed)
             };
             let ask = conflict_asker(tx, &reply_rx);
             let result = extract(&archive, &dest, &wanted, &notify, &ask, pw.as_deref());
@@ -187,6 +192,20 @@ impl AppController {
                     self.run_job(Job::Extract {
                         archives,
                         dest,
+                        password: Some(password),
+                    });
+                }
+            }
+            Pending::ListArchive(path) => {
+                self.state.password_wrong = false;
+                self.state.archive_password = Some(password);
+                self.load_listing(path);
+            }
+            Pending::TestArchive(job) => {
+                if let Job::Test { archive, only, .. } = *job {
+                    self.run_job(Job::Test {
+                        archive,
+                        only,
                         password: Some(password),
                     });
                 }
@@ -236,6 +255,9 @@ impl AppController {
     /// both files and folders: the native dialog only offers one or the other,
     /// so a mixed selection takes more than one pass through here.
     pub(crate) fn prepare_compress(&mut self, inputs: Vec<PathBuf>) {
+        if !self.state.format.can_write() {
+            self.state.format = Format::Zip;
+        }
         if !matches!(self.state.view, View::Add) {
             self.state.pending_inputs.clear();
             self.state.output_name.clear();
@@ -482,7 +504,10 @@ impl AppController {
     // of the fifteen hundred files inside it, and the Explorer pastes a folder
     // rather than a heap of loose files.
     pub(crate) fn cancel_password(&mut self) {
-        let was_job = matches!(self.state.waiting_on_password, Some(Pending::Extract(_)));
+        let was_job = matches!(
+            self.state.waiting_on_password,
+            Some(Pending::Extract(_) | Pending::TestArchive(_))
+        );
         self.state.waiting_on_password = None;
         self.state.password_input.clear();
         // Only a job left the window on the running view with nothing running.
@@ -512,8 +537,7 @@ impl AppController {
             self.state.error = true;
             return;
         }
-        self.open(archive);
-        self.state.archive_password = pw;
+        self.open_with_password(archive, pw);
     }
 
     // Reads the names in the archive again under another code page.
@@ -1062,7 +1086,12 @@ impl AppController {
                             self.state.password_input.clear();
                             self.state.password_wrong = false;
                             self.state.archive_password = None;
-                            self.state.waiting_on_password = Some(Pending::OpenArchive);
+                            self.state.waiting_on_password =
+                                Some(if detect(&path) == Some(Format::Rar) {
+                                    Pending::ListArchive(path.clone())
+                                } else {
+                                    Pending::OpenArchive
+                                });
                         }
                         // Nothing picked to begin with. It used to be
                         // everything, which was invisible while the ticks were
@@ -1081,10 +1110,15 @@ impl AppController {
                         // program puts it, which frees a whole row above the
                         // list for nothing at all.
                         self.state.window_title = format!(
-                            "{} - Arca",
+                            "{} - Arca{}",
                             path.file_name()
                                 .map(|x| x.to_string_lossy().to_string())
-                                .unwrap_or_default()
+                                .unwrap_or_default(),
+                            if detect(&path) == Some(Format::Rar) {
+                                " (RAR: experimental, read-only)"
+                            } else {
+                                ""
+                            }
                         );
                         self.state.archive = Some(path);
                         let restore_dir = self.state.reread_dir.take();
@@ -1096,6 +1130,30 @@ impl AppController {
                         if !self.state.current_dir.is_empty() {
                             self.state.history = vec![self.state.current_dir.clone()];
                         }
+                        self.state.busy = false;
+                        close = true;
+                    }
+                    Message::JobPasswordNeeded(job) => {
+                        self.state.busy = false;
+                        self.state.password_input.clear();
+                        self.state.password_wrong = false;
+                        self.state.waiting_on_password =
+                            Some(if matches!(*job, Job::Test { .. }) {
+                                Pending::TestArchive(job)
+                            } else {
+                                Pending::Extract(job)
+                            });
+                    }
+                    Message::PasswordNeeded(path, wrong) => {
+                        self.state.archive = Some(path.clone());
+                        self.state.format = Format::Rar;
+                        self.state.entries.clear();
+                        self.state.checked.clear();
+                        self.state.folders = tree::Folder::default();
+                        self.state.archive_password = None;
+                        self.state.password_input.clear();
+                        self.state.password_wrong = wrong;
+                        self.state.waiting_on_password = Some(Pending::ListArchive(path));
                         self.state.busy = false;
                         close = true;
                     }
@@ -1171,8 +1229,7 @@ impl AppController {
             if let Some((path, pw, dir)) = self.state.reread_after.take() {
                 let notice = std::mem::take(&mut self.state.notice);
                 self.state.reread_dir = Some(dir);
-                self.open(path);
-                self.state.archive_password = pw;
+                self.open_with_password(path, pw);
                 self.state.notice = notice;
                 self.state.view = View::Browse;
             }
@@ -1463,7 +1520,11 @@ impl AppController {
 
     // The file being looked at, in its own window over the list.
     pub(crate) fn open(&mut self, path: PathBuf) {
-        self.state.archive_password = None;
+        self.open_with_password(path, None);
+    }
+
+    fn open_with_password(&mut self, path: PathBuf, password: Option<String>) {
+        self.state.archive_password = password;
         // Whatever was cut belonged to the listing being replaced, and so did
         // whatever the status bar was saying: the summary of the archive being
         // closed sat there over the one that had just opened.
@@ -1473,31 +1534,39 @@ impl AppController {
         self.state.notice.clear();
         self.state.error = false;
         self.remember(&path);
+        self.load_listing(path);
+    }
+
+    fn refresh(&mut self) {
+        if let Some(path) = self.state.archive.clone() {
+            let password = self.state.archive_password.clone();
+            self.open_with_password(path, password);
+        }
+    }
+
+    fn load_listing(&mut self, path: PathBuf) {
+        let password = self.state.archive_password.clone();
+        let stop = self.state.stop.clone();
+        stop.store(false, std::sync::atomic::Ordering::Relaxed);
         self.spawn(0, move |tx| {
-            let m = match list_entries(&path) {
+            let notify = |_, _, _: &str| !stop.load(std::sync::atomic::Ordering::Relaxed);
+            let m = match list_entries(&path, password.as_deref(), &notify) {
                 Ok(v) => Message::Listing(path, v),
+                Err(arca_core::Error::PasswordRequired) => Message::PasswordNeeded(path, false),
+                Err(arca_core::Error::BadPassword) => Message::PasswordNeeded(path, true),
                 Err(e) => Message::Failed(e.to_string()),
             };
             let _ = tx.send(m);
         });
     }
 
-    // Reading the central directory is enough to know whether the archive is
-    // encrypted, and costs nothing next to extracting it. Asking here, before
-    // any work starts, keeps the question on the window's own thread.
-    pub(crate) fn run_job(&mut self, job: Job) {
-        if let Job::Extract {
-            archives,
-            password: None,
-            ..
-        } = &job
+    pub(crate) fn run_job(&mut self, mut job: Job) {
+        if let Job::Test {
+            archive, password, ..
+        } = &mut job
         {
-            if archives.iter().any(|a| is_encrypted(a)) {
-                self.state.password_input.clear();
-                self.state.waiting_on_password = Some(Pending::Extract(Box::new(job)));
-                self.state.view = View::Running;
-                self.state.title = self.s().extracting.to_string();
-                return;
+            if password.is_none() && self.state.archive.as_ref() == Some(archive) {
+                *password = self.state.archive_password.clone();
             }
         }
         let s: &'static Strings = self.s();
@@ -1602,6 +1671,23 @@ impl AppController {
                     Ok(path) => Message::Downloaded(path),
                     Err(text) => Message::Failed(text),
                 });
+                return;
+            }
+            let needs_password = match &job {
+                Job::Test {
+                    archive,
+                    password: None,
+                    ..
+                } => is_encrypted(archive, &notify),
+                Job::Extract {
+                    archives,
+                    password: None,
+                    ..
+                } => archives.iter().any(|a| is_encrypted(a, &notify)),
+                _ => false,
+            };
+            if needs_password {
+                let _ = tx.send(Message::JobPasswordNeeded(Box::new(job)));
                 return;
             }
             let ask = conflict_asker(tx, &reply_rx);
@@ -1790,6 +1876,7 @@ mod reread_tests {
         let job = Job::Test {
             archive: archive(),
             only: None,
+            password: None,
         };
         assert!(reread_target(&job, "").is_none());
     }
@@ -1831,7 +1918,7 @@ mod reread_tests {
             size: 0,
             compressed_size: 0,
             method: arca_core::Method::Store,
-            crc32: 0,
+            crc32: None,
             is_dir: false,
             mtime: None,
             created: None,
@@ -1970,7 +2057,7 @@ mod password_tests {
             size: 0,
             compressed_size: 0,
             method: arca_core::Method::Store,
-            crc32: 0,
+            crc32: None,
             is_dir: false,
             mtime: None,
             created: None,
@@ -2054,7 +2141,7 @@ mod filter_tests {
             size: 1,
             compressed_size: 1,
             method: arca_core::Method::Store,
-            crc32: 0,
+            crc32: None,
             is_dir: false,
             mtime: None,
             created: None,

@@ -198,10 +198,10 @@ pub fn extract_entry_with<R: Read + Seek, W: Write>(
     // AE-2 stores a zero CRC on purpose, and the HMAC has already spoken for
     // the contents. AE-1 keeps the real one, so a non-zero value still gets
     // checked either way.
-    if !(e.encrypted && e.crc32 == 0) && crc_val != e.crc32 {
+    if !(e.encrypted && e.crc32 == Some(0)) && Some(crc_val) != e.crc32 {
         return Err(Error::Integrity {
             name: e.name.clone(),
-            expected: e.crc32,
+            expected: e.crc32.unwrap_or(0),
             found: crc_val,
         });
     }
@@ -426,6 +426,9 @@ fn decompress_into<Rd: Read, W: Write>(
     cw: &mut CrcWriter<W>,
 ) -> Result<Rd> {
     match method_code {
+        Method::Rar => Err(Error::Unsupported(
+            "RAR is not a ZIP compression method".into(),
+        )),
         Method::Store => {
             let mut a = src;
             io::copy(&mut a, cw)?;
@@ -712,7 +715,7 @@ fn read_central_header(c: &mut Cursor<'_>) -> Result<Entry> {
         size: uncompressed,
         compressed_size: comp_size,
         method,
-        crc32: crc_val,
+        crc32: Some(crc_val),
         is_dir,
         mtime: arca_core::dos_to_unix(date_val, time_val),
         created: times.created,
@@ -785,11 +788,12 @@ impl<W: Write + Seek> ZipWriter<W> {
         let name_bytes = check_name(name_str)?;
         let method_code = method_of(codec);
         let offset = self.pos;
-        let aes_extra = password.map(|_| aes::extra_field(method_code.code()));
+        let zip_method = method_code.code()?;
+        let aes_extra = password.map(|_| aes::extra_field(zip_method));
         let stored_code = if aes_extra.is_some() {
             aes::METHOD_AE
         } else {
-            method_code.code()
+            method_code.code()?
         };
         self.write_lfh(
             &name_bytes,
@@ -908,11 +912,12 @@ impl<W: Write + Seek> ZipWriter<W> {
         let (date_val, time_val) = arca_core::unix_to_dos(mtime.unwrap_or(0));
         let name_bytes = check_name(name_str)?;
         let offset = self.pos;
-        let aes_extra = password.map(|_| aes::extra_field(method_code.code()));
+        let zip_method = method_code.code()?;
+        let aes_extra = password.map(|_| aes::extra_field(zip_method));
         let stored_code = if aes_extra.is_some() {
             aes::METHOD_AE
         } else {
-            method_code.code()
+            method_code.code()?
         };
         self.write_lfh(
             &name_bytes,
@@ -969,11 +974,12 @@ impl<W: Write + Seek> ZipWriter<W> {
         let (date_val, time_val) = arca_core::unix_to_dos(mtime.unwrap_or(0));
         let name_bytes = check_name(name_str)?;
         let offset = self.pos;
-        let aes_extra = encrypted.then(|| aes::extra_field(method_code.code()));
+        let zip_method = method_code.code()?;
+        let aes_extra = encrypted.then(|| aes::extra_field(zip_method));
         let stored_code = if encrypted {
             aes::METHOD_AE
         } else {
-            method_code.code()
+            method_code.code()?
         };
         self.write_lfh(
             &name_bytes,
@@ -1052,13 +1058,13 @@ impl<W: Write + Seek> ZipWriter<W> {
             method_code: if encrypted {
                 aes::METHOD_AE
             } else {
-                method_code.code()
+                method_code.code()?
             },
             date_val,
             time_val,
             is_directory,
             encrypted,
-            real_method: method_code.code(),
+            real_method: method_code.code()?,
         });
         Ok(())
     }
@@ -1240,6 +1246,11 @@ fn compress_stream<R: Read, S: Write>(
     let mut buf = vec![0u8; STREAM_BUF];
 
     match method_code {
+        Method::Rar => {
+            return Err(Error::Unsupported(
+                "RAR is not a ZIP compression method".into(),
+            ))
+        }
         Method::Store => loop {
             let n = data.read(&mut buf)?;
             if n == 0 {
@@ -1516,11 +1527,12 @@ fn rewrite(
         }
         // Directories hold nothing, and no other tool encrypts them either.
         let pw = if e.is_dir { None } else { new };
-        let crc = if e.encrypted && e.crc32 == 0 {
+        let crc = if e.encrypted && e.crc32 == Some(0) {
             let mut src = BufReader::with_capacity(STREAM_BUF, File::open(archive)?);
             checksum_entry(&mut src, e, current)?
         } else {
             e.crc32
+                .ok_or_else(|| Error::Format("missing ZIP checksum".into()))?
         };
         let mut src = BufReader::with_capacity(STREAM_BUF, File::open(archive)?);
         w.copy_entry(&name(e), crc, e.size, e.method, e.mtime, pw, |sink| {
@@ -1982,7 +1994,7 @@ mod tests {
             e.offset = seed.wrapping_mul(2_654_435_761) % (buf.len() as u64 + 64);
             e.compressed_size = seed.wrapping_mul(97) % 4096;
             e.size = seed.wrapping_mul(31) % 4096;
-            e.crc32 = seed as u32;
+            e.crc32 = Some(seed as u32);
             let mut source = IoCursor::new(buf.clone());
             let r = extract_entry(&mut source, &e, &mut Vec::new());
             assert!(r.is_err() || e.offset == real.offset, "{r:?}");
@@ -2079,11 +2091,11 @@ mod tests {
             .to_vec();
         let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
         for e in &entries {
-            let crc = if e.encrypted && e.crc32 == 0 {
+            let crc = if e.encrypted && e.crc32 == Some(0) {
                 let mut src = IoCursor::new(buf.to_vec());
                 checksum_entry(&mut src, e, current).unwrap()
             } else {
-                e.crc32
+                e.crc32.unwrap()
             };
             let mut src = IoCursor::new(buf.to_vec());
             w.copy_entry(&e.name, crc, e.size, e.method, e.mtime, new, |sink| {
@@ -2116,9 +2128,15 @@ mod tests {
         let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
         for e in &entries {
             let mut src = IoCursor::new(buf.to_vec());
-            w.copy_entry(&e.name, e.crc32, e.size, e.method, e.mtime, None, |sink| {
-                copy_compressed(&mut src, e, sink, None)
-            })
+            w.copy_entry(
+                &e.name,
+                e.crc32.unwrap(),
+                e.size,
+                e.method,
+                e.mtime,
+                None,
+                |sink| copy_compressed(&mut src, e, sink, None),
+            )
             .unwrap();
         }
         w.finish().unwrap().into_inner()

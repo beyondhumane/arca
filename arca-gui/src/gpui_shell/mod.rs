@@ -915,7 +915,14 @@ impl GpuiShell {
             let result = match kind {
                 DialogKind::Open => DialogResult::Open(
                     rfd::FileDialog::new()
-                        .add_filter("Archives", &["zip", "tar", "gz", "tgz"])
+                        .add_filter(
+                            "Archives",
+                            if cfg!(feature = "rar") {
+                                &["zip", "tar", "gz", "tgz", "rar", "cbr"][..]
+                            } else {
+                                &["zip", "tar", "gz", "tgz"][..]
+                            },
+                        )
                         .pick_file(),
                 ),
                 DialogKind::PickInputs { folders } => DialogResult::Inputs(if folders {
@@ -1549,6 +1556,7 @@ impl GpuiShell {
                     self.controller.dispatch(AppAction::Run(Job::Test {
                         archive,
                         only: (!names.is_empty()).then(|| names.into_iter().collect()),
+                        password: None,
                     }));
                 }
             }
@@ -1913,18 +1921,11 @@ impl GpuiShell {
                     self.controller.dispatch(AppAction::Run(Job::Test {
                         archive,
                         only: None,
+                        password: None,
                     }));
                 }
             }
-            Shortcut::Refresh => {
-                if let Some(path) = archive {
-                    // Rereading must not ask again for the password of an
-                    // archive that has already been unlocked.
-                    let keep = self.controller.state.archive_password.clone();
-                    self.controller.dispatch(AppAction::Open(path));
-                    self.controller.state.archive_password = keep;
-                }
-            }
+            Shortcut::Refresh => self.controller.dispatch(AppAction::Refresh),
             Shortcut::Invert => self.controller.dispatch(AppAction::InvertVisible),
             // Escape backs out of the innermost thing there is to back out of,
             // and while the list is running itself that is the running.
@@ -2332,7 +2333,9 @@ fn column_text(row: &super::Row, column: SortColumn, s: &'static Strings, root: 
                 if row.is_dir {
                     "—".to_string()
                 } else {
-                    format!("{:08X}", row.crc32)
+                    row.crc32
+                        .map(|crc| format!("{crc:08X}"))
+                        .unwrap_or_default()
                 }
             }
             SortColumn::Type => arca_icons::cache_key(&row.label, row.is_dir),
@@ -2848,6 +2851,7 @@ impl Render for GpuiShell {
                 this.controller.dispatch(AppAction::Run(Job::Test {
                     archive,
                     only: (!names.is_empty()).then(|| names.into_iter().collect()),
+                    password: None,
                 }));
             }
             cx.notify();
@@ -2903,6 +2907,7 @@ impl Render for GpuiShell {
                                                     Job::Test {
                                                         archive,
                                                         only: None,
+                                                        password: None,
                                                     },
                                                 ));
                                             }
@@ -4070,7 +4075,7 @@ fn format_pick(
     cx: &App,
 ) -> gpui::AnyElement {
     let s = shell.read(cx).controller.s();
-    let options = [super::Format::Zip, super::Format::Tar, super::Format::TarGz]
+    let options = super::Format::WRITABLE
         .map(|format| (format, format.label()))
         .to_vec();
     pick(
@@ -4389,7 +4394,12 @@ fn build_dialog(
             );
             let opening = matches!(
                 shell.read(cx).controller.state.waiting_on_password,
-                Some(Pending::Extract(_) | Pending::OpenArchive)
+                Some(
+                    Pending::Extract(_)
+                        | Pending::OpenArchive
+                        | Pending::ListArchive(_)
+                        | Pending::TestArchive(_)
+                )
             );
             // Only worth offering where there is a password to take off.
             let removable = setting
@@ -6103,7 +6113,7 @@ mod tests {
             created: None,
             accessed: None,
             attributes: 0,
-            crc32: 0,
+            crc32: None,
             up: false,
         };
         let s = super::super::strings(super::super::Lang::En);
