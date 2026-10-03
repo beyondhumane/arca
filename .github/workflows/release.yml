@@ -8,15 +8,40 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # A tag that disagrees with the workspace version fails here, in seconds,
+  # and not after every platform has spent its build on it. By hand the
+  # rehearsal is named after the workspace version, so `main` or a branch
+  # name with a slash never ends up in a file name.
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: version
+        run: |
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "tag=${GITHUB_REF_NAME#v}  Cargo.toml=$VERSION"
+            test "${GITHUB_REF_NAME#v}" = "$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
   binaries:
     name: ${{ matrix.name }}
+    needs: version
     runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -29,14 +54,17 @@ jobs:
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             native: true
+            tests: true
           - name: linux-arm64
             os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             native: true
+            tests: true
           - name: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
             native: true
+            tests: true
           # The Intel binary is cross-compiled from the ARM runner. With
           # `macos-13`, the last Intel one left, a job spent 40 minutes waiting
           # for a runner: GitHub is retiring them and there is a queue. The
@@ -50,6 +78,7 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
             native: true
+            tests: true
     steps:
       - uses: actions/checkout@v7
 
@@ -71,12 +100,15 @@ jobs:
           libfontconfig1-dev
 
       # A binary that does not pass the tests does not get published. The tag
-      # can point at a commit CI never saw.
+      # can point at a commit CI never saw. The Intel Mac job skips them: it
+      # runs on the same ARM runner as the arm64 one, so it would compile and
+      # run the very same tests a second time.
       - name: Tests
-        run: cargo test --workspace
+        if: matrix.tests
+        run: cargo test --workspace --locked
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Check the binary starts
         if: matrix.native
@@ -96,7 +128,7 @@ jobs:
         shell: bash
         run: |
           set -eu
-          NAME="arca-${{ github.ref_name }}-${{ matrix.name }}"
+          NAME="arca-v$VERSION-${{ matrix.name }}"
           mkdir -p "dist/$NAME"
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp "target/${{ matrix.target }}/release/arca.exe" "dist/$NAME/"
@@ -128,11 +160,10 @@ jobs:
         shell: bash
         run: |
           set -eu
-          VERSION="${GITHUB_REF_NAME#v}"
           # arca-shell is excluded from the workspace, so --manifest-path
           # builds it into its own target directory and not the root one.
           # Pointing the installer at the root target is what broke v0.3.0.
-          cargo build --release --target ${{ matrix.target }} \
+          cargo build --release --locked --target ${{ matrix.target }} \
             --manifest-path windows/arca-shell/Cargo.toml
           DLL="windows/arca-shell/target/${{ matrix.target }}/release/arca_shell.dll"
           test -f "$DLL" || { echo "the shell extension is not at $DLL"; exit 1; }
@@ -167,17 +198,10 @@ jobs:
     needs: binaries
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
-
-      # If the tag and the workspace version disagree, the Release would go out
-      # lying about what it contains.
-      - name: The tag must match the workspace version
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          echo "tag=$TAG  Cargo.toml=$VERSION"
-          test "$TAG" = "$VERSION"
 
       - uses: actions/download-artifact@v8
         with:
