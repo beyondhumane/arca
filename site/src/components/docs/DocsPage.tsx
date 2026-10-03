@@ -17,6 +17,10 @@ import { useCopy, useLang } from '@/lib/i18n';
 import { Kbd } from '../ui';
 import { DOCS, docGroups } from './registry';
 import { Markdown } from './Markdown';
+import { docPath, homePath } from '@/lib/router';
+
+const formatDate = (d: string, lang: string) =>
+  new Intl.DateTimeFormat(lang, { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(`${d}T00:00:00Z`));
 
 type TocItem = { id: string; text: string; level: 2 | 3 };
 
@@ -40,6 +44,7 @@ const COPY = {
     edit: 'Edit this page',
     report: 'Report an issue',
     top: 'Back to top',
+    updated: 'Last updated',
   },
   es: {
     documentation: 'Documentación',
@@ -60,6 +65,7 @@ const COPY = {
     edit: 'Editar esta página',
     report: 'Informar de un problema',
     top: 'Volver arriba',
+    updated: 'Actualizado el',
   },
 };
 
@@ -199,14 +205,14 @@ export function DocsPage({ slug }: { slug: string }) {
           <nav aria-label={t.documentation} className="mt-6 space-y-7">
             {groups.map((g) => (
               <div key={g.title}>
-                <h2 className="px-3 font-mono text-[11px] uppercase tracking-[0.16em] text-slate-500">{g.title}</h2>
+                <p className="px-3 font-mono text-[11px] uppercase tracking-[0.16em] text-slate-400">{g.title}</p>
                 <ul className="mt-2 space-y-0.5">
                   {g.pages.map((p) => {
                     const current = p.slug === slug;
                     return (
                       <li key={p.slug}>
                         <a
-                          href={`#/docs/${p.slug}`}
+                          href={docPath(lang, p.slug)}
                           aria-current={current ? 'page' : undefined}
                           onClick={() => setNavOpen(false)}
                           className={cn(
@@ -226,7 +232,7 @@ export function DocsPage({ slug }: { slug: string }) {
               </div>
             ))}
             {groups.length === 0 && (
-              <p className="px-3 text-sm text-slate-500">
+              <p className="px-3 text-sm text-slate-400">
                 {t.noMatch(query)}{' '}
                 <button type="button" onClick={() => setQuery('')} className="text-brand-300 hover:text-brand-200">
                   {t.clear}
@@ -236,13 +242,13 @@ export function DocsPage({ slug }: { slug: string }) {
           </nav>
 
           <a
-            href="#download"
+            href={homePath(lang, 'download')}
             className="group mt-8 block rounded-2xl border border-white/[0.08] bg-linear-to-b from-brand-500/[0.09] to-transparent p-4 transition hover:border-brand-400/30"
           >
             <span className="flex items-center gap-2 text-sm font-medium text-white">
               <Download className="size-4 text-brand-300" /> {t.get} v{VERSION}
             </span>
-            <span className="mt-1 block text-xs text-slate-500">Windows · macOS · Linux · Apache-2.0</span>
+            <span className="mt-1 block text-xs text-slate-400">Windows · macOS · Linux · Apache-2.0</span>
           </a>
         </aside>
 
@@ -250,8 +256,8 @@ export function DocsPage({ slug }: { slug: string }) {
         <main id="main" tabIndex={-1} className="min-w-0 outline-none">
           {page ? (
             <>
-              <nav aria-label={t.breadcrumb} className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                <a href="#/docs" className="transition hover:text-slate-200">
+              <nav aria-label={t.breadcrumb} className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
+                <a href={docPath(lang)} className="transition hover:text-slate-200">
                   {t.docs}
                 </a>
                 <ChevronRight className="size-3" />
@@ -265,6 +271,11 @@ export function DocsPage({ slug }: { slug: string }) {
               <article ref={articleRef} key={`${lang}-${page.slug}`} className="animate-fade-up">
                 <h1 className="mt-4 text-balance text-4xl font-semibold tracking-[-0.035em] text-white sm:text-5xl">{page.title}</h1>
                 <p className="mt-4 max-w-2xl text-pretty text-lg leading-relaxed text-slate-400">{page.description}</p>
+                {page.updated && (
+                  <p className="mt-3 text-sm text-slate-400">
+                    {t.updated} <time dateTime={page.updated}>{formatDate(page.updated, lang)}</time>
+                  </p>
+                )}
                 <div className="mt-8 h-px bg-linear-to-r from-white/10 via-white/[0.06] to-transparent" />
                 <div className="mt-8 max-w-3xl">
                   <Markdown source={page.body} ids={page.ids} />
@@ -275,10 +286,10 @@ export function DocsPage({ slug }: { slug: string }) {
               <nav aria-label={t.prevNext} className="mt-16 grid max-w-3xl gap-3 sm:grid-cols-2">
                 {prev ? (
                   <a
-                    href={`#/docs/${prev.slug}`}
+                    href={docPath(lang, prev.slug)}
                     className="group rounded-2xl border border-white/[0.07] p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-white/[0.15] hover:bg-white/[0.02]"
                   >
-                    <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <span className="flex items-center gap-1.5 text-xs text-slate-400">
                       <ArrowLeft className="size-3.5 transition-transform group-hover:-translate-x-0.5" /> {t.previous}
                     </span>
                     <span className="mt-1 block font-medium text-white transition-colors group-hover:text-brand-200">{prev.title}</span>
@@ -288,10 +299,10 @@ export function DocsPage({ slug }: { slug: string }) {
                 )}
                 {next && (
                   <a
-                    href={`#/docs/${next.slug}`}
+                    href={docPath(lang, next.slug)}
                     className="group rounded-2xl border border-white/[0.07] p-5 text-right transition-all duration-300 hover:-translate-y-0.5 hover:border-white/[0.15] hover:bg-white/[0.02]"
                   >
-                    <span className="flex items-center justify-end gap-1.5 text-xs text-slate-500">
+                    <span className="flex items-center justify-end gap-1.5 text-xs text-slate-400">
                       {t.next} <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
                     </span>
                     <span className="mt-1 block font-medium text-white transition-colors group-hover:text-brand-200">{next.title}</span>
@@ -307,7 +318,7 @@ export function DocsPage({ slug }: { slug: string }) {
                 {t.noPage} <span className="font-mono text-slate-200">{slug}</span>.
               </p>
               <a
-                href="#/docs/introduction"
+                href={docPath(lang)}
                 className="mt-8 inline-flex items-center gap-1.5 rounded-full bg-white px-5 py-2.5 text-sm font-medium text-ink-950 transition hover:-translate-y-0.5"
               >
                 {t.toIntro} <ArrowRight className="size-4" />
@@ -321,7 +332,7 @@ export function DocsPage({ slug }: { slug: string }) {
           <div className="thin-scrollbar sticky top-24 max-h-[calc(100dvh-7rem)] overflow-y-auto pb-10">
             {toc.length > 0 && (
               <>
-                <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-slate-500">{t.onThisPage}</p>
+                <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-slate-400">{t.onThisPage}</p>
                 <ul className="mt-3 border-l border-white/[0.07]">
                   {toc.map((item) => (
                     <li key={item.id}>
@@ -331,7 +342,7 @@ export function DocsPage({ slug }: { slug: string }) {
                         className={cn(
                           '-ml-px block w-full border-l py-1.5 text-left text-[13px] leading-snug transition-colors duration-200',
                           item.level === 3 ? 'pl-6' : 'pl-4',
-                          activeId === item.id ? 'border-brand-400 text-white' : 'border-transparent text-slate-500 hover:text-slate-200',
+                          activeId === item.id ? 'border-brand-400 text-white' : 'border-transparent text-slate-400 hover:text-slate-200',
                         )}
                       >
                         {item.text}
@@ -347,18 +358,18 @@ export function DocsPage({ slug }: { slug: string }) {
                   href={`${REPO_URL}/blob/main/${page.path}`}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="flex items-center gap-1.5 text-slate-500 transition hover:text-white"
+                  className="flex items-center gap-1.5 text-slate-400 transition hover:text-white"
                 >
                   <ExternalLink className="size-3.5" /> {t.edit}
                 </a>
               )}
-              <a href={NEW_ISSUE_URL} target="_blank" rel="noreferrer noopener" className="flex items-center gap-1.5 text-slate-500 transition hover:text-white">
+              <a href={NEW_ISSUE_URL} target="_blank" rel="noreferrer noopener" className="flex items-center gap-1.5 text-slate-400 transition hover:text-white">
                 <ExternalLink className="size-3.5" /> {t.report}
               </a>
               <button
                 type="button"
                 onClick={() => window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' })}
-                className="flex items-center gap-1.5 text-slate-500 transition hover:text-white"
+                className="flex items-center gap-1.5 text-slate-400 transition hover:text-white"
               >
                 <ArrowUp className="size-3.5" /> {t.top}
               </button>

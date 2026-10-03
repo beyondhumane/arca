@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { ArrowRight, Check, Lock, ShieldCheck, Timer } from 'lucide-react';
 import { cn } from '@/utils/cn';
-import { formatCount, useGitHubStars, useInView, usePrefersReducedMotion } from '@/lib/hooks';
-import { RELEASE_URL, REPO_URL, VERSION } from '@/lib/site';
-import { useCopy } from '@/lib/i18n';
+import { formatCount, useInView, usePrefersReducedMotion } from '@/lib/hooks';
+import { RELEASE_URL, REPO_URL, STARS, VERSION } from '@/lib/site';
+import { useCopy, useLang } from '@/lib/i18n';
 
 const COPY = {
   en: {
@@ -44,6 +44,7 @@ import { Accent, ButtonLink, Container } from '../ui';
 import { DownloadButton } from '../download';
 import { GitHubIcon } from '../icons';
 import { Cursor, Prompt, TerminalWindow, colorizeCommand } from '../terminal';
+import { docPath } from '@/lib/router';
 
 /* ------------------------------------------------------------------ */
 /*  Terminal script — real arca 0.7.2 output on the Silesia corpus,    */
@@ -394,7 +395,8 @@ function Word({ children, delay }: { children: ReactNode; delay: number }) {
 /*  Hero                                                               */
 /* ------------------------------------------------------------------ */
 export function Hero() {
-  const stars = useGitHubStars();
+  const stars = STARS;
+  const { lang } = useLang();
   const showStars = stars !== null && stars >= 10;
   const t = useCopy(COPY);
 
@@ -465,13 +467,13 @@ export function Hero() {
               <Check className="size-3.5 text-emerald-400" /> {t.free}
             </span>
             <a
-              href="#/docs/installation"
+              href={docPath(lang, 'installation')}
               className="inline-flex items-center gap-1 text-slate-400 underline decoration-white/20 underline-offset-4 transition hover:text-white hover:decoration-brand-400"
             >
               {t.install} <ArrowRight className="size-3.5" />
             </a>
             <a
-              href="#/docs/benchmarks"
+              href={docPath(lang, 'benchmarks')}
               className="inline-flex items-center gap-1 text-slate-400 underline decoration-white/20 underline-offset-4 transition hover:text-white hover:decoration-brand-400"
             >
               {t.measured} <ArrowRight className="size-3.5" />

@@ -12,3 +12,4 @@ windows/salida/
 windows/salida-setup/
 site/node_modules/
 site/dist/
+site/dist-ssr/

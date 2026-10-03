@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /* ------------------------------------------------------------------ */
 /*  Reduced motion                                                     */
@@ -6,14 +6,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 const REDUCED_QUERY = '(prefers-reduced-motion: reduce)';
 
 export function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState<boolean>(() =>
-    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      ? window.matchMedia(REDUCED_QUERY).matches
-      : false,
-  );
+  const [reduced, setReduced] = useState(false);
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
     const mq = window.matchMedia(REDUCED_QUERY);
+    setReduced(mq.matches);
     const onChange = () => setReduced(mq.matches);
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
@@ -137,71 +134,6 @@ export function useScrollSpy(ids: readonly string[], enabled = true): string | n
   return active;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Hash routing                                                       */
-/* ------------------------------------------------------------------ */
-export type Route = { view: 'home'; anchor: string } | { view: 'docs'; slug: string; section?: string };
-
-export function parseHash(hash: string): Route {
-  const h = hash.replace(/^#/, '');
-  if (h === '/docs' || h.startsWith('/docs/')) {
-    const [slug, section] = h.slice('/docs'.length).replace(/^\/+/, '').replace(/\/+$/, '').split('/');
-    return { view: 'docs', slug: slug || 'introduction', section };
-  }
-  return { view: 'home', anchor: h.replace(/^\/+/, '') };
-}
-
-export function useHashRoute(): Route {
-  const [hash, setHash] = useState(() => (typeof window === 'undefined' ? '' : window.location.hash));
-  useEffect(() => {
-    const onChange = () => setHash(window.location.hash);
-    window.addEventListener('hashchange', onChange);
-    return () => window.removeEventListener('hashchange', onChange);
-  }, []);
-  return useMemo(() => parseHash(hash), [hash]);
-}
-
-/* ------------------------------------------------------------------ */
-/*  GitHub stars (deduplicated, fails silently)                        */
-/* ------------------------------------------------------------------ */
-let starsPromise: Promise<number | null> | null = null;
-
-function fetchStars(): Promise<number | null> {
-  if (!starsPromise) {
-    starsPromise = fetch('https://api.github.com/repos/beyondhumane/arca', {
-      headers: { Accept: 'application/vnd.github+json' },
-    })
-      .then((r) => (r.ok ? (r.json() as Promise<unknown>) : null))
-      .then((d) => {
-        if (d && typeof d === 'object' && 'stargazers_count' in d) {
-          const n = (d as { stargazers_count: unknown }).stargazers_count;
-          return typeof n === 'number' ? n : null;
-        }
-        return null;
-      })
-      .catch(() => null)
-      .then((n) => {
-        if (n === null) starsPromise = null;
-        return n;
-      });
-  }
-  return starsPromise;
-}
-
-export function useGitHubStars(): number | null {
-  const [stars, setStars] = useState<number | null>(null);
-  useEffect(() => {
-    let alive = true;
-    fetchStars().then((n) => {
-      if (alive) setStars(n);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-  return stars;
-}
-
 export function formatCount(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
   return String(n);
@@ -226,7 +158,8 @@ export function detectOS(): OS {
 }
 
 export function useOS(): OS {
-  const [os] = useState<OS>(detectOS);
+  const [os, setOs] = useState<OS>('unknown');
+  useEffect(() => setOs(detectOS()), []);
   return os;
 }
 
@@ -258,17 +191,20 @@ export function useMacArch(enabled: boolean): MacArch | null {
 /* ------------------------------------------------------------------ */
 const GLYPHS = '0123456789abcdef#%&*+=?@';
 
-function scramble(target: string, revealed: number): string {
+function scramble(target: string, revealed: number, pick = () => Math.floor(Math.random() * GLYPHS.length)): string {
   let out = '';
   for (let i = 0; i < target.length; i++) {
     const ch = target[i];
-    out += i < revealed || ch === ' ' ? ch : GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+    out += i < revealed || ch === ' ' ? ch : GLYPHS[pick()];
   }
   return out;
 }
 
 export function useScramble(target: string, active: boolean, interval = 28): string {
-  const [text, setText] = useState(() => scramble(target, 0));
+  const [text, setText] = useState(() => {
+    let seed = 0;
+    return scramble(target, 0, () => (seed = (seed * 7 + 3) % GLYPHS.length));
+  });
   const progress = useRef(0);
 
   useEffect(() => {

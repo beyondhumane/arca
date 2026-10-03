@@ -1,6 +1,6 @@
 # Guía de Arca
 
-Documentación de usuario. El sitio web renderiza estos archivos bajo `#/docs/<nombre de archivo>`; la cabecera YAML fija el grupo de la barra lateral, el orden, la descripción y las palabras clave de búsqueda. Una página que falte aquí se muestra en inglés. English version: [../README.md](../README.md).
+Documentación de usuario. El sitio web renderiza estos archivos bajo `/es/docs/<nombre de archivo>/` y publica el Markdown junto a ellos como `/es/docs/<nombre de archivo>.md`; la cabecera YAML fija el grupo de la barra lateral, el orden, la descripción y las palabras clave de búsqueda. Una página que falte aquí se muestra en inglés. English version: [../README.md](../README.md).
 
 1. [Introducción](introduction.md)
 2. [Instalación](installation.md)

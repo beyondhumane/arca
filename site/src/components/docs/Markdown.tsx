@@ -9,8 +9,8 @@ const LANGS: Record<string, Lang> = { sh: 'bash', bash: 'bash', text: 'text', ya
 const CALLOUTS = { NOTE: 'note', TIP: 'tip', WARNING: 'warning' } as const;
 
 function href(url: string) {
-  const doc = /^([a-z0-9-]+)\.md$/.exec(url);
-  return doc ? `#/docs/${doc[1]}` : url;
+  const doc = /^([a-z0-9-]+)\.md(#[a-z0-9-]+)?$/.exec(url);
+  return doc ? `../${doc[1]}/${doc[2] ?? ''}` : url;
 }
 
 function inline(tokens: Token[]): ReactNode[] {

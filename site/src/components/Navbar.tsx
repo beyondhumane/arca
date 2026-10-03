@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import type { FocusEvent as ReactFocusEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { ArrowRight, BookOpen, Check, ChevronDown, Languages, Menu, Star, X } from 'lucide-react';
 import { cn } from '@/utils/cn';
-import { formatCount, useGitHubStars, useScrolled, useScrollSpy } from '@/lib/hooks';
-import { RELEASE_URL, REPO_URL, VERSION } from '@/lib/site';
+import { formatCount, useScrolled, useScrollSpy } from '@/lib/hooks';
+import { RELEASE_URL, REPO_URL, STARS, VERSION } from '@/lib/site';
 import { LANG_NAMES, LANGS, useCopy, useLang } from '@/lib/i18n';
 import type { Lang } from '@/lib/i18n';
 import { ButtonLink, Logo } from './ui';
 import { GitHubIcon } from './icons';
+import { docPath, homePath } from '@/lib/router';
 
 const SPY_IDS = ['features', 'showcase', 'performance', 'faq'];
 
@@ -132,8 +133,9 @@ function LangMenu({ className }: { className?: string }) {
 export function Navbar({ view }: { view: 'home' | 'docs' }) {
   const scrolled = useScrolled(16);
   const active = useScrollSpy(SPY_IDS, view === 'home');
-  const stars = useGitHubStars();
+  const stars = STARS;
   const t = useCopy(COPY);
+  const { lang } = useLang();
   const LINKS = SPY_IDS.map((id, i) => ({ id, label: t.links[i] }));
   const [open, setOpen] = useState(false);
   const listRef = useRef<HTMLUListElement>(null);
@@ -175,8 +177,8 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
   const showStars = stars !== null && stars >= 10;
 
   const mobileLinks = [
-    ...LINKS.map((l) => ({ href: `#${l.id}`, label: l.label })),
-    { href: '#/docs', label: t.documentation },
+    ...LINKS.map((l) => ({ href: homePath(lang, l.id), label: l.label })),
+    { href: docPath(lang), label: t.documentation },
   ];
 
   return (
@@ -197,7 +199,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
           )}
         >
           <div className="flex items-center gap-3">
-            <a href="#top" aria-label={t.home} className="rounded-lg">
+            <a href={homePath(lang, 'top')} aria-label={t.home} className="rounded-lg">
               <Logo />
             </a>
             <a
@@ -222,7 +224,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
               return (
                 <li key={l.id}>
                   <a
-                    href={`#${l.id}`}
+                    href={homePath(lang, l.id)}
                     onMouseEnter={movePill}
                     onFocus={movePill}
                     onBlur={hidePill}
@@ -246,7 +248,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
             })}
             <li>
               <a
-                href="#/docs"
+                href={docPath(lang)}
                 onMouseEnter={movePill}
                 onFocus={movePill}
                 onBlur={hidePill}
@@ -280,7 +282,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
               <Star className="size-3.5 text-slate-500 transition-all duration-500 group-hover:rotate-[72deg] group-hover:fill-brand-400 group-hover:text-brand-400" />
             </a>
             <LangMenu />
-            <ButtonLink href="#download" size="sm" className="hidden sm:inline-flex">
+            <ButtonLink href={homePath(lang, 'download')} size="sm" className="hidden sm:inline-flex">
               {t.download}
             </ButtonLink>
             <button
@@ -342,7 +344,7 @@ export function Navbar({ view }: { view: 'home' | 'docs' }) {
               <GitHubIcon className="size-4" />
               GitHub
             </ButtonLink>
-            <ButtonLink href="#download" size="md" onClick={() => setOpen(false)}>
+            <ButtonLink href={homePath(lang, 'download')} size="md" onClick={() => setOpen(false)}>
               {t.download}
             </ButtonLink>
           </div>

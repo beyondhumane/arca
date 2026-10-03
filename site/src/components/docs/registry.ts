@@ -12,6 +12,8 @@ export type DocPage = {
   ids: string[];
   /** Where the page source lives, relative to the repository root. */
   path: string;
+  /** Last commit date of the source, YYYY-MM-DD, or empty when the build has no history. */
+  updated: string;
 };
 
 const EN = import.meta.glob<string>(['../../../../docs/guide/*.md', '!**/README.md'], {
@@ -34,6 +36,7 @@ export const headingSlug = (s: string) =>
 const outsideCode = (body: string) => body.replace(/^```[\s\S]*?^```/gm, '');
 
 function parse(file: string, raw: string): Omit<DocPage, 'ids'> {
+  const path = file.replace(/^(\.\.\/)+/, '');
   const m = /^---\n([\s\S]*?)\n---\n/.exec(raw);
   const meta: Record<string, string> = {};
   for (const line of (m?.[1] ?? '').split('\n')) {
@@ -50,7 +53,8 @@ function parse(file: string, raw: string): Omit<DocPage, 'ids'> {
     keywords: meta.keywords ?? '',
     order: Number(meta.order ?? 0),
     body: h1 ? rest.slice(h1[0].length) : rest,
-    path: file.replace(/^(\.\.\/)+/, ''),
+    path,
+    updated: __DOCS_UPDATED__[path] ?? '',
   };
 }
 

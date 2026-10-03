@@ -3,8 +3,9 @@ import type { ReactNode } from 'react';
 import { ArrowUpRight, Plus } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { NEW_ISSUE_URL } from '@/lib/site';
-import { useCopy } from '@/lib/i18n';
+import { useCopy, useLang } from '@/lib/i18n';
 import { Accent, Container, Eyebrow, Reveal } from '../ui';
+import { docPath } from '@/lib/router';
 
 const Code = ({ children }: { children: ReactNode }) => (
   <code className="rounded-md border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[0.85em] text-brand-200">{children}</code>
@@ -56,7 +57,7 @@ const FAQS_EN: { q: string; a: ReactNode }[] = [
       <>
         No, and we say so. With large files Arca compressed 5.7× faster at a 3.7% size cost (deflate vs deflate, Windows
         11). With thousands of small files 7-Zip is slightly ahead at the same size, because file creation on NTFS
-        dominates. The <a href="#/docs/benchmarks/deflate-against-deflate-on-windows-11" className="text-brand-300 underline decoration-brand-400/40 underline-offset-4 hover:text-brand-200">benchmarks page</a> shows both.
+        dominates. The <a href={docPath('en', 'benchmarks', 'deflate-against-deflate-on-windows-11')} className="text-brand-300 underline decoration-brand-400/40 underline-offset-4 hover:text-brand-200">benchmarks page</a> shows both.
       </>
     ),
   },
@@ -137,7 +138,7 @@ const FAQS_ES: typeof FAQS_EN = [
         No, y lo decimos. Con archivos grandes Arca comprimió 5,7× más rápido a cambio de un 3,7% más de tamaño (deflate
         contra deflate, Windows 11). Con miles de archivos pequeños 7-Zip va algo por delante con el mismo tamaño, porque
         domina el tiempo de crear archivos en NTFS. La{' '}
-        <a href="#/docs/benchmarks/deflate-against-deflate-on-windows-11" className="text-brand-300 underline decoration-brand-400/40 underline-offset-4 hover:text-brand-200">página de benchmarks</a> muestra los dos casos.
+        <a href={docPath('es', 'benchmarks', 'deflate-against-deflate-on-windows-11')} className="text-brand-300 underline decoration-brand-400/40 underline-offset-4 hover:text-brand-200">página de benchmarks</a> muestra los dos casos.
       </>
     ),
   },
@@ -170,6 +171,8 @@ const FAQS_ES: typeof FAQS_EN = [
     ),
   },
 ];
+
+export const FAQS = { en: FAQS_EN, es: FAQS_ES };
 
 const COPY = {
   en: {
@@ -234,6 +237,7 @@ function FaqItem({ q, a, open, onToggle }: { q: string; a: ReactNode; open: bool
 }
 
 export function FAQ() {
+  const { lang } = useLang();
   const [open, setOpen] = useState<number | null>(0);
   const t = useCopy(COPY);
   return (
@@ -256,7 +260,7 @@ export function FAQ() {
             </Reveal>
             <Reveal delay={260}>
               <div className="mt-8 flex flex-col gap-2 text-sm">
-                <a href="#/docs" className="inline-flex items-center gap-1.5 text-brand-300 transition hover:gap-2.5 hover:text-brand-200">
+                <a href={docPath(lang)} className="inline-flex items-center gap-1.5 text-brand-300 transition hover:gap-2.5 hover:text-brand-200">
                   {t.browse} <ArrowUpRight className="size-4" />
                 </a>
                 <a href={NEW_ISSUE_URL} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1.5 text-slate-400 transition hover:gap-2.5 hover:text-white">

@@ -1,8 +1,9 @@
 import type { ComponentType, SVGProps } from 'react';
 import { ArrowRight, MousePointerClick, ShieldCheck, Terminal, Workflow } from 'lucide-react';
 import { Accent, ButtonLink, Container, Eyebrow, Reveal, SpotlightCard } from '../ui';
-import { useCopy } from '@/lib/i18n';
+import { useCopy, useLang } from '@/lib/i18n';
 import { MethodLink } from './MethodLink';
+import { docPath } from '@/lib/router';
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -86,6 +87,7 @@ const COPY: Record<'en' | 'es', { eyebrow: string; title: [string, string, strin
 };
 
 export function Benefits() {
+  const { lang } = useLang();
   const t = useCopy(COPY);
   return (
     <section id="benefits" aria-labelledby="benefits-title" className="relative py-24 sm:py-32">
@@ -110,7 +112,7 @@ export function Benefits() {
             </Reveal>
             <Reveal delay={260}>
               <div className="mt-8 flex flex-wrap items-center gap-3">
-                <ButtonLink href="#/docs/quick-start" variant="primary">
+                <ButtonLink href={docPath(lang, 'quick-start')} variant="primary">
                   {t.quick} <ArrowRight className="size-4 transition-transform group-hover/btn:translate-x-0.5" />
                 </ButtonLink>
                 <ButtonLink href="#performance" variant="ghost">

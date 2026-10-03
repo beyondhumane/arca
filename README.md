@@ -11,7 +11,7 @@ A cross-platform archiver in Rust. ZIP and TAR, Zstandard on every core, AES-256
 
 [![CI](https://github.com/beyondhumane/arca/actions/workflows/ci.yml/badge.svg)](https://github.com/beyondhumane/arca/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/beyondhumane/arca?color=0066FF)](https://github.com/beyondhumane/arca/releases/latest) [![License](https://img.shields.io/badge/license-Apache--2.0-FF8A3D)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.95%2B-0E1628)](Cargo.toml)
 
-**[Website](https://beyondhumane.github.io/arca/)** · **[Download](https://github.com/beyondhumane/arca/releases/latest)** · **[Guide](docs/guide/README.md)** · **[Guía en español](docs/guide/es/README.md)**
+**[Website](https://arca.beyondhumane.com/)** · **[Download](https://github.com/beyondhumane/arca/releases/latest)** · **[Guide](docs/guide/README.md)** · **[Guía en español](docs/guide/es/README.md)**
 
 <br>
 
