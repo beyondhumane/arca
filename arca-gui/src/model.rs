@@ -11,47 +11,10 @@ pub enum ThemePreference {
     Dark,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub(crate) enum Format {
-    Zip,
-    SevenZ,
-    Tar,
-    TarGz,
-}
-
-impl Format {
-    pub(crate) fn extension(self) -> &'static str {
-        match self {
-            Format::Zip => "zip",
-            Format::SevenZ => "7z",
-            Format::Tar => "tar",
-            Format::TarGz => "tar.gz",
-        }
-    }
-
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Format::Zip => "ZIP",
-            Format::SevenZ => "7z",
-            Format::Tar => "TAR",
-            Format::TarGz => "TAR.GZ",
-        }
-    }
-}
+pub(crate) use arca_core::Format;
 
 pub(crate) fn detect(p: &Path) -> Option<Format> {
-    let n = p.to_string_lossy().to_ascii_lowercase();
-    if n.ends_with(".zip") {
-        Some(Format::Zip)
-    } else if n.ends_with(".7z") {
-        Some(Format::SevenZ)
-    } else if n.ends_with(".tar.gz") || n.ends_with(".tgz") {
-        Some(Format::TarGz)
-    } else if n.ends_with(".tar") {
-        Some(Format::Tar)
-    } else {
-        None
-    }
+    Format::detect(p)
 }
 
 // The little triangle beside a column name that says which way it is sorted.
@@ -141,7 +104,7 @@ pub(crate) fn archive_stem(p: &Path) -> String {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     let lower = name.to_ascii_lowercase();
-    for ext in [".tar.gz", ".tgz", ".zip", ".tar", ".7z"] {
+    for ext in [".tar.gz", ".tgz", ".zip", ".7z", ".tar", ".rar", ".cbr"] {
         if lower.ends_with(ext) {
             return name[..name.len() - ext.len()].to_string();
         }

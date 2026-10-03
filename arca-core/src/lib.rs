@@ -1,6 +1,9 @@
 use std::fmt;
 use std::io;
 
+mod format;
+pub use format::Format;
+
 pub mod limits {
     pub const MAX_NAME: usize = 4096;
     pub const MAX_ENTRIES: u64 = 10_000_000;
@@ -27,6 +30,7 @@ pub enum Error {
     Unsupported(String),
     PasswordRequired,
     PasswordOrCorrupt,
+    BadPassword,
     // Somebody pressed stop. Not a failure: nothing is wrong with the archive
     // and nothing needs reporting, so callers that clean up after themselves
     // can tell this apart from a real error and say so plainly.
@@ -54,6 +58,7 @@ impl fmt::Display for Error {
             Error::Unsupported(m) => write!(f, "unsupported: {m}"),
             Error::PasswordRequired => write!(f, "a password is required for this archive"),
             Error::PasswordOrCorrupt => write!(f, "wrong password or corrupt encrypted archive"),
+            Error::BadPassword => write!(f, "incorrect archive password"),
             Error::Cancelled => write!(f, "cancelled"),
         }
     }
@@ -85,6 +90,7 @@ pub enum Method {
     Lzma2,
     Bzip2,
     Other7z,
+    Rar,
 }
 
 impl Method {
@@ -97,6 +103,7 @@ impl Method {
             Method::Lzma2 => "lzma2",
             Method::Bzip2 => "bzip2",
             Method::Other7z => "7z",
+            Method::Rar => "rar",
         }
     }
 
@@ -168,7 +175,7 @@ pub struct Entry {
     pub size: u64,
     pub compressed_size: u64,
     pub method: Method,
-    pub crc32: u32,
+    pub crc32: Option<u32>,
     pub is_dir: bool,
     pub mtime: Option<i64>,
     // When the file was made and when it was last read. A zip only carries

@@ -279,6 +279,18 @@ pub(crate) fn run_job_blocking(
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     ask: &dyn Fn(&Path) -> Answer,
 ) -> std::result::Result<String, String> {
+    let mutation = match &job {
+        Job::Password { archive, .. }
+        | Job::Delete { archive, .. }
+        | Job::Rename { archive, .. }
+        | Job::Move { archive, .. }
+        | Job::NewFolder { archive, .. }
+        | Job::Add { archive, .. } => Some(archive),
+        _ => None,
+    };
+    if mutation.is_some_and(|p| detect(p) == Some(Format::Rar)) {
+        return Err(arca_rar::read_only().to_string());
+    }
     match job {
         Job::Extract {
             archives,

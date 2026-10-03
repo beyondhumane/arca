@@ -1,0 +1,23 @@
+[package]
+name = "arca-rar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Experimental read-only RAR adapter for Arca"
+
+[features]
+default = []
+rar = ["dep:rars", "dep:tempfile"]
+
+[dependencies]
+arca-core.workspace = true
+rars = { version = "=0.10.0", default-features = false, features = ["encryption"], optional = true }
+tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"

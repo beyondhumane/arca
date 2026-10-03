@@ -17,12 +17,20 @@ Arca is a Cargo workspace. Each crate has one job and a declared stance on unsaf
 | `arca-zip` | ZIP with Zip64; store, Deflate over zlib-rs, Zstandard, AES-256 | forbidden |
 | `arca-tar` | ustar TAR with checksum verification | forbidden |
 | `arca-7z` | Bounded 7z parsing, solid extraction, Store/LZMA2 creation and AES | forbidden |
+| `arca-rar` | Opt-in, experimental read-only RAR/CBR adapter | forbidden |
 | `arca-cli` | The arca binary | allowed, unused |
 | `arca-gui` | The arca-gui window | forbidden |
 | `arca-icons` | The icon the desktop shows for a file type | Windows only, for the shell call |
 | `windows/arca-shell` | Explorer context menu, outside the workspace so cargo build still works on Linux and macOS | required: COM |
 
 The workspace also contains `arca-drag` and `arca-net`; see [their sources](https://github.com/beyondhumane/arca) for details.
+
+CLI and desktop share `arca_core::Format`. Its writable formats include 7z but
+exclude RAR. The [RAR reader](rar.md) is enabled only by `--features rar`; the
+resolved `rars` dependency enables encryption, never its writer. The desktop
+uses one background password-validation flow for ZIP, 7z and RAR, with retries,
+cancel and resumption of the original action. CRC metadata is optional: an absent
+checksum is not displayed as a fabricated zero.
 
 ## The unsafe policy
 

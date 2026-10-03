@@ -15,7 +15,7 @@ fn wrong_password_never_creates_or_truncates_destinations_or_open_file_output() 
     for hidden in [false, true] {
         let room = Room::new();
         let archive = room.archive(Some("secret"), hidden);
-        let entries = list_entries(&archive, Some("secret")).unwrap();
+        let entries = list_entries(&archive, Some("secret"), &|_, _, _| true).unwrap();
         let index = entries
             .iter()
             .position(|e| e.name == "source/a.txt")
@@ -53,7 +53,7 @@ fn wrong_password_never_creates_or_truncates_destinations_or_open_file_output() 
 fn encrypted_selection_preview_testing_and_conflict_answers_work() {
     let room = Room::new();
     let archive = room.archive(Some("secret"), true);
-    let entries = list_entries(&archive, Some("secret")).unwrap();
+    let entries = list_entries(&archive, Some("secret"), &|_, _, _| true).unwrap();
     let index = entries
         .iter()
         .position(|e| e.name == "source/b.txt")
@@ -157,7 +157,7 @@ fn sevenz_cancellation_does_not_prepare_output() {
 fn corrupt_unselected_encrypted_content_prevents_even_directory_creation() {
     let room = Room::new();
     let archive = room.archive(Some("secret"), false);
-    let entries = list_entries(&archive, None).unwrap();
+    let entries = list_entries(&archive, None, &|_, _, _| true).unwrap();
     let wanted: Vec<_> = entries.iter().map(|e| e.is_dir).collect();
     let mut bytes = fs::read(&archive).unwrap();
     bytes[32] ^= 0x80;
@@ -214,7 +214,7 @@ fn sevenz_creation_levels_and_options_are_forwarded_without_zip_codes() {
             (None, false),
         )
         .unwrap();
-        let entries = list_entries(&out, None).unwrap();
+        let entries = list_entries(&out, None, &|_, _, _| true).unwrap();
         assert_eq!(
             entries[0].method,
             if level == Level::Store {

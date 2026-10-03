@@ -18,6 +18,10 @@ Store/LZMA2, contraseñas y nombres ocultos en CLI y escritorio. Consulta el
 
 ## Todavía no
 
+La [lectura RAR/CBR](../rar.md) es experimental y se activa con `--features rar`.
+La activación estable, la revisión de procedencia y los archivos multivolumen
+siguen pendientes. No se admite crear ni modificar RAR.
+
 - **xz independiente:** LZMA2 sí se admite dentro de 7z.
 - **Enlaces simbólicos:** se omiten al crear ZIP/TAR y se rechazan en 7z.
 - **Nombres largos de GNU tar.**

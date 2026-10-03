@@ -1,6 +1,8 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
+#[cfg(all(test, feature = "rar"))]
+mod rar_tests;
 #[cfg(test)]
 mod sevenz_tests;
 mod state;
@@ -56,6 +58,7 @@ fn worker_notify<'a>(
 
 fn password_error(error: &arca_core::Error) -> bool {
     arca_7z::password_required(error)
+        || matches!(error, arca_core::Error::BadPassword)
         || matches!(error, arca_core::Error::Format(text) if text.contains("wrong password"))
 }
 
@@ -151,6 +154,7 @@ impl AppController {
     pub(crate) fn dispatch(&mut self, action: AppAction) {
         match action {
             AppAction::Open(path) => self.open(path),
+            AppAction::Refresh => self.refresh(),
             AppAction::Run(job) => self.run_job(job),
             AppAction::ExtractTo { only_checked, dest } => {
                 self.start_extract_to(only_checked, dest)
@@ -344,6 +348,9 @@ impl AppController {
     /// both files and folders: the native dialog only offers one or the other,
     /// so a mixed selection takes more than one pass through here.
     pub(crate) fn prepare_compress(&mut self, inputs: Vec<PathBuf>) {
+        if !self.state.format.can_write() {
+            self.state.format = Format::Zip;
+        }
         if !matches!(self.state.view, View::Add) {
             self.state.pending_inputs.clear();
             self.state.output_name.clear();
@@ -679,8 +686,7 @@ impl AppController {
             self.state.error = true;
             return;
         }
-        self.open(archive);
-        self.state.archive_password = pw;
+        self.open_with_password(archive, pw);
     }
 
     // Reads the names in the archive again under another code page.
@@ -1295,10 +1301,15 @@ impl AppController {
                     // program puts it, which frees a whole row above the
                     // list for nothing at all.
                     self.state.window_title = format!(
-                        "{} - Arca",
+                        "{} - Arca{}",
                         path.file_name()
                             .map(|x| x.to_string_lossy().to_string())
-                            .unwrap_or_default()
+                            .unwrap_or_default(),
+                        if detect(&path) == Some(Format::Rar) {
+                            " (RAR: experimental, read-only)"
+                        } else {
+                            ""
+                        }
                     );
                     self.state.archive = Some(path);
                     let restore_dir = self.state.reread_dir.take();
@@ -1406,6 +1417,7 @@ impl AppController {
                 let notice = std::mem::take(&mut self.state.notice);
                 self.open_with_password(path, pw);
                 self.state.reread_dir = Some(dir);
+
                 self.state.notice = notice;
                 self.state.view = View::Browse;
             }
@@ -1754,6 +1766,12 @@ impl AppController {
         self.load_listing(path, password);
     }
 
+    fn refresh(&mut self) {
+        if let Some(path) = self.state.archive.clone() {
+            self.open_with_password(path, self.state.archive_password.clone());
+        }
+    }
+
     fn load_listing(&mut self, path: PathBuf, password: Option<String>) {
         self.show_job(self.s().opening, archive_stem(&path), true);
         let (stop, hold) = self.fresh_flags();
@@ -1766,13 +1784,21 @@ impl AppController {
                 if !notify(0, 0, "") {
                     return Err(arca_core::Error::Cancelled);
                 }
-                list_entries(&path, password.as_deref())
+                list_entries(&path, password.as_deref(), &notify)
             })();
             let _ = tx.send(Message::Listing(path, result, password));
         });
     }
 
-    pub(crate) fn run_job(&mut self, job: Job) {
+    pub(crate) fn run_job(&mut self, mut job: Job) {
+        if let Job::Test {
+            archive, password, ..
+        } = &mut job
+        {
+            if password.is_none() && self.state.archive.as_ref() == Some(archive) {
+                *password = self.state.archive_password.clone();
+            }
+        }
         if let Job::Extract { password, .. } | Job::Test { password, .. } = &job {
             let password = password.clone();
             self.authenticate(Pending::Extract(Box::new(job)), password);
@@ -2151,7 +2177,7 @@ mod reread_tests {
             size: 0,
             compressed_size: 0,
             method: arca_core::Method::Store,
-            crc32: 0,
+            crc32: None,
             is_dir: false,
             mtime: None,
             created: None,
@@ -2291,7 +2317,7 @@ mod password_tests {
             size: 0,
             compressed_size: 0,
             method: arca_core::Method::Store,
-            crc32: 0,
+            crc32: None,
             is_dir: false,
             mtime: None,
             created: None,
@@ -2375,7 +2401,7 @@ mod filter_tests {
             size: 1,
             compressed_size: 1,
             method: arca_core::Method::Store,
-            crc32: 0,
+            crc32: None,
             is_dir: false,
             mtime: None,
             created: None,

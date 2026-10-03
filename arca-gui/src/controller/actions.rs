@@ -57,6 +57,7 @@ pub(crate) enum View {
 
 pub(crate) enum AppAction {
     Open(PathBuf),
+    Refresh,
     Run(Job),
     ExtractTo { only_checked: bool, dest: PathBuf },
     PrepareCompress(Vec<PathBuf>),
@@ -526,7 +527,7 @@ pub(crate) fn up_row(dir: &str) -> Row {
         created: None,
         accessed: None,
         attributes: 0,
-        crc32: 0,
+        crc32: None,
         up: true,
     }
 }

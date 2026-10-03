@@ -535,6 +535,22 @@ fn decoder_truncation_and_dictionary_limits() {
 }
 
 #[test]
+fn crc_metadata_distinguishes_absent_and_present_checksums() {
+    let data = single_block(&[1, 1, 0], 1, b"a");
+    let mut archive = SevenZArchive::open(Cursor::new(data), None).unwrap();
+    assert_eq!(archive.entries()[0].crc32, None);
+    archive.test(&mut |_| true).unwrap();
+    for solid in [false, true] {
+        let archive = SevenZArchive::open(Cursor::new(fixture(solid, None, false)), None).unwrap();
+        assert_eq!(archive.entries()[0].crc32, None);
+        assert_eq!(
+            archive.entries()[1].crc32,
+            Some(arca_core::crc32(b"first contents"))
+        );
+    }
+}
+
+#[test]
 fn malformed_aes_properties_do_not_run_unbounded_kdf() {
     for properties in [vec![62, 0], vec![255], vec![0xc1, 0xff], vec![]] {
         let mut coder = vec![1, 0x24, 6, 0xf1, 7, 1, properties.len() as u8];

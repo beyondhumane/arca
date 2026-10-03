@@ -198,10 +198,10 @@ pub fn extract_entry_with<R: Read + Seek, W: Write>(
     // AE-2 stores a zero CRC on purpose, and the HMAC has already spoken for
     // the contents. AE-1 keeps the real one, so a non-zero value still gets
     // checked either way.
-    if !(e.encrypted && e.crc32 == 0) && crc_val != e.crc32 {
+    if !(e.encrypted && e.crc32 == Some(0)) && Some(crc_val) != e.crc32 {
         return Err(Error::Integrity {
             name: e.name.clone(),
-            expected: e.crc32,
+            expected: e.crc32.unwrap_or(0),
             found: crc_val,
         });
     }
@@ -429,6 +429,9 @@ fn decompress_into<Rd: Read, W: Write>(
         Method::Lzma | Method::Lzma2 | Method::Bzip2 | Method::Other7z => {
             Err(Error::Unsupported(format!("{} in ZIP", method_code.name())))
         }
+        Method::Rar => Err(Error::Unsupported(
+            "RAR is not a ZIP compression method".into(),
+        )),
         Method::Store => {
             let mut a = src;
             io::copy(&mut a, cw)?;
@@ -715,7 +718,7 @@ fn read_central_header(c: &mut Cursor<'_>) -> Result<Entry> {
         size: uncompressed,
         compressed_size: comp_size,
         method,
-        crc32: crc_val,
+        crc32: Some(crc_val),
         is_dir,
         mtime: arca_core::dos_to_unix(date_val, time_val),
         created: times.created,
@@ -747,6 +750,7 @@ pub struct ZipWriter<W: Write + Seek> {
     out: W,
     registros: Vec<Record>,
     pos: u64,
+    stream_threads: usize,
 }
 
 impl<W: Write + Seek> ZipWriter<W> {
@@ -755,6 +759,7 @@ impl<W: Write + Seek> ZipWriter<W> {
             out,
             registros: Vec::new(),
             pos: 0,
+            stream_threads: 0,
         }
     }
 
@@ -807,8 +812,14 @@ impl<W: Write + Seek> ZipWriter<W> {
 
         let (comp_size, uncompressed, crc_val) = match password {
             None => {
-                let (_, comp, un) =
-                    compress_stream(&mut data, &mut self.out, method_code, level, &mut hasher)?;
+                let (_, comp, un) = compress_stream(
+                    &mut data,
+                    &mut self.out,
+                    method_code,
+                    level,
+                    &mut hasher,
+                    self.stream_threads,
+                )?;
                 (comp, un, hasher.finalize())
             }
             Some(pw) => {
@@ -817,8 +828,14 @@ impl<W: Write + Seek> ZipWriter<W> {
                 self.out.write_all(&salt)?;
                 self.out.write_all(&aes::verifier_of(&keys))?;
                 let sink = aes::AesWriter::new(&mut self.out, &keys)?;
-                let (sink, cipher_len, un) =
-                    compress_stream(&mut data, sink, method_code, level, &mut hasher)?;
+                let (sink, cipher_len, un) = compress_stream(
+                    &mut data,
+                    sink,
+                    method_code,
+                    level,
+                    &mut hasher,
+                    self.stream_threads,
+                )?;
                 let (_, auth, _) = sink.finish();
                 self.out.write_all(&auth)?;
                 // AE-2 leaves the CRC field at zero on purpose: it would leak a
@@ -1221,6 +1238,7 @@ fn compress_stream<R: Read, S: Write>(
     method_code: Method,
     level: Level,
     hasher: &mut crc32fast::Hasher,
+    threads: usize,
 ) -> Result<(S, u64, u64)> {
     let mut counter = Counter::new(sink);
     let mut uncompressed = 0u64;
@@ -1229,6 +1247,11 @@ fn compress_stream<R: Read, S: Write>(
     match method_code {
         Method::Lzma | Method::Lzma2 | Method::Bzip2 | Method::Other7z => {
             return Err(Error::Unsupported(format!("{} in ZIP", method_code.name())));
+        }
+        Method::Rar => {
+            return Err(Error::Unsupported(
+                "RAR is not a ZIP compression method".into(),
+            ))
         }
         Method::Store => loop {
             let n = data.read(&mut buf)?;
@@ -1257,7 +1280,7 @@ fn compress_stream<R: Read, S: Write>(
             {
                 let mut enc = zstd::stream::write::Encoder::new(counter, level.to_zstd())
                     .map_err(Error::Io)?;
-                let _ = enc.multithread(available_threads());
+                enc.multithread(zstd_workers(threads)).map_err(Error::Io)?;
                 loop {
                     let n = data.read(&mut buf)?;
                     if n == 0 {
@@ -1271,7 +1294,7 @@ fn compress_stream<R: Read, S: Write>(
             }
             #[cfg(not(feature = "codecs-native"))]
             {
-                let _ = counter;
+                let _ = (counter, threads);
                 return Err(Error::Unsupported(
                     "this binary was built without Zstandard".into(),
                 ));
@@ -1299,11 +1322,20 @@ fn method_of(c: Codec) -> Method {
     }
 }
 
+fn resolve_threads(requested: usize) -> usize {
+    if requested > 0 {
+        requested
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    }
+}
+
 #[cfg(feature = "codecs-native")]
-fn available_threads() -> u32 {
-    std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
-        .unwrap_or(1)
+fn zstd_workers(threads: usize) -> u32 {
+    // Reserve the caller's thread; zero workers compresses on the caller.
+    (resolve_threads(threads) - 1).min(u32::MAX as usize) as u32
 }
 
 // Writes a copy of `archive` at `out` carrying a different password, or none.
@@ -1497,11 +1529,12 @@ fn rewrite(
         }
         // Directories hold nothing, and no other tool encrypts them either.
         let pw = if e.is_dir { None } else { new };
-        let crc = if e.encrypted && e.crc32 == 0 {
+        let crc = if e.encrypted && e.crc32 == Some(0) {
             let mut src = BufReader::with_capacity(STREAM_BUF, File::open(archive)?);
             checksum_entry(&mut src, e, current)?
         } else {
             e.crc32
+                .ok_or_else(|| Error::Format("missing ZIP checksum".into()))?
         };
         let mut src = BufReader::with_capacity(STREAM_BUF, File::open(archive)?);
         w.copy_entry(&name(e), crc, e.size, e.method, e.mtime, pw, |sink| {
@@ -1718,9 +1751,9 @@ type Block = (usize, Vec<u8>, Method, u32);
 /// way -- it is an ordinary zip.
 ///
 /// Files are read in batches so that the memory held at once stays bounded, and
-/// one too big for the whole budget is streamed straight through instead. That
-/// one goes at the speed of a single core, which is the price of not needing
-/// room for it.
+/// one too big for the whole budget is streamed straight through instead.
+/// Streaming deflate uses a single core; zstd shares the requested thread budget
+/// with the streaming caller.
 ///
 /// Sealing happens inside the worker on purpose: deriving the key is a thousand
 /// rounds of PBKDF2 per entry, and doing it back in the writer would put all of
@@ -1776,9 +1809,9 @@ fn write_zip(
 /// way -- it is an ordinary zip.
 ///
 /// Files are read in batches so that the memory held at once stays bounded, and
-/// one too big for the whole budget is streamed straight through instead. That
-/// one goes at the speed of a single core, which is the price of not needing
-/// room for it.
+/// one too big for the whole budget is streamed straight through instead.
+/// Streaming deflate uses a single core; zstd shares the requested thread budget
+/// with the streaming caller.
 ///
 /// Sealing happens inside the worker on purpose: deriving the key is a thousand
 /// rounds of PBKDF2 per entry, and doing it back in the writer would put all of
@@ -1799,18 +1832,13 @@ fn write_in_parallel<W: Write + Seek>(
     use rayon::prelude::*;
     use std::sync::atomic::Ordering;
 
-    let threads = if threads > 0 {
-        threads
-    } else {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    };
+    let threads = resolve_threads(threads);
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()
         .map_err(|e| Error::Format(format!("could not create the thread pool: {e}")))?;
     let cap = IN_FLIGHT_PER_THREAD * threads as u64;
+    w.stream_threads = threads;
     let mut bytes = 0u64;
 
     for batch in batches(files, cap) {
@@ -1968,7 +1996,7 @@ mod tests {
             e.offset = seed.wrapping_mul(2_654_435_761) % (buf.len() as u64 + 64);
             e.compressed_size = seed.wrapping_mul(97) % 4096;
             e.size = seed.wrapping_mul(31) % 4096;
-            e.crc32 = seed as u32;
+            e.crc32 = Some(seed as u32);
             let mut source = IoCursor::new(buf.clone());
             let r = extract_entry(&mut source, &e, &mut Vec::new());
             assert!(r.is_err() || e.offset == real.offset, "{r:?}");
@@ -2065,11 +2093,11 @@ mod tests {
             .to_vec();
         let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
         for e in &entries {
-            let crc = if e.encrypted && e.crc32 == 0 {
+            let crc = if e.encrypted && e.crc32 == Some(0) {
                 let mut src = IoCursor::new(buf.to_vec());
                 checksum_entry(&mut src, e, current).unwrap()
             } else {
-                e.crc32
+                e.crc32.unwrap()
             };
             let mut src = IoCursor::new(buf.to_vec());
             w.copy_entry(&e.name, crc, e.size, e.method, e.mtime, new, |sink| {
@@ -2102,9 +2130,15 @@ mod tests {
         let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
         for e in &entries {
             let mut src = IoCursor::new(buf.to_vec());
-            w.copy_entry(&e.name, e.crc32, e.size, e.method, e.mtime, None, |sink| {
-                copy_compressed(&mut src, e, sink, None)
-            })
+            w.copy_entry(
+                &e.name,
+                e.crc32.unwrap(),
+                e.size,
+                e.method,
+                e.mtime,
+                None,
+                |sink| copy_compressed(&mut src, e, sink, None),
+            )
             .unwrap();
         }
         w.finish().unwrap().into_inner()
@@ -2500,6 +2534,83 @@ mod tests {
             assert_eq!(out_bytes, bodies[i]);
         }
         let _ = std::fs::remove_dir_all(&room);
+    }
+
+    #[cfg(feature = "codecs-native")]
+    #[test]
+    fn zstd_worker_count_includes_caller_in_thread_budget() {
+        assert_eq!(resolve_threads(1), 1);
+        assert_eq!(resolve_threads(2), 2);
+        assert_eq!(zstd_workers(1), 0);
+        assert_eq!(zstd_workers(2), 1);
+        assert_eq!(zstd_workers(8), 7);
+        let available = std::thread::available_parallelism().unwrap().get();
+        assert_eq!(resolve_threads(0), available);
+        assert_eq!(zstd_workers(0) as usize + 1, available);
+        assert_eq!(ZipWriter::new(IoCursor::new(Vec::new())).stream_threads, 0);
+    }
+
+    #[cfg(feature = "codecs-native")]
+    #[test]
+    fn oversized_zstd_entries_match_the_requested_thread_mode() {
+        let room = std::env::temp_dir().join(format!("arca-zstd-threads-{}", std::process::id()));
+        std::fs::create_dir_all(&room).unwrap();
+        let body: Vec<u8> = (0..2 * IN_FLIGHT_PER_THREAD as usize + 1)
+            .map(|i| (i / 4096 % 251) as u8)
+            .collect();
+        let path = room.join("large.bin");
+        std::fs::write(&path, &body).unwrap();
+        let files = [Source {
+            path,
+            name: "large.bin".into(),
+            size: body.len() as u64,
+            mtime: 1_700_000_000,
+            codec: Codec::Zstd,
+            level: Level::Normal,
+        }];
+
+        for (threads, workers) in [(1, 0), (2, 1)] {
+            assert!(files[0].size > IN_FLIGHT_PER_THREAD * threads as u64);
+            let mut reference =
+                zstd::stream::write::Encoder::new(Vec::new(), Level::Normal.to_zstd()).unwrap();
+            reference.multithread(workers).unwrap();
+            for chunk in body.chunks(STREAM_BUF) {
+                reference.write_all(chunk).unwrap();
+            }
+            let expected = reference.finish().unwrap();
+
+            for password in [None, Some("streaming password")] {
+                let out = room.join("out.zip");
+                create_zip(&out, &files, threads, password, &|_, _, _| true).unwrap();
+                let mut archive = ZipArchive::open(std::fs::File::open(&out).unwrap()).unwrap();
+                assert_eq!(archive.len(), 1);
+                let entry = &archive.entries()[0];
+                assert_eq!(entry.size, body.len() as u64);
+                assert_eq!(entry.method, Method::Zstd);
+                assert_eq!(entry.encrypted, password.is_some());
+
+                let mut compressed = Vec::new();
+                copy_compressed(
+                    &mut std::fs::File::open(&out).unwrap(),
+                    entry,
+                    &mut compressed,
+                    password,
+                )
+                .unwrap();
+                assert!(
+                    compressed == expected,
+                    "streaming zstd did not use the requested mode: threads={threads}, encrypted={}",
+                    password.is_some()
+                );
+
+                let mut extracted = Vec::new();
+                archive
+                    .extract_to_with(0, &mut extracted, password)
+                    .unwrap();
+                assert!(extracted == body);
+            }
+        }
+        std::fs::remove_dir_all(&room).unwrap();
     }
 
     // Saying no to "carry on?" has to stop it, and say so.

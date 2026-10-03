@@ -18,6 +18,10 @@ creation, passwords and hidden names are implemented for CLI and desktop. See
 
 ## Not yet
 
+[RAR/CBR reading](rar.md) is experimental and opt-in with `--features rar`.
+Stable activation, provenance review and multi-volume support remain follow-up
+work. RAR creation and mutation are not supported.
+
 - **Standalone xz:** LZMA2 is supported inside 7z.
 - **Symbolic links:** skipped for ZIP/TAR creation, rejected for 7z.
 - **GNU tar long names.**

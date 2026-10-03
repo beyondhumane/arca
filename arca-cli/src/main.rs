@@ -1,4 +1,4 @@
-use arca_core::{Codec, Error, Level, Result};
+use arca_core::{Codec, Error, Format, Level, Result};
 use arca_tar::{TarReader, TarWriter};
 use arca_zip::ZipArchive;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -67,7 +67,7 @@ enum Cmd {
         archive: PathBuf,
         #[arg(short, long, help = "Report how long it took")]
         time: bool,
-        #[arg(short = 'p', long, help = "Password to read encrypted .7z headers")]
+        #[arg(short = 'p', long, help = "Password to read encrypted 7z/RAR headers")]
         password: Option<String>,
     },
     #[command(visible_alias = "x", about = "Extract the contents")]
@@ -86,22 +86,14 @@ enum Cmd {
             help = "Threads to use. 0 means every core. Only .zip can go parallel"
         )]
         threads: usize,
-        #[arg(
-            short = 'p',
-            long,
-            help = "Password of an encrypted archive (AES-256 or ZipCrypto)"
-        )]
+        #[arg(short = 'p', long, help = "Password of an encrypted archive")]
         password: Option<String>,
     },
     #[command(visible_alias = "t", about = "Check integrity without writing to disk")]
     Test {
         #[arg(help = "Archive to check")]
         archive: PathBuf,
-        #[arg(
-            short = 'p',
-            long,
-            help = "Password of an encrypted archive (AES-256 or ZipCrypto)"
-        )]
+        #[arg(short = 'p', long, help = "Password of an encrypted archive")]
         password: Option<String>,
     },
     #[command(
@@ -169,30 +161,13 @@ impl From<LevelArg> for Level {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-enum Format {
-    Zip,
-    SevenZ,
-    Tar,
-    TarGz,
-}
-
 fn detect(p: &Path) -> Result<Format> {
-    let n = p.to_string_lossy().to_ascii_lowercase();
-    if n.ends_with(".zip") {
-        Ok(Format::Zip)
-    } else if n.ends_with(".7z") {
-        Ok(Format::SevenZ)
-    } else if n.ends_with(".tar.gz") || n.ends_with(".tgz") {
-        Ok(Format::TarGz)
-    } else if n.ends_with(".tar") {
-        Ok(Format::Tar)
-    } else {
-        Err(Error::Unsupported(format!(
-            "unrecognized extension in '{}' (.zip, .7z, .tar and .tar.gz are supported)",
+    Format::detect(p).ok_or_else(|| {
+        Error::Unsupported(format!(
+            "unrecognized extension in '{}' (.zip, .7z, .tar, .tar.gz, .rar and .cbr are recognized)",
             p.display()
-        )))
-    }
+        ))
+    })
 }
 
 fn main() {
@@ -315,6 +290,9 @@ fn create(
     hide_names: bool,
 ) -> Result<()> {
     let format_kind = detect(out)?;
+    if !format_kind.can_write() {
+        return Err(arca_rar::read_only());
+    }
     if format_kind == Format::SevenZ {
         return sevenz::create(out, inputs, level, codec_arg, password, hide_names);
     }
@@ -355,6 +333,7 @@ fn create(
         Format::SevenZ => unreachable!(),
         // Nothing to report while it runs -- the summary is printed at the end
         // -- so the answer to "carry on?" is always yes.
+        Format::Rar => return Err(arca_rar::read_only()),
         Format::Zip => arca_zip::create_zip(out, &files, threads, password, &|_, _, _| true)?,
         Format::Tar | Format::TarGz => {
             let f = BufWriter::with_capacity(BUF, File::create(out)?);
@@ -412,6 +391,21 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
     match format_kind {
         Format::SevenZ => {
             let a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            for e in a.entries() {
+                writeln!(
+                    out,
+                    "{:>12}  {:>7}  {:>5.1}%  {}",
+                    e.size,
+                    e.method.name(),
+                    e.ratio() * 100.0,
+                    e.name
+                )?;
+                n += 1;
+                bytes += e.size;
+            }
+        }
+        Format::Rar => {
+            let a = arca_rar::RarArchive::open(archive, password)?;
             for e in a.entries() {
                 writeln!(
                     out,
@@ -528,7 +522,9 @@ fn extract(
     if format_kind == Format::SevenZ {
         return sevenz::extract(archive, dest, policy, password);
     }
-    fs::create_dir_all(dest)?;
+    if format_kind != Format::Rar {
+        fs::create_dir_all(dest)?;
+    }
     let t0 = Instant::now();
     let mut n = 0u64;
     let mut bytes = 0u64;
@@ -536,6 +532,20 @@ fn extract(
 
     match format_kind {
         Format::SevenZ => unreachable!(),
+        Format::Rar => {
+            let a = arca_rar::RarArchive::open(archive, password)?;
+            let bytes = a.extract(dest, &[], password, &|_, _, _| true, &|_| match policy {
+                OnConflict::Overwrite => arca_rar::Conflict::Overwrite,
+                OnConflict::Skip => arca_rar::Conflict::Skip,
+                OnConflict::Rename => arca_rar::Conflict::Rename,
+            })?;
+            println!(
+                "{} written in {:.3} s",
+                human(bytes),
+                t0.elapsed().as_secs_f64()
+            );
+            return Ok(());
+        }
         Format::Zip => {
             let a = ZipArchive::open(File::open(archive)?)?;
             // Directories and conflicts are settled here, single threaded: two
@@ -631,7 +641,7 @@ fn change_password(
 ) -> Result<()> {
     if detect(archive)? != Format::Zip {
         return Err(Error::Unsupported(
-            "changing passwords is supported only for .zip; .7z password changes require rewriting blocks and are not supported".into(),
+            "only ZIP passwords can be changed; 7z password changes are not supported and RAR is read-only".into(),
         ));
     }
     let entries = ZipArchive::open(File::open(archive)?)?.entries().to_vec();
@@ -694,6 +704,11 @@ fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
             let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
             a.test(&mut |_| true)?;
             n = a.len() as u64;
+        }
+        Format::Rar => {
+            let a = arca_rar::RarArchive::open(archive, password)?;
+            a.test(password, &|_, _, _| true)?;
+            n = a.entries().iter().filter(|e| !e.is_dir).count() as u64;
         }
         Format::Zip => {
             let mut a = ZipArchive::open(File::open(archive)?)?;

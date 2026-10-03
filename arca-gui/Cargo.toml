@@ -12,6 +12,7 @@ name = "arca-gui"
 path = "src/main.rs"
 
 [dependencies]
+arca-rar.workspace = true
 arca-core.workspace = true
 arca-zip.workspace = true
 arca-tar.workspace = true
@@ -86,5 +87,6 @@ path = "../arca-drag"
 path = "../arca-net"
 
 [features]
+rar = ["arca-rar/rar"]
 default = ["codecs-native"]
 codecs-native = ["arca-zip/codecs-native", "arca-7z/codecs-native"]

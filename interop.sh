@@ -279,6 +279,32 @@ else
 fi
 
 echo
+if [ "${ARCA_TEST_RAR:-0}" = 1 ]; then
+  echo "RAR) External fixtures -> Arca (read-only)"
+  FIXTURES="$ROOT/arca-rar/tests/fixtures"
+  for f in plain stored solid encrypted headers; do
+    ARGS=()
+    case "$f" in encrypted|headers) ARGS=(-p arca-test-only);; esac
+    rm -rf rar-out
+    "$ARCA" test "$FIXTURES/$f.rar" "${ARGS[@]}" >/dev/null 2>&1 &&
+      "$ARCA" extract "$FIXTURES/$f.rar" -o rar-out "${ARGS[@]}" >/dev/null 2>&1 &&
+      python3 -c 'from pathlib import Path; p=Path("rar-out"); assert (p/"first.txt").read_bytes()==b"Arca RAR fixture alpha\n"*64; assert (p/"folder/second.txt").read_bytes()==b"Arca RAR fixture beta\n"*64' &&
+      ok "Arca reads official RAR fixture $f" || ko "RAR fixture $f"
+    if [ -n "${UNRAR:-}" ]; then
+      rm -rf unrar-out; mkdir unrar-out
+      "$UNRAR" x -idq -o+ -parca-test-only "$FIXTURES/$f.rar" unrar-out/ &&
+        diff -r rar-out unrar-out &&
+        ok "Arca and UnRAR produce identical $f files" || ko "UnRAR comparison $f"
+    fi
+  done
+  rm -rf rar-bad-password
+  "$ARCA" extract "$FIXTURES/encrypted.rar" -o rar-bad-password -p wrong >/dev/null 2>&1 &&
+    ko "RAR wrong password accepted" || ok "RAR wrong password rejected"
+  [ ! -e rar-bad-password ] && ok "RAR failure publishes nothing" || ko "RAR failure touched destination"
+  "$ARCA" test "$FIXTURES/volume.part1.rar" >/dev/null 2>&1 &&
+    ko "RAR volume set accepted" || ok "RAR volume set explicitly rejected"
+  echo
+fi
 echo "-------------------------------------------"
 echo "  $OK passed, $KO failed"
 [ $KO -eq 0 ] || exit 1

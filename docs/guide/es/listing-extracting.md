@@ -90,7 +90,7 @@ sustituciones usan temporales, sin truncar enlaces duros existentes. Esto no
 elimina las carreras ante cambios concurrentes del sistema de archivos. La
 extracción sin cifrar puede fallar tras escribir entradas previas; no hay una
 reversión de todo el directorio. Consulta los límites de recursos y códecs en
-[Arquitectura](architecture.md#límites-de-7z).
+[Arquitectura](architecture.md).
 
 ## Rutas seguras
 

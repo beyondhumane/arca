@@ -121,7 +121,7 @@ impl<R: Read + Seek> SevenZArchive<R> {
                 size: file.size,
                 compressed_size,
                 method,
-                crc32: file.crc as u32,
+                crc32: file.has_crc.then_some(file.crc as u32),
                 is_dir: file.is_directory,
                 mtime: file
                     .has_last_modified_date

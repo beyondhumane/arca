@@ -25,6 +25,7 @@ pub(crate) fn open_source(archive: &Path, format: Format) -> std::io::Result<Box
 pub(crate) fn list_entries(
     archive: &Path,
     password: Option<&str>,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
 ) -> arca_core::Result<Vec<Entry>> {
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported(format!(
@@ -33,13 +34,17 @@ pub(crate) fn list_entries(
         )));
     };
     match format {
+        Format::Rar => {
+            let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
+            Ok(a.entries().to_vec())
+        }
         Format::Zip => Ok(ZipArchive::open(File::open(archive)?)?.entries().to_vec()),
         Format::SevenZ => Ok(
             arca_7z::SevenZArchive::open(File::open(archive)?, password)?
                 .entries()
                 .to_vec(),
         ),
-        _ => {
+        Format::Tar | Format::TarGz => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let mut v = Vec::new();
             while let Some(e) = r.next_entry()? {
@@ -57,6 +62,15 @@ pub(crate) fn check_access(
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
 ) -> arca_core::Result<()> {
     match detect(archive) {
+        Some(Format::Rar) => {
+            let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
+            if a.entries().iter().any(|e| e.encrypted) {
+                let password = password.ok_or(arca_core::Error::PasswordRequired)?;
+                a.test(Some(password), notify)
+            } else {
+                Ok(())
+            }
+        }
         Some(Format::SevenZ) => {
             let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
             if a.has_encrypted() && password.is_none() {
@@ -136,11 +150,15 @@ pub(crate) fn read_entry(
                 notify(p.entries_done, p.entries_total, p.name)
             })?;
         }
+        Format::Rar => {
+            let a = arca_rar::RarArchive::open(archive, password)?;
+            *out = a.read_entry(index, password)?;
+        }
         Format::Zip => {
             let mut a = ZipArchive::open(File::open(archive)?)?;
             a.extract_to_with(index, out, password)?;
         }
-        _ => {
+        Format::Tar | Format::TarGz => {
             // A tar has no index, so the only way to one entry is through all
             // the ones before it.
             let mut r = TarReader::new(open_source(archive, format)?);
@@ -170,6 +188,22 @@ pub(crate) fn extract_one(
     let room = fs::canonicalize(std::env::temp_dir())?
         .join("Arca")
         .join(archive_stem(archive));
+    if detect(archive) == Some(Format::Rar) {
+        let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
+        let index = usize::try_from(entry.offset)
+            .map_err(|_| arca_core::Error::Format("invalid RAR entry index".into()))?;
+        if a.entries().get(index).is_none_or(|e| e.name != entry.name) {
+            return Err(arca_core::Error::Format(
+                "RAR entry changed since listing".into(),
+            ));
+        }
+        let mut wanted = vec![false; a.entries().len()];
+        wanted[index] = true;
+        a.extract(&room, &wanted, password, notify, &|_| {
+            arca_rar::Conflict::Overwrite
+        })?;
+        return Ok(room.join(arca_core::safe_name(&entry.name)?));
+    }
     let path = room.join(arca_core::safe_name(&entry.name)?);
     if detect(archive) == Some(Format::SevenZ) {
         let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
@@ -194,11 +228,13 @@ pub(crate) fn extract_one(
     };
     let mut out = BufWriter::with_capacity(BUF, File::create(&path)?);
     match format {
+        Format::SevenZ => unreachable!(),
+        Format::Rar => return Err(arca_rar::read_only()),
         Format::Zip => {
             let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
             arca_zip::extract_entry_with(&mut source, entry, &mut out, password)?;
         }
-        _ => {
+        Format::Tar | Format::TarGz => {
             // A tar has no index, so the only way to one entry is through all
             // the ones before it.
             let mut r = TarReader::new(open_source(archive, format)?);
@@ -456,6 +492,15 @@ pub(crate) fn extract(
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported("unknown format".into()));
     };
+    if format == Format::Rar {
+        let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
+        return a.extract(dest, wanted, password, notify, &|path| match ask(path) {
+            Answer::Replace | Answer::ReplaceAll => arca_rar::Conflict::Overwrite,
+            Answer::Skip | Answer::SkipAll => arca_rar::Conflict::Skip,
+            Answer::Rename | Answer::RenameAll => arca_rar::Conflict::Rename,
+            Answer::Cancel => arca_rar::Conflict::Cancel,
+        });
+    }
     if format != Format::SevenZ {
         fs::create_dir_all(dest)?;
     }
@@ -477,6 +522,7 @@ pub(crate) fn extract(
                 &mut |p| notify(p.entries_done, p.entries_total, p.name),
             )?;
         }
+        Format::Rar => return Err(arca_rar::read_only()),
         Format::Zip => {
             let a = ZipArchive::open(File::open(archive)?)?;
             let mut jobs: Vec<(Entry, PathBuf)> = Vec::new();
@@ -508,7 +554,7 @@ pub(crate) fn extract(
             bytes = written.iter().sum();
             let _ = notify(total, total, "");
         }
-        _ => {
+        Format::Tar | Format::TarGz => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let total = wanted.len();
             let mut i = 0usize;
@@ -576,6 +622,11 @@ pub(crate) fn test_archive(
                 )?;
             }
         }
+        Format::Rar => {
+            let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
+            a.test(password, notify)?;
+            good = a.entries().iter().filter(|e| !e.is_dir).count();
+        }
         Format::Zip => {
             let mut a = ZipArchive::open(File::open(archive)?)?;
             let total = a.len();
@@ -594,7 +645,7 @@ pub(crate) fn test_archive(
             }
             let _ = notify(total, total, "");
         }
-        _ => {
+        Format::Tar | Format::TarGz => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let mut i = 0usize;
             while let Some(e) = r.next_entry()? {
@@ -686,6 +737,9 @@ pub(crate) fn compress(
     encryption: (Option<&str>, bool),
 ) -> arca_core::Result<(u64, u64)> {
     let (password, hide_names) = encryption;
+    if !format.can_write() || detect(out) == Some(Format::Rar) {
+        return Err(arca_rar::read_only());
+    }
     if password.is_some() && !matches!(format, Format::Zip | Format::SevenZ) {
         return Err(arca_core::Error::Unsupported(
             "encryption requires ZIP or 7z".into(),
@@ -724,6 +778,7 @@ pub(crate) fn compress(
                 &mut |p| notify(p.entries_done, p.entries_total, p.name),
             )?;
         }
+        Format::Rar => return Err(arca_rar::read_only()),
         // Cada entrada de un zip se comprime por su cuenta, asi que esto entrega
         // la lista entera y deja que corra en todos los nucleos. Es la misma
         // llamada que hace la linea de ordenes: hay una, no dos.
@@ -752,7 +807,7 @@ pub(crate) fn compress(
             }
             arca_zip::create_zip(out, &sources, 0, password, notify)?;
         }
-        _ => {
+        Format::Tar | Format::TarGz => {
             let raw = BufWriter::with_capacity(BUF, File::create(out)?);
             let sink: Box<dyn Write> = if format == Format::TarGz {
                 Box::new(flate2::write::GzEncoder::new(
