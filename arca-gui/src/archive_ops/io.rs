@@ -209,6 +209,11 @@ pub(crate) fn extract_one(
         let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
         let index = usize::try_from(entry.offset)
             .map_err(|_| arca_core::Error::Format("invalid entry index".into()))?;
+        if a.entries().get(index).is_none_or(|e| e.name != entry.name) {
+            return Err(arca_core::Error::Format(
+                "7z entry changed since listing".into(),
+            ));
+        }
         let mut claimed = HashSet::new();
         a.extract(
             &[index],

@@ -11,6 +11,37 @@ fn sevenz_detection_and_stems_are_case_insensitive() {
 }
 
 #[test]
+fn sevenz_open_rejects_entries_changed_since_listing_without_writing() {
+    let room = Room::new();
+    let archive = room.archive(None, false);
+    let entries = list_entries(&archive, None, &|_, _, _| true).unwrap();
+    let mut entry = entries
+        .iter()
+        .find(|e| e.name == "source/a.txt")
+        .unwrap()
+        .clone();
+    let temp = fs::canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join("Arca")
+        .join(archive_stem(&archive));
+    assert!(!temp.exists());
+    entry.name = "stale.txt".into();
+    let result = extract_one(&archive, &entry, None, &|_, _, _| true);
+    let untouched = !temp.exists();
+    if !untouched {
+        fs::remove_dir_all(&temp).unwrap();
+    }
+    assert!(matches!(result, Err(Error::Format(_))));
+    assert!(untouched);
+    entry.offset = u64::MAX;
+    assert!(matches!(
+        extract_one(&archive, &entry, None, &|_, _, _| true),
+        Err(Error::Format(_))
+    ));
+    assert!(!temp.exists());
+}
+
+#[test]
 fn wrong_password_never_creates_or_truncates_destinations_or_open_file_output() {
     for hidden in [false, true] {
         let room = Room::new();
