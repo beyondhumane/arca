@@ -35,6 +35,19 @@ impl Lang {
 }
 
 pub struct Strings {
+    pub enter_folder: &'static str,
+    pub focus_word: &'static str,
+    pub sort_word: &'static str,
+    pub column_view: &'static str,
+    pub close_preview: &'static str,
+    pub hidden_folders: &'static str,
+    pub details_view: &'static str,
+    pub unavailable: &'static str,
+    pub preview_empty: &'static str,
+    pub preview_empty_file: &'static str,
+    pub preview_loading: &'static str,
+    pub preview_unsupported: &'static str,
+    pub preview_error: &'static str,
     pub open: &'static str,
     pub compress: &'static str,
     pub extract_all: &'static str,
@@ -204,7 +217,6 @@ pub struct Strings {
     // carries the active language, so English labels never leak into a Spanish
     // window.
     pub toolbar_region: &'static str,
-    pub hidden_folders: &'static str,
     pub open_folder: &'static str,
     pub status_region: &'static str,
     pub progress_region: &'static str,
@@ -220,6 +232,19 @@ pub struct Strings {
 }
 
 const EN: Strings = Strings {
+    enter_folder: "Enter folder",
+    focus_word: "Move focus",
+    sort_word: "Sort",
+    column_view: "Columns",
+    close_preview: "Close preview",
+    hidden_folders: "Hidden folders",
+    details_view: "Details",
+    unavailable: "Unavailable",
+    preview_empty: "Select a file to preview",
+    preview_empty_file: "Empty file",
+    preview_loading: "Loading preview...",
+    preview_unsupported: "Preview unavailable",
+    preview_error: "Preview failed",
     open: "Open…",
     compress: "Compress…",
     extract_all: "Extract all",
@@ -386,7 +411,6 @@ const EN: Strings = Strings {
     jump_word: "Jump to a name",
     move_word: "Move around the list",
     toolbar_region: "Archive actions",
-    hidden_folders: "Hidden folders",
     open_folder: "Open folder {name}",
     status_region: "Archive status",
     progress_region: "Operation progress",
@@ -402,6 +426,19 @@ const EN: Strings = Strings {
 };
 
 const ES: Strings = Strings {
+    enter_folder: "Entrar en la carpeta",
+    focus_word: "Mover el foco",
+    sort_word: "Ordenar",
+    column_view: "Columnas",
+    close_preview: "Cerrar vista previa",
+    hidden_folders: "Carpetas ocultas",
+    details_view: "Detalles",
+    unavailable: "No disponible",
+    preview_empty: "Selecciona un archivo para previsualizar",
+    preview_empty_file: "Archivo vacío",
+    preview_loading: "Cargando vista previa...",
+    preview_unsupported: "Vista previa no disponible",
+    preview_error: "Error de vista previa",
     open: "Abrir…",
     compress: "Comprimir…",
     extract_all: "Extraer todo",
@@ -568,7 +605,6 @@ const ES: Strings = Strings {
     jump_word: "Saltar a un nombre",
     move_word: "Moverse por la lista",
     toolbar_region: "Acciones del archivo",
-    hidden_folders: "Carpetas ocultas",
     open_folder: "Abrir la carpeta {name}",
     status_region: "Estado del archivo",
     progress_region: "Progreso de la operación",

@@ -133,6 +133,7 @@ pub(crate) fn step_aside(archive: &Path) -> std::io::Result<()> {
 // The same walk as `extract_one` without the file at the end of it: a viewer
 // that wrote to the temporary folder on the way would have extracted the thing
 // it was only supposed to show.
+#[cfg(test)]
 pub(crate) fn read_entry(
     archive: &Path,
     index: usize,

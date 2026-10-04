@@ -3,8 +3,9 @@ use crate::test_support::Room;
 
 fn settle(controller: &mut AppController) {
     let end = Instant::now() + std::time::Duration::from_secs(30);
-    while controller.state.busy {
+    while controller.state.busy || controller.state.preview.status == PreviewStatus::Loading {
         assert!(!controller.receive());
+        controller.poll_preview();
         assert!(Instant::now() < end, "worker did not complete");
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
