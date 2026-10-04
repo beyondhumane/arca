@@ -8,7 +8,11 @@ use arca_core::Entry;
 use std::path::{Path, PathBuf};
 
 pub(crate) enum Message {
-    Listing(PathBuf, arca_core::Result<Vec<Entry>>, Option<String>),
+    Listing(
+        PathBuf,
+        arca_core::Result<(Vec<Entry>, Vec<String>)>,
+        Option<String>,
+    ),
     AccessChecked(Pending, Option<String>, arca_core::Result<()>),
     Created(PathBuf, Option<String>),
     // The installer is down and checked. It ends in a file to run rather than

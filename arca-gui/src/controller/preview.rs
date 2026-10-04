@@ -454,6 +454,19 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
             let bytes = archive.read_entry(request.index, request.password.as_deref())?;
             out.write_all(&bytes).map_err(Error::from)
         }
+        Container::Iso => {
+            let archive =
+                arca_iso::IsoArchive::open_with_progress(&request.archive, &|_, _, _| {
+                    request.clock.load(Ordering::Relaxed) == request.generation
+                })?;
+            let entry = archive
+                .entries()
+                .get(request.index)
+                .ok_or_else(|| Error::Format("entry missing".into()))?;
+            verify_entry(entry, &request.entry)?;
+            let bytes = archive.read_entry(request.index)?;
+            out.write_all(&bytes).map_err(Error::from)
+        }
     };
     if out.exceeded {
         return Err(Error::Limit("preview byte limit exceeded".into()));
@@ -510,7 +523,7 @@ mod tests {
         fn controller(&self) -> AppController {
             let mut c = AppController::new(Settings::default());
             c.state.archive = Some(self.0.clone());
-            c.state.entries = list_entries(&self.0, None, &|_, _, _| true).unwrap();
+            c.state.entries = list_entries(&self.0, None, &|_, _, _| true).unwrap().0;
             c.state.checked = vec![false; c.state.entries.len()];
             c
         }

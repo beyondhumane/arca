@@ -97,7 +97,7 @@ pub(crate) fn list_entries(
     archive: &Path,
     password: Option<&str>,
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
-) -> arca_core::Result<Vec<Entry>> {
+) -> arca_core::Result<(Vec<Entry>, Vec<String>)> {
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported(format!(
             "unrecognized extension in '{}'",
@@ -107,14 +107,22 @@ pub(crate) fn list_entries(
     match format.container() {
         Container::Rar => {
             let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
-            Ok(a.entries().to_vec())
+            Ok((a.entries().to_vec(), Vec::new()))
         }
-        Container::Zip => Ok(ZipArchive::open(File::open(archive)?)?.entries().to_vec()),
-        Container::SevenZ => Ok(
+        Container::Iso => {
+            let a = arca_iso::IsoArchive::open_with_progress(archive, notify)?;
+            Ok((a.entries().to_vec(), a.notices().to_vec()))
+        }
+        Container::Zip => Ok((
+            ZipArchive::open(File::open(archive)?)?.entries().to_vec(),
+            Vec::new(),
+        )),
+        Container::SevenZ => Ok((
             arca_7z::SevenZArchive::open(File::open(archive)?, password)?
                 .entries()
                 .to_vec(),
-        ),
+            Vec::new(),
+        )),
         Container::Tar | Container::TarGz => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let mut v = Vec::new();
@@ -122,7 +130,7 @@ pub(crate) fn list_entries(
                 v.push(e.entry.clone());
                 r.skip_data(&e)?;
             }
-            Ok(v)
+            Ok((v, Vec::new()))
         }
     }
 }
@@ -226,6 +234,9 @@ pub(crate) fn read_entry(
             let a = arca_rar::RarArchive::open(archive, password)?;
             *out = a.read_entry(index, password)?;
         }
+        Container::Iso => {
+            *out = arca_iso::IsoArchive::open(archive)?.read_entry(index)?;
+        }
         Container::Zip => {
             let mut a = ZipArchive::open(File::open(archive)?)?;
             a.extract_to_with(index, out, password)?;
@@ -276,6 +287,22 @@ pub(crate) fn extract_one(
         })?;
         return Ok(room.join(arca_core::safe_name(&entry.name)?));
     }
+    if detect(archive) == Some(Format::Iso) {
+        let a = arca_iso::IsoArchive::open(archive)?;
+        let index = usize::try_from(entry.offset)
+            .map_err(|_| arca_core::Error::Format("invalid ISO entry index".into()))?;
+        if a.entries().get(index).is_none_or(|e| e.name != entry.name) {
+            return Err(arca_core::Error::Format(
+                "ISO entry changed since listing".into(),
+            ));
+        }
+        let mut wanted = vec![false; a.entries().len()];
+        wanted[index] = true;
+        a.extract(&room, &wanted, &|_, _, _| true, &|_| {
+            arca_iso::Conflict::Overwrite
+        })?;
+        return Ok(room.join(arca_core::safe_name(&entry.name)?));
+    }
     let path = room.join(arca_core::safe_name(&entry.name)?);
     if detect(archive) == Some(Format::SevenZ) {
         let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
@@ -305,7 +332,7 @@ pub(crate) fn extract_one(
     };
     match format.container() {
         Container::SevenZ => unreachable!(),
-        Container::Rar => return Err(format.read_only()),
+        Container::Rar | Container::Iso => return Err(format.read_only()),
         Container::Zip => {
             let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
             unpack(&path, notify, (0, 1, &entry.name), |out| {
@@ -549,6 +576,15 @@ pub(crate) fn extract(
             Answer::Cancel => arca_rar::Conflict::Cancel,
         });
     }
+    if format == Format::Iso {
+        let a = arca_iso::IsoArchive::open_with_progress(archive, notify)?;
+        return a.extract(dest, wanted, notify, &|path| match ask(path) {
+            Answer::Replace | Answer::ReplaceAll => arca_iso::Conflict::Overwrite,
+            Answer::Skip | Answer::SkipAll => arca_iso::Conflict::Skip,
+            Answer::Rename | Answer::RenameAll => arca_iso::Conflict::Rename,
+            Answer::Cancel => arca_iso::Conflict::Cancel,
+        });
+    }
     if format != Format::SevenZ {
         fs::create_dir_all(dest)?;
     }
@@ -571,7 +607,7 @@ pub(crate) fn extract(
                 &mut |p| notify(p.entries_done, p.entries_total, p.name),
             )?;
         }
-        Container::Rar => return Err(format.read_only()),
+        Container::Rar | Container::Iso => return Err(format.read_only()),
         Container::Zip => {
             let a = ZipArchive::open(File::open(archive)?)?;
             let mut jobs: Vec<(Entry, PathBuf)> = Vec::new();
@@ -675,6 +711,14 @@ pub(crate) fn test_archive(
             let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
             a.test(password, notify)?;
             good = a.entries().iter().filter(|e| !e.is_dir).count();
+        }
+        Container::Iso => {
+            let a = arca_iso::IsoArchive::open_with_progress(archive, notify)?;
+            let wanted: Vec<bool> = match only {
+                Some(set) => a.entries().iter().map(|e| set.contains(&e.name)).collect(),
+                None => Vec::new(),
+            };
+            good = a.test(&wanted, notify)?;
         }
         Container::Zip => {
             let mut a = ZipArchive::open(File::open(archive)?)?;
@@ -785,6 +829,9 @@ pub(crate) fn compress(
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     encryption: (Option<&str>, bool),
 ) -> arca_core::Result<(u64, u64)> {
+    if format == Format::Iso || detect(out) == Some(Format::Iso) {
+        return Err(arca_iso::read_only());
+    }
     let (password, hide_names) = encryption;
     if !format.can_write() {
         return Err(format.read_only());
@@ -830,7 +877,7 @@ pub(crate) fn compress(
                 &mut |p| notify(p.entries_done, p.entries_total, p.name),
             )?;
         }
-        Container::Rar => return Err(format.read_only()),
+        Container::Rar | Container::Iso => return Err(format.read_only()),
         // Cada entrada de un zip se comprime por su cuenta, asi que esto entrega
         // la lista entera y deja que corra en todos los nucleos. Es la misma
         // llamada que hace la linea de ordenes: hay una, no dos.

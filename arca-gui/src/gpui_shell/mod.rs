@@ -867,7 +867,7 @@ impl GpuiShell {
             ModalKind::Drop => self
                 .controller
                 .dispatch(AppAction::AnswerDrop(DropChoice::Cancel)),
-            ModalKind::Add => self.controller.state.view = View::Browse,
+            ModalKind::Add => self.controller.cancel_compress(),
             ModalKind::NewFolder | ModalKind::Mask => self.close_name(),
             ModalKind::Settings => self.controller.state.show_settings = false,
             ModalKind::Shortcuts => self.controller.state.show_shortcuts = false,
