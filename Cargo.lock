@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "arca-7z"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "arca-core",
  "crc32fast",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "arca-cli"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "arca-7z",
  "arca-core",
@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "arca-core"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "arca-drag"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "windows 0.58.0",
  "windows-core 0.58.0",
@@ -311,7 +311,7 @@ dependencies = [
 
 [[package]]
 name = "arca-gui"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "arca-7z",
  "arca-core",
@@ -338,28 +338,28 @@ dependencies = [
 
 [[package]]
 name = "arca-icons"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "windows 0.58.0",
 ]
 
 [[package]]
 name = "arca-net"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "windows 0.58.0",
 ]
 
 [[package]]
 name = "arca-notify"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "windows 0.58.0",
 ]
 
 [[package]]
 name = "arca-rar"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "arca-core",
  "rars",
@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "arca-setup"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "arca-core",
  "arca-notify",
@@ -382,14 +382,14 @@ dependencies = [
 
 [[package]]
 name = "arca-tar"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "arca-core",
 ]
 
 [[package]]
 name = "arca-zip"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "aes 0.8.4",
  "arca-core",
