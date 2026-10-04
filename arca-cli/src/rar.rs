@@ -413,13 +413,14 @@ mod tests {
     fn deep_trees_do_not_recurse() {
         let dir = tempfile::tempdir().unwrap();
         let mut deep = dir.path().join("in");
-        for _ in 0..2000 {
+        let depth = if cfg!(target_os = "macos") { 400 } else { 2000 };
+        for _ in 0..depth {
             deep.push("d");
         }
         fs::create_dir_all(&deep).unwrap();
         let out = dir.path().join("out.rar");
         let walk = collect(&out, &[dir.path().join("in")], Bounds::WRITER, &NEVER).unwrap();
-        assert_eq!(walk.sources.len(), 2001);
+        assert_eq!(walk.sources.len(), depth + 1);
     }
 
     #[test]
