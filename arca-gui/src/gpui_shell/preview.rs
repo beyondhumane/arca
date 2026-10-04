@@ -260,6 +260,8 @@ impl GpuiShell {
                                     div()
                                         .h(px(20.))
                                         .flex()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
                                         .font_family("monospace")
                                         .text_xs()
                                         .child(
@@ -289,12 +291,16 @@ impl GpuiShell {
                             range
                                 .map(|row| {
                                     let start = row * 16;
-                                    div().h(px(20.)).font_family("monospace").text_xs().child(
-                                        super::hex_line(
+                                    div()
+                                        .h(px(20.))
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .font_family("monospace")
+                                        .text_xs()
+                                        .child(super::hex_line(
                                             start,
                                             &bytes[start..(start + 16).min(bytes.len())],
-                                        ),
-                                    )
+                                        ))
                                 })
                                 .collect::<Vec<_>>()
                         },
