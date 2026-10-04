@@ -1275,7 +1275,17 @@ impl GpuiShell {
                 None => return,
             },
         };
-        window.on_next_frame(move |window, cx| window.focus(&target, cx));
+        let shell = cx.weak_entity();
+        window.on_next_frame(move |window, cx| {
+            let Some(shell) = shell.upgrade() else {
+                return;
+            };
+            let shell = shell.read(cx);
+            // An asynchronous retry can open another modal before this runs.
+            if shell.modal_kind() == current && shell.dialog.is_none() {
+                window.focus(&target, cx);
+            }
+        });
     }
 
     fn answer_conflict(&mut self, answer: Answer) {
@@ -4591,11 +4601,12 @@ fn build_dialog(
                         ),
                     ),
                 )
-                .on_ok(move |_, _, cx| {
+                .on_ok(move |_, window, cx| {
                     let _ = submit.update(cx, |this, cx| {
                         let password = this.password.read(cx).value().to_string();
                         this.controller
                             .dispatch(AppAction::SubmitPassword(password));
+                        this.password.read(cx).focus_handle(cx).focus(window, cx);
                         cx.notify();
                     });
                     // Only sync_dialog closes this dialog: a fast password
