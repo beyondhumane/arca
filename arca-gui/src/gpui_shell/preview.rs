@@ -191,11 +191,11 @@ impl GpuiShell {
                         .on_click(cx.listener(
                             move |this, _, window, cx| {
                                 let password = this.preview_password.read(cx).value().to_string();
-                                this.controller.state.archive_password = Some(password);
                                 this.preview_password
                                     .update(cx, |input, cx| input.set_value("", window, cx));
                                 if let Some(index) = index {
-                                    this.controller.request_preview(index);
+                                    this.controller
+                                        .request_preview_with_password(index, Some(password));
                                 }
                                 cx.notify();
                             },

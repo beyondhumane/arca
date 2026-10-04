@@ -80,10 +80,15 @@ struct PreviewResult {
 struct PreviewContent {
     viewed: Viewed,
     image: Option<Arc<image::RgbaImage>>,
+    verified_password: Option<String>,
 }
 
 impl AppController {
     pub(crate) fn request_preview(&mut self, index: usize) {
+        self.request_preview_with_password(index, self.state.archive_password.clone());
+    }
+
+    pub(crate) fn request_preview_with_password(&mut self, index: usize, password: Option<String>) {
         self.cancel_preview();
         self.state.preview.status = PreviewStatus::Empty;
         let (Some(archive), Some(entry)) = (
@@ -102,7 +107,7 @@ impl AppController {
             self.state.preview.status = PreviewStatus::Oversized { limit: VIEW_LIMIT };
             return;
         }
-        if entry.encrypted && self.state.archive_password.is_none() {
+        if entry.encrypted && password.is_none() {
             self.state.preview.status = PreviewStatus::PasswordRequired { wrong: false };
             return;
         }
@@ -110,7 +115,7 @@ impl AppController {
             archive,
             index,
             entry,
-            password: self.state.archive_password.clone(),
+            password,
             generation: self.state.preview.generation,
             clock: self.state.preview.clock.clone(),
         };
@@ -160,6 +165,9 @@ impl AppController {
             if result.generation == self.state.preview.generation {
                 match result.outcome {
                     Ok(content) => {
+                        if let Some(password) = content.verified_password {
+                            self.state.archive_password = Some(password);
+                        }
                         self.state.preview.status = if content.viewed.bytes.is_empty() {
                             PreviewStatus::Empty
                         } else {
@@ -233,7 +241,11 @@ fn read_preview(request: &PreviewRequest) -> Result<PreviewContent, PreviewStatu
         .next()
         .unwrap_or(&request.entry.name);
     let image = if looks_like_picture(name) {
-        decode_picture(&bytes)?
+        match decode_picture(&bytes) {
+            Ok(image) => image,
+            Err(PreviewStatus::Error(_) | PreviewStatus::Unsupported(_)) => None,
+            Err(status) => return Err(status),
+        }
     } else {
         None
     };
@@ -258,6 +270,11 @@ fn read_preview(request: &PreviewRequest) -> Result<PreviewContent, PreviewStatu
             picture,
         },
         image,
+        verified_password: request
+            .entry
+            .encrypted
+            .then(|| request.password.clone())
+            .flatten(),
     })
 }
 
@@ -430,18 +447,25 @@ mod tests {
 
     impl Fixture {
         fn zip(password: Option<&str>) -> Self {
+            Self::with_entries(
+                &[
+                    ("first.txt", b"first\nline"),
+                    ("second.txt", b"second"),
+                    ("empty.txt", b""),
+                    ("nested/deep/child.txt", b"child"),
+                ],
+                password,
+            )
+        }
+
+        fn with_entries(entries: &[(&str, &[u8])], password: Option<&str>) -> Self {
             let path = std::env::temp_dir().join(format!(
                 "arca-preview-{}-{}.zip",
                 std::process::id(),
                 NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
             ));
             let mut zip = arca_zip::ZipWriter::new(fs::File::create(&path).unwrap());
-            for (name, bytes) in [
-                ("first.txt", b"first\nline".as_slice()),
-                ("second.txt", b"second"),
-                ("empty.txt", b""),
-                ("nested/deep/child.txt", b"child"),
-            ] {
+            for &(name, bytes) in entries {
                 zip.add_with_password(
                     name,
                     bytes,
@@ -501,6 +525,7 @@ mod tests {
                     picture: false,
                 },
                 image: None,
+                verified_password: None,
             }),
         }
     }
@@ -525,6 +550,26 @@ mod tests {
         settle(&mut c);
         assert_eq!(c.state.preview.status, PreviewStatus::Empty);
         assert!(c.state.viewing.as_ref().unwrap().bytes.is_empty());
+    }
+
+    #[test]
+    fn explicit_preview_aligns_the_cursor_without_changing_selection() {
+        let fixture = Fixture::zip(None);
+        for (columns, flat) in [(true, false), (false, false), (false, true)] {
+            let mut c = fixture.controller();
+            c.transition_browser_view(columns, flat);
+            let cursor = c.visible_rows().iter().position(|r| r.entry == Some(0));
+            c.set_pane_cursor(0, cursor);
+            c.state.checked[0] = true;
+            c.view_entry(1);
+            let row = &c.visible_rows()[c.state.cursor.unwrap()];
+            assert_eq!(row.entry, Some(1));
+            assert_eq!(c.state.preview.index, row.entry);
+            assert_eq!(c.state.browser.panes[0].cursor, c.state.cursor);
+            assert_eq!(c.selected_names(), ["first.txt"]);
+            settle(&mut c);
+            assert_eq!(c.state.viewing.as_ref().unwrap().name, "second.txt");
+        }
     }
 
     #[test]
@@ -564,10 +609,14 @@ mod tests {
                 5 => c.reset_browser_panes(),
                 _ => c.state.archive = Some(PathBuf::from("other.zip")),
             }
-            tx.send(fake_content(generation)).unwrap();
+            let mut result = fake_content(generation);
+            result.outcome.as_mut().unwrap().verified_password = Some("stale-candidate".into());
+            c.state.archive_password = Some("keep".into());
+            tx.send(result).unwrap();
             c.poll_preview();
             assert!(c.state.viewing.is_none());
             assert_eq!(c.state.preview.status, PreviewStatus::Hidden);
+            assert_eq!(c.state.archive_password.as_deref(), Some("keep"));
         }
     }
 
@@ -581,17 +630,53 @@ mod tests {
             PreviewStatus::PasswordRequired { wrong: false }
         );
         assert!(c.state.preview.running.is_none());
-        c.state.archive_password = Some("wrong".into());
-        c.request_preview(0);
+        c.request_preview_with_password(0, Some("wrong".into()));
         settle(&mut c);
         assert_eq!(
             c.state.preview.status,
             PreviewStatus::PasswordRequired { wrong: true }
         );
+        assert!(c.state.archive_password.is_none());
+        c.request_preview_with_password(0, Some("preview-test-only".into()));
+        assert!(c.state.archive_password.is_none());
+        settle(&mut c);
+        assert_eq!(c.state.preview.status, PreviewStatus::Ready);
+        assert_eq!(
+            c.state.archive_password.as_deref(),
+            Some("preview-test-only")
+        );
+    }
+
+    #[test]
+    fn rejected_and_unencrypted_preview_candidates_preserve_the_archive_password() {
+        let fixture = Fixture::zip(Some("preview-test-only"));
+        let mut c = fixture.controller();
         c.state.archive_password = Some("preview-test-only".into());
+        c.request_preview_with_password(0, Some("wrong".into()));
+        assert_eq!(
+            c.state.archive_password.as_deref(),
+            Some("preview-test-only")
+        );
+        settle(&mut c);
+        assert_eq!(
+            c.state.preview.status,
+            PreviewStatus::PasswordRequired { wrong: true }
+        );
+        assert_eq!(
+            c.state.archive_password.as_deref(),
+            Some("preview-test-only")
+        );
         c.request_preview(0);
         settle(&mut c);
         assert_eq!(c.state.preview.status, PreviewStatus::Ready);
+
+        let fixture = Fixture::zip(None);
+        let mut c = fixture.controller();
+        c.state.archive_password = Some("keep".into());
+        c.request_preview_with_password(0, Some("unverified".into()));
+        settle(&mut c);
+        assert_eq!(c.state.preview.status, PreviewStatus::Ready);
+        assert_eq!(c.state.archive_password.as_deref(), Some("keep"));
     }
 
     #[test]
@@ -663,6 +748,50 @@ mod tests {
             decode_picture(b"II\x2a\0\0\0\0\0"),
             Err(PreviewStatus::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn malformed_picture_previews_keep_text_and_hex_without_bypassing_image_limits() {
+        let mut large = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(IMAGE_DIMENSION_LIMIT + 1, 1)
+            .write_to(&mut large, image::ImageFormat::Png)
+            .unwrap();
+        let mut valid = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(2, 3)
+            .write_to(&mut valid, image::ImageFormat::Png)
+            .unwrap();
+        let entries: &[(&str, &[u8])] = &[
+            ("notes.png", b"plain text"),
+            ("bytes.png", b"\0\xff\x01"),
+            ("truncated.png", &valid.get_ref()[..33]),
+            ("unsupported.png", b"II\x2a\0\0\0\0\0"),
+            ("large.png", large.get_ref()),
+            ("valid.png", valid.get_ref()),
+        ];
+        let fixture = Fixture::with_entries(entries, None);
+        let mut c = fixture.controller();
+        for (index, (_, bytes)) in entries.iter().enumerate().take(4) {
+            c.request_preview(index);
+            settle(&mut c);
+            assert_eq!(c.state.preview.status, PreviewStatus::Ready);
+            let view = c.state.viewing.as_ref().unwrap();
+            assert_eq!(view.bytes.as_ref(), *bytes);
+            assert!(!view.picture);
+            assert!(c.state.preview.image.is_none());
+            assert!(view.look == if index == 0 { Look::Text } else { Look::Hex });
+        }
+        c.request_preview(4);
+        settle(&mut c);
+        assert!(matches!(
+            c.state.preview.status,
+            PreviewStatus::Oversized { .. }
+        ));
+        assert!(c.state.viewing.is_none());
+        c.request_preview(5);
+        settle(&mut c);
+        assert_eq!(c.state.preview.status, PreviewStatus::Ready);
+        assert!(c.state.viewing.as_ref().unwrap().picture);
+        assert_eq!(c.state.preview.image.as_ref().unwrap().dimensions(), (2, 3));
     }
 
     #[test]

@@ -1540,6 +1540,13 @@ impl AppController {
     // is held over the window it says which. Guessing in silence is what made
     // the old behaviour surprising in the first place.
     pub(crate) fn view_entry(&mut self, index: usize) {
+        if let Some(cursor) = self
+            .visible_rows()
+            .iter()
+            .position(|row| !row.up && !row.is_dir && row.entry == Some(index))
+        {
+            self.set_pane_cursor(self.state.browser.active, Some(cursor));
+        }
         self.request_preview(index);
     }
 
@@ -1752,18 +1759,19 @@ impl AppController {
         });
     }
     pub(crate) fn is_checked(&self, row: &Row) -> bool {
+        self.row_is_checked(row, |i| self.state.checked.get(i).copied().unwrap_or(false))
+    }
+
+    fn row_is_checked(&self, row: &Row, selected: impl Fn(usize) -> bool) -> bool {
         // The way out of the folder is not a thing that can be picked.
         if row.up {
             return false;
         }
         match row.entry {
-            Some(i) => self.state.checked.get(i).copied().unwrap_or(false),
+            Some(i) => selected(i),
             None => {
                 let under = entries_under(&self.state.entries, &row.path);
-                !under.is_empty()
-                    && under
-                        .iter()
-                        .all(|&i| self.state.checked.get(i).copied().unwrap_or(false))
+                !under.is_empty() && under.into_iter().all(selected)
             }
         }
     }

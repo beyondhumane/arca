@@ -110,6 +110,17 @@ impl AppController {
             .map(|p| p.directory.as_str())
     }
 
+    pub(crate) fn pane_is_checked(&self, pane: usize, row: &Row) -> bool {
+        if pane == self.state.browser.active {
+            return self.is_checked(row);
+        }
+        self.state
+            .browser
+            .panes
+            .get(pane)
+            .is_some_and(|pane| self.row_is_checked(row, |i| pane.selected.contains(&i)))
+    }
+
     pub(crate) fn enter_folder_from_pane(&mut self, pane: usize, path: &str) -> bool {
         let path = normalized_dir(path);
         if !self
@@ -324,6 +335,40 @@ mod tests {
             .iter()
             .map(|p| p.directory.as_str())
             .collect()
+    }
+
+    #[test]
+    fn inactive_folder_checks_match_active_checks_for_partial_and_complete_selection() {
+        for backslashes in [false, true] {
+            let mut c = controller();
+            if backslashes {
+                for entry in &mut c.state.entries {
+                    entry.name = entry.name.replace('/', "\\");
+                }
+            }
+            let folder = c
+                .visible_rows()
+                .into_iter()
+                .find(|r| r.path == "a/")
+                .unwrap();
+            c.state.checked[1] = true;
+            assert!(!c.pane_is_checked(0, &folder));
+            c.go_to("a/".into());
+            assert!(!c.pane_is_checked(0, &folder));
+            assert_eq!(c.pane_selected_roots(0), ["a/top.txt"]);
+            c.activate_pane(0);
+            c.set_checked(&folder, true);
+            assert!(c.pane_is_checked(0, &folder));
+            c.go_to("a/".into());
+            assert!(c.pane_is_checked(0, &folder));
+            assert_eq!(c.pane_selected_roots(0), ["a"]);
+            assert!(!c.pane_is_checked(usize::MAX, &folder));
+            c.transition_browser_view(false, false);
+            let up = c.visible_rows()[0].clone();
+            assert!(up.up);
+            c.activate_pane(0);
+            assert!(!c.pane_is_checked(1, &up));
+        }
     }
 
     #[test]

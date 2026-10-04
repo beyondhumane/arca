@@ -377,27 +377,7 @@ impl GpuiShell {
     ) -> gpui::AnyElement {
         let s = self.controller.s();
         let active = pane == self.controller.state.browser.active;
-        let checked = if active {
-            self.controller.is_checked(row)
-        } else {
-            row.entry.is_some_and(|entry| {
-                self.controller.state.browser.panes[pane]
-                    .selected
-                    .contains(&entry)
-            }) || row.is_dir
-                && self
-                    .controller
-                    .state
-                    .entries
-                    .iter()
-                    .enumerate()
-                    .any(|(i, e)| {
-                        e.name.starts_with(&row.path)
-                            && self.controller.state.browser.panes[pane]
-                                .selected
-                                .contains(&i)
-                    })
-        };
+        let checked = self.controller.pane_is_checked(pane, row);
         let cursor = if active {
             self.controller.state.cursor
         } else {
