@@ -35,6 +35,7 @@ COMPLETION_BASH="$PREFIX/share/bash-completion/completions/arca"
 COMPLETION_FISH="$PREFIX/share/fish/vendor_completions.d/arca.fish"
 COMPLETION_ZSH="$PREFIX/share/zsh/site-functions/_arca"
 MANPAGE="$PREFIX/share/man/man1/arca.1"
+RAR_NOTICES="$PREFIX/share/licenses/arca/RAR-NOTICES.txt"
 
 # Writing into /usr/local almost always needs permissions; ~/.local never does.
 SUDO=""
@@ -44,7 +45,7 @@ fi
 
 if [ "$UNINSTALL" -eq 1 ]; then
   echo "==> Removing Arca from $PREFIX"
-  for f in "$BIN" "$BIN_GUI" "$COMPLETION_BASH" "$COMPLETION_FISH" "$COMPLETION_ZSH" "$MANPAGE"; do
+  for f in "$BIN" "$BIN_GUI" "$COMPLETION_BASH" "$COMPLETION_FISH" "$COMPLETION_ZSH" "$MANPAGE" "$RAR_NOTICES"; do
     if [ -e "$f" ]; then
       $SUDO rm -f "$f"
       echo "    removed $f"
@@ -76,6 +77,8 @@ echo "==> Installing into $PREFIX/bin"
 $SUDO install -d "$PREFIX/bin"
 $SUDO install -m 755 "$SRC" "$BIN"
 $SUDO install -m 755 "$SRC_GUI" "$BIN_GUI"
+$SUDO install -d "$PREFIX/share/licenses/arca"
+$SUDO install -m 644 "$ROOT/RAR-NOTICES.txt" "$RAR_NOTICES"
 echo "    $BIN"
 echo "    $BIN_GUI"
 

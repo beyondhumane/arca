@@ -19,6 +19,7 @@ fn lists_tests_and_extracts_external_archives() {
         "solid.rar",
         "encrypted.rar",
         "headers.rar",
+        "volume.part1.rar",
     ] {
         let password = name.contains("encrypted") || name.contains("headers");
         let password = password.then_some("arca-test-only");
@@ -163,14 +164,19 @@ fn cancellation_stops_before_publication() {
 }
 
 #[test]
-fn refuses_multi_volume_without_guessing_other_paths() {
-    for name in ["volume.part1.rar", "volume.part4.rar"] {
-        assert!(
-            matches!(
-                RarArchive::open(&fixture(name), None),
-                Err(Error::Unsupported(_))
-            ),
-            "{name}"
+fn resolves_any_volume_to_the_complete_set() {
+    for part in 1..=4 {
+        let a = RarArchive::open(&fixture(&format!("volume.part{part}.rar")), None).unwrap();
+        assert_eq!(a.entries().len(), 4);
+        a.test(None, &|_, _, _| true).unwrap();
+        let i = a
+            .entries()
+            .iter()
+            .position(|e| e.name == "folder/second.txt")
+            .unwrap();
+        assert_eq!(
+            a.read_entry(i, None).unwrap(),
+            b"Arca RAR fixture beta\n".repeat(64)
         );
     }
 }

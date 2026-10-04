@@ -40,9 +40,6 @@ pub(crate) fn open_filter() -> Vec<String> {
 
 pub(crate) fn read_only_suffix(format: Option<Format>) -> String {
     match format {
-        Some(f) if f.container() == Container::Rar => {
-            format!(" ({}: experimental, read-only)", f.label())
-        }
         Some(f) if !f.can_write() => format!(" ({}: read-only)", f.label()),
         _ => String::new(),
     }

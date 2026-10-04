@@ -22,12 +22,24 @@ Its final summary reports the count for the selected build and available tools.
 - External solid LZMA/LZMA2 inputs, Unicode names, empty entries and conflict handling.
 - Wrong-password 7z extraction leaves the destination absent or unchanged.
 - An entry with `../../` is rejected instead of writing outside the destination.
+- The RAR/CBR reader fixtures, also through official UnRAR when `UNRAR` points at it (`ARCA_TEST_RAR=0` skips them).
 - `.tar.xz` at all four levels and with one or four threads opens in `xz -t` and `tar -J`, and Arca reads what `tar -cJf` writes, also named `.txz`.
 - A standalone `.xz` round-trips with `xz`, including every `--check` type and concatenated streams. Two inputs are refused.
 - A TAR inside a file named `.xz` is listed as TAR.XZ; a corrupt `.xz` fails and publishes nothing, and a truncated `.tar.xz` fails.
 
 ```sh
 bash interop.sh
+```
+
+RAR archives Arca creates are checked by a separate seeded harness: it builds
+trees at every level, hashes the source and the trees extracted by Arca,
+official UnRAR and 7-Zip, and records the result as JSON. Without the two
+decoders it reports explicit skips; CI downloads pinned copies and fails if
+they are missing.
+
+```sh
+cargo build --release -p arca-cli
+UNRAR=/path/to/unrar SEVENZIP=/path/to/7zz python3 arca-rar/tests/create-stress.py --require-tools
 ```
 
 ## Zstandard in ZIP

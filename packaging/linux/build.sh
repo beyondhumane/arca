@@ -56,6 +56,7 @@ install -Dm755 "$BIN/arca-gui" "$STAGE/usr/bin/arca-gui"
 install -Dm644 "$HERE/arca.desktop" "$STAGE/usr/share/applications/arca.desktop"
 install -Dm644 "$ROOT/brand/arca-monolito-256.png" "$STAGE/usr/share/icons/hicolor/256x256/apps/arca.png"
 install -Dm644 "$ROOT/LICENSE" "$STAGE/usr/share/licenses/arca/LICENSE"
+install -Dm644 "$ROOT/RAR-NOTICES.txt" "$STAGE/usr/share/licenses/arca/RAR-NOTICES.txt"
 install -Dm644 "$ROOT/README.md" "$STAGE/usr/share/doc/arca/README.md"
 
 # AppImage. Runners have no FUSE, so appimagetool unpacks itself to run.

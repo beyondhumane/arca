@@ -90,8 +90,11 @@ cargo build --release      # el binario queda en target/release/arca
 
 | Perfil | Comando | Qué obtienes |
 | --- | --- | --- |
-| codecs-native (por defecto) | `cargo build --release` | Incluye libzstd (C) para el rendimiento nativo de Zstandard. |
-| Rust puro | `cargo build --release --no-default-features` | Sin dependencia de C; compila para cualquier destino que soporte Rust. |
+| Por defecto | `cargo build --release` | Códecs Zstandard nativos y RAR de solo lectura. |
+| Códecs Rust puro con RAR | `cargo build --release --no-default-features --features rar` | Sin códecs ZIP/7z nativos; conserva el lector RAR. |
+| Sin opciones por defecto | `cargo build --release --no-default-features` | Sin códecs ZIP/7z nativos ni lector RAR. |
+
+Usa `--no-default-features --features codecs-native` para excluir solo RAR.
 
 ### Verificar tu compilación
 

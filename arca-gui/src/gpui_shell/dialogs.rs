@@ -47,9 +47,10 @@ pub(super) fn format_pick(
     cx: &App,
 ) -> gpui::AnyElement {
     let s = shell.read(cx).controller.s();
-    let options = super::Format::WRITABLE
+    let options = AppController::create_formats()
+        .into_iter()
         .map(|format| (format, format.label()))
-        .to_vec();
+        .collect();
     pick(
         id,
         s.format,
@@ -412,25 +413,24 @@ pub(super) fn build_dialog(
                         ),
                     ),
                 )
-                .on_ok(move |_, _, cx| {
-                    let mut close = true;
+                .on_ok(move |_, window, cx| {
                     let _ = submit.update(cx, |this, cx| {
                         let password = this.password.read(cx).value().to_string();
                         this.controller
                             .dispatch(AppAction::SubmitPassword(password));
-                        // The current password is the first of two questions,
-                        // and an empty box is no answer at all: closing on
-                        // either leaves the window waiting on a window that is
-                        // no longer there.
-                        close = this.controller.state.waiting_on_password.is_none();
+                        this.password.read(cx).focus_handle(cx).focus(window, cx);
                         cx.notify();
                     });
-                    close
+                    // Only sync_dialog closes this dialog: a fast password
+                    // failure can request it again before the next frame.
+                    false
                 })
         }
         ModalKind::Add => {
             let is_zip = shell.read(cx).controller.state.format == super::Format::Zip;
             let is_sevenz = shell.read(cx).controller.state.format == super::Format::SevenZ;
+            let is_rar = shell.read(cx).controller.state.format == super::Format::Rar;
+            let policy_note = shell.read(cx).controller.create_policy_note();
             let is_lzma2 = matches!(
                 shell.read(cx).controller.state.format,
                 super::Format::SevenZ | super::Format::TarXz | super::Format::Xz
@@ -472,12 +472,22 @@ pub(super) fn build_dialog(
                             s.compressor,
                             if is_lzma2 {
                                 div().child("LZMA2").into_any_element()
+                            } else if is_rar {
+                                div().child("RAR").into_any_element()
                             } else {
                                 codec_pick("add-codec", shell, &weak, is_zip, cx)
                             },
                         ))
                         .child(labelled(s.level, level_pick("add-level", shell, &weak, cx))),
                 );
+            if let Some(note) = policy_note {
+                body = body.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(note),
+                );
+            }
             if is_zip || is_sevenz {
                 body = body.child(Input::new(&add_password).mask_toggle());
             }
@@ -765,11 +775,20 @@ pub(super) fn build_dialog(
                         s.compressor,
                         if is_lzma2 {
                             div().child("LZMA2").into_any_element()
+                        } else if shell.read(cx).controller.state.format == super::Format::Rar {
+                            div().child("RAR").into_any_element()
                         } else {
                             codec_pick("settings-codec", shell, &weak, is_zip, cx)
                         },
                     ))
                     .child(row(s.level, level_pick("settings-level", shell, &weak, cx)))
+                    .children(
+                        shell
+                            .read(cx)
+                            .controller
+                            .create_policy_note()
+                            .map(|note| div().text_sm().text_color(muted).child(note)),
+                    )
                     .child(subfolder)
                     .into_any_element(),
                 SettingsSection::Appearance => div()
