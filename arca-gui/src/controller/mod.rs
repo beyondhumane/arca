@@ -379,7 +379,7 @@ impl AppController {
         }
     }
     pub(crate) fn prepare_compress(&mut self, inputs: Vec<PathBuf>) {
-        if !self.state.format.can_write() {
+        if !Self::create_formats().contains(&self.state.format) {
             self.state.format = Format::Zip;
         }
         if !matches!(self.state.view, View::Add) {
@@ -2361,6 +2361,45 @@ mod compress_tests {
         assert!(controller.state.pending_inputs.is_empty());
         assert!(controller.state.output_name.is_empty());
         assert!(matches!(controller.state.view, View::Add));
+    }
+
+    #[test]
+    fn picking_again_preserves_the_creatable_format_and_options() {
+        for format in AppController::create_formats() {
+            let mut controller = AppController::new(Settings::default());
+            controller.prepare_compress(Vec::new());
+            controller.set_create_format(format);
+            let output = format!("chosen.{}", format.extension());
+            controller.state.output_name = output.clone();
+            controller.state.level = Level::Best;
+            controller.state.add_password = "fixture-password".into();
+            for input in ["a.txt", "folder"] {
+                controller.dispatch(AppAction::PrepareCompress(vec![PathBuf::from(input)]));
+                assert_eq!(controller.state.format, format);
+                assert_eq!(controller.state.output_name, output);
+                assert_eq!(controller.state.level, Level::Best);
+                assert_eq!(controller.state.add_password, "fixture-password");
+                assert!(matches!(controller.compression_job(), Some(Job::Compress {
+                    format: job_format, ..
+                }) if job_format == format));
+            }
+            assert_eq!(controller.state.pending_inputs.len(), 2);
+        }
+    }
+
+    #[test]
+    fn non_creatable_formats_fall_back_to_zip() {
+        let mut unsupported = vec![Format::Cbr, Format::Iso];
+        if !cfg!(feature = "rar") {
+            unsupported.push(Format::Rar);
+        }
+        for format in unsupported {
+            let mut controller = AppController::new(Settings::default());
+            controller.state.format = format;
+            controller.prepare_compress(vec![PathBuf::from("a.txt")]);
+            assert_eq!(controller.state.format, Format::Zip);
+            assert_eq!(controller.state.output_name, "a.zip");
+        }
     }
 
     #[test]

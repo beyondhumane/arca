@@ -232,7 +232,8 @@ fn rar_mutation_jobs_are_rejected_before_touching_the_archive() {
     let mut controller = AppController::new(Settings::default());
     controller.state.format = Format::Rar;
     controller.prepare_compress(Vec::new());
-    assert_eq!(controller.state.format, Format::Zip);
+    assert_eq!(controller.state.format, Format::Rar);
+    assert!(!controller.state.format.can_write());
 }
 
 #[test]
