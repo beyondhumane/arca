@@ -686,19 +686,20 @@ class Harness:
         """SIGINT and SIGTERM mid-write must be honoured cooperatively: the CLI
         exits by itself with a nonzero status and 'cancelled' on stderr, nothing
         ever appears at the output path and no staged `.arca-*.rar.part` file is
-        left in the directory. A run that finishes before the signal is a skip,
-        not a pass. SIGKILL and power loss are not covered."""
+        left in the directory. A run that finishes before the signal fails in
+        required-tool mode, otherwise skips. SIGKILL and power loss are not covered."""
         rng = random.Random(self.rng.random())
         root = area / "large"
-        self.large_tree(root, rng, total)
+        self.large_tree(root, rng, max(total, 32 * MIB))
         detail = {}
         for sig in (signal.SIGINT, signal.SIGTERM):
             out = area / f"{sig.name}.rar"
             run = self.arca("create", str(out), str(root), "-l", "best", signal_after=0.5, sig=sig)
             temps = sorted(p.name for p in area.iterdir() if TEMP_PATTERN.match(p.name))
             if run.rc == 0:
-                raise Skip(f"{sig.name}: creation finished in {run.seconds:.2f}s before the signal; "
-                           "raise --large-mib to exercise interruption")
+                reason = (f"{sig.name}: creation finished in {run.seconds:.2f}s before the signal; "
+                          "raise --large-mib to exercise interruption")
+                raise Failure(reason) if self.opts.require_tools else Skip(reason)
             if out.exists():
                 raise Failure(f"{sig.name}: an output file exists after interruption")
             if temps:

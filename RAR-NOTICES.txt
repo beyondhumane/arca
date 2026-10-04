@@ -300,13 +300,19 @@ Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-MIT -> SHA-256 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
   LICENSE-UNICODE -> SHA-256 f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1
 
-windows-sys 0.52.0
+windows-link 0.2.1
 Declared license: MIT OR Apache-2.0
 Source: registry+https://github.com/rust-lang/crates.io-index
   license-apache-2.0 -> SHA-256 c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b
   license-mit -> SHA-256 c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383
 
 windows-sys 0.59.0
+Declared license: MIT OR Apache-2.0
+Source: registry+https://github.com/rust-lang/crates.io-index
+  license-apache-2.0 -> SHA-256 c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b
+  license-mit -> SHA-256 c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383
+
+windows-sys 0.61.2
 Declared license: MIT OR Apache-2.0
 Source: registry+https://github.com/rust-lang/crates.io-index
   license-apache-2.0 -> SHA-256 c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b

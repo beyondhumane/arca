@@ -408,6 +408,32 @@ fn an_output_inside_the_tree_is_refused_not_stored() {
 
 #[cfg(all(feature = "rar", unix))]
 #[test]
+fn creation_works_with_ignored_signals_and_background_launches() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input.txt");
+    std::fs::write(&input, b"background creation").unwrap();
+    for (name, script) in [
+        ("ignored", "trap '' INT TERM HUP; exec \"$@\""),
+        ("background", "\"$@\" & wait \"$!\""),
+        ("nohup", "exec nohup \"$@\""),
+    ] {
+        let out = dir.path().join(format!("{name}.rar"));
+        let result = Command::new("sh")
+            .args(["-c", script, "arca-signal-test"])
+            .arg(env!("CARGO_BIN_EXE_arca"))
+            .arg("create")
+            .arg(&out)
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{name}: {}", stderr(&result));
+        let result = run(&["test".as_ref(), out.as_os_str()]);
+        assert!(result.status.success(), "{name}: {}", stderr(&result));
+    }
+}
+
+#[cfg(all(feature = "rar", unix))]
+#[test]
 fn an_interrupt_cancels_the_creation_and_leaves_nothing_behind() {
     use std::io::Write;
     use std::time::{Duration, Instant};
@@ -426,8 +452,25 @@ fn an_interrupt_cancels_the_creation_and_leaves_nothing_behind() {
     }
     drop(big);
     let out = dir.path().join("out.rar");
-    for signal in ["-INT", "-TERM"] {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_arca"))
+    for (signal, ignore_hup) in [
+        ("-INT", false),
+        ("-TERM", false),
+        ("-INT", true),
+        ("-TERM", true),
+    ] {
+        let mut command = if ignore_hup {
+            let mut command = Command::new("sh");
+            command.args([
+                "-c",
+                "trap '' INT TERM HUP; exec \"$@\"",
+                "arca-signal-test",
+            ]);
+            command.arg(env!("CARGO_BIN_EXE_arca"));
+            command
+        } else {
+            Command::new(env!("CARGO_BIN_EXE_arca"))
+        };
+        let mut child = command
             .args([
                 "create".as_ref(),
                 out.as_os_str(),
@@ -442,6 +485,18 @@ fn an_interrupt_cancels_the_creation_and_leaves_nothing_behind() {
             child.try_wait().unwrap().is_none(),
             "{signal}: creation finished before the signal; the fixture is too small"
         );
+        if ignore_hup {
+            assert!(Command::new("kill")
+                .args(["-HUP", &child.id().to_string()])
+                .status()
+                .unwrap()
+                .success());
+            std::thread::sleep(Duration::from_millis(400));
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "ignored HUP cancelled creation"
+            );
+        }
         let kill = Command::new("kill")
             .args([signal, &child.id().to_string()])
             .status()

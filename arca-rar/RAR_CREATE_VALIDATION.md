@@ -148,13 +148,21 @@ git diff --check                                                                
 ```
 
 Interrupt check, now required (a run that finishes before the signal is a
-`skip`, never a pass): SIGINT and SIGTERM 0.5 s into the `best` write of the
+failure under `--require-tools`, otherwise a `skip`, never a pass): SIGINT and SIGTERM 0.5 s into the `best` write of the
 large tree exit with status 1 and `arca: cancelled` on stderr after 0.66 to
 0.71 s, no file at the output path and no `.arca-*.rar.part` in the directory
 (smoke: 8 MiB tree; stress: 128 MiB tree). The other rows reproduce the first
 run within noise (10k entries 0.85 s create, 33 MiB RSS; 128 MiB stream 75.3 s
 at normal, 90 MiB RSS; 100 cycles; 25 corrupt archives rejected). Workspace-wide
 test totals were not recounted for this commit; the parent runs the broad
-baseline. `Cargo.lock` gained `ctrlc 3.4.7` and `nix 0.30.1` (Unix signal
-plumbing, safe Rust); `arca-rar/fuzz/Cargo.lock` is refreshed separately by the
+baseline. `Cargo.lock` gained `ctrlc 3.4.7` and `nix 0.30.1` (platform signal
+plumbing with safe public APIs); `arca-rar/fuzz/Cargo.lock` is refreshed separately by the
 parent and untouched here.
+
+The final integration replaces Unix `ctrlc::try_set_handler` with
+`signal-hook 0.3.18` flag handlers for SIGINT/SIGTERM only. The former refused
+creation when a shell or `nohup` had inherited ignored signals. SIGHUP's
+disposition is now untouched, so `nohup` remains effective. RAR creation
+explicitly handles SIGINT/SIGTERM even if a parent ignored them. Windows uses
+`ctrlc 3.4.7` for console interruption. Both adapters use safe APIs; their
+platform implementations contain unsafe code outside Arca's parser boundary.

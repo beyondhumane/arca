@@ -21,10 +21,15 @@ arca-7z.workspace = true
 flate2.workspace = true
 clap.workspace = true
 rayon.workspace = true
-ctrlc = { version = "=3.4.7", features = ["termination"], optional = true }
+
+[target."cfg(unix)".dependencies]
+signal-hook = { version = "=0.3.18", optional = true }
+
+[target."cfg(windows)".dependencies]
+ctrlc = { version = "=3.4.7", optional = true }
 
 [features]
-rar = ["arca-rar/rar", "dep:ctrlc"]
+rar = ["arca-rar/rar", "dep:ctrlc", "dep:signal-hook"]
 default = ["codecs-native", "rar"]
 codecs-native = ["arca-zip/codecs-native", "arca-7z/codecs-native"]
 

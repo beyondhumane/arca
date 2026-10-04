@@ -7,6 +7,7 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Ceilings applied while the inputs are walked, before any name is kept
@@ -58,7 +59,7 @@ pub(super) fn create(
     }
     let options = options(level, codec, requested_threads, password, hide_names)?;
     let cancelled = interruption()?;
-    let walk = collect(out, inputs, Bounds::WRITER, cancelled)?;
+    let walk = collect(out, inputs, Bounds::WRITER, &cancelled)?;
     let t0 = Instant::now();
     create_rar(out, &walk.sources, &options, &|_, _, _| {
         !cancelled.load(Ordering::SeqCst)
@@ -116,15 +117,23 @@ fn options(
 /// writer's progress callback read, so an interrupted creation ends with
 /// `Error::Cancelled`, drops its staged file and never publishes. Installed
 /// before any input is read. SIGKILL and power loss are not covered.
-fn interruption() -> Result<&'static AtomicBool> {
-    static CANCELLED: AtomicBool = AtomicBool::new(false);
-    #[cfg(feature = "rar")]
-    ctrlc::try_set_handler(|| CANCELLED.store(true, Ordering::SeqCst)).map_err(|e| {
+fn interruption() -> Result<Arc<AtomicBool>> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    #[cfg(all(feature = "rar", unix))]
+    for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+        signal_hook::flag::register(signal, Arc::clone(&cancelled))?;
+    }
+    #[cfg(all(feature = "rar", windows))]
+    ctrlc::set_handler({
+        let cancelled = Arc::clone(&cancelled);
+        move || cancelled.store(true, Ordering::SeqCst)
+    })
+    .map_err(|e| {
         Error::Io(io::Error::other(format!(
             "cannot watch for interruption during RAR creation: {e}"
         )))
     })?;
-    Ok(&CANCELLED)
+    Ok(cancelled)
 }
 
 fn collect<'a>(
