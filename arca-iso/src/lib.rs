@@ -116,7 +116,7 @@ impl IsoArchive {
         let total = (0..self.entries.len())
             .filter(|&i| selected(i) && !self.entries[i].is_dir)
             .count();
-        let mut destination = Destination::new(dest);
+        let mut destination = Destination::new(&resolve(dest)?);
         let mut source = File::open(&self.path)?;
         let mut done = 0;
         let mut written = 0;
@@ -188,6 +188,33 @@ fn copy(
         }
     }
     Ok(written)
+}
+
+// The folder the user picked is trusted even when its path goes through a
+// link (macOS temp dirs live under /var -> /private/var); only links inside it
+// are refused, so resolve the part of the path that already exists.
+fn resolve(dest: &Path) -> Result<PathBuf> {
+    let absolute = std::path::absolute(dest)?;
+    let mut existing = absolute.as_path();
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::canonicalize(existing) {
+            Ok(mut resolved) => {
+                resolved.extend(missing.iter().rev());
+                return Ok(resolved);
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                match (existing.file_name(), existing.parent()) {
+                    (Some(name), Some(parent)) => {
+                        missing.push(name);
+                        existing = parent;
+                    }
+                    _ => return Ok(absolute),
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
 }
 
 // Streams one file's extents in order, keeping why it stopped so the caller

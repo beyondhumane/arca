@@ -301,6 +301,19 @@ fn the_same_path_twice_is_rejected() {
 
 #[cfg(unix)]
 #[test]
+fn a_destination_reached_through_a_link_is_trusted() {
+    let a = IsoArchive::open(&fixture("rockridge.iso")).unwrap();
+    let base = tempfile::tempdir().unwrap();
+    fs::create_dir(base.path().join("real")).unwrap();
+    std::os::unix::fs::symlink(base.path().join("real"), base.path().join("alias")).unwrap();
+    let dest = base.path().join("alias/new/out");
+    a.extract(&dest, &[], &|_, _, _| true, &|_| Conflict::Overwrite)
+        .unwrap();
+    assert!(base.path().join("real/new/out/docs").is_dir());
+}
+
+#[cfg(unix)]
+#[test]
 fn links_already_in_the_destination_are_not_followed() {
     let a = IsoArchive::open(&fixture("rockridge.iso")).unwrap();
     let out = tempfile::tempdir().unwrap();
