@@ -96,7 +96,9 @@ Extraer. El portapapeles de ficheros depende de la plataforma.
 
 ## Operaciones y teclado
 
-Progreso, pausa, cancelación, finalización y errores se mantienen visibles sin bloquear la exploración cuando la operación permite navegar. Pausar y cancelar también actúan dentro de una sola entrada grande: una extracción cancelada borra el fichero que estaba escribiendo y conserva los que ya había terminado. No se inicia una segunda modificación mientras otra está en curso. Las operaciones puntuales del Explorador conservan su comportamiento al terminar.
+Cada operación (extraer, probar, comprimir, añadir, borrar, renombrar, cambiar contraseña, copiar) es una fila del panel **Operaciones**, que flota sobre la esquina inferior derecha del espacio de trabajo y se puede ocultar y reabrir desde el botón del pie que las cuenta. Cada fila muestra su progreso, tiempo transcurrido y restante, pausar/seguir y cancelar; las filas terminadas conservan su resultado hasta que se quitan. Pausar y cancelar también actúan dentro de una sola entrada grande: una extracción cancelada borra el fichero que estaba escribiendo y conserva los que ya había terminado.
+
+Las operaciones corren a la vez cuando tocan ficheros distintos. Las reescrituras del mismo archivo se esperan entre sí en el orden en que se pidieron, y una reescritura espera también a cualquier extracción o prueba de ese archivo que ya esté en marcha. Mientras se reescribe el archivo abierto su listado es de solo lectura; extraer, probar o comprimir deja la ventana libre para seguir navegando y lanzar más trabajo. Las preguntas de sobrescritura indican a qué operación pertenecen. Las operaciones puntuales del Explorador muestran el mismo panel como ventana completa y conservan su comportamiento al terminar.
 
 El pie muestra directorio activo, cantidades visibles y seleccionadas, estado y ayuda **F1**. Tabulador llega a navegación, barra lateral, explorador, controles de vista previa y pie. Los campos conservan sus teclas de edición; los diálogos devuelven el foco al cerrarse. Los controles exponen etiquetas AccessKit e indicadores de foco y selección.
 

@@ -3,7 +3,10 @@ use crate::test_support::Room;
 
 fn settle(controller: &mut AppController) {
     let end = Instant::now() + std::time::Duration::from_secs(30);
-    while controller.state.busy || controller.state.preview.status == PreviewStatus::Loading {
+    while controller.state.busy
+        || controller.working()
+        || controller.state.preview.status == PreviewStatus::Loading
+    {
         assert!(!controller.receive());
         controller.poll_preview();
         assert!(Instant::now() < end, "worker did not complete");
@@ -34,7 +37,7 @@ fn hidden_headers_retry_without_listing_and_cancel_cleanly() {
     assert!(app.state.waiting_on_password.is_none());
     assert!(app.state.password_input.is_empty());
     assert!(app.state.archive_password.is_none());
-    assert!(app.state.reread_after.is_none());
+    assert!(app.pending_reread().is_none());
     app.open(archive);
     settle(&mut app);
     app.submit_password("secret".into());
@@ -128,7 +131,6 @@ fn opening_another_archive_discards_entries_pending_actions_and_old_responses() 
     settle(&mut app);
     app.state.waiting_on_password = Some(Pending::Read(Box::new(AppAction::Preview(1))));
     app.state.archive_password = Some("old".into());
-    app.state.reread_after = Some((room.path("old.7z"), None, String::new()));
     let (old_tx, old_rx) = channel();
     app.state.channel = Some(old_rx);
     let old_stop = app.state.stop.clone();
@@ -138,7 +140,7 @@ fn opening_another_archive_discards_entries_pending_actions_and_old_responses() 
     assert!(app.state.checked.is_empty());
     assert!(app.state.waiting_on_password.is_none());
     assert!(app.state.archive_password.is_none());
-    assert!(app.state.reread_after.is_none());
+    assert!(app.pending_reread().is_none());
     assert!(old_tx
         .send(Message::AccessChecked(
             Pending::Read(Box::new(AppAction::Preview(1))),
@@ -244,7 +246,7 @@ fn sevenz_creation_conflicts_preserve_the_original_and_open_the_renamed_output()
             hide_names: false,
         });
         let end = Instant::now() + std::time::Duration::from_secs(30);
-        while app.state.conflict.is_none() {
+        while app.conflict().is_none() {
             app.receive();
             assert!(Instant::now() < end, "conflict was not delivered");
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -258,7 +260,7 @@ fn sevenz_creation_conflicts_preserve_the_original_and_open_the_renamed_output()
             assert_eq!(app.state.entries[0].name, "input.txt");
         } else {
             assert!(app.state.archive.is_none());
-            assert!(app.state.reread_after.is_none());
+            assert!(app.pending_reread().is_none());
         }
     }
 }

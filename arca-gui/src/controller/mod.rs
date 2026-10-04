@@ -3,12 +3,16 @@
 mod actions;
 mod disk;
 pub(crate) use disk::{disk_dir, disk_path, DiskState, Origin, Place, PlaceKind};
+pub(crate) use jobs::{Task, TaskId, TaskStatus};
 #[cfg(test)]
 mod container_tests;
 #[cfg(test)]
 mod disk_tests;
 #[cfg(test)]
 mod iso_tests;
+mod jobs;
+#[cfg(test)]
+mod jobs_tests;
 mod panes;
 mod preview;
 #[cfg(all(test, feature = "rar"))]
@@ -78,7 +82,7 @@ fn password_error(error: &arca_core::Error) -> bool {
 
 impl AppController {
     fn read_access(&mut self, action: AppAction) -> bool {
-        if self.state.busy || self.state.waiting_on_password.is_some() {
+        if self.blocked() || self.state.waiting_on_password.is_some() {
             return false;
         }
         if self.state.archive_password.is_none() && self.state.entries.iter().any(|e| e.encrypted) {
@@ -144,7 +148,6 @@ impl AppController {
     fn access_failed(&mut self, pending: Pending, password: Option<&str>, error: arca_core::Error) {
         self.state.busy = false;
         self.state.overlay = false;
-        self.state.reread_after = None;
         if password_error(&error) {
             self.state.password_wrong = password.is_some();
             self.state.archive_password = None;
@@ -221,12 +224,7 @@ impl AppController {
                 self.state.settings.theme = theme;
                 self.state.settings.save();
             }
-            AppAction::AnswerConflict(answer) => {
-                if let Some(tx) = &self.state.replies {
-                    let _ = tx.send(answer);
-                }
-                self.state.conflict = None;
-            }
+            AppAction::AnswerConflict(answer) => self.answer_conflict(answer),
             AppAction::CancelPassword => self.cancel_password(),
             AppAction::SetPasswordInput(password) => self.state.password_input = password,
             AppAction::SubmitPassword(password) => self.submit_password(password),
@@ -236,11 +234,10 @@ impl AppController {
             AppAction::AnswerDrop(choice) => self.answer_drop(choice),
             // The worker reads this at the end of every entry. Let it go first,
             // or the news would sit unread until somebody pressed Resume.
-            AppAction::CancelJob => {
-                use std::sync::atomic::Ordering;
-                self.state.stop.store(true, Ordering::Relaxed);
-                self.state.hold.store(false, Ordering::Relaxed);
-            }
+            AppAction::CancelTask(id) => self.cancel_task(id),
+            AppAction::HoldTask(id, held) => self.hold_task(id, held),
+            AppAction::DismissTask(id) => self.dismiss_task(id),
+            AppAction::ClearFinishedTasks => self.clear_finished_tasks(),
         }
     }
 
@@ -253,7 +250,7 @@ impl AppController {
             self.state.error = true;
             return;
         }
-        if self.state.busy {
+        if self.blocked() {
             return;
         }
         let job = Job::Password {
@@ -306,26 +303,32 @@ impl AppController {
         let total = wanted.iter().filter(|b| **b).count();
         let pw = self.state.archive_password.clone();
         self.state.close_when_done = false;
-        self.show_job(s.extracting, archive_stem(&archive), true);
-        self.state.stop_leaves_files = true;
-        let (reply_tx, reply_rx) = channel::<Answer>();
-        self.state.replies = Some(reply_tx);
-        let (stop, hold) = self.fresh_flags();
-        self.spawn(total, move |tx| {
-            let notify = worker_notify(tx, &stop, &hold);
-            let ask = conflict_asker(tx, &reply_rx);
-            let result = extract(&archive, &dest, &wanted, &notify, &ask, pw.as_deref());
-            let _ = tx.send(match result {
-                Ok(bytes) => Message::Done(fill(
-                    s.extracted_to,
-                    &[
-                        ("size", &human(bytes)),
-                        ("dest", &dest.display().to_string()),
-                    ],
-                )),
-                Err(e) => Message::Failed(e.to_string()),
-            });
-        });
+        let source = archive.clone();
+        let dest_folder = dest.clone();
+        let mut task = Task::new(
+            s.extracting,
+            archive_stem(&archive),
+            Box::new(move |tx, reply_rx, stop, hold| {
+                let notify = worker_notify(&tx, &stop, &hold);
+                let ask = conflict_asker(&tx, &reply_rx);
+                let result = extract(&archive, &dest, &wanted, &notify, &ask, pw.as_deref());
+                let _ = tx.send(match result {
+                    Ok(bytes) => Message::Done(fill(
+                        s.extracted_to,
+                        &[
+                            ("size", &human(bytes)),
+                            ("dest", &dest.display().to_string()),
+                        ],
+                    )),
+                    Err(e) => Message::Failed(e.to_string()),
+                });
+            }),
+        )
+        .reading([source])
+        .filling([dest_folder])
+        .total(total);
+        task.stop_leaves_files = true;
+        self.enqueue(task);
     }
 
     pub(crate) fn submit_password(&mut self, password: String) {
@@ -585,7 +588,6 @@ impl AppController {
                 pending_inputs: Vec::new(),
                 output_name: String::new(),
                 close_when_done: false,
-                stop_leaves_files: false,
                 one_shot: false,
                 title: String::new(),
                 window_title: "Arca".to_string(),
@@ -593,8 +595,8 @@ impl AppController {
                 origin: None,
                 current_dir: String::new(),
                 show_settings: false,
-                conflict: None,
-                replies: None,
+                tasks: Vec::new(),
+                next_task: 0,
                 waiting_on_password: None,
                 password_wrong: false,
                 password_notice: None,
@@ -602,8 +604,8 @@ impl AppController {
                 add_password: String::new(),
                 hide_names: false,
                 archive_password: None,
-                reread_after: None,
                 reread_dir: None,
+                reread_queued: None,
                 history: vec![String::new()],
                 here: 0,
                 cursor: None,
@@ -617,7 +619,6 @@ impl AppController {
                 update: None,
                 update_rx: None,
                 asked_about_updates: false,
-                in_bytes: false,
                 subject: String::new(),
                 overlay: false,
                 stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -796,7 +797,6 @@ impl AppController {
         }
         self.state.password_input.clear();
         self.state.password_wrong = false;
-        self.state.reread_after = None;
         self.state.reread_dir = None;
         // Only a job left the window on the running view with nothing running.
         if was_job {
@@ -812,7 +812,7 @@ impl AppController {
     // Lives on the controller rather than in a view because there is nothing
     // about it that belongs to a toolkit, and both surfaces offer it.
     pub(crate) fn undo_last(&mut self) {
-        if self.state.busy {
+        if self.blocked() {
             return;
         }
         let Some((archive, _)) = self.state.undo.take() else {
@@ -1197,7 +1197,7 @@ impl AppController {
         let Some(cut) = &self.state.cut_pending else {
             return;
         };
-        if self.state.busy || self.state.archive.as_ref() != Some(&cut.archive) {
+        if self.blocked() || self.state.archive.as_ref() != Some(&cut.archive) {
             return;
         }
         if cut.paths.iter().any(|p| p.exists()) {
@@ -1298,50 +1298,61 @@ impl AppController {
             .filter_map(|r| arca_core::safe_name(r).ok())
             .map(|r| dir.join(r))
             .collect();
-        if cut && detect(&archive) == Some(Format::Zip) {
-            self.state.cut_armed = Some(Cut {
-                archive: archive.clone(),
-                paths: landed.clone(),
-                names,
-            });
-        }
+        let armed = (cut && detect(&archive) == Some(Format::Zip)).then(|| Cut {
+            archive: archive.clone(),
+            paths: landed.clone(),
+            names,
+        });
+        // One clipboard at a time: a later copy deletes the folder of the one
+        // before it and takes the clipboard over, so it runs after it.
+        let clipboard = temp.join("Arca").join("clipboard");
 
         let wanted = self.state.checked.clone();
         let total = wanted.iter().filter(|b| **b).count();
         let pw = self.state.archive_password.clone();
         self.state.close_when_done = false;
-        let (stop, hold) = self.fresh_flags();
-        self.spawn(total, move |tx| {
-            let notify = worker_notify(tx, &stop, &hold);
-            // A folder nobody has seen yet has nothing in it to overwrite, so
-            // there is no question to put on screen.
-            let ask = |_: &Path| Answer::Replace;
-            let outcome = extract(&archive, &dir, &wanted, &notify, &ask, pw.as_deref())
-                .map_err(|e| e.to_string())
-                .and_then(|_| clipboard::set_files(&landed, cut).map(|()| landed.len()));
-            // Only once the new list is on the clipboard: until that moment the
-            // old paths are still what a paste would reach for.
-            if let Some(old) = previous {
-                let _ = fs::remove_dir_all(old);
-            }
-            let _ = tx.send(match outcome {
-                // Nothing to say. Copying somewhere else does not announce
-                // itself either, and the rows a cut is holding are already
-                // faded; what is worth a line is the entries leaving the
-                // archive, and that has its own. An empty message hands the
-                // status bar back to the summary of what is open.
-                Ok(_) => {
-                    if cut {
-                        let _ = tx.send(Message::CutReady);
-                    }
-                    Message::Done(String::new())
+        let source = archive.clone();
+        let verb = if cut { s.cut_word } else { s.copy_word };
+        let mut task = Task::new(
+            verb,
+            archive_stem(&archive),
+            Box::new(move |tx, _, stop, hold| {
+                let notify = worker_notify(&tx, &stop, &hold);
+                // A folder nobody has seen yet has nothing in it to overwrite, so
+                // there is no question to put on screen.
+                let ask = |_: &Path| Answer::Replace;
+                let outcome = extract(&archive, &dir, &wanted, &notify, &ask, pw.as_deref())
+                    .map_err(|e| e.to_string())
+                    .and_then(|_| clipboard::set_files(&landed, cut).map(|()| landed.len()));
+                // Only once the new list is on the clipboard: until that moment the
+                // old paths are still what a paste would reach for.
+                if let Some(old) = previous {
+                    let _ = fs::remove_dir_all(old);
                 }
-                Err(why) => Message::Failed(fill(s.clipboard_failed, &[("why", &why)])),
-            });
-        });
-        // After `spawn`, which clears it: this is the one job that runs without
-        // saying so.
-        self.state.quiet = true;
+                let _ = tx.send(match outcome {
+                    // Nothing to say. Copying somewhere else does not announce
+                    // itself either, and the rows a cut is holding are already
+                    // faded; what is worth a line is the entries leaving the
+                    // archive, and that has its own. An empty message hands the
+                    // status bar back to the summary of what is open.
+                    Ok(_) => {
+                        if cut {
+                            let _ = tx.send(Message::CutReady);
+                        }
+                        Message::Done(String::new())
+                    }
+                    Err(why) => Message::Failed(fill(s.clipboard_failed, &[("why", &why)])),
+                });
+            }),
+        )
+        .reading([source])
+        .writing([clipboard])
+        .total(total);
+        // The one job that runs without saying so: it is over before a bar
+        // has finished appearing.
+        task.quiet = true;
+        let id = self.enqueue(task);
+        self.state.cut_armed = armed.map(|cut| (id, cut));
     }
 
     // Whether the cut waiting on a paste has had it.
@@ -1377,27 +1388,33 @@ impl AppController {
         let password = self.state.archive_password.clone();
         let s = self.s();
         self.state.close_when_done = false;
-        self.state.title = s.opening.to_string();
-        self.state.view = View::Running;
-        let (stop, hold) = self.fresh_flags();
-        self.spawn(1, move |tx| {
-            let _ = tx.send(Message::Progress(0, 1, entry.name.clone()));
-            let notify = worker_notify(tx, &stop, &hold);
-            let outcome =
-                extract_one(&archive, &entry, password.as_deref(), &notify).and_then(|path| {
-                    if !notify(1, 1, &entry.name) {
-                        return Err(arca_core::Error::Cancelled);
-                    }
-                    launch_with_system(&path).map(|()| path)
+        let source = archive.clone();
+        let subject = entry.name.clone();
+        let task = Task::new(
+            s.opening,
+            subject,
+            Box::new(move |tx, _, stop, hold| {
+                let _ = tx.send(Message::Progress(0, 1, entry.name.clone()));
+                let notify = worker_notify(&tx, &stop, &hold);
+                let outcome =
+                    extract_one(&archive, &entry, password.as_deref(), &notify).and_then(|path| {
+                        if !notify(1, 1, &entry.name) {
+                            return Err(arca_core::Error::Cancelled);
+                        }
+                        launch_with_system(&path).map(|()| path)
+                    });
+                let _ = tx.send(match outcome {
+                    Ok(path) => Message::Done(fill(
+                        s.opened_with_system,
+                        &[("name", &path.display().to_string())],
+                    )),
+                    Err(e) => Message::Failed(e.to_string()),
                 });
-            let _ = tx.send(match outcome {
-                Ok(path) => Message::Done(fill(
-                    s.opened_with_system,
-                    &[("name", &path.display().to_string())],
-                )),
-                Err(e) => Message::Failed(e.to_string()),
-            });
-        });
+            }),
+        )
+        .reading([source])
+        .total(1);
+        self.enqueue(task);
     }
 
     // Everything the keyboard does to the list, in one place. `rows` is what is
@@ -1415,11 +1432,7 @@ impl AppController {
             }
         }
         let mut close = false;
-        let mut finished_ok = false;
         let mut resume = None;
-        // Set when the installer is down and checked, and answered as "close
-        // the window": running it is Inno replacing the program that is open.
-        let mut installing = false;
         let messages: Vec<_> = self
             .state
             .channel
@@ -1507,68 +1520,19 @@ impl AppController {
                         Err(error) => self.access_failed(pending, password.as_deref(), error),
                     }
                 }
-                Message::Created(path, password) => {
-                    if !self.state.close_when_done {
-                        self.state.reread_after = Some((path, password, String::new()));
-                    }
-                }
-                Message::Conflict(path) => {
-                    self.state.conflict = Some(path);
-                }
                 Message::Progress(done, total, name) => {
                     self.state.done_count = done;
                     self.state.total_count = total;
                     self.state.current_file = name;
                 }
-                Message::Done(text) => {
-                    self.state.notice = text;
-                    self.state.busy = false;
-                    close = true;
-                    finished_ok = true;
-                }
-                Message::Failed(text) => {
-                    self.state.reread_after = None;
-                    self.state.reread_dir = None;
-                    // Stopping is not failing. Nothing is wrong with the
-                    // archive and there is nothing to report in red: the
-                    // rewrite gave up before it swapped anything.
-                    let quit = text == arca_core::Error::Cancelled.to_string();
-                    self.state.notice = if quit && self.state.stop_leaves_files {
-                        self.s().stopped_partial.to_string()
-                    } else if quit {
-                        self.s().stopped.to_string()
-                    } else {
-                        text
-                    };
-                    self.state.error = !quit;
-                    self.state.busy = false;
-                    close = true;
-                }
-                // The installer is down and checked. It is run silently and
-                // Arca stands aside: Inno Setup closes the program it is
-                // about to replace and opens it again when it finishes,
-                // which is how something that is running gets updated.
-                Message::Downloaded(path) => {
-                    self.state.busy = false;
-                    close = true;
-                    let version = self
-                        .state
-                        .update
-                        .as_ref()
-                        .map(|r| r.tag.clone())
-                        .unwrap_or_default();
-                    self.state.notice = fill(self.s().update_installing, &[("version", &version)]);
-                    match install_update(&path) {
-                        Ok(()) => installing = true,
-                        Err(e) => {
-                            self.state.notice = e;
-                            self.state.error = true;
-                        }
-                    }
-                }
-                Message::CutReady => {
-                    self.state.cut_pending = self.state.cut_armed.take();
-                }
+                // The rest is what a task says, and tasks have channels of
+                // their own.
+                Message::Created(..)
+                | Message::Conflict(..)
+                | Message::Done(..)
+                | Message::Failed(..)
+                | Message::Downloaded(..)
+                | Message::CutReady => {}
             }
         }
         if close {
@@ -1578,26 +1542,11 @@ impl AppController {
                 self.state.notice = self.summary();
             }
         }
-        // The archive on disk is not the one that was listed any more. Reopen it
-        // with the password it now carries, so the browse view shows the new
-        // state and does not ask for a password it was just handed.
-        if finished_ok {
-            if let Some((path, pw, dir)) = self.state.reread_after.take() {
-                let notice = std::mem::take(&mut self.state.notice);
-                self.open_with_password(path, pw);
-                self.state.reread_dir = Some(dir);
-
-                self.state.notice = notice;
-                self.state.view = View::Browse;
-            }
-        }
+        let close_window = self.poll_tasks();
         if let Some((pending, password)) = resume {
             self.resume_access(pending, password);
         }
-        installing
-            || (finished_ok
-                && self.state.close_when_done
-                && matches!(self.state.view, View::Running))
+        close_window
     }
     pub(crate) fn paste_from_clipboard(&mut self) {
         let Some(archive) = self.state.archive.clone() else {
@@ -1866,7 +1815,7 @@ impl AppController {
     // A listing still on its way can be replaced by opening something else;
     // a mutation in flight cannot, or the archive would be swapped under it.
     pub(crate) fn open_with_password(&mut self, path: PathBuf, password: Option<String>) {
-        if self.state.busy && !self.state.listing {
+        if (self.state.busy && !self.state.listing) || self.archive_locked() {
             return;
         }
         if self.on_disk() {
@@ -1876,11 +1825,9 @@ impl AppController {
             });
         }
         self.state.channel = None;
-        self.state.replies = None;
         self.state.waiting_on_password = None;
         self.state.password_input.clear();
         self.state.password_wrong = false;
-        self.state.reread_after = None;
         self.state.reread_dir = None;
         self.state.entries.clear();
         self.state.checked.clear();
@@ -1895,7 +1842,6 @@ impl AppController {
         self.state.confirm_drop = None;
         self.state.renaming = None;
         self.state.asking_folder = false;
-        self.state.conflict = None;
         self.state.undo = None;
         self.state.overlay = false;
         self.state.close_when_done = false;
@@ -1923,7 +1869,7 @@ impl AppController {
     }
 
     fn refresh(&mut self) {
-        if self.state.busy {
+        if self.blocked() {
             return;
         }
         if self.on_disk() {
@@ -1958,7 +1904,7 @@ impl AppController {
     }
 
     pub(crate) fn run_job(&mut self, mut job: Job) {
-        if self.state.busy {
+        if self.blocked() {
             return;
         }
         let mutation = match &job {
@@ -2009,7 +1955,7 @@ impl AppController {
             }
         }
         let s: &'static Strings = self.s();
-        self.state.stop_leaves_files = matches!(job, Job::Extract { .. } | Job::CopyTo { .. });
+        let stop_leaves_files = matches!(job, Job::Extract { .. } | Job::CopyTo { .. });
         let verb = match &job {
             Job::Extract { .. } => s.extracting.to_string(),
             Job::Test { .. } => s.testing.to_string(),
@@ -2027,7 +1973,7 @@ impl AppController {
         };
         // The download measures itself in bytes; everything else counts
         // entries.
-        self.state.in_bytes = matches!(job, Job::Update { .. });
+        let in_bytes = matches!(job, Job::Update { .. });
         // Getting the new version is asked for from this window's menu; the
         // rest can come from the Explorer, and then there is no list behind it.
         let from_here = self.state.archive.is_some() || matches!(job, Job::Update { .. });
@@ -2059,7 +2005,7 @@ impl AppController {
         // pointing it at the new archive would cancel its own departure: what
         // decides the window closes is still being on View::Running, and
         // rereading is what puts it back on View::Browse.
-        self.state.reread_after = if self.state.close_when_done {
+        let reread_after = if self.state.close_when_done {
             None
         } else {
             reread_target(&job, &self.state.current_dir)
@@ -2081,74 +2027,71 @@ impl AppController {
             _ => None,
         };
 
-        let (reply_tx, reply_rx) = channel::<Answer>();
-        self.state.replies = Some(reply_tx);
-        let (stop, hold) = self.fresh_flags();
-        self.spawn(0, move |tx| {
-            use std::sync::atomic::Ordering;
-            let notify = |i: usize, n: usize, name: &str| {
-                let _ = tx.send(Message::Progress(i, n, name.to_string()));
-                // Held right here while it is paused. This is the end of an
-                // entry, which is the one moment the work is not in the middle
-                // of something; stopping still gets through, so a paused job
-                // can be given up on without being let go first.
-                while hold.load(Ordering::Relaxed) && !stop.load(Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_millis(60));
+        let (reads, writes, outputs) = touched_by(&job);
+        let mut task = Task::new(
+            verb,
+            subject_of(&job),
+            Box::new(move |tx, reply_rx, stop, hold| {
+                let notify = worker_notify(&tx, &stop, &hold);
+                // Getting the new version does not end in a text to read but
+                // in a file to run, and running it closes Arca. That is why it
+                // leaves by its own message and not by Done: who decides to
+                // install is the window, not this thread.
+                if let Job::Update {
+                    installer, sums, ..
+                } = &job
+                {
+                    let _ = tx.send(match download_update(installer, sums, s, &notify) {
+                        Ok(path) => Message::Downloaded(path),
+                        Err(text) => Message::Failed(text),
+                    });
+                    return;
                 }
-                // The answer to "carry on?". Read on every step because that is
-                // the only place a long job looks up from what it is doing.
-                !stop.load(Ordering::Relaxed)
-            };
-            // Getting the new version does not end in a text to read but in a
-            // file to run, and running it closes Arca. That is why it leaves by
-            // its own message and not by Done: who decides to install is the
-            // window, not this thread.
-            if let Job::Update {
-                installer, sums, ..
-            } = &job
-            {
-                let _ = tx.send(match download_update(installer, sums, s, &notify) {
-                    Ok(path) => Message::Downloaded(path),
-                    Err(text) => Message::Failed(text),
-                });
-                return;
-            }
-            let ask = conflict_asker(tx, &reply_rx);
-            let mut job = job;
-            let created = if let Job::Compress {
-                out,
-                password,
-                format: format @ (Format::SevenZ | Format::Rar),
-                ..
-            } = &mut job
-            {
-                let output = if *format == Format::Rar {
-                    new_only_output(out)
+                let ask = conflict_asker(&tx, &reply_rx);
+                let mut job = job;
+                let created = if let Job::Compress {
+                    out,
+                    password,
+                    format: format @ (Format::SevenZ | Format::Rar),
+                    ..
+                } = &mut job
+                {
+                    let output = if *format == Format::Rar {
+                        new_only_output(out)
+                    } else {
+                        creation_output(out, &ask)
+                    };
+                    match output {
+                        Ok(path) => *out = path,
+                        Err(error) => {
+                            let _ = tx.send(Message::Failed(error.to_string()));
+                            return;
+                        }
+                    }
+                    Some((out.clone(), password.clone()))
                 } else {
-                    creation_output(out, &ask)
+                    None
                 };
-                match output {
-                    Ok(path) => *out = path,
-                    Err(error) => {
-                        let _ = tx.send(Message::Failed(error.to_string()));
-                        return;
+                let outcome = run_job_blocking(job, s, &notify, &ask);
+                if outcome.is_ok() {
+                    if let Some((path, password)) = created {
+                        let _ = tx.send(Message::Created(path, password));
                     }
                 }
-                Some((out.clone(), password.clone()))
-            } else {
-                None
-            };
-            let outcome = run_job_blocking(job, s, &notify, &ask);
-            if outcome.is_ok() {
-                if let Some((path, password)) = created {
-                    let _ = tx.send(Message::Created(path, password));
-                }
-            }
-            let _ = tx.send(match outcome {
-                Ok(text) => Message::Done(text),
-                Err(text) => Message::Failed(text),
-            });
-        });
+                let _ = tx.send(match outcome {
+                    Ok(text) => Message::Done(text),
+                    Err(text) => Message::Failed(text),
+                });
+            }),
+        )
+        .reading(reads)
+        .writing(writes)
+        .filling(outputs);
+        task.in_bytes = in_bytes;
+        task.stop_leaves_files = stop_leaves_files;
+        task.reread_after = reread_after;
+        task.close_when_done = self.state.close_when_done;
+        self.enqueue(task);
     }
     pub(crate) fn is_checked(&self, row: &Row) -> bool {
         self.row_is_checked(row, |i| self.state.checked.get(i).copied().unwrap_or(false))
@@ -2166,6 +2109,36 @@ impl AppController {
                 !under.is_empty() && under.into_iter().all(selected)
             }
         }
+    }
+}
+
+/// The files a job reads, the ones it rewrites and the folders it fills,
+/// which is what decides whether two jobs can run at the same time.
+fn touched_by(job: &Job) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+    match job {
+        Job::Extract { archives, dest, .. } => {
+            let folders = archives
+                .iter()
+                .map(|a| {
+                    let base = a.parent().map(PathBuf::from).unwrap_or_default();
+                    match dest {
+                        Destination::Beside => base,
+                        Destination::Subfolder => base.join(archive_stem(a)),
+                    }
+                })
+                .collect();
+            (archives.clone(), Vec::new(), folders)
+        }
+        Job::Test { archive, .. } => (vec![archive.clone()], Vec::new(), Vec::new()),
+        Job::Password { archive, .. }
+        | Job::Delete { archive, .. }
+        | Job::Rename { archive, .. }
+        | Job::Move { archive, .. }
+        | Job::NewFolder { archive, .. }
+        | Job::Add { archive, .. } => (Vec::new(), vec![archive.clone()], Vec::new()),
+        Job::CopyTo { archive, dest } => (vec![archive.clone()], vec![dest.clone()], Vec::new()),
+        Job::Compress { out, inputs, .. } => (inputs.clone(), vec![out.clone()], Vec::new()),
+        Job::Update { .. } => (Vec::new(), Vec::new(), Vec::new()),
     }
 }
 
@@ -2518,7 +2491,7 @@ mod compress_tests {
         let mut controller = AppController::new(Settings::default());
         controller.run_job(compressing(Some("secret".into())));
         assert_eq!(
-            controller.state.reread_after,
+            controller.pending_reread(),
             Some((
                 std::env::temp_dir().join("arca-close-test.zip"),
                 Some("secret".to_string()),
@@ -2537,7 +2510,7 @@ mod compress_tests {
         controller.state.one_shot = true;
         controller.run_job(compressing(None));
         assert!(controller.state.close_when_done);
-        assert!(controller.state.reread_after.is_none());
+        assert!(controller.pending_reread().is_none());
     }
 }
 
@@ -2634,11 +2607,7 @@ mod password_tests {
             controller.begin_password_change();
             controller.submit_password(given.into());
             assert_eq!(
-                controller
-                    .state
-                    .reread_after
-                    .as_ref()
-                    .map(|(_, password, _)| password.clone()),
+                controller.pending_reread().map(|(_, password, _)| password),
                 Some(expected),
                 "password {given:?}"
             );

@@ -110,6 +110,7 @@ pub struct Strings {
     pub paused_word: &'static str,
     pub stopped: &'static str,
     pub stopped_partial: &'static str,
+    pub task_lost: &'static str,
     pub clear_history: &'static str,
     pub open_word: &'static str,
     pub continue_word: &'static str,
@@ -255,6 +256,13 @@ pub struct Strings {
     pub descending: &'static str,
     pub not_checked: &'static str,
     pub working_word: &'static str,
+    pub operations_title: &'static str,
+    pub operations_count: &'static str,
+    pub running_count: &'static str,
+    pub queued_word: &'static str,
+    pub clear_finished: &'static str,
+    pub dismiss_word: &'static str,
+    pub hide_word: &'static str,
 }
 
 const EN: Strings = Strings {
@@ -333,6 +341,7 @@ const EN: Strings = Strings {
     paused_word: "paused",
     stopped: "stopped -- nothing was changed",
     stopped_partial: "stopped -- what was already extracted stays",
+    task_lost: "the operation ended without a result",
     clear_history: "Clear history",
     open_word: "Open",
     continue_word: "Continue",
@@ -475,6 +484,13 @@ const EN: Strings = Strings {
     descending: "descending",
     not_checked: "not checked",
     working_word: "Working",
+    operations_title: "Operations",
+    operations_count: "{n} operations",
+    running_count: "{n} running",
+    queued_word: "waiting for the archive",
+    clear_finished: "Clear finished",
+    dismiss_word: "Dismiss",
+    hide_word: "Hide",
 };
 
 const ES: Strings = Strings {
@@ -553,6 +569,7 @@ const ES: Strings = Strings {
     paused_word: "en pausa",
     stopped: "parado -- no se ha cambiado nada",
     stopped_partial: "parado -- lo ya extraído se queda",
+    task_lost: "la operación terminó sin resultado",
     clear_history: "Borrar historial",
     open_word: "Abrir",
     continue_word: "Continuar",
@@ -695,6 +712,13 @@ const ES: Strings = Strings {
     descending: "descendente",
     not_checked: "sin marcar",
     working_word: "Trabajando",
+    operations_title: "Operaciones",
+    operations_count: "{n} operaciones",
+    running_count: "{n} en marcha",
+    queued_word: "esperando al archivo",
+    clear_finished: "Quitar terminadas",
+    dismiss_word: "Quitar",
+    hide_word: "Ocultar",
 };
 
 pub fn strings(l: Lang) -> &'static Strings {

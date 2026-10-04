@@ -10,7 +10,7 @@ fn fixture(name: &str) -> PathBuf {
 
 fn settle(controller: &mut AppController) {
     let limit = Instant::now() + Duration::from_secs(10);
-    while controller.state.busy {
+    while controller.state.busy || controller.working() {
         controller.receive();
         assert!(Instant::now() < limit, "listing worker did not complete");
         std::thread::sleep(Duration::from_millis(1));
@@ -613,7 +613,7 @@ fn rar_creation_refuses_an_existing_output_before_asking() {
     app.run_job(rar_job(out.clone(), vec![input.clone()], Level::Fast));
     settle(&mut app);
     assert!(
-        app.state.conflict.is_none(),
+        app.conflict().is_none(),
         "RAR creation must not offer Replace"
     );
     assert!(app.state.error);
@@ -623,7 +623,7 @@ fn rar_creation_refuses_an_existing_output_before_asking() {
         app.state.notice
     );
     assert!(app.state.archive.is_none());
-    assert!(app.state.reread_after.is_none());
+    assert!(app.state.reread_queued.is_none());
     assert_eq!(fs::read(&out).unwrap(), b"original archive");
     let mut leftovers: Vec<_> = fs::read_dir(room.path(""))
         .unwrap()

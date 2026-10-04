@@ -1,15 +1,17 @@
 //! Runtime state owned by the application controller.
 
 use super::{Cut, Message, Pending, Release, View, Viewed};
-use crate::archive_ops::Answer;
 use crate::model::{Format, SortColumn};
 use crate::settings::Settings;
 use crate::tree;
 use arca_core::{Codec, Entry, Level};
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Receiver;
 use std::time::Instant;
+
+/// What to reopen, the password it carries and the folder to come back to.
+pub(crate) type Reread = (PathBuf, Option<String>, String);
 
 pub(crate) struct AppState {
     pub(crate) browser: super::BrowserState,
@@ -37,9 +39,6 @@ pub(crate) struct AppState {
     pub(crate) pending_inputs: Vec<PathBuf>,
     pub(crate) output_name: String,
     pub(crate) close_when_done: bool,
-    // Whether stopping the running job leaves files behind. A rewrite swaps
-    // nothing until it is whole; an extraction keeps what it finished.
-    pub(crate) stop_leaves_files: bool,
     // Whether this window was opened to do one job handed to it on the command
     // line, in which case finishing that job is the end of it. A window driven
     // by hand stays open: closing it under the user looks like a crash.
@@ -50,8 +49,10 @@ pub(crate) struct AppState {
     pub(crate) origin: Option<super::Origin>,
     pub(crate) current_dir: String,
     pub(crate) show_settings: bool,
-    pub(crate) conflict: Option<String>,
-    pub(crate) replies: Option<Sender<Answer>>,
+    // Every operation asked for, running or waiting or finished and not yet
+    // put away. The listing is not one of them: it is what the window is.
+    pub(crate) tasks: Vec<super::Task>,
+    pub(crate) next_task: super::TaskId,
     // A job held back until the password window has an answer. Extraction asks
     // once, before it starts, rather than per entry: every entry in a .zip is
     // encrypted with the same password, and asking again per file is noise.
@@ -68,14 +69,12 @@ pub(crate) struct AppState {
     // Held for the archive currently open in the window, so extracting from it
     // does not ask again for every button press.
     pub(crate) archive_password: Option<String>,
-    // Where to look again once a job has rewritten the archive, and the password
-    // it now carries. Set by every job that rebuilds the file, not just the one
-    // that changes its password: a rewrite the window does not reread leaves a
-    // list that disagrees with the disk.
-    pub(crate) reread_after: Option<(PathBuf, Option<String>, String)>,
     // The folder to restore after rereading a rewritten archive. It is consumed
     // by the next listing, so opening an archive normally still starts at root.
     pub(crate) reread_dir: Option<String>,
+    // A reread a finished rewrite is owed, waiting for the archive to be free,
+    // with the archive the window showed when that rewrite was asked for.
+    pub(crate) reread_queued: Option<(Option<PathBuf>, Reread)>,
     // Where the window has been, so the mouse back and forward buttons have
     // somewhere to go. `here` indexes into it; going somewhere new throws away
     // whatever was ahead, the way a browser does.
@@ -101,9 +100,6 @@ pub(crate) struct AppState {
     pub(crate) update: Option<Release>,
     pub(crate) update_rx: Option<std::sync::mpsc::Receiver<Release>>,
     pub(crate) asked_about_updates: bool,
-    // Whether the two counts are bytes rather than entries. Only the download
-    // measures itself that way.
-    pub(crate) in_bytes: bool,
     // What the job is being done to, beside the verb in the title.
     pub(crate) subject: String,
     // Whether the job is a panel over the list it was started from, rather than
@@ -142,7 +138,8 @@ pub(crate) struct AppState {
     pub(crate) cut_names: HashSet<String>,
     // Made ready before the extraction runs and armed only when it says the
     // clipboard took it, which is what `Message::CutReady` reports.
-    pub(crate) cut_armed: Option<Cut>,
+    // Tagged with the task preparing it, so only that task can arm it.
+    pub(crate) cut_armed: Option<(super::TaskId, Cut)>,
     pub(crate) cut_pending: Option<Cut>,
     pub(crate) show_shortcuts: bool,
     // Set for work that says nothing while it runs. Copying to the clipboard is

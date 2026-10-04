@@ -94,7 +94,9 @@ platform-dependent.
 
 ## Jobs and keyboard access
 
-Progress, pause, cancel, completion and errors remain visible without a browsing modal when the operation permits navigation. Pause and cancel also act inside a single large entry: a cancelled extraction removes the file it was writing and keeps the ones it had finished. Mutation commands cannot start another job while one is running. Explorer one-shot operations retain their existing completion behavior.
+Every operation (extract, test, compress, add, delete, rename, change password, copy) is a row in the **Operations** panel, which floats over the lower-right corner of the workspace and can be hidden and reopened from the footer button that counts them. Each row shows its own progress, elapsed and remaining time, pause/resume and cancel; finished rows keep their result until cleared. Pause and cancel also act inside a single large entry: a cancelled extraction removes the file it was writing and keeps the ones it had finished.
+
+Operations run at the same time when they touch different files. Rewrites of the same archive wait for each other in the order they were asked for, and a rewrite also waits for any extraction or test of that archive that is already running. While the open archive is being rewritten its listing is read-only; extracting, testing or compressing leaves the window free to keep browsing and start more work. Overwrite questions name the operation they belong to. Explorer one-shot operations show the same panel as the whole window and retain their existing completion behavior.
 
 The footer reports the active directory, visible/selected counts and job status, with **F1** help. Tab reaches navigation, sidebar, browser, preview controls and footer. Text fields keep their editing keys; closing dialogs restores focus. Controls expose AccessKit labels and focus/selection indicators.
 

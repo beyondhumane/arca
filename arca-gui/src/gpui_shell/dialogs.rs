@@ -216,13 +216,19 @@ pub(super) fn build_dialog(
                 })
         }
         ModalKind::Conflict => {
-            let path = shell
-                .read(cx)
-                .controller
-                .state
-                .conflict
-                .clone()
-                .unwrap_or_default();
+            let (asker, path) = {
+                let controller = &shell.read(cx).controller;
+                controller
+                    .conflict()
+                    .map(|(id, path)| {
+                        let asker = controller
+                            .task(id)
+                            .map(|task| format!("{} · {}", task.verb, task.subject))
+                            .unwrap_or_default();
+                        (asker, path.to_string())
+                    })
+                    .unwrap_or_default()
+            };
             // Every choice closes the dialog the same way: it answers, the
             // controller drops the question and the next reconcile takes the
             // dialog down. Nothing here has to close it by hand.
@@ -238,7 +244,11 @@ pub(super) fn build_dialog(
             let enter = weak.clone();
             dialog
                 .title(heading(s.conflict_title))
-                .child(DialogDescription::new().child(format!("{} {path}", s.already_there)))
+                .child(
+                    DialogDescription::new()
+                        .child(format!("{} {path}", s.already_there))
+                        .when(!asker.is_empty(), |text| text.child(asker)),
+                )
                 .footer(
                     DialogFooter::new()
                         .flex_wrap()

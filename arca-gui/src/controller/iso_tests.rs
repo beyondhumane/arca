@@ -10,7 +10,7 @@ fn fixture(name: &str) -> PathBuf {
 
 fn settle(controller: &mut AppController) {
     let limit = Instant::now() + Duration::from_secs(10);
-    while controller.state.busy {
+    while controller.state.busy || controller.working() {
         controller.receive();
         assert!(Instant::now() < limit, "listing worker did not complete");
         std::thread::sleep(Duration::from_millis(1));
