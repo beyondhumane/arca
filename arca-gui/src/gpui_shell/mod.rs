@@ -944,14 +944,7 @@ impl GpuiShell {
             let result = match kind {
                 DialogKind::Open => DialogResult::Open(
                     rfd::FileDialog::new()
-                        .add_filter(
-                            "Archives",
-                            if cfg!(feature = "rar") {
-                                &["zip", "7z", "tar", "gz", "tgz", "rar", "cbr"][..]
-                            } else {
-                                &["zip", "7z", "tar", "gz", "tgz"][..]
-                            },
-                        )
+                        .add_filter("Archives", &super::open_filter())
                         .pick_file(),
                 ),
                 DialogKind::PickInputs { folders } => DialogResult::Inputs(if folders {

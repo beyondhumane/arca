@@ -2,7 +2,7 @@ use std::fmt;
 use std::io;
 
 mod format;
-pub use format::Format;
+pub use format::{Container, Format};
 pub mod extraction;
 
 pub mod limits {
