@@ -47,10 +47,12 @@
               clippy
               rustfmt
               rust-analyzer
-              # interop.sh and bench.sh compare against these.
+              # interop.sh calls 7z and python3; bench.sh calls 7zz.
               zip
               unzip
+              p7zip
               _7zz
+              python3
               zstd
               hyperfine
             ];
