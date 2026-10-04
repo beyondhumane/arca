@@ -21,6 +21,9 @@ Get the file for your platform from the [latest release](https://github.com/beyo
 | macOS Intel | `arca-v<version>-macos-x86_64.tar.gz` | Intel |
 | Linux | `arca-v<version>-linux-x86_64.tar.gz` | x86\_64 |
 | Linux ARM | `arca-v<version>-linux-arm64.tar.gz` | arm64 |
+| Linux | `arca-v<version>-linux-x86_64.AppImage` | Desktop window, any distribution; also `linux-arm64` |
+| Debian, Ubuntu | `arca_<version>-1_amd64.deb` | Package; also `arm64` |
+| Fedora, openSUSE | `arca-<version>-1.x86_64.rpm` | Package; also `aarch64` |
 
 Every asset for every version, with its SHA-256 digest, is on the [releases page](https://github.com/beyondhumane/arca/releases). Each one also carries a build provenance attestation, which `gh attestation verify <file> -R beyondhumane/arca` checks.
 
@@ -29,6 +32,24 @@ On Linux the desktop window needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, 
 ### Windows
 
 Run the installer. It’s produced with Inno Setup from `windows/arca.iss` and sets Arca up together with the Explorer context menu; see [Windows integration](windows-integration.md).
+
+### Linux packages
+
+The `.deb` and `.rpm` install both binaries into `/usr/bin` and add Arca to the applications menu:
+
+```sh
+sudo apt install ./arca_*_amd64.deb      # Debian, Ubuntu
+sudo dnf install ./arca-*.x86_64.rpm     # Fedora
+sudo zypper install ./arca-*.x86_64.rpm  # openSUSE
+```
+
+The AppImage needs no installation. Make it executable and run it; `--cli` runs the command line instead of the window:
+
+```sh
+chmod +x arca-v*-linux-x86_64.AppImage
+./arca-v*-linux-x86_64.AppImage
+./arca-v*-linux-x86_64.AppImage --cli --help
+```
 
 ### macOS and Linux
 

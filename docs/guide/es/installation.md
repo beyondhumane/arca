@@ -20,12 +20,34 @@ Consigue el archivo para tu plataforma desde la [última versión](https://githu
 | macOS | `arca-v<version>-macos-arm64.tar.gz` | Apple silicon |
 | macOS Intel | `arca-v<version>-macos-x86_64.tar.gz` | Intel |
 | Linux | `arca-v<version>-linux-x86_64.tar.gz` | x86\_64 |
+| Linux ARM | `arca-v<version>-linux-arm64.tar.gz` | arm64 |
+| Linux | `arca-v<version>-linux-x86_64.AppImage` | Ventana de escritorio, cualquier distribución; también `linux-arm64` |
+| Debian, Ubuntu | `arca_<version>-1_amd64.deb` | Paquete; también `arm64` |
+| Fedora, openSUSE | `arca-<version>-1.x86_64.rpm` | Paquete; también `aarch64` |
 
 Todos los archivos de todas las versiones, con su hash SHA-256, están en la [página de versiones](https://github.com/beyondhumane/arca/releases).
 
 ### Windows
 
 Ejecuta el instalador. Está generado con Inno Setup desde `windows/arca.iss` y configura Arca junto con el menú contextual del Explorador; ver [Integración con Windows](windows-integration.md).
+
+### Paquetes de Linux
+
+El `.deb` y el `.rpm` instalan los dos binarios en `/usr/bin` y añaden Arca al menú de aplicaciones:
+
+```sh
+sudo apt install ./arca_*_amd64.deb      # Debian, Ubuntu
+sudo dnf install ./arca-*.x86_64.rpm     # Fedora
+sudo zypper install ./arca-*.x86_64.rpm  # openSUSE
+```
+
+La AppImage no necesita instalación. Dale permiso de ejecución y ábrela; con `--cli` se ejecuta la línea de comandos en lugar de la ventana:
+
+```sh
+chmod +x arca-v*-linux-x86_64.AppImage
+./arca-v*-linux-x86_64.AppImage
+./arca-v*-linux-x86_64.AppImage --cli --help
+```
 
 ### macOS y Linux
 
