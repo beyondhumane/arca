@@ -402,6 +402,16 @@ impl AppController {
         self.state.view = View::Add;
     }
 
+    /// The formats the new-archive selector offers, in selector order. RAR
+    /// is creatable only in a build with the `rar` feature; the selector maps
+    /// by value, so leaving it out shifts nothing.
+    pub(crate) fn create_formats() -> Vec<Format> {
+        Format::CREATABLE
+            .into_iter()
+            .filter(|format| *format != Format::Rar || cfg!(feature = "rar"))
+            .collect()
+    }
+
     pub(crate) fn set_create_format(&mut self, format: Format) {
         if !self.state.output_name.is_empty() {
             let path = Path::new(&self.state.output_name);
@@ -2017,7 +2027,7 @@ impl AppController {
             let created = if let Job::Compress {
                 out,
                 password,
-                format: Format::SevenZ,
+                format: Format::SevenZ | Format::Rar,
                 ..
             } = &mut job
             {

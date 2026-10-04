@@ -47,9 +47,10 @@ pub(super) fn format_pick(
     cx: &App,
 ) -> gpui::AnyElement {
     let s = shell.read(cx).controller.s();
-    let options = super::Format::WRITABLE
+    let options = AppController::create_formats()
+        .into_iter()
         .map(|format| (format, format.label()))
-        .to_vec();
+        .collect();
     pick(
         id,
         s.format,
