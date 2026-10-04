@@ -376,6 +376,17 @@ impl Volumes {
                 if archive.family() != first.family() || props != properties(first)? {
                     return Err(invalid(path, "archive family or volume/solid/encryption flags do not match the first volume"));
                 }
+                if let (Archive::Rar15To40(first), Archive::Rar15To40(current)) = (first, &archive)
+                {
+                    if matches!(first.blocks.last(), Some(rars::rar15_40::Block::End(_)))
+                        && !matches!(current.blocks.last(), Some(rars::rar15_40::Block::End(_)))
+                    {
+                        return Err(invalid(
+                            path,
+                            "end header is missing from a set with end headers (truncated archive)",
+                        ));
+                    }
+                }
             }
             if paths.len() > 1 && !props.volume {
                 return Err(invalid(path, "not marked as part of a volume set"));
