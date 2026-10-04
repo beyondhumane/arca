@@ -218,7 +218,7 @@ impl AppController {
             return;
         };
         if detect(&archive) != Some(Format::Zip) {
-            self.state.notice = self.s().only_zip_can_change.to_string();
+            self.state.notice = self.cannot_change(detect(&archive));
             self.state.error = true;
             return;
         }
@@ -436,7 +436,7 @@ impl AppController {
     }
     pub(crate) fn request_delete(&mut self) {
         if self.state.format != Format::Zip {
-            self.state.notice = self.s().only_zip_can_change.to_string();
+            self.state.notice = self.cannot_change(Some(self.state.format));
             self.state.error = true;
             return;
         }
@@ -637,6 +637,13 @@ impl AppController {
             self.clear_picked();
         }
     }
+    fn cannot_change(&self, format: Option<Format>) -> String {
+        match format {
+            Some(f) if !f.can_write() => f.read_only().to_string(),
+            _ => self.s().only_zip_can_change.to_string(),
+        }
+    }
+
     pub(crate) fn s(&self) -> &'static Strings {
         strings(self.state.settings.effective_lang())
     }
@@ -1631,7 +1638,7 @@ impl AppController {
             if all_archives {
                 open_first(self, paths);
             } else {
-                self.state.notice = self.s().only_zip_can_change.to_string();
+                self.state.notice = self.cannot_change(detect(&archive));
                 self.state.error = true;
             }
             return;
@@ -1814,7 +1821,7 @@ impl AppController {
         | Job::NewFolder { archive, .. } = &job
         {
             if detect(archive) != Some(Format::Zip) {
-                self.state.notice = self.s().only_zip_can_change.to_string();
+                self.state.notice = self.cannot_change(detect(archive));
                 self.state.error = true;
                 return;
             }

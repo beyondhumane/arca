@@ -109,3 +109,27 @@ fn zip_container_mutation_jobs_are_rejected_before_touching_the_archive() {
     }
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn zip_container_edit_requests_name_the_real_format() {
+    let dir = std::env::temp_dir().join(format!("arca-container-notice-{}", std::process::id()));
+    let archive = container(&dir, "comic.cbz");
+    let mut controller = AppController::new(Settings::default());
+    controller.load_listing(archive.clone(), None);
+    settle(&mut controller);
+    controller.request_delete();
+    assert!(controller.state.error);
+    assert!(
+        controller.state.notice.contains("CBZ") && controller.state.notice.contains("read-only"),
+        "{}",
+        controller.state.notice
+    );
+    controller.state.error = false;
+    controller.begin_password_change();
+    assert!(
+        controller.state.notice.contains("CBZ"),
+        "{}",
+        controller.state.notice
+    );
+    let _ = fs::remove_dir_all(dir);
+}
