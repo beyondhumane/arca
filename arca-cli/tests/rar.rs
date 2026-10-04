@@ -45,7 +45,10 @@ fn explains_how_to_enable_the_reader() {
     for verb in ["list", "test", "extract"] {
         let result = run(&[verb.as_ref(), archive.as_os_str()]);
         assert!(!result.status.success());
-        assert!(String::from_utf8_lossy(&result.stderr).contains("--features rar"));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("RAR reading is disabled in this build"));
+        assert!(stderr.contains("--features rar"));
+        assert!(!stderr.contains("experimental"));
     }
 }
 

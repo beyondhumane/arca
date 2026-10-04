@@ -1,4 +1,4 @@
-//! Experimental, opt-in RAR reading. No archive-writing API is exposed.
+//! Read-only RAR support. No archive-writing API is exposed.
 
 use arca_core::{Entry, Error, Result};
 use std::path::Path;
@@ -103,7 +103,7 @@ pub fn read_only() -> Error {
 
 #[cfg(not(feature = "rar"))]
 fn disabled() -> Error {
-    Error::Unsupported("experimental RAR reading is disabled; rebuild with --features rar".into())
+    Error::Unsupported("RAR reading is disabled in this build; rebuild with --features rar".into())
 }
 
 #[cfg(all(test, not(feature = "rar")))]

@@ -1,17 +1,16 @@
 # RAR format (read-only)
 
-Status: experimental implementation behind an opt-in Cargo feature.
+Status: read-only RAR enabled by default in CLI and GUI.
 Tracks [#3](https://github.com/beyondhumane/arca/issues/3) and
-[#14](https://github.com/beyondhumane/arca/issues/14). Multivolume assembly is
-implemented; stable activation remains follow-up work. **Distribution remains blocked**
-by the investigated provenance/notice questions below, independently of
-technical acceptance testing.
+[#14](https://github.com/beyondhumane/arca/issues/14). Modern and legacy
+multivolume assembly is implemented. The dependency review records provenance
+questions, not an established infringement or distribution prohibition.
 
 ## Decision (2026-10-03)
 
 Use `rars = "=0.10.0"` through a dedicated `arca-rar` adapter, with
 `default-features = false` and only `encryption` enabled. Normal CLI and GUI
-builds do not activate it. The shared `arca_core::Format` distinguishes readable
+builds activate it by default. The shared `arca_core::Format` distinguishes readable
 formats from `WRITABLE`; RAR has no creation or mutation path.
 
 This supersedes the earlier 0.9.4 recommendation in this document. Two
@@ -28,7 +27,7 @@ premises needed correcting:
 
 | Backend | Read RAR | Write RAR | Reason not selected |
 |---|---|---|---|
-| `rars` | Yes | Yes, excluded here | Selected for opt-in development; provenance/distribution gate unresolved |
+| `rars` | Yes | Yes, excluded here | Selected safe-Rust reader; exact pin, encryption-only feature graph |
 | UnRAR / Rust `unrar` wrapper | Yes | No | In-process C/C++ parser crosses Arca's safe-Rust parser boundary |
 | External `unrar` or 7-Zip | Yes | No | Separate process is useful isolation, but requires an installed executable |
 | Official RAR/WinRAR | Yes | Yes | Proprietary tool and separate licensing/distribution terms |
@@ -41,7 +40,7 @@ research history, official RARLAB terms, feature graph and license files.
 The upstream license metadata mismatch is fixed in 0.10.0, and an actual Linux
 CLI/GUI compile confirms only `rars/encryption` is enabled.
 
-**Engineering recommendation: `distribution_blocked = true`.** Research history
+Research history
 includes direct UnRAR references and subsequently removed 7-Zip RAR citations;
 the AROS reference's claimed license also needs reconciliation. The published
 crate has Apache-2.0 `COPYING`, but no complete reader-specific provenance/notice
@@ -50,13 +49,12 @@ license. Public author statements acknowledge code-derived research and
 disassembly. These are concrete unresolved inputs, not a conclusion that the
 reader is unlawful or that independent RAR readers are universally prohibited.
 
-Before enabling normal CLI/GUI distribution, obtain the source-to-reader mapping
-and applicable research permissions, resolve the historical-source questions
-with qualified review where needed, and assemble the target-specific license
-and notice bundle. The decision record lists exact evidence and questions.
-Disabling `write` or relying on Apache metadata alone does not lift this gate.
-The current opt-in flag is a development boundary, not distribution clearance.
-No upstream contact was made during this audit.
+The original recommendation to block activation overstated what this evidence
+established. The maintainer authorized normal CLI/GUI support with the questions
+documented, without claiming legal clearance. Published license texts/notices
+for the adapter's dependency branch accompany release packages, and CI checks
+them against the lockfile. Investigate additional obligations if concrete
+evidence identifies them. No upstream contact was made during this audit.
 
 ## Implemented boundary
 
@@ -76,13 +74,18 @@ commands and remaining exclusions. The [fixture record](../../arca-rar/tests/fix
 identifies independent official-RAR fixtures and the legacy upstream sample.
 RAR/UnRAR reference executables are local test tools, not redistributed with
 Arca or required by its runtime.
-CI tests both feature states and checks the opt-in reader on all three platforms.
+CI tests both feature states and checks the default reader on all three platforms.
+The adapter crate keeps an empty default feature set; CLI and GUI independently
+enable `arca-rar/rar`. `--no-default-features` still excludes the backend, while
+`--no-default-features --features codecs-native` retains the native ZIP/7z codecs.
 
-## Stable-release checklist
+## Release validation and follow-ups
 
-- [ ] Resolve the evidence-based [distribution gate](../plans/rars-0.10.0-distribution.md#evidence-needed-to-lift-the-hold)
-  and verify required notices in the actual release artifacts. The initial
-  provenance audit is complete; the unresolved questions are not legal clearance.
+- [x] Record the [dependency review and activation decision](../plans/rars-0.10.0-distribution.md).
+- [x] Enable RAR in normal CLI/GUI builds, update English/Spanish docs and retain
+  the feature-off build. No writing, recovery or OS associations are added.
+- [x] Include the published adapter dependency license texts/notices in packaging.
+- [ ] Inspect the license bundle in each release archive/installer before publishing.
 - [ ] On the release candidate, pass workspace formatting, Clippy, feature-on/off
   tests, release builds and the feature audit. Confirm only `rars/encryption`
   is compiled for CLI and GUI on Linux, Windows and macOS.
@@ -91,8 +94,8 @@ CI tests both feature states and checks the opt-in reader on all three platforms
   Explicitly accept or resolve uncovered generations, filters and dictionary sizes.
 - [ ] Run the checked-in fuzz campaign with recorded seed, execution count,
   elapsed time and memory/time bounds. Triage every panic, timeout and invariant
-  violation; add minimized regressions. Agree and record a sustained campaign
-  budget before promotion: the initial bounded run is not exhaustive evidence.
+  violation; add minimized regressions. A sustained campaign remains useful
+  follow-up: the initial bounded run is not exhaustive evidence.
 - [ ] Verify missing/corrupt later volumes, unsafe paths, cancellation and staging
   disk-full failures leave the destination untouched; publication failures may
   leave earlier verified files. Run platform-specific reparse and disk-full tests
@@ -103,6 +106,3 @@ CI tests both feature states and checks the opt-in reader on all three platforms
   cross-platform compilation do not replace interaction checks.
 - [ ] Resolve or explicitly document RAR4 encrypted-header bad-password ambiguity
   and validate representative workloads against the published resource limits.
-- [ ] Only after these gates, enable RAR in normal CLI/GUI builds, update English
-  and Spanish UI/docs, retain the feature-off build, and verify notices in every
-  archive/installer. Do not add writing, recovery or OS associations as part of promotion.

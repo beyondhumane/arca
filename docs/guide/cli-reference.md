@@ -7,8 +7,8 @@ keywords: cli command line options flags reference help exit status
 
 # CLI reference
 
-ZIP, 7z and TAR are enabled by default. [RAR/CBR reading](rar.md) requires
-`--features rar`; it supports `list`, `test` and `extract`, including `-p` for
+ZIP, 7z, TAR and [RAR/CBR reading](rar.md) are enabled by default.
+RAR supports `list`, `test` and `extract`, including `-p` for
 encrypted data or headers. RAR creation and mutation are always rejected.
 
 ```text

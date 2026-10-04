@@ -230,6 +230,7 @@ fn opening_later_modern_and_legacy_volumes_lists_and_tests_the_complete_set() {
         assert!(!controller.state.error, "{}", controller.state.notice);
         assert_eq!(controller.state.entries.len(), 4);
         assert!(controller.state.window_title.contains("read-only"));
+        assert!(!controller.state.window_title.contains("experimental"));
         controller.run_job(Job::Test {
             archive,
             only: None,

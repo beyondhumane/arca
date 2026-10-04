@@ -1306,7 +1306,7 @@ impl AppController {
                             .map(|x| x.to_string_lossy().to_string())
                             .unwrap_or_default(),
                         if detect(&path) == Some(Format::Rar) {
-                            " (RAR: experimental, read-only)"
+                            " (RAR: read-only)"
                         } else {
                             ""
                         }

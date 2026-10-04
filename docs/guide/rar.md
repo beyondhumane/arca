@@ -1,25 +1,27 @@
 ---
-description: Build the optional read-only RAR/CBR reader, including multivolume sets, passwords and verified extraction.
+description: Read RAR/CBR archives, including multivolume sets, passwords and verified extraction.
 group: Reference
 order: 20
-keywords: rar cbr read-only experimental encryption solid archive multivolume part1 r00
+keywords: rar cbr read-only encryption solid archive multivolume part1 r00
 ---
 
-# Experimental RAR reader
+# RAR reader
 
-RAR is an **opt-in, read-only** format. Normal builds and release packages do
-not enable it. Build the CLI and desktop window explicitly:
+RAR is a **read-only** format enabled by default in the CLI and desktop window.
+Normal builds and the packages built from them include it:
 
 ```sh
-cargo build --release --features rar
+cargo build --release
 # Or CLI only:
-cargo build --release -p arca-cli --features rar
+cargo build --release -p arca-cli
 ```
 
 The `arca-rar` adapter pins `rars` to 0.10.0, disables its default features and
 enables only `encryption`. Its writer is not compiled. No installed `unrar`,
-RAR/WinRAR or 7-Zip executable is used at runtime. Without the Cargo feature,
-opening a `.rar` or `.cbr` gives an explanation of how to enable the reader.
+RAR/WinRAR or 7-Zip executable is used at runtime. For a build without RAR, use
+`--no-default-features --features codecs-native`; omit `codecs-native` to also
+exclude the native ZIP/7z codecs. A pure-Rust build with RAR uses
+`--no-default-features --features rar`. This is a build option, not a UI toggle.
 
 ## Using it
 
@@ -39,7 +41,7 @@ dialog on shared machines. The GUI prompts before listing encrypted headers,
 retries identifiable incorrect passwords, and keeps the password for the open archive.
 RAR4 encrypted headers can report an incorrect password as a format error;
 reopen with the correct password rather than assuming the archive is damaged.
-The title identifies RAR as experimental and read-only. No operating-system
+The title identifies RAR as read-only. No operating-system
 file associations are added by this feature.
 
 Listing, testing, previews and extraction are supported. Solid streams are
@@ -124,7 +126,7 @@ RAR5 archives must have a complete end header. Formats that do not store a
 CRC32 display a blank CRC column; native RAR integrity checks still run.
 Integrity guarantees depend on the checksums/authenticators the archive carries.
 
-## Deliberate exclusions and stability gate
+## Deliberate exclusions and dependency notes
 
 - No recovery/repair, RAR writing, OS associations or claim of exhaustive RAR
   compatibility. Unsupported methods/metadata return errors.
@@ -133,17 +135,19 @@ Integrity guarantees depend on the checksums/authenticators the archive carries.
   compatibility. See the [validation record](https://github.com/beyondhumane/arca/tree/main/docs/plans)
   for reproducible checks and uncovered cases.
 - The [provenance review](https://github.com/beyondhumane/arca/blob/main/docs/plans/rars-0.10.0-distribution.md)
-  found unresolved source/research and notice questions. Stable distribution
-  remains blocked. Apache-2.0 metadata, safe Rust and a disabled writer do not
-  resolve those questions; the opt-in feature is not distribution clearance.
+  records upstream's Apache-2.0 declaration and unresolved source/research
+  questions. It did not establish infringement or a license incompatibility
+  preventing distribution. These observations are not a claim of legal
+  clearance or a reason to label the reader experimental. Published license
+  texts and notices for the adapter's dependencies accompany the packages.
 
 Run the feature audit and tests with:
 
 ```sh
 python3 arca-rar/tests/check-features.py
 cargo test --workspace
-cargo test --workspace --features rar
-cargo clippy --workspace --all-targets --features rar -- -D warnings
+cargo test --workspace --no-default-features --features codecs-native
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 See the [decision record](https://github.com/beyondhumane/arca/blob/main/docs/todos/rar-format.md) and

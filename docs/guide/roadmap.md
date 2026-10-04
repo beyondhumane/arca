@@ -16,11 +16,11 @@ creation, passwords and hidden names are implemented for CLI and desktop. See
 [issue #2](https://github.com/beyondhumane/arca/issues/2) and the
 [accepted design](https://github.com/beyondhumane/arca/blob/main/docs/plans/7z-format.md).
 
-## Not yet
+[RAR/CBR reading](rar.md) is enabled by default, including modern and legacy
+multivolume sets, passwords, previews and verified extraction. RAR remains
+read-only: creation, mutation and recovery/repair are not supported.
 
-[RAR/CBR reading](rar.md) is experimental and opt-in with `--features rar`.
-Stable activation, provenance review and multi-volume support remain follow-up
-work. RAR creation and mutation are not supported.
+## Not yet
 
 - **Standalone xz:** LZMA2 is supported inside 7z.
 - **Symbolic links:** skipped for ZIP/TAR creation, rejected for 7z.

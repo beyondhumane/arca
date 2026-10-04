@@ -2,9 +2,11 @@
 
 Linux x86_64, 2026-10-03; Rust 1.97.1, Python 3.12.13, pinned `rars 0.10.0`.
 Implementation base: `c53a8ea4b90f706cd585d3391c1ab737e272b4f2`, issue #14.
-This is engineering evidence only. **Distribution/legal review remains blocked;
-stability, default activation and release approval are not claimed.** No feature
-defaults, UI wording, CI/release packaging or licensing records were changed.
+This is historical engineering evidence for that implementation base, not a
+legal conclusion or release approval. Default activation was implemented
+subsequently; see the [decision record](../docs/todos/rar-format.md). The initial
+claim of a legal/distribution blocker was not established by the audit and is
+superseded by the [updated review](../docs/plans/rars-0.10.0-distribution.md).
 
 ## Reproducible evidence
 
@@ -116,6 +118,5 @@ git diff --check
 - ENOSPC and publication behavior were checked on Linux tmpfs only; this does
   not prove Windows locks/antivirus behavior, quota exhaustion, power-loss
   durability, races with external filesystem writers, or directory rollback.
-- These checks do not resolve legal/distribution review or approve default-on
-  read-only RAR. Creation, mutation, repair, recovery and associations remain out
-  of scope.
+- These checks do not answer the open provenance questions. Creation, mutation,
+  repair, recovery and associations remain out of scope.

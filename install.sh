@@ -76,6 +76,8 @@ echo "==> Installing into $PREFIX/bin"
 $SUDO install -d "$PREFIX/bin"
 $SUDO install -m 755 "$SRC" "$BIN"
 $SUDO install -m 755 "$SRC_GUI" "$BIN_GUI"
+$SUDO install -d "$PREFIX/share/licenses/arca"
+$SUDO install -m 644 "$ROOT/RAR-NOTICES.txt" "$PREFIX/share/licenses/arca/RAR-NOTICES.txt"
 echo "    $BIN"
 echo "    $BIN_GUI"
 

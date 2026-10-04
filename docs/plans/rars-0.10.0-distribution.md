@@ -4,11 +4,18 @@ Review date: 2026-10-03. Arca baseline:
 [`c8918c8f7d9804a98cda45aaf84f8e7483082150`][arca-baseline].
 Tracks [#14](https://github.com/beyondhumane/arca/issues/14).
 
-**Engineering recommendation: `distribution_blocked = true`.** Do not enable
-`rars` in normal CLI/GUI releases yet. The issue is incomplete reader-specific
-provenance and redistribution evidence, not merely a pending TODO or the fact
-that upstream also implements writing. Keep the current opt-in development
-boundary; it is not clearance to distribute experimental RAR-enabled binaries.
+**Activation decision:** enable read-only RAR in normal CLI/GUI builds and
+include the published dependency license texts and notices in packages. The
+maintainer authorized this after reviewing the distinction between observed
+provenance questions and a demonstrated distribution restriction. This
+supersedes the initial conservative recommendation to withhold activation.
+
+The review established an Apache-2.0 declaration and unresolved questions about
+reader-specific provenance. It did **not** establish copied incompatible code,
+infringement or a license incompatibility preventing distribution. Treating
+that uncertainty as a proven legal blocker was not supported by the evidence.
+The observations and pinned sources below remain available for follow-up; they
+are not silently resolved by activating the feature.
 
 This is a factual dependency review, not legal advice, a finding of infringement,
 or a guarantee of legal clearance. Independent RAR readers are not universally
@@ -36,10 +43,10 @@ Rust/Cargo 1.97.1. Cargo's compiler-artifact record for `rars 0.10.0` has exactl
 showed no `write`, `recovery`, `parallel`, or `rars` default feature. Reproduce:
 
 ```sh
-cargo tree --locked -p arca-cli -p arca-gui --features rar -e features -i rars
-cargo tree --locked -p arca-cli -p arca-gui --features rar --target all -e features -i rars
-cargo tree --locked -p arca-cli -p arca-gui --features rar -e normal,build
-cargo check --locked -p arca-cli -p arca-gui --features rar --message-format=json
+cargo tree --locked -p arca-cli -p arca-gui -e features -i rars
+cargo tree --locked -p arca-cli -p arca-gui --target all -e features -i rars
+cargo tree --locked -p arca-cli -p arca-gui -e normal,build
+cargo check --locked -p arca-cli -p arca-gui --message-format=json
 ```
 
 This verifies the compilation graph, not a final-binary symbol audit or runtime
@@ -195,7 +202,7 @@ Thus another dependency's `getrandom` does not imply `rars/write` is enabled.
 Windows/macOS target-specific dependencies and the rest of the workspace still
 need an inventory for the actual shipping artifacts.
 
-Before RAR-enabled distribution:
+Redistribution obligations and scope:
 
 - Supply the Apache-2.0 text for `rars`, preserve applicable copyright/attribution
   notices, and meet section 4 requirements for any modified or redistributed
@@ -210,9 +217,13 @@ Before RAR-enabled distribution:
   BSD, LGPL, UnRAR or other source was incorporated, determine and satisfy the
   applicable obligations; merely appending this decision record is not enough.
 - Verify the archive/installer contains the resulting license bundle. The
-  [baseline release workflow][release] explicitly copies Arca's `LICENSE` and
-  `README.md`, not a `rars`/transitive third-party bundle. This audit does not
-  modify packaging or certify existing releases' overall license compliance.
+  [baseline release workflow][release] copied only Arca's `LICENSE` and
+  `README.md`. The activation change adds `RAR-NOTICES.txt` to portable archives,
+  the Windows installer, Linux AppImage/deb/rpm, Nix and package-manager installs.
+  `python3 packaging/rar-notices.py --check` checks that bundle against the
+  locked adapter branch for all five release targets, including published
+  copyright files and Unicode terms. This is not a whole-application inventory
+  or a certification of existing releases' overall license compliance.
 
 ## Reference executables are not product dependencies
 
@@ -224,7 +235,7 @@ UnRAR source for provenance/terms; it did not install or run its executable.
 Keep RAR/UnRAR binaries, registration material and upstream research working trees
 out of releases. Local tool use must separately comply with the relevant terms.
 
-## Evidence needed to lift the hold
+## Open provenance questions
 
 1. **Reader provenance:** obtain a versioned upstream file/algorithm mapping for
    the exact 0.10.0 reader, encryption, tables and RARVM code: input project,
@@ -242,16 +253,17 @@ out of releases. Local tool use must separately comply with the relevant terms.
    interoperability/reverse-engineering exceptions for the intended distribution
    jurisdictions. Do not substitute an author assurance or a build flag for this
    assessment when the underlying evidence remains ambiguous.
-4. **Release material:** once the above is resolved, produce and inspect the
-   actual target-specific notice/source-compliance bundle. Record the evidence
-   and accountable decision here before lifting the distribution gate. If the
-   current backend cannot meet it, evaluate a separately scoped alternative or
-   remediation rather than silently changing the pin.
+4. **Release material:** keep the published license/notice bundle aligned with
+   the locked dependencies and inspect the actual archives/installers. If new
+   evidence identifies additional obligations, assess and satisfy those
+   obligations; evaluate remediation or another backend if necessary rather
+   than silently changing the pin.
 
-These are actionable release gates, not a request to contact upstream without
-approval. Successful builds, interoperability tests and additional fuzzing can
-support technical readiness but cannot answer these provenance questions. The
-separate technical acceptance work remains in the [RAR TODO](../todos/rar-format.md).
+These are follow-up questions, not demonstrated prohibitions or prerequisites
+for the activation decision above. No upstream contact was made. Successful
+builds, interoperability tests and additional fuzzing support technical
+readiness but cannot answer provenance questions. The separate technical
+acceptance work remains in the [RAR record](../todos/rar-format.md).
 
 [arca-baseline]: https://github.com/beyondhumane/arca/commit/c8918c8f7d9804a98cda45aaf84f8e7483082150
 [adapter]: https://github.com/beyondhumane/arca/blob/c8918c8f7d9804a98cda45aaf84f8e7483082150/arca-rar/Cargo.toml

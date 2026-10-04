@@ -17,7 +17,7 @@ Arca es un workspace de Cargo. Cada crate tiene una sola tarea y una postura dec
 | `arca-zip` | ZIP con Zip64; store, Deflate sobre zlib-rs, Zstandard, AES-256 | prohibido |
 | `arca-tar` | TAR ustar con verificación de suma de comprobación | prohibido |
 | `arca-7z` | Análisis 7z acotado, extracción sólida, creación Store/LZMA2 y AES | prohibido |
-| `arca-rar` | Adaptador RAR/CBR experimental, opcional y de solo lectura | prohibido |
+| `arca-rar` | Adaptador RAR/CBR de solo lectura, activo por defecto en CLI/GUI | prohibido |
 | `arca-cli` | El binario arca | permitido, sin usar |
 | `arca-gui` | La ventana arca-gui | prohibido |
 | `arca-icons` | El icono que el escritorio muestra para un tipo de archivo | solo Windows, para la llamada al shell |
@@ -26,8 +26,8 @@ Arca es un workspace de Cargo. Cada crate tiene una sola tarea y una postura dec
 El workspace también contiene `arca-drag` y `arca-net`; consulta [sus fuentes](https://github.com/beyondhumane/arca) para más detalles.
 
 CLI y escritorio comparten `arca_core::Format`. Los formatos de escritura
-incluyen 7z, pero no RAR. El [lector RAR](../rar.md) se activa solo con
-`--features rar`; `rars` habilita el cifrado, nunca su escritor. El escritorio
+incluyen 7z, pero no RAR. El [lector RAR](rar.md) está activo por defecto en CLI
+y GUI; `rars` habilita el cifrado, nunca su escritor. El escritorio
 comparte la validación de contraseñas en segundo plano entre ZIP, 7z y RAR, con
 reintentos, cancelación y reanudación de la acción original. El CRC es opcional:
 una suma ausente no se muestra como un cero inventado.

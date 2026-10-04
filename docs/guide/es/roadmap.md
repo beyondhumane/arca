@@ -16,11 +16,12 @@ Store/LZMA2, contraseñas y nombres ocultos en CLI y escritorio. Consulta el
 [issue #2](https://github.com/beyondhumane/arca/issues/2) y el
 [diseño aceptado](https://github.com/beyondhumane/arca/blob/main/docs/plans/7z-format.md).
 
-## Todavía no
+La [lectura RAR/CBR](rar.md) está activa por defecto, incluidos conjuntos
+multivolumen modernos y antiguos, contraseñas, vistas previas y extracción
+verificada. RAR sigue siendo de solo lectura, sin creación, modificación,
+reparación ni recuperación.
 
-La [lectura RAR/CBR](../rar.md) es experimental y se activa con `--features rar`.
-La activación estable, la revisión de procedencia y los archivos multivolumen
-siguen pendientes. No se admite crear ni modificar RAR.
+## Todavía no
 
 - **xz independiente:** LZMA2 sí se admite dentro de 7z.
 - **Enlaces simbólicos:** se omiten al crear ZIP/TAR y se rechazan en 7z.

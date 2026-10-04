@@ -1,5 +1,18 @@
 # Package managers
 
+Normal CLI and GUI builds include read-only RAR/CBR support. `RAR-NOTICES.txt`
+contains the published license/notice texts for the adapter's dependency branch,
+including shared dependencies and the union of the five release targets. It is
+included in portable archives, installers and package-manager installations.
+It is not a license inventory for all of Arca or a provenance attestation.
+
+After changing the locked dependency graph, regenerate and check it with:
+
+```sh
+python3 packaging/rar-notices.py
+python3 packaging/rar-notices.py --check
+```
+
 `render.sh` writes the manifests for one release from its `SHA256SUMS.txt`.
 The `packages` job in `.github/workflows/release.yml` runs it after publishing
 and pushes each one. A channel stays off until its secret exists.

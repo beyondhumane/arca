@@ -7,8 +7,8 @@ keywords: cli línea de comandos opciones flags referencia ayuda estado de salid
 
 # Referencia de la CLI
 
-ZIP, 7z y TAR están activos por defecto. La [lectura RAR/CBR](../rar.md) requiere
-`--features rar`; permite `list`, `test` y `extract`, con `-p` para datos o
+ZIP, 7z, TAR y la [lectura RAR/CBR](rar.md) están activos por defecto.
+RAR permite `list`, `test` y `extract`, con `-p` para datos o
 cabeceras cifradas. Crear o modificar RAR siempre se rechaza.
 
 ```text

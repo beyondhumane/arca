@@ -279,7 +279,7 @@ else
 fi
 
 echo
-if [ "${ARCA_TEST_RAR:-0}" = 1 ]; then
+if [ "${ARCA_TEST_RAR:-1}" = 1 ]; then
   echo "RAR) External fixtures -> Arca (read-only)"
   FIXTURES="$ROOT/arca-rar/tests/fixtures"
   for f in plain stored solid encrypted headers; do

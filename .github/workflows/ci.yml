@@ -53,8 +53,9 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: python3 arca-rar/tests/check-features.py
-      - run: cargo clippy --workspace --all-targets --features rar -- -D warnings
-      - run: cargo test --workspace --features rar
+      - run: python3 packaging/rar-notices.py --check
+      - run: cargo clippy --workspace --all-targets --no-default-features --features codecs-native -- -D warnings
+      - run: cargo test --workspace --no-default-features --features codecs-native
       - name: Bounded RAR mutation campaign
         run: |
           cargo fmt --manifest-path arca-rar/fuzz/Cargo.toml -- --check
@@ -65,16 +66,12 @@ jobs:
 
       # Interoperability exercises the CLI; there is no reason to build GPUI
       # just to obtain arca for this check.
-      - name: Build CLI without the C codecs
+      - name: Build CLI without default features
         run: cargo build --no-default-features -p arca-cli
       - name: Build CLI with the default codecs
         run: cargo build -p arca-cli
       - name: Interoperability verified by hash
         run: ARCA="$GITHUB_WORKSPACE/target/debug/arca" bash interop.sh
-      - name: Experimental RAR fixture interoperability
-        run: |
-          cargo build -p arca-cli --features rar --locked
-          ARCA="$GITHUB_WORKSPACE/target/debug/arca" ARCA_TEST_RAR=1 bash interop.sh
 
   # rust-version in Cargo.toml is a promise; this job keeps it honest. Raise
   # both together when a dependency needs a newer compiler.
@@ -94,7 +91,7 @@ jobs:
           libxi-dev libgl1-mesa-dev libxcursor-dev libxinerama-dev
           libfontconfig1-dev
       - run: cargo check --workspace --all-targets --locked
-      - run: cargo check --workspace --all-targets --features rar --locked
+      - run: cargo check --workspace --all-targets --no-default-features --locked
 
   build:
     name: Build on ${{ matrix.name }}
@@ -139,10 +136,14 @@ jobs:
       - name: Build release binaries
         run: cargo build --release
 
-      - name: Experimental RAR reader
+      - name: Archive readers with default features
         run: |
-          cargo test -p arca-core -p arca-7z -p arca-rar -p arca-cli --features rar --locked
-          cargo build --release -p arca-cli -p arca-gui --features rar --locked
+          cargo test -p arca-core -p arca-7z -p arca-rar -p arca-cli --locked
+          python3 arca-rar/tests/check-features.py
+
+      - name: Release RAR smoke test
+        shell: bash
+        run: target/release/arca test arca-rar/tests/fixtures/volume.part4.rar
 
       - name: Shell extension
         if: matrix.os == 'windows-latest'

@@ -32,7 +32,7 @@ impl Format {
             Self::SevenZ => "7z",
             Self::Tar => "TAR",
             Self::TarGz => "TAR.GZ",
-            Self::Rar => "RAR (experimental, read-only)",
+            Self::Rar => "RAR (read-only)",
         }
     }
 

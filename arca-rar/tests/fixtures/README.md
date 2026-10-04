@@ -50,7 +50,7 @@ coverage, not the independent-encoder claim for Arca's existing four-volume set.
 An independent decoder can be checked against Arca's output with:
 
 ```sh
-cargo build -p arca-cli --features rar
+cargo build -p arca-cli
 ARCA="$PWD/target/debug/arca" ARCA_TEST_RAR=1 UNRAR=/absolute/path/to/unrar bash interop.sh
 ```
 

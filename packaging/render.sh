@@ -55,6 +55,7 @@ class Arca < Formula
 
   def install
     bin.install "arca", "arca-gui"
+    pkgshare.install "RAR-NOTICES.txt"
   end
 
   test do
@@ -117,6 +118,7 @@ package() {
   cd "arca-v\$pkgver-linux-\$( [ "\$CARCH" = aarch64 ] && echo arm64 || echo x86_64 )"
   install -Dm755 arca arca-gui -t "\$pkgdir/usr/bin/"
   install -Dm644 LICENSE "\$pkgdir/usr/share/licenses/\$pkgname/LICENSE"
+  install -Dm644 RAR-NOTICES.txt "\$pkgdir/usr/share/licenses/\$pkgname/RAR-NOTICES.txt"
 }
 END
 
