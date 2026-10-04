@@ -161,7 +161,7 @@ impl GpuiShell {
         let active = pane == self.controller.state.browser.active;
         let state: &crate::controller::DirectoryPane = &self.controller.state.browser.panes[pane];
         let name = if state.directory.is_empty() {
-            s.archive_root.to_string()
+            self.controller.root_label().to_string()
         } else {
             state
                 .directory
@@ -256,7 +256,7 @@ impl GpuiShell {
             .overflow_hidden()
             .when(!self.background_blocked(), |panel| panel.role(Role::List))
             .aria_label(if path.is_empty() {
-                s.archive_root.to_string()
+                self.controller.root_label().to_string()
             } else {
                 path.clone()
             })
@@ -277,7 +277,7 @@ impl GpuiShell {
                 this.list_key_down(event, window, cx);
             }))
             .child(title);
-        if self.background_idle() && self.controller.state.format == Format::Zip {
+        if self.background_idle() && self.controller.writable() {
             let target = path.clone();
             let legacy = target.clone();
             panel = panel
@@ -340,7 +340,7 @@ impl GpuiShell {
             );
         }
         let menu_owner = owner.clone();
-        let writable = self.controller.state.format == Format::Zip;
+        let writable = self.controller.writable();
         let idle = self.background_idle();
         // The empty-space menu lives on the filler below the rows, not on the
         // whole pane: the menu element only checks hover, so a row and the pane
@@ -475,12 +475,15 @@ impl GpuiShell {
         let owner = cx.weak_entity();
         let context_row = row.clone();
         let context_path = self.controller.state.browser.panes[pane].directory.clone();
-        let writable = self.controller.state.format == Format::Zip;
+        let writable = self.controller.writable();
+        let on_disk = self.controller.on_disk();
         let idle = self.background_idle();
         let menu = move |mut menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
             for action in RowAction::ALL {
                 if !action.offered()
+                    || !action.shown(on_disk)
                     || (context_row.is_dir && action == RowAction::View)
+                    || (!context_row.is_dir && action == RowAction::Pin)
                     || (action.writable_only() && !writable)
                 {
                     continue;
@@ -529,7 +532,7 @@ impl GpuiShell {
                     offset,
                 })
             });
-            if row.is_dir && self.controller.state.format == Format::Zip {
+            if row.is_dir && self.controller.writable() {
                 let target = row.path.clone();
                 let external = target.clone();
                 let legacy = target.clone();

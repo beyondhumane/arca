@@ -82,7 +82,7 @@ impl AppController {
                 &state.directory,
                 &state.filter,
                 state.order,
-                !self.state.browser.columns && self.state.settings.flat,
+                !self.state.browser.columns && self.flat(),
                 !self.state.browser.columns,
             )
         }
@@ -139,6 +139,7 @@ impl AppController {
 
     pub(crate) fn navigate_panes(&mut self, path: String) {
         self.snapshot_active_pane();
+        self.load_disk_ancestors(&normalized_dir(&path));
         let path = nearest_existing_dir(&self.state.entries, &path);
         let mut directories = vec![String::new()];
         let mut directory = String::new();

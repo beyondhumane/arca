@@ -54,7 +54,7 @@ impl GpuiShell {
         self.workspace_width = width;
         self.workspace_height = f32::from(window.viewport_size().height);
         let mut layout = decide(self.workspace_width, &self.controller.state.settings);
-        layout.preview &= self.controller.state.archive.is_some();
+        layout.preview &= self.controller.state.archive.is_some() || self.controller.on_disk();
         if resized || self.effective_layout != Some(layout) {
             if !layout.preview {
                 self.controller.cancel_preview();
@@ -169,7 +169,7 @@ impl GpuiShell {
     ) -> Stateful<gpui::Div> {
         let s = self.controller.s();
         let directory = if self.controller.state.current_dir.is_empty() {
-            s.archive_root
+            self.controller.root_label()
         } else {
             &self.controller.state.current_dir
         };
@@ -190,7 +190,7 @@ impl GpuiShell {
             .child(div().flex_1().truncate().child(format!(
                 "{directory} | {visible} {} {} | {selected} {}",
                 s.visible_of,
-                self.controller.state.entries.len(),
+                self.controller.folder_total(),
                 s.checked
             )))
             .child(div().truncate().child(self.status()))

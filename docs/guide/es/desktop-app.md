@@ -7,11 +7,19 @@ keywords: interfaz gráfica ventana arca-gui escritorio aplicación accesibilida
 
 # El espacio de trabajo de escritorio
 
-`arca-gui` permite explorar archivos comprimidos en una ventana nativa GPUI. La barra de título conserva la marca y los controles de ventana de Arca; una sola banda de navegación reúne historial, ruta, vistas, filtro, extracción, comprobación y el menú **Más**.
+`arca-gui` permite explorar el disco y los archivos comprimidos en una ventana nativa GPUI. La barra de título conserva la marca y los controles de ventana de Arca; una sola banda de navegación reúne historial, ruta, vistas, filtro, extracción, comprobación y el menú **Más**.
+
+## Explorar el disco
+
+Al arrancar sin un archivo, la ventana muestra la última carpeta visitada (o la carpeta personal) como un explorador de archivos normal. Las carpetas se abren en las mismas vistas Columnas o Detalles que los archivos comprimidos; cada carpeta se lee al entrar en ella, no por adelantado. La barra lateral enumera **Lugares** (la carpeta personal y las carpetas de usuario habituales), las carpetas **Fijadas** y los **Dispositivos** (los volúmenes montados, o las unidades en Windows). Haz clic en uno para saltar allí; haz clic derecho en una fila de carpeta y elige **Fijar en la barra lateral** para tenerla a mano, y clic derecho sobre una entrada fijada para quitarla. **Más > Vista > Mostrar archivos ocultos** alterna los archivos ocultos.
+
+Hacer doble clic en un archivo de un formato compatible (`.zip`, `.7z`, `.tar`, `.iso` y los contenedores ZIP) lo abre en el mismo sitio: la ruta, el árbol y los paneles pasan a su contenido y las acciones habituales de archivo quedan disponibles. **Arriba** o **Retroceso** en la raíz del archivo, o el botón **Cerrar archivo**, vuelven a la carpeta de origen con el cursor sobre el archivo. Los demás archivos se abren con la aplicación del sistema; la vista previa muestra los archivos locales igual que las entradas de un archivo comprimido.
+
+En el disco, **Comprimir** usa las filas marcadas como entrada, **Copiar ruta** pone las rutas absolutas en el portapapeles y las acciones exclusivas de archivo (extraer, comprobar, renombrar, eliminar, pegar, nueva carpeta) permanecen desactivadas. La última carpeta visitada, las carpetas fijadas y la preferencia de archivos ocultos se recuerdan entre sesiones.
 
 ## Navegación y distribución
 
-**Abrir** y **Crear** están en la barra lateral, junto a los archivos recientes y el árbol de carpetas del archivo actual. El botón lateral alterna entre panel ampliado, columna de iconos y oculto. Arrastra el divisor para ajustar su ancho. **Más > Vista** también permite ocultarlo.
+**Abrir** y **Crear** están en la barra lateral, junto a los archivos recientes y, cuando hay un archivo abierto, su árbol de carpetas. El botón lateral alterna entre panel ampliado, columna de iconos y oculto. Arrastra el divisor para ajustar su ancho. **Más > Vista** también permite ocultarlo.
 
 La vista predeterminada **Columnas** mantiene un directorio en cada panel vertical. Haz clic en una carpeta para abrir su panel hijo; los antecesores permanecen a la izquierda. Elegir otra carpeta sustituye solo los descendientes. Cada panel conserva su propio cursor, selección, desplazamiento, filtro y orden. Haz clic o lleva el foco al panel antes de operar sobre él. Arrastra los divisores para ajustar el ancho y desplázate horizontalmente para volver a los antecesores. La navegación deja a la vista el panel activo.
 

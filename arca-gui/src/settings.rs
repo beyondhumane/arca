@@ -70,6 +70,9 @@ pub(crate) struct Settings {
     // The archives opened lately, newest first. Paths, so that one that has
     // since been moved can be noticed and dropped rather than opened blind.
     pub(crate) recent: Vec<String>,
+    pub(crate) last_folder: Option<String>,
+    pub(crate) pinned: Vec<String>,
+    pub(crate) show_hidden: bool,
     // How wide each column is: the name first, then the ones that can be
     // turned off, in the order of `Columns::ALL`. A column keeps its width
     // while it is off, so turning one back on does not lose how it was set.
@@ -114,6 +117,9 @@ impl Default for Settings {
             page: arca_zip::pages::Page::default(),
             window: None,
             recent: Vec::new(),
+            last_folder: None,
+            pinned: Vec::new(),
+            show_hidden: false,
             widths: Settings::default_widths(),
             sidebar: SIDEBAR_WIDE.min(200.0).clamp(SIDEBAR_LEAST, SIDEBAR_MOST),
         }
@@ -182,6 +188,9 @@ impl Settings {
                 // One line each, because a path can hold anything a filename
                 // can and there is no separator left that it could not.
                 ("recent", p) if !p.is_empty() => s.recent.push(p.to_string()),
+                ("pinned", p) if !p.is_empty() => s.pinned.push(p.to_string()),
+                ("last_folder", p) if !p.is_empty() => s.last_folder = Some(p.to_string()),
+                ("show_hidden", v) => s.show_hidden = v == "yes",
                 ("window", v) => {
                     let Some(n) = v
                         .split(',')
@@ -322,6 +331,13 @@ impl Settings {
         for path in &self.recent {
             out.push_str(&format!("recent = {path}\n"));
         }
+        for path in &self.pinned {
+            out.push_str(&format!("pinned = {path}\n"));
+        }
+        if let Some(path) = &self.last_folder {
+            out.push_str(&format!("last_folder = {path}\n"));
+        }
+        out.push_str(&format!("show_hidden = {}\n", yes(self.show_hidden)));
         out
     }
 
@@ -591,5 +607,23 @@ mod tests {
              malformed line\n = value\n# comment\n",
         );
         assert_eq!(s.text(), Settings::default().text());
+    }
+
+    #[test]
+    fn disk_preferences_round_trip() {
+        let before = Settings {
+            last_folder: Some("/home/someone/Documents".into()),
+            pinned: vec!["/srv/share".into(), "/home/someone/Projects".into()],
+            show_hidden: true,
+            ..Default::default()
+        };
+        let after = Settings::parse(&before.text());
+        assert_eq!(after.last_folder, before.last_folder);
+        assert_eq!(after.pinned, before.pinned);
+        assert!(after.show_hidden);
+        let defaults = Settings::parse(&Settings::default().text());
+        assert_eq!(defaults.last_folder, None);
+        assert!(defaults.pinned.is_empty());
+        assert!(!defaults.show_hidden);
     }
 }
