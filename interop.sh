@@ -329,7 +329,7 @@ rm -rf y; mkdir y
 $ARCA extract out/cut.tar.xz -o y >/dev/null 2>&1 && ko "truncated .tar.xz extracted" || ok "truncated .tar.xz fails"
 
 echo
-if [ "${ARCA_TEST_RAR:-0}" = 1 ]; then
+if [ "${ARCA_TEST_RAR:-1}" = 1 ]; then
   echo "RAR) External fixtures -> Arca (read-only)"
   FIXTURES="$ROOT/arca-rar/tests/fixtures"
   for f in plain stored solid encrypted headers; do
@@ -351,8 +351,15 @@ if [ "${ARCA_TEST_RAR:-0}" = 1 ]; then
   "$ARCA" extract "$FIXTURES/encrypted.rar" -o rar-bad-password -p wrong >/dev/null 2>&1 &&
     ko "RAR wrong password accepted" || ok "RAR wrong password rejected"
   [ ! -e rar-bad-password ] && ok "RAR failure publishes nothing" || ko "RAR failure touched destination"
-  "$ARCA" test "$FIXTURES/volume.part1.rar" >/dev/null 2>&1 &&
-    ko "RAR volume set accepted" || ok "RAR volume set explicitly rejected"
+  for part in 1 4; do
+    rm -rf rar-out
+    "$ARCA" test "$FIXTURES/volume.part$part.rar" >/dev/null 2>&1 &&
+      "$ARCA" extract "$FIXTURES/volume.part$part.rar" -o rar-out >/dev/null 2>&1 &&
+      python3 -c 'from pathlib import Path; p=Path("rar-out"); assert (p/"first.txt").read_bytes()==b"Arca RAR fixture alpha\n"*64; assert (p/"folder/second.txt").read_bytes()==b"Arca RAR fixture beta\n"*64' &&
+      ok "RAR complete set resolved from volume $part" || ko "RAR volume $part resolution"
+  done
+  ARCA="$ARCA" python3 "$ROOT/arca-rar/tests/compare-matrix.py" &&
+    ok "RAR independent generation/volume/dictionary matrix" || ko "RAR independent matrix"
   echo
 fi
 echo "ISO) genisoimage / xorriso images -> Arca, compared with bsdtar and 7z (read-only)"

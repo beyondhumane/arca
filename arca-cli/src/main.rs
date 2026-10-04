@@ -10,6 +10,7 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+mod rar;
 mod sevenz;
 
 const BUF: usize = 256 * 1024;
@@ -30,7 +31,7 @@ struct Cli {
 enum Cmd {
     #[command(visible_alias = "c", about = "Create an archive")]
     Create {
-        #[arg(help = "Output archive (.zip, .7z, .tar, .tar.gz, .tar.xz, .xz)")]
+        #[arg(help = "Output archive (.zip, .7z, .rar, .tar, .tar.gz, .tar.xz, .xz)")]
         out: PathBuf,
         #[arg(required = true, help = "Files or directories to include")]
         inputs: Vec<PathBuf>,
@@ -38,19 +39,19 @@ enum Cmd {
               help = "Compression level")]
         level: LevelArg,
         #[arg(short, long, value_enum, default_value_t = CodecArg::Auto,
-              help = "Compressor. 'auto' uses deflate in .zip and LZMA2 in .7z")]
+              help = "Compressor. 'auto' uses deflate in .zip, LZMA2 in .7z and the RAR compressor in .rar, which accepts only auto or store")]
         codec: CodecArg,
         #[arg(
             short = 'j',
             long,
             default_value_t = 0,
-            help = "Threads to use. 0 means every core. .7z creation is sequential; .xz and .tar.xz use as many as fit in 2 GiB"
+            help = "Threads to use. 0 means every core. .7z and .rar creation is sequential; .xz and .tar.xz use as many as fit in 2 GiB"
         )]
         threads: usize,
         #[arg(
             short = 'p',
             long,
-            help = "Encrypt with AES-256. Other tools will ask for it to open the archive"
+            help = "Encrypt with AES-256 (.zip and .7z). Other tools will ask for it to open the archive"
         )]
         password: Option<String>,
         #[arg(
@@ -346,11 +347,22 @@ fn create(
     hide_names: bool,
 ) -> Result<()> {
     let format_kind = detect(out)?;
-    if !format_kind.can_write() {
+    if !format_kind.can_create() {
         return Err(format_kind.read_only());
     }
     if format_kind == Format::SevenZ {
         return sevenz::create(out, inputs, level, codec_arg, password, hide_names);
+    }
+    if format_kind == Format::Rar {
+        return rar::create(
+            out,
+            inputs,
+            level,
+            codec_arg,
+            requested_threads,
+            password,
+            hide_names,
+        );
     }
     if hide_names {
         return Err(Error::Unsupported(

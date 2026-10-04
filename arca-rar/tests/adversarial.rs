@@ -221,3 +221,58 @@ fn missing_optional_crc32_is_not_invented_as_zero() {
         b"Arca RAR fixture alpha\n".repeat(64)
     );
 }
+
+#[test]
+fn dictionary_and_preview_limits_fail_before_publication() {
+    for limit in ["dictionary", "preview"] {
+        let data = rewrite_headers(|kind, header| {
+            if kind != 2 {
+                return;
+            }
+            let mut at = 0;
+            read_vint(header, &mut at);
+            let flags = read_vint(header, &mut at);
+            if flags & 1 != 0 {
+                read_vint(header, &mut at);
+            }
+            if flags & 2 != 0 {
+                read_vint(header, &mut at);
+            }
+            let flags = read_vint(header, &mut at);
+            if flags & 1 != 0 {
+                return;
+            }
+            let size_at = at;
+            read_vint(header, &mut at);
+            if limit == "preview" {
+                header.splice(size_at..at, vint(65 * 1024 * 1024));
+                return;
+            }
+            read_vint(header, &mut at);
+            if flags & 2 != 0 {
+                at += 4;
+            }
+            if flags & 4 != 0 {
+                at += 4;
+            }
+            let start = at;
+            read_vint(header, &mut at);
+            // A valid compressed-method claim with a 512 MiB dictionary (limit: 256 MiB).
+            header.splice(start..at, vint((12 << 10) | (3 << 7)));
+        });
+        let archive = opening(&data).unwrap();
+        if limit == "preview" {
+            assert!(matches!(archive.read_entry(0, None), Err(Error::Limit(_))));
+        } else {
+            let out = tempfile::tempdir().unwrap();
+            let dest = out.path().join("out");
+            let error = archive
+                .extract(&dest, &[], None, &|_, _, _| true, &|_| {
+                    arca_rar::Conflict::Overwrite
+                })
+                .unwrap_err();
+            assert!(matches!(error, Error::Limit(_)), "{error}");
+            assert!(!dest.exists());
+        }
+    }
+}

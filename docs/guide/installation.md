@@ -92,8 +92,11 @@ cargo build --release      # binary at target/release/arca
 
 | Profile | Command | What you get |
 | --- | --- | --- |
-| codecs-native (default) | `cargo build --release` | Includes libzstd (C) for native Zstandard performance. |
-| pure Rust | `cargo build --release --no-default-features` | No C dependency; builds for any target Rust supports. |
+| Default | `cargo build --release` | Native Zstandard codecs and read-only RAR. |
+| Pure-Rust codecs with RAR | `cargo build --release --no-default-features --features rar` | No native ZIP/7z codecs; retains the RAR reader. |
+| No default features | `cargo build --release --no-default-features` | No native ZIP/7z codecs or RAR reader. |
+
+Use `--no-default-features --features codecs-native` to exclude only RAR.
 
 ### Verify your build
 

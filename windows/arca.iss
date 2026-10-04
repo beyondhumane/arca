@@ -85,6 +85,7 @@ Source: "{#BinDir}\arca-gui.exe";        DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ShellDir}\arca_shell.dll";    DestDir: "{app}"; Flags: ignoreversion restartreplace uninsrestartdelete
 Source: "AppxManifest.xml";              DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE";                    DestDir: "{app}"; Flags: ignoreversion
+Source: "..\RAR-NOTICES.txt";             DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md";                  DestDir: "{app}"; Flags: ignoreversion
 Source: "assets\*";                      DestDir: "{app}\Assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 
