@@ -2,7 +2,7 @@
 description: Levels, codecs, threads and formats for arca create, including new RAR5 archives.
 group: Using Arca
 order: 4
-keywords: create compress level codec zstd deflate store threads tar gzip rar rar5 -l -c -j
+keywords: create compress level codec zstd deflate store threads tar gzip xz txz lzma2 rar rar5 -l -c -j
 ---
 
 # Creating archives
@@ -14,8 +14,8 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
 | `-l, --level` | store · fast · normal · best | normal | Compression level. |
-| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate in .zip, LZMA2 in .7z, the RAR compressor in .rar (auto or store only). |
-| `-j, --threads` | a number | 0 | ZIP thread limit. 0 means every core; 7z and RAR are sequential. |
+| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, the RAR compressor in .rar (auto or store only). |
+| `-j, --threads` | a number | 0 | ZIP and XZ thread limit. 0 means every core; 7z and RAR are sequential. |
 | `-p, --password` | text | none | Encrypt ZIP or 7z with AES-256. Refused for .rar. |
 | `--hide-names` | flag | off | Encrypt 7z headers too; requires a nonempty password. |
 
@@ -101,6 +101,31 @@ arca create copy.tar.gz my-files/ -l best
 ```
 
 The gzip layer honours the chosen level. TAR has nowhere to put encryption, so `-p` is refused for `.tar` and `.tar.gz`.
+
+## XZ
+
+```sh
+arca create copy.tar.xz my-files/ -l best   # .txz works too
+arca create notes.txt.xz notes.txt          # one file, no container
+```
+
+An `.xz` is a compressed stream, not an archive: it holds the bytes of exactly
+one file and no name, date or folder. Arca refuses a folder or more than one
+input for it and suggests `.tar.xz`, which puts a TAR inside the XZ stream.
+Extracting `notes.txt.xz` writes `notes.txt`; a file without the suffix gets
+`.out` appended.
+
+The levels map to xz presets: `store` is preset 0, `fast` 1, `normal` 6 and
+`best` 9. Even preset 0 compresses with LZMA2; XZ has no stored mode. Only
+`auto` and `lzma2` are accepted as codecs, and `-p` and `--hide-names` are
+refused. The output carries a CRC64 check that `xz` and `tar -J` verify.
+
+`-j` sets how many blocks are compressed at the same time. Each worker needs
+the memory of its preset, so Arca uses as many as fit in 2 GiB (one at `best`,
+up to 14 at `normal`) and prints the number actually used. With more than one worker the
+stream is split into independent blocks, which costs a little ratio. Reading
+is a single sequential stream. Creation writes a temporary file beside the
+output and renames it only on success.
 
 ## What gets stored
 

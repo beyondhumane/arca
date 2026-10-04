@@ -7,7 +7,7 @@ keywords: cli command line options flags reference help exit status
 
 # CLI reference
 
-ZIP, 7z, TAR and [RAR](rar.md) are enabled by default. RAR supports `list`,
+ZIP, 7z, TAR (plain, gzip and XZ), standalone XZ and [RAR](rar.md) are enabled by default. RAR supports `list`,
 `test` and `extract`, including `-p` for encrypted data or headers, and
 `create` for new single-volume RAR5 archives. Modifying an existing RAR or
 CBR, and creating CBR, is always rejected.
@@ -38,11 +38,11 @@ Create an archive. The format is taken from the extension of the output file.
 
 | Argument / option | Default | Description |
 | --- | --- | --- |
-| `<OUT>` | required | Output archive: .zip, .7z, .rar, .tar, .tar.gz (or .tgz). |
+| `<OUT>` | required | Output archive: .zip, .7z, .rar, .tar, .tar.gz (or .tgz), .tar.xz (or .txz), .xz. An .xz takes exactly one file. |
 | `<INPUTS>...` | required | Files or directories to include. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
-| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto uses Deflate in .zip, LZMA2 in .7z and the RAR compressor in .rar (auto or store only). |
-| `-j, --threads <N>` | 0 | ZIP threads; 0 means every core. 7z and RAR creation is sequential; .rar refuses N above 1. |
+| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto uses Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz and the RAR compressor in .rar (auto or store only). |
+| `-j, --threads <N>` | 0 | ZIP and XZ threads; 0 means every core. XZ uses as many as fit in 2 GiB. 7z and RAR creation is sequential; .rar refuses N above 1. |
 | `-p, --password <PASSWORD>` | none | Encrypt with AES-256 (.zip, .7z). Other tools will ask for it to open the archive. Refused for .rar. |
 | `--hide-names` | off | 7z only: encrypt headers; requires a nonempty password. |
 

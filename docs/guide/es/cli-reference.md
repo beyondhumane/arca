@@ -7,7 +7,7 @@ keywords: cli línea de comandos opciones flags referencia ayuda estado de salid
 
 # Referencia de la CLI
 
-ZIP, 7z, TAR y [RAR](rar.md) están activos por defecto. RAR permite `list`,
+ZIP, 7z, TAR (sin comprimir, gzip y XZ), XZ suelto y [RAR](rar.md) están activos por defecto. RAR permite `list`,
 `test` y `extract`, con `-p` para datos o cabeceras cifradas, y `create` para
 nuevos archivos RAR5 de un solo volumen. Modificar un RAR o CBR existente, y
 crear CBR, siempre se rechaza.
@@ -38,11 +38,11 @@ Crea un archivo. El formato se toma de la extensión del archivo de salida.
 
 | Argumento / opción | Por defecto | Descripción |
 | --- | --- | --- |
-| `<OUT>` | obligatorio | Archivo de salida: .zip, .7z, .rar, .tar, .tar.gz (o .tgz). |
+| `<OUT>` | obligatorio | Archivo de salida: .zip, .7z, .rar, .tar, .tar.gz (o .tgz), .tar.xz (o .txz), .xz. Un .xz admite un único fichero. |
 | `<INPUTS>...` | obligatorio | Archivos o directorios a incluir. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
-| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto usa Deflate en .zip, LZMA2 en .7z y el compresor RAR en .rar (solo auto o store). |
-| `-j, --threads <N>` | 0 | Hilos ZIP; 0 usa todos los núcleos. La creación 7z y RAR es secuencial; .rar rechaza N mayor que 1. |
+| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto usa Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz y el compresor RAR en .rar (solo auto o store). |
+| `-j, --threads <N>` | 0 | Hilos ZIP y XZ; 0 usa todos los núcleos. XZ usa tantos como quepan en 2 GiB. La creación 7z y RAR es secuencial; .rar rechaza N mayor que 1. |
 | `-p, --password <PASSWORD>` | ninguna | Cifra con AES-256 (.zip, .7z). Otras herramientas la pedirán para abrir el archivo. Se rechaza en .rar. |
 | `--hide-names` | desactivado | Solo 7z: cifra cabeceras; exige una contraseña no vacía. |
 

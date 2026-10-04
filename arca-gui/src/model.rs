@@ -14,7 +14,7 @@ pub enum ThemePreference {
 pub(crate) use arca_core::{Container, Format};
 
 pub(crate) fn detect(p: &Path) -> Option<Format> {
-    Format::detect(p)
+    arca_xz::identify(p)
 }
 
 pub(crate) fn container_of(p: &Path) -> Option<Container> {

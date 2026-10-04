@@ -7,6 +7,8 @@ pub enum Format {
     SevenZ,
     Tar,
     TarGz,
+    TarXz,
+    Xz,
     Rar,
     Cbr,
     Apk,
@@ -31,6 +33,9 @@ pub enum Container {
     SevenZ,
     Tar,
     TarGz,
+    TarXz,
+    /// A single compressed stream. Its one entry is named after the file.
+    Xz,
     Rar,
     Iso,
 }
@@ -38,21 +43,39 @@ pub enum Container {
 impl Format {
     /// Formats whose existing archives Arca can rewrite: add, remove, rename
     /// and password changes. RAR is not one of them.
-    pub const WRITABLE: [Self; 4] = [Self::Zip, Self::Tar, Self::TarGz, Self::SevenZ];
+    pub const WRITABLE: [Self; 6] = [
+        Self::Zip,
+        Self::Tar,
+        Self::TarGz,
+        Self::TarXz,
+        Self::SevenZ,
+        Self::Xz,
+    ];
 
     /// Formats a new archive can be created in. A superset of [`WRITABLE`]:
     /// RAR can be created from scratch but never modified afterwards, and
     /// CBR stays a reading format even though it shares the RAR container.
     /// Like the rest of this type it describes the format, not the build;
     /// clients that compile without the `rar` feature filter RAR themselves.
-    pub const CREATABLE: [Self; 5] = [Self::Zip, Self::Tar, Self::TarGz, Self::SevenZ, Self::Rar];
+    pub const CREATABLE: [Self; 7] = [
+        Self::Zip,
+        Self::Tar,
+        Self::TarGz,
+        Self::TarXz,
+        Self::SevenZ,
+        Self::Xz,
+        Self::Rar,
+    ];
 
     /// Every recognized name suffix, longest first where one ends another.
-    pub const SUFFIXES: [(&'static str, Self); 19] = [
+    pub const SUFFIXES: [(&'static str, Self); 22] = [
         ("zip", Self::Zip),
         ("7z", Self::SevenZ),
         ("tar.gz", Self::TarGz),
         ("tgz", Self::TarGz),
+        ("tar.xz", Self::TarXz),
+        ("txz", Self::TarXz),
+        ("xz", Self::Xz),
         ("tar", Self::Tar),
         ("rar", Self::Rar),
         ("cbr", Self::Cbr),
@@ -83,6 +106,8 @@ impl Format {
             Self::SevenZ => Container::SevenZ,
             Self::Tar => Container::Tar,
             Self::TarGz => Container::TarGz,
+            Self::TarXz => Container::TarXz,
+            Self::Xz => Container::Xz,
             Self::Rar | Self::Cbr => Container::Rar,
             Self::Iso => Container::Iso,
             Self::Zip
@@ -113,6 +138,8 @@ impl Format {
             Self::SevenZ => "7z",
             Self::Tar => "TAR",
             Self::TarGz => "TAR.GZ",
+            Self::TarXz => "TAR.XZ",
+            Self::Xz => "XZ",
             Self::Rar => "RAR",
             Self::Cbr => "CBR",
             Self::Apk => "APK",
@@ -287,6 +314,28 @@ mod tests {
         }
         assert_eq!(Format::Zip.container(), Container::Zip);
         assert!(Format::Zip.can_write());
+    }
+
+    #[test]
+    fn xz_suffixes_are_writable_and_tar_xz_wins_over_xz() {
+        for (name, format, stem) in [
+            ("backup.tar.xz", Format::TarXz, "backup"),
+            ("backup.TAR.XZ", Format::TarXz, "backup"),
+            ("backup.txz", Format::TarXz, "backup"),
+            ("backup.TxZ", Format::TarXz, "backup"),
+            ("notes.txt.xz", Format::Xz, "notes.txt"),
+            ("NOTES.XZ", Format::Xz, "NOTES"),
+        ] {
+            assert_eq!(Format::split_name(name), Some((stem, format)));
+            assert!(format.can_write());
+        }
+        assert_eq!(Format::TarXz.extension(), "tar.xz");
+        assert_eq!(Format::Xz.extension(), "xz");
+        assert_eq!(Format::TarXz.label(), "TAR.XZ");
+        assert_eq!(Format::Xz.label(), "XZ");
+        assert_eq!(Format::TarXz.container(), Container::TarXz);
+        assert_eq!(Format::Xz.container(), Container::Xz);
+        assert_eq!(Format::split_name("archive.lzma"), None);
     }
 
     #[test]

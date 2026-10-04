@@ -12,6 +12,8 @@ mod rar_tests;
 #[cfg(test)]
 mod sevenz_tests;
 mod state;
+#[cfg(test)]
+mod xz_tests;
 pub(crate) use actions::*;
 pub(crate) use panes::{BrowserState, DirectoryPane};
 pub(crate) use preview::{PreviewState, PreviewStatus};
@@ -423,6 +425,22 @@ impl AppController {
     }
 
     pub(crate) fn set_create_format(&mut self, format: Format) {
+        let suggested = |format| {
+            (!self.state.pending_inputs.is_empty()).then(|| {
+                quick_output(&self.state.pending_inputs, format)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            })
+        };
+        if let (Some(old), Some(new)) = (suggested(self.state.format), suggested(format)) {
+            if old == self.state.output_name {
+                self.state.output_name = new;
+                self.state.format = format;
+                self.state.hide_names &= format == Format::SevenZ;
+                return;
+            }
+        }
         if !self.state.output_name.is_empty() {
             let path = Path::new(&self.state.output_name);
             let stem = archive_stem(path);

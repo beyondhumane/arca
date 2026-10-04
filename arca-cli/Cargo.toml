@@ -17,6 +17,7 @@ arca-iso.workspace = true
 arca-core.workspace = true
 arca-zip.workspace = true
 arca-tar.workspace = true
+arca-xz.workspace = true
 arca-7z.workspace = true
 flate2.workspace = true
 clap.workspace = true

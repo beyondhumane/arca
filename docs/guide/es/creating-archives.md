@@ -2,7 +2,7 @@
 description: Niveles, códecs, hilos y formatos para arca create, incluidos los nuevos archivos RAR5.
 group: Uso de Arca
 order: 4
-keywords: crear comprimir nivel códec zstd deflate store hilos tar gzip rar rar5 -l -c -j create compress level codec zstd deflate store threads tar gzip rar rar5 -l -c -j
+keywords: crear comprimir nivel códec zstd deflate store hilos tar gzip xz txz lzma2 rar rar5 -l -c -j create compress level codec zstd deflate store threads tar gzip xz txz lzma2 rar rar5 -l -c -j
 ---
 
 # Crear archivos
@@ -14,8 +14,8 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | Opción | Valores | Por defecto | Descripción |
 | --- | --- | --- | --- |
 | `-l, --level` | store · fast · normal · best | normal | Nivel de compresión. |
-| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate en .zip, LZMA2 en .7z, el compresor RAR en .rar (solo auto o store). |
-| `-j, --threads` | un número | 0 | Límite de hilos ZIP. 0 usa todos los núcleos; 7z y RAR son secuenciales. |
+| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz, el compresor RAR en .rar (solo auto o store). |
+| `-j, --threads` | un número | 0 | Límite de hilos ZIP y XZ. 0 usa todos los núcleos; 7z y RAR son secuenciales. |
 | `-p, --password` | texto | ninguna | Cifra ZIP o 7z con AES-256. Se rechaza en .rar. |
 | `--hide-names` | indicador | desactivado | Cifra también las cabeceras 7z; exige una contraseña no vacía. |
 
@@ -102,6 +102,32 @@ arca create copy.tar.gz my-files/ -l best
 ```
 
 La capa gzip respeta el nivel elegido. TAR no tiene dónde poner el cifrado, así que `-p` se rechaza para `.tar` y `.tar.gz`.
+
+## XZ
+
+```sh
+arca create copy.tar.xz my-files/ -l best   # también vale .txz
+arca create notes.txt.xz notes.txt          # un fichero, sin contenedor
+```
+
+Un `.xz` es un flujo comprimido, no un archivo: guarda los bytes de un único
+fichero, sin nombre, fecha ni carpeta. Arca rechaza una carpeta o más de una
+entrada y sugiere `.tar.xz`, que mete un TAR dentro del flujo XZ. Al extraer
+`notes.txt.xz` se escribe `notes.txt`; si el fichero no lleva el sufijo, se le
+añade `.out`.
+
+Los niveles corresponden a presets de xz: `store` es el preset 0, `fast` el 1,
+`normal` el 6 y `best` el 9. Incluso el preset 0 comprime con LZMA2, porque XZ
+no tiene modo sin compresión. Como códec solo se admiten `auto` y `lzma2`, y
+`-p` y `--hide-names` se rechazan. La salida lleva una comprobación CRC64 que
+`xz` y `tar -J` verifican.
+
+`-j` fija cuántos bloques se comprimen a la vez. Cada hilo necesita la memoria
+de su preset, así que Arca usa tantos como quepan en 2 GiB (uno con `best`,
+hasta 14 con `normal`) e indica cuántos ha usado. Con más de uno, el flujo se divide en bloques
+independientes, lo que cuesta un poco de ratio. La lectura es un único flujo
+secuencial. La creación escribe un temporal junto al destino y solo lo renombra
+si termina bien.
 
 ## Qué se guarda
 

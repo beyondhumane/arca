@@ -23,6 +23,9 @@ y limpieza. El resumen final da el número según la compilación y las herramie
 - Extraer 7z con contraseña incorrecta deja el destino ausente o intacto.
 - Una entrada con `../../` se rechaza en lugar de escribir fuera del destino.
 - Los fixtures del lector RAR/CBR, también con UnRAR oficial cuando `UNRAR` apunta a él (`ARCA_TEST_RAR=0` los omite).
+- `.tar.xz` en los cuatro niveles y con uno o cuatro hilos se abre con `xz -t` y `tar -J`, y Arca lee lo que escribe `tar -cJf`, también con el nombre `.txz`.
+- Un `.xz` suelto va y vuelve con `xz`, con todos los tipos de `--check` y con flujos concatenados. Dos entradas se rechazan.
+- Un TAR dentro de un fichero llamado `.xz` se lista como TAR.XZ; un `.xz` dañado falla sin publicar nada, y un `.tar.xz` truncado falla.
 
 ```sh
 bash interop.sh
@@ -58,6 +61,8 @@ de CRC cifrado también puede indicar corrupción.
 ```sh
 cargo test -p arca-7z
 cargo test -p arca-cli --test sevenz
+cargo test -p arca-xz
+cargo test -p arca-cli --test xz
 cargo test -p arca-7z --test interop -- --ignored
 cargo test -p arca-gui -- --ignored
 ```

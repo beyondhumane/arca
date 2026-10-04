@@ -70,6 +70,15 @@ decodificador por bloque y pasada, sin reabrirlo por cada entrada. La vista prev
 abrir, Copiar y Extraer usan la misma ruta de lectura validada. Consulta
 [Cifrado](encryption.md) y los [límites de recursos](architecture.md#7z-boundaries).
 
+## XZ y TAR.XZ
+
+El diálogo de crear ofrece TAR.XZ y XZ con LZMA2 y los niveles de siempre. XZ
+admite un único fichero; con una carpeta o varios ficheros el diálogo pide
+TAR.XZ. Un `.xz` suelto se abre como una lista con una entrada que se llama como
+el archivo sin `.xz`. Probar, la vista previa, Copiar y Extraer leen el flujo
+hasta el final y lo comprueban, y una creación detenida o fallida no deja un
+archivo a medias.
+
 ## Límites por formato
 
 Añadir, borrar, renombrar y cambiar contraseñas en archivos existentes sigue

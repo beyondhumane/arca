@@ -22,9 +22,13 @@ RAR5 archives can be created at four levels. Existing RAR/CBR archives remain
 read-only: mutation, recovery/repair, encrypted, solid or multivolume output and
 CBR creation are not supported.
 
+Standalone `.xz` and `.tar.xz`/`.txz` can be created, listed, tested and
+extracted in CLI and desktop. See
+[issue #18](https://github.com/beyondhumane/arca/issues/18) and
+[Creating archives](creating-archives.md#xz).
+
 ## Not yet
 
-- **Standalone xz:** LZMA2 is supported inside 7z.
 - **UDF:** ISO images are read through ISO 9660, so files stored only in UDF (such as `install.wim` on Windows media) are not listed yet.
 - **Symbolic links:** skipped for ZIP/TAR creation, rejected for 7z.
 - **GNU tar long names.**

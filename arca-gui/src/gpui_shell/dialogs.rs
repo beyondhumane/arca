@@ -484,6 +484,10 @@ pub(super) fn build_dialog(
             let is_sevenz = shell.read(cx).controller.state.format == super::Format::SevenZ;
             let is_rar = shell.read(cx).controller.state.format == super::Format::Rar;
             let policy_note = shell.read(cx).controller.create_policy_note();
+            let is_lzma2 = matches!(
+                shell.read(cx).controller.state.format,
+                super::Format::SevenZ | super::Format::TarXz | super::Format::Xz
+            );
             let count = shell.read(cx).controller.state.pending_inputs.len();
             let output_name = shell.read(cx).output_name.clone();
             let add_password = shell.read(cx).add_password.clone();
@@ -519,7 +523,7 @@ pub(super) fn build_dialog(
                         ))
                         .child(labelled(
                             s.compressor,
-                            if is_sevenz {
+                            if is_lzma2 {
                                 div().child("LZMA2").into_any_element()
                             } else if is_rar {
                                 div().child("RAR").into_any_element()
@@ -650,6 +654,10 @@ pub(super) fn build_dialog(
             let lang = shell.read(cx).controller.state.settings.lang;
             let theme = shell.read(cx).controller.state.settings.theme;
             let is_zip = shell.read(cx).controller.state.format == super::Format::Zip;
+            let is_lzma2 = matches!(
+                shell.read(cx).controller.state.format,
+                super::Format::SevenZ | super::Format::TarXz | super::Format::Xz
+            );
             let page = shell.read(cx).controller.state.settings.page;
             let pages = arca_zip::pages::Page::ALL
                 .iter()
@@ -768,10 +776,12 @@ pub(super) fn build_dialog(
                         ))
                         .child(row(
                             s.compressor,
-                            match shell.read(cx).controller.state.format {
-                                super::Format::SevenZ => div().child("LZMA2").into_any_element(),
-                                super::Format::Rar => div().child("RAR").into_any_element(),
-                                _ => codec_pick("settings-codec", shell, &weak, is_zip, cx),
+                            if is_lzma2 {
+                                div().child("LZMA2").into_any_element()
+                            } else if shell.read(cx).controller.state.format == super::Format::Rar {
+                                div().child("RAR").into_any_element()
+                            } else {
+                                codec_pick("settings-codec", shell, &weak, is_zip, cx)
                             },
                         ))
                         .child(row(s.level, level_pick("settings-level", shell, &weak, cx)))

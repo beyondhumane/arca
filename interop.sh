@@ -9,7 +9,7 @@ if [ ! -x "$ARCA" ]; then
   echo "binary not found at $ARCA (build it with: cargo build --release)" >&2
   exit 1
 fi
-for tool in zip unzip tar 7z python3; do
+for tool in zip unzip tar 7z xz python3; do
   command -v "$tool" >/dev/null 2>&1 || { echo "required tool not found: $tool" >&2; exit 1; }
 done
 W=$(mktemp -d "${TMPDIR:-/tmp}/arca-interop.XXXXXX") || exit 1
@@ -277,6 +277,56 @@ if 7z a -t7z out/mixed.7z src7/first.txt src7/empty >/dev/null 2>&1 &&
 else
   ko "could not create mixed plain/encrypted fixture"
 fi
+
+echo
+echo "I) XZ and TAR.XZ, both directions"
+for niv in store fast normal best; do
+  for j in 1 4; do
+    $ARCA create out/a-$niv-$j.tar.xz src -l $niv -j $j >/dev/null 2>&1 || { ko "arca create .tar.xz (-l $niv -j $j)"; continue; }
+    xz -tq out/a-$niv-$j.tar.xz 2>/dev/null && ok "xz -t accepts Arca's .tar.xz (-l $niv -j $j)" || ko "xz -t rejects Arca's .tar.xz (-l $niv -j $j)"
+    rm -rf x; mkdir x; tar xJf out/a-$niv-$j.tar.xz -C x 2>/dev/null
+    H=$(cd x/src 2>/dev/null && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+    [ "$H" = "$REF" ] && ok "tar -J returns identical bytes (-l $niv -j $j)" || ko "tar -J returns different data (-l $niv -j $j)"
+  done
+done
+$ARCA create out/one.bin.xz src/binary.bin -j 4 >/dev/null 2>&1
+[ "$(xz -dc out/one.bin.xz 2>/dev/null | sha256sum)" = "$(sha256sum < src/binary.bin)" ] && ok "xz -d reads Arca's standalone .xz" || ko "xz -d fails on Arca's standalone .xz"
+$ARCA create out/two.xz src/text.txt src/binary.bin >/dev/null 2>&1 && ko "a standalone .xz accepted two inputs" || ok "a standalone .xz refuses two inputs"
+[ -e out/two.xz ] && ko "the refused .xz was left on disk" || ok "the refused .xz left nothing behind"
+
+tar cJf out/t.tar.xz src
+cp out/t.tar.xz out/t.txz
+for f in t.tar.xz t.txz; do
+  rm -rf y; mkdir y
+  $ARCA test out/$f >/dev/null 2>&1 || ko "Arca tests tar's $f"
+  $ARCA extract out/$f -o y >/dev/null 2>&1 || { ko "arca extract $f"; continue; }
+  H=$(cd y/src && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+  [ "$H" = "$REF" ] && ok "Arca extracts tar's $f without losing a byte" || ko "Arca mis-extracts $f"
+done
+for check in none crc32 crc64 sha256; do
+  xz -kc -T2 --check=$check src/text.txt > out/text-$check.txt.xz
+  rm -rf y; mkdir y
+  if $ARCA test out/text-$check.txt.xz >/dev/null 2>&1 && $ARCA extract out/text-$check.txt.xz -o y >/dev/null 2>&1 && cmp -s y/text-$check.txt src/text.txt; then
+    ok "Arca reads xz's standalone .xz (--check=$check)"
+  else
+    ko "Arca fails on xz's standalone .xz (--check=$check)"
+  fi
+done
+xz -kc src/text.txt > out/cat.xz; xz -kc src/binary.bin >> out/cat.xz
+rm -rf y; mkdir y
+$ARCA extract out/cat.xz -o y >/dev/null 2>&1 && [ "$(sha256sum < y/cat)" = "$(cat src/text.txt src/binary.bin | sha256sum)" ] && ok "Arca joins concatenated .xz streams like xz -d" || ko "Arca mishandles concatenated .xz streams"
+cp out/t.tar.xz out/renamed.xz
+$ARCA list out/renamed.xz 2>/dev/null | grep -q 'src/a/b/c/deep.dat' && ok "a TAR inside a .xz is listed as TAR.XZ" || ko "a TAR inside a .xz was not recognised"
+
+cp out/one.bin.xz out/bad.xz
+printf '\xDE\xAD\xBE\xEF' | dd of=out/bad.xz bs=1 seek=4000 conv=notrunc 2>/dev/null
+rm -rf y; mkdir y
+$ARCA test out/bad.xz >/dev/null 2>&1 && ko "corrupt .xz not detected" || ok "corrupt .xz detected, exits with an error"
+$ARCA extract out/bad.xz -o y >/dev/null 2>&1 && ko "corrupt .xz extracted" || ok "corrupt .xz extraction fails"
+[ -z "$(ls -A y)" ] && ok "a corrupt .xz publishes nothing" || ko "a corrupt .xz left a partial file"
+head -c 100000 out/a-normal-1.tar.xz > out/cut.tar.xz
+rm -rf y; mkdir y
+$ARCA extract out/cut.tar.xz -o y >/dev/null 2>&1 && ko "truncated .tar.xz extracted" || ok "truncated .tar.xz fails"
 
 echo
 if [ "${ARCA_TEST_RAR:-1}" = 1 ]; then

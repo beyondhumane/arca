@@ -23,9 +23,13 @@ niveles. Los RAR/CBR existentes siguen siendo de solo lectura: no se admite
 modificación, reparación ni recuperación, ni salida cifrada, sólida o
 multivolumen, ni creación de CBR.
 
+`.xz` suelto y `.tar.xz`/`.txz` se pueden crear, listar, probar y extraer en CLI
+y escritorio. Consulta el
+[issue #18](https://github.com/beyondhumane/arca/issues/18) y
+[Crear archivos](creating-archives.md#xz).
+
 ## Todavía no
 
-- **xz independiente:** LZMA2 sí se admite dentro de 7z.
 - **UDF:** las imágenes ISO se leen por ISO 9660, así que los ficheros que solo están en UDF (como `install.wim` en los medios de Windows) todavía no aparecen.
 - **Enlaces simbólicos:** se omiten al crear ZIP/TAR y se rechazan en 7z.
 - **Nombres largos de GNU tar.**
