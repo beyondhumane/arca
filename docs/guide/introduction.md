@@ -7,7 +7,7 @@ keywords: overview what why status about
 
 # Introduction
 
-Arca is a cross-platform archiver written in Rust. It creates and extracts ZIP and TAR archives, compresses with Deflate or Zstandard across every core of your machine, and encrypts with AES-256. It runs as a single command-line binary, a native desktop window, or the Windows Explorer context menu.
+Arca is a cross-platform archiver written in Rust. It creates and extracts ZIP, 7z and TAR archives, compresses with Deflate or Zstandard across every core of your machine, and encrypts with AES-256. It runs as a single command-line binary, a native desktop window, or the Windows Explorer context menu.
 
 ## Why another archiver?
 
@@ -17,17 +17,17 @@ It is also fast. On the machine it was measured on, Arca with Zstandard compress
 
 ## At a glance
 
-- **Formats:** ZIP with Zip64 (store, Deflate over zlib-rs, Zstandard, AES-256), ustar TAR with checksum verification, and `.tar.gz`.
+- **Formats:** ZIP with Zip64 (Store/Deflate/Zstandard), 7z (Store/LZMA2 creation and solid reading), ustar TAR, and `.tar.gz`.
 - **Speed:** multi-threaded compression, parallel extraction of `.zip`, and a sub-millisecond cold start.
 - **Safety:** unsafe-free parsers, bounded header reads and a Zip Slip defence on every entry name.
-- **Encryption:** WinZip AE-2 AES-256, interoperable with 7-Zip, WinRAR and NanaZip.
+- **Encryption:** ZIP WinZip AE-2; 7z AES-256 with optional encrypted headers. See [integrity limits](encryption.md).
 - **Interfaces:** the `arca` command line, the `arca-gui` window and a Windows 11 Explorer menu.
 - **License:** Apache-2.0, free for personal and commercial use.
 
 ## Project status
 
 > [!NOTE]
-> Arca covers phase F01 and part of F03 of its design (the core, ZIP and TAR, Zstandard, multi-threaded compression and a command line), plus AES-256 encryption, the desktop window and Windows Explorer integration. The [roadmap](roadmap.md) lists what isn’t there yet.
+> Arca covers phase F01 and part of F03 of its design (the core, ZIP and TAR, Zstandard, multi-threaded compression and a command line), plus 7z with encrypted headers, AES-256 encryption, the desktop window and Windows Explorer integration. The [roadmap](roadmap.md) lists what isn’t there yet.
 
 ## Next steps
 

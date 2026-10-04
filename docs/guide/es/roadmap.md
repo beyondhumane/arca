@@ -9,15 +9,26 @@ keywords: hoja de ruta futuro 7z lzma xz sólido enlaces simbólicos planificado
 
 Lo que Arca todavía no hace y, donde importa, por qué.
 
+## Disponible
+
+7z permite listar y extraer (incluidos sólidos y cabeceras cifradas), crear con
+Store/LZMA2, contraseñas y nombres ocultos en CLI y escritorio. Consulta el
+[issue #2](https://github.com/beyondhumane/arca/issues/2) y el
+[diseño aceptado](https://github.com/beyondhumane/arca/blob/main/docs/plans/7z-format.md).
+
 ## Todavía no
 
-- **El formato 7z.**
-- **xz / LZMA2.**
-- **Enlaces simbólicos:** hoy se omiten al crear.
+La [lectura RAR/CBR](../rar.md) es experimental y se activa con `--features rar`.
+La activación estable, la revisión de procedencia y los archivos multivolumen
+siguen pendientes. No se admite crear ni modificar RAR.
+
+- **xz independiente:** LZMA2 sí se admite dentro de 7z.
+- **Enlaces simbólicos:** se omiten al crear ZIP/TAR y se rechazan en 7z.
 - **Nombres largos de GNU tar.**
-- **Archivos sólidos:** comprimir cada archivo como un solo flujo, que es de donde sale la mayor ganancia de ratio.
+- **Crear 7z sólidos:** se leen los existentes, pero se crean bloques independientes.
+- **Cambiar contraseñas y modificar 7z:** añadir, borrar y renombrar puede exigir reescribir bloques sólidos y queda fuera del alcance.
 - **Integración de escritorio en Linux y macOS:** el menú del Explorador es solo para Windows por ahora.
-- **Añadir a un archivo existente:** el requisito previo para <kbd>Ctrl+V</kbd> en la ventana.
+- **Modificar fuera de ZIP:** ZIP ya se edita en la ventana; 7z solo se crea y se lee.
 - **Un formato nativo:** momento en el que Zstandard pasa a ser el códec por defecto.
 
 > [!TIP]

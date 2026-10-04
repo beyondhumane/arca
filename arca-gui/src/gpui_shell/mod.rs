@@ -947,9 +947,9 @@ impl GpuiShell {
                         .add_filter(
                             "Archives",
                             if cfg!(feature = "rar") {
-                                &["zip", "tar", "gz", "tgz", "rar", "cbr"][..]
+                                &["zip", "7z", "tar", "gz", "tgz", "rar", "cbr"][..]
                             } else {
-                                &["zip", "tar", "gz", "tgz"][..]
+                                &["zip", "7z", "tar", "gz", "tgz"][..]
                             },
                         )
                         .pick_file(),
@@ -1523,29 +1523,11 @@ impl GpuiShell {
     }
 
     fn start_add(&mut self, cx: &mut Context<Self>) {
-        let Some(first) = self.controller.state.pending_inputs.first() else {
+        let Some(job) = self.controller.compression_job() else {
             return;
         };
         self.dialog_return_focus = Some(self.add_start_focus.clone());
-        let dir = first.parent().map(PathBuf::from).unwrap_or_default();
-        let name = {
-            let name = self.controller.state.output_name.trim();
-            if name.is_empty() {
-                format!("archive.{}", self.controller.state.format.extension())
-            } else {
-                name.to_string()
-            }
-        };
-        self.controller.dispatch(AppAction::Run(Job::Compress {
-            out: dir.join(name),
-            inputs: self.controller.state.pending_inputs.clone(),
-            format: self.controller.state.format,
-            codec: self.controller.state.codec,
-            level: self.controller.state.level,
-            password: (self.controller.state.format == super::Format::Zip
-                && !self.controller.state.add_password.is_empty())
-            .then(|| self.controller.state.add_password.clone()),
-        }));
+        self.controller.dispatch(AppAction::Run(job));
         cx.notify();
     }
 
@@ -1589,8 +1571,8 @@ impl GpuiShell {
                 if let Some(archive) = self.controller.state.archive.clone() {
                     self.controller.dispatch(AppAction::Run(Job::Test {
                         archive,
+                        password: self.controller.state.archive_password.clone(),
                         only: (!names.is_empty()).then(|| names.into_iter().collect()),
-                        password: None,
                     }));
                 }
             }
@@ -1954,8 +1936,8 @@ impl GpuiShell {
                 if let Some(archive) = archive {
                     self.controller.dispatch(AppAction::Run(Job::Test {
                         archive,
+                        password: self.controller.state.archive_password.clone(),
                         only: None,
-                        password: None,
                     }));
                 }
             }
@@ -2690,7 +2672,10 @@ impl Render for GpuiShell {
                 input.set_value(output_value.clone(), window, cx);
             }
         });
-        let zip = self.controller.state.format == super::Format::Zip;
+        let zip = matches!(
+            self.controller.state.format,
+            super::Format::Zip | super::Format::SevenZ
+        );
         self.add_password.update(cx, |input, cx| {
             input.set_placeholder(s.password_optional, window, cx);
             input.set_disabled(!(matches!(modal, Some(ModalKind::Add)) && zip), cx);
@@ -2886,8 +2871,8 @@ impl Render for GpuiShell {
             if let Some(archive) = this.controller.state.archive.clone() {
                 this.controller.dispatch(AppAction::Run(Job::Test {
                     archive,
+                    password: this.controller.state.archive_password.clone(),
                     only: (!names.is_empty()).then(|| names.into_iter().collect()),
-                    password: None,
                 }));
             }
             cx.notify();
@@ -2942,8 +2927,12 @@ impl Render for GpuiShell {
                                                 this.controller.dispatch(AppAction::Run(
                                                     Job::Test {
                                                         archive,
+                                                        password: this
+                                                            .controller
+                                                            .state
+                                                            .archive_password
+                                                            .clone(),
                                                         only: None,
-                                                        password: None,
                                                     },
                                                 ));
                                             }
@@ -3554,7 +3543,12 @@ impl Render for GpuiShell {
                                 app.stop_active_drag(window);
                                 dragging.update(app, |shell, cx| {
                                     shell.carrying = false;
-                                    shell.controller.drag_out();
+                                    if shell.controller.state.format == super::Format::SevenZ {
+                                        shell.controller.state.notice =
+                                            shell.controller.s().sevenz_copy.to_string();
+                                    } else {
+                                        shell.controller.drag_out();
+                                    }
                                     cx.notify();
                                 });
                             }
@@ -4192,7 +4186,7 @@ fn format_pick(
         shell.read(cx).controller.state.format,
         true,
         weak.clone(),
-        |this, format| this.controller.state.format = format,
+        |this, format| this.controller.set_create_format(format),
     )
 }
 
@@ -4520,12 +4514,7 @@ fn build_dialog(
             );
             let opening = matches!(
                 shell.read(cx).controller.state.waiting_on_password,
-                Some(
-                    Pending::Extract(_)
-                        | Pending::OpenArchive
-                        | Pending::ListArchive(_)
-                        | Pending::TestArchive(_)
-                )
+                Some(Pending::Extract(_) | Pending::OpenArchive | Pending::Read(_))
             );
             // Only worth offering where there is a password to take off.
             let removable = setting
@@ -4567,7 +4556,11 @@ fn build_dialog(
                 .child(DialogDescription::new().child(if setting {
                     s.new_password
                 } else if shell.read(cx).controller.state.password_wrong {
-                    s.password_wrong
+                    if shell.read(cx).controller.state.notice == s.password_or_corrupt {
+                        s.password_or_corrupt
+                    } else {
+                        s.password_wrong
+                    }
                 } else {
                     s.password_hint
                 }))
@@ -4612,6 +4605,7 @@ fn build_dialog(
         }
         ModalKind::Add => {
             let is_zip = shell.read(cx).controller.state.format == super::Format::Zip;
+            let is_sevenz = shell.read(cx).controller.state.format == super::Format::SevenZ;
             let count = shell.read(cx).controller.state.pending_inputs.len();
             let output_name = shell.read(cx).output_name.clone();
             let add_password = shell.read(cx).add_password.clone();
@@ -4647,12 +4641,31 @@ fn build_dialog(
                         ))
                         .child(labelled(
                             s.compressor,
-                            codec_pick("add-codec", shell, &weak, is_zip, cx),
+                            if is_sevenz {
+                                div().child("LZMA2").into_any_element()
+                            } else {
+                                codec_pick("add-codec", shell, &weak, is_zip, cx)
+                            },
                         ))
                         .child(labelled(s.level, level_pick("add-level", shell, &weak, cx))),
                 );
-            if is_zip {
+            if is_zip || is_sevenz {
                 body = body.child(Input::new(&add_password).mask_toggle());
+            }
+            if is_sevenz {
+                let toggle = weak.clone();
+                body = body.child(
+                    Switch::new("add-hide-names")
+                        .label(s.hide_names)
+                        .checked(shell.read(cx).controller.state.hide_names)
+                        .on_click(move |_, _, cx| {
+                            let _ = toggle.update(cx, |this, cx| {
+                                this.controller.state.hide_names =
+                                    !this.controller.state.hide_names;
+                                cx.notify();
+                            });
+                        }),
+                );
             }
             // One button with two entries under it, because Windows has two
             // dialogs: one picks files, the other picks folders, and neither
