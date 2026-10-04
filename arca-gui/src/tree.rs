@@ -24,7 +24,13 @@ pub fn kind_of(name: &str, is_dir: bool) -> Kind {
         }
         "txt" | "md" | "log" | "csv" | "tsv" | "json" | "xml" | "yml" | "yaml" | "toml" | "ini"
         | "cfg" | "conf" | "rs" | "py" | "js" | "ts" | "html" | "css" | "sh" | "ps1" => Kind::Text,
-        "zip" | "tar" | "gz" | "tgz" | "7z" | "rar" | "xz" | "bz2" | "zst" => Kind::Archive,
+        "7z" | "gz" | "xz" | "bz2" | "zst" => Kind::Archive,
+        _ if arca_core::Format::SUFFIXES
+            .iter()
+            .any(|(suffix, _)| *suffix == ext) =>
+        {
+            Kind::Archive
+        }
         "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" => Kind::Audio,
         "mp4" | "mkv" | "avi" | "mov" | "webm" | "wmv" => Kind::Video,
         _ => Kind::Other,
@@ -390,6 +396,8 @@ mod tests {
         assert_eq!(kind_of("x.PNG", false), Kind::Image);
         assert_eq!(kind_of("x.txt", false), Kind::Text);
         assert_eq!(kind_of("x.zip", false), Kind::Archive);
+        assert_eq!(kind_of("x.APK", false), Kind::Archive);
+        assert_eq!(kind_of("x.tar.gz", false), Kind::Archive);
         assert_eq!(kind_of("x.mp3", false), Kind::Audio);
         assert_eq!(kind_of("x.mkv", false), Kind::Video);
         assert_eq!(kind_of("noextension", false), Kind::Other);
