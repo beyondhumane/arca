@@ -9,8 +9,8 @@ description = "Tipos comunes y lectura acotada para Arca"
 
 [dependencies]
 crc32fast.workspace = true
-cap-std = "3.4.5"
-cap-fs-ext = "3.4.5"
+cap-std = "4.0.3"
+cap-fs-ext = "4.0.3"
 
 [dev-dependencies]
 tempfile = "3"
