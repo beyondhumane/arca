@@ -5,12 +5,16 @@ mod actions;
 mod container_tests;
 #[cfg(test)]
 mod iso_tests;
+mod panes;
+mod preview;
 #[cfg(all(test, feature = "rar"))]
 mod rar_tests;
 #[cfg(test)]
 mod sevenz_tests;
 mod state;
 pub(crate) use actions::*;
+pub(crate) use panes::{BrowserState, DirectoryPane};
+pub(crate) use preview::{PreviewState, PreviewStatus};
 pub(crate) use state::AppState;
 
 use crate::archive_ops::*;
@@ -171,7 +175,7 @@ impl AppController {
                 self.start_extract_to(only_checked, dest)
             }
             AppAction::PrepareCompress(paths) => self.prepare_compress(paths),
-            AppAction::SetFilter(filter) => self.state.filter = filter,
+            AppAction::SetFilter(filter) => self.set_pane_filter(self.state.browser.active, filter),
             AppAction::SelectAllVisible => self.select_all_visible(),
             AppAction::InvertVisible => self.invert_visible(),
             AppAction::Add(paths) => self.add_files(paths),
@@ -254,11 +258,12 @@ impl AppController {
     }
 
     pub(crate) fn sort_by(&mut self, column: SortColumn) {
-        if self.state.order.0 == column {
-            self.state.order.1 = !self.state.order.1;
+        let order = if self.state.order.0 == column {
+            (column, !self.state.order.1)
         } else {
-            self.state.order = (column, true);
-        }
+            (column, true)
+        };
+        self.set_pane_order(self.state.browser.active, order);
     }
 
     pub(crate) fn start_extract_to(&mut self, only_checked: bool, mut dest: PathBuf) {
@@ -283,6 +288,8 @@ impl AppController {
         let total = wanted.iter().filter(|b| **b).count();
         let pw = self.state.archive_password.clone();
         self.state.close_when_done = false;
+        self.show_job(s.extracting, archive_stem(&archive), true);
+        self.state.stop_leaves_files = true;
         let (reply_tx, reply_rx) = channel::<Answer>();
         self.state.replies = Some(reply_tx);
         let (stop, hold) = self.fresh_flags();
@@ -318,6 +325,10 @@ impl AppController {
             return;
         };
         self.state.password_input.clear();
+        // Whatever the last attempt left in the status bar is answered by this
+        // one; a wrong password writes a fresh notice from `access_failed`.
+        self.state.notice.clear();
+        self.state.error = false;
         match pending {
             pending @ (Pending::Extract(_) | Pending::Read(_)) => {
                 self.authenticate(pending, Some(password))
@@ -441,16 +452,20 @@ impl AppController {
         })
     }
     pub(crate) fn select_all_visible(&mut self) {
+        self.cancel_preview();
         for row in self.visible_rows() {
-            self.set_checked(&row, true);
+            self.set_checked_projection(&row, true);
         }
+        self.snapshot_active_pane();
     }
     pub(crate) fn invert_visible(&mut self) {
         let rows = self.visible_rows();
         let values: Vec<bool> = rows.iter().map(|r| !self.is_checked(r)).collect();
+        self.cancel_preview();
         for (r, v) in rows.iter().zip(values) {
-            self.set_checked(r, v);
+            self.set_checked_projection(r, v);
         }
+        self.snapshot_active_pane();
     }
     pub(crate) fn request_delete(&mut self) {
         if self.state.format != Format::Zip {
@@ -504,6 +519,7 @@ impl AppController {
                 notice: String::new(),
                 error: false,
                 busy: false,
+                listing: false,
                 done_count: 0,
                 total_count: 0,
                 current_file: String::new(),
@@ -515,6 +531,7 @@ impl AppController {
                 pending_inputs: Vec::new(),
                 output_name: String::new(),
                 close_when_done: false,
+                stop_leaves_files: false,
                 one_shot: false,
                 title: String::new(),
                 window_title: "Arca".to_string(),
@@ -557,6 +574,8 @@ impl AppController {
                 cut_pending: None,
                 show_shortcuts: false,
                 quiet: false,
+                browser: BrowserState::default(),
+                preview: PreviewState::default(),
             },
         }
     }
@@ -583,12 +602,26 @@ impl AppController {
     pub(crate) fn go_back(&mut self) {
         if self.can_go_back() {
             self.state.here -= 1;
-            self.state.current_dir = self.state.history[self.state.here].clone();
-            self.state.filter.clear();
-            self.clear_picked();
+            self.navigate_panes(self.state.history[self.state.here].clone());
         }
     }
     pub(crate) fn selected_roots(&self) -> Vec<String> {
+        self.selection_roots(&self.state.current_dir, |index| {
+            self.state.checked.get(index).copied().unwrap_or(false)
+        })
+    }
+
+    pub(crate) fn pane_selected_roots(&self, pane: usize) -> Vec<String> {
+        if pane == self.state.browser.active {
+            return self.selected_roots();
+        }
+        let Some(pane) = self.state.browser.panes.get(pane) else {
+            return Vec::new();
+        };
+        self.selection_roots(&pane.directory, |index| pane.selected.contains(&index))
+    }
+
+    fn selection_roots(&self, directory: &str, checked: impl Fn(usize) -> bool) -> Vec<String> {
         let names: Vec<String> = self
             .state
             .entries
@@ -603,7 +636,7 @@ impl AppController {
         let mut seen: HashSet<String> = HashSet::new();
 
         for (i, full) in names.iter().enumerate() {
-            if !self.state.checked.get(i).copied().unwrap_or(false) {
+            if !checked(i) {
                 continue;
             }
             let trimmed = full.trim_end_matches('/');
@@ -614,12 +647,15 @@ impl AppController {
             while let Some(cut) = trimmed[at..].find('/') {
                 at += cut + 1;
                 let prefix = &trimmed[..at];
+                if !self.state.settings.flat && prefix.len() <= directory.len() {
+                    continue;
+                }
                 let all = *whole.entry(prefix.to_string()).or_insert_with(|| {
                     names
                         .iter()
                         .enumerate()
                         .filter(|(_, n)| n.starts_with(prefix))
-                        .all(|(j, _)| self.state.checked.get(j).copied().unwrap_or(false))
+                        .all(|(j, _)| checked(j))
                 });
                 if all {
                     root = prefix.trim_end_matches('/').to_string();
@@ -643,17 +679,17 @@ impl AppController {
     // ever happened, and removing them on the guess that it did would lose them
     // for good the moment somebody changed their mind.
     pub(crate) fn clear_picked(&mut self) {
+        self.cancel_preview();
         self.state.checked.iter_mut().for_each(|c| *c = false);
         self.state.cursor = None;
         // A row number means something else in the folder now on screen.
         self.state.last_click = None;
+        self.snapshot_active_pane();
     }
     pub(crate) fn go_forward(&mut self) {
         if self.can_go_forward() {
             self.state.here += 1;
-            self.state.current_dir = self.state.history[self.state.here].clone();
-            self.state.filter.clear();
-            self.clear_picked();
+            self.navigate_panes(self.state.history[self.state.here].clone());
         }
     }
     fn cannot_change(&self, format: Option<Format>) -> String {
@@ -701,6 +737,9 @@ impl AppController {
     // Lives on the controller rather than in a view because there is nothing
     // about it that belongs to a toolkit, and both surfaces offer it.
     pub(crate) fn undo_last(&mut self) {
+        if self.state.busy {
+            return;
+        }
         let Some((archive, _)) = self.state.undo.take() else {
             return;
         };
@@ -738,6 +777,7 @@ impl AppController {
         self.state.current_dir.clear();
         self.state.history = vec![String::new()];
         self.state.here = 0;
+        self.reset_browser_panes();
         self.state.notice = self.summary();
         self.state.error = false;
     }
@@ -900,10 +940,12 @@ impl AppController {
     /// The tree points at folders the list may not be showing, so the pick is
     /// made from the path and not from a row on screen.
     pub(crate) fn pick_folder(&mut self, path: &str) {
+        self.go_to(parent_of(&normalized_dir(path)));
         self.clear_picked();
         for i in entries_under(&self.state.entries, path) {
             self.state.checked[i] = true;
         }
+        self.snapshot_active_pane();
     }
 
     pub(crate) fn set_checked(&mut self, row: &Row, value: bool) {
@@ -913,8 +955,28 @@ impl AppController {
         if row.up {
             return;
         }
+        if !self
+            .visible_rows()
+            .iter()
+            .any(|r| r.path == row.path && r.entry == row.entry)
+        {
+            return;
+        }
+        self.cancel_preview();
+        self.set_checked_projection(row, value);
+        self.snapshot_active_pane();
+    }
+
+    fn set_checked_projection(&mut self, row: &Row, value: bool) {
+        if row.up {
+            return;
+        }
         match row.entry {
-            Some(i) => self.state.checked[i] = value,
+            Some(i) => {
+                if let Some(on) = self.state.checked.get_mut(i) {
+                    *on = value;
+                }
+            }
             None => {
                 for i in entries_under(&self.state.entries, &row.path) {
                     self.state.checked[i] = value;
@@ -954,15 +1016,8 @@ impl AppController {
     // thought better of costs nothing, and a drag of six gigabytes starts as
     // fast as a drag of one file.
     pub(crate) fn go_to(&mut self, path: String) {
-        if self.state.history.get(self.state.here) == Some(&path) {
-            return;
-        }
-        self.state.history.truncate(self.state.here + 1);
-        self.state.history.push(path.clone());
-        self.state.here = self.state.history.len() - 1;
-        self.state.current_dir = path;
-        self.state.filter.clear();
-        self.clear_picked();
+        self.navigate_panes(path);
+        self.record_pane_history();
     }
 
     // Every folder starts with nothing picked, the way the Explorer does.
@@ -1269,6 +1324,7 @@ impl AppController {
     // changing folder changes the list under the cursor, so it is clamped here
     // rather than tracked separately.
     pub(crate) fn receive(&mut self) -> bool {
+        self.poll_preview();
         // The answer about a newer version, if it ever came. Its own channel,
         // because it is not a job and must not make the window look busy.
         if let Some(rx) = &self.state.update_rx {
@@ -1293,6 +1349,7 @@ impl AppController {
             match m {
                 Message::Listing(path, result, password) => {
                     self.state.busy = false;
+                    self.state.listing = false;
                     self.state.overlay = false;
                     self.state.view = View::Browse;
                     close = true;
@@ -1350,6 +1407,7 @@ impl AppController {
                     if !self.state.current_dir.is_empty() {
                         self.state.history = vec![self.state.current_dir.clone()];
                     }
+                    self.reset_browser_panes();
                     self.state.busy = false;
                     close = true;
                 }
@@ -1364,13 +1422,6 @@ impl AppController {
                         }
                         Err(error) => self.access_failed(pending, password.as_deref(), error),
                     }
-                }
-                Message::Viewed(viewed) => {
-                    self.state.viewing = Some(viewed);
-                    self.state.busy = false;
-                    self.state.overlay = false;
-                    self.state.view = View::Browse;
-                    close = true;
                 }
                 Message::Created(path, password) => {
                     if !self.state.close_when_done {
@@ -1398,7 +1449,9 @@ impl AppController {
                     // archive and there is nothing to report in red: the
                     // rewrite gave up before it swapped anything.
                     let quit = text == arca_core::Error::Cancelled.to_string();
-                    self.state.notice = if quit {
+                    self.state.notice = if quit && self.state.stop_leaves_files {
+                        self.s().stopped_partial.to_string()
+                    } else if quit {
                         self.s().stopped.to_string()
                     } else {
                         text
@@ -1497,14 +1550,34 @@ impl AppController {
     }
 
     pub(crate) fn visible_rows(&self) -> Vec<Row> {
-        let filter = self.state.filter.trim().to_lowercase();
+        self.rows_for(
+            &self.state.current_dir,
+            &self.state.filter,
+            self.state.order,
+            self.state.settings.flat,
+            !self.state.browser.columns,
+        )
+    }
+
+    fn rows_for(
+        &self,
+        directory: &str,
+        filter: &str,
+        order: (SortColumn, bool),
+        flat: bool,
+        up: bool,
+    ) -> Vec<Row> {
+        let filter = filter.trim().to_lowercase();
         // A search reaches down through the folders, so it starts where you
         // are: from the root it still walks the whole archive, and inside a
         // folder it stays under that folder. The flat view is the same list
         // without a name to look for, and it always starts at the root.
-        let flat = self.state.settings.flat;
         let mut rows = if !filter.is_empty() {
-            search_under(&self.state.entries, self.row_root(), &filter)
+            search_under(
+                &self.state.entries,
+                if flat { "" } else { directory },
+                &filter,
+            )
         } else if flat {
             self.state
                 .entries
@@ -1538,10 +1611,10 @@ impl AppController {
                 })
                 .collect()
         } else {
-            children_of(&self.state.entries, &self.state.current_dir)
+            children_of(&self.state.entries, directory)
         };
 
-        let (col, asc) = self.state.order;
+        let (col, asc) = order;
         rows.sort_by(|x, y| {
             if x.is_dir != y.is_dir {
                 return if x.is_dir {
@@ -1588,8 +1661,8 @@ impl AppController {
         });
         // Put on after the sort, because it belongs at the top whichever column
         // the list is held by and whichever way round.
-        if !flat && filter.is_empty() && !self.state.current_dir.is_empty() {
-            rows.insert(0, up_row(&self.state.current_dir));
+        if up && !flat && filter.is_empty() && !directory.is_empty() {
+            rows.insert(0, up_row(directory));
         }
         rows
     }
@@ -1681,69 +1754,17 @@ impl AppController {
     // is held over the window it says which. Guessing in silence is what made
     // the old behaviour surprising in the first place.
     pub(crate) fn view_entry(&mut self, index: usize) {
+        if let Some(cursor) = self
+            .visible_rows()
+            .iter()
+            .position(|row| !row.up && !row.is_dir && row.entry == Some(index))
+        {
+            self.set_pane_cursor(self.state.browser.active, Some(cursor));
+        }
         if !self.read_access(AppAction::Preview(index)) {
             return;
         }
-        let Some(archive) = self.state.archive.clone() else {
-            return;
-        };
-        let Some(entry) = self.state.entries.get(index).cloned() else {
-            return;
-        };
-        let s = self.s();
-        if entry.is_dir {
-            return;
-        }
-        if entry.size > VIEW_LIMIT {
-            self.state.notice = fill(s.too_big_to_view, &[("size", &human(VIEW_LIMIT))]);
-            self.state.error = true;
-            return;
-        }
-        let password = self.state.archive_password.clone();
-        self.state.close_when_done = false;
-        self.state.viewing = None;
-        self.show_job(s.opening, entry.name.clone(), true);
-        let (stop, hold) = self.fresh_flags();
-        self.spawn(1, move |tx| {
-            let notify = worker_notify(tx, &stop, &hold);
-            let mut bytes = Vec::with_capacity(entry.size as usize);
-            if let Err(e) = read_entry(&archive, index, &mut bytes, password.as_deref(), &notify) {
-                let _ = tx.send(Message::Failed(e.to_string()));
-                return;
-            }
-
-            let name = entry.name.rsplit(['/', '\\']).next().unwrap_or(&entry.name);
-            // Asked once, and only of the names that claim to be pictures: handing
-            // every unknown file to a decoder to find out is a decoder run on
-            // whatever happens to be in the archive.
-            let picture = looks_like_picture(name)
-                && image::guess_format(&bytes).is_ok_and(|f| {
-                    image::ImageReader::new(std::io::Cursor::new(&bytes))
-                        .with_guessed_format()
-                        .is_ok_and(|r| r.format() == Some(f))
-                });
-            let look = if picture {
-                Look::Picture
-            } else if looks_like_text(&bytes) {
-                Look::Text
-            } else {
-                Look::Hex
-            };
-            // Split now, once. The text is drawn a line at a time and only the
-            // lines on screen are laid out, so a log of a million lines opens as
-            // fast as a note of three.
-            let lines = String::from_utf8_lossy(&bytes)
-                .lines()
-                .map(|l| l.to_string())
-                .collect();
-            let _ = tx.send(Message::Viewed(Viewed {
-                name: name.to_string(),
-                bytes: bytes.into(),
-                look,
-                lines,
-                picture,
-            }));
-        });
+        self.request_preview(index);
     }
 
     // The file being looked at, in its own window over the list.
@@ -1751,7 +1772,12 @@ impl AppController {
         self.open_with_password(path, None);
     }
 
+    // A listing still on its way can be replaced by opening something else;
+    // a mutation in flight cannot, or the archive would be swapped under it.
     pub(crate) fn open_with_password(&mut self, path: PathBuf, password: Option<String>) {
+        if self.state.busy && !self.state.listing {
+            return;
+        }
         self.state.channel = None;
         self.state.replies = None;
         self.state.waiting_on_password = None;
@@ -1785,6 +1811,7 @@ impl AppController {
             "{} - Arca",
             path.file_name().unwrap_or_default().to_string_lossy()
         );
+        self.reset_browser_panes();
         self.state.archive_password = None;
         // Whatever was cut belonged to the listing being replaced, and so did
         // whatever the status bar was saying: the summary of the archive being
@@ -1799,12 +1826,19 @@ impl AppController {
     }
 
     fn refresh(&mut self) {
+        if self.state.busy {
+            return;
+        }
         if let Some(path) = self.state.archive.clone() {
+            let dir = self.state.current_dir.clone();
             self.open_with_password(path, self.state.archive_password.clone());
+            self.state.reread_dir = Some(dir);
         }
     }
 
     fn load_listing(&mut self, path: PathBuf, password: Option<String>) {
+        self.cancel_preview();
+        self.state.listing = true;
         self.show_job(self.s().opening, archive_stem(&path), true);
         let (stop, hold) = self.fresh_flags();
         self.spawn(0, move |tx| {
@@ -1823,6 +1857,26 @@ impl AppController {
     }
 
     pub(crate) fn run_job(&mut self, mut job: Job) {
+        if self.state.busy {
+            return;
+        }
+        let mutation = match &job {
+            Job::Password { archive, .. }
+            | Job::Delete { archive, .. }
+            | Job::Rename { archive, .. }
+            | Job::Move { archive, .. }
+            | Job::NewFolder { archive, .. }
+            | Job::Add { archive, .. } => Some(archive),
+            _ => None,
+        };
+        if mutation.is_some_and(|archive| detect(archive) != Some(Format::Zip)) {
+            self.state.error = true;
+            self.state.notice = self.s().only_zip_can_change.into();
+            return;
+        }
+        if reread_target(&job, &self.state.current_dir).is_some() {
+            self.cancel_preview();
+        }
         if let Job::Test {
             archive, password, ..
         } = &mut job
@@ -1854,6 +1908,7 @@ impl AppController {
             }
         }
         let s: &'static Strings = self.s();
+        self.state.stop_leaves_files = matches!(job, Job::Extract { .. } | Job::CopyTo { .. });
         let verb = match &job {
             Job::Extract { .. } => s.extracting.to_string(),
             Job::Test { .. } => s.testing.to_string(),
@@ -1990,15 +2045,19 @@ impl AppController {
         });
     }
     pub(crate) fn is_checked(&self, row: &Row) -> bool {
+        self.row_is_checked(row, |i| self.state.checked.get(i).copied().unwrap_or(false))
+    }
+
+    fn row_is_checked(&self, row: &Row, selected: impl Fn(usize) -> bool) -> bool {
         // The way out of the folder is not a thing that can be picked.
         if row.up {
             return false;
         }
         match row.entry {
-            Some(i) => self.state.checked[i],
+            Some(i) => selected(i),
             None => {
                 let under = entries_under(&self.state.entries, &row.path);
-                !under.is_empty() && under.iter().all(|&i| self.state.checked[i])
+                !under.is_empty() && under.into_iter().all(selected)
             }
         }
     }
@@ -2363,6 +2422,27 @@ mod password_tests {
         }];
         controller.state.checked = vec![false];
         controller
+    }
+
+    #[test]
+    fn a_new_password_attempt_takes_the_old_failure_off_the_status_bar() {
+        let mut controller = controller(true);
+        controller.access_failed(
+            Pending::OpenArchive,
+            Some("wrong"),
+            arca_core::Error::BadPassword,
+        );
+        assert!(controller.state.password_wrong);
+        assert!(!controller.state.notice.is_empty());
+        assert!(matches!(
+            controller.state.waiting_on_password,
+            Some(Pending::OpenArchive)
+        ));
+
+        controller.submit_password("right".into());
+        assert!(controller.state.notice.is_empty());
+        assert!(!controller.state.error);
+        assert!(controller.state.waiting_on_password.is_none());
     }
 
     #[test]
