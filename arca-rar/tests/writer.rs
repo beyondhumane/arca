@@ -680,6 +680,162 @@ fn header_budget_is_bounded() {
 }
 
 #[test]
+fn empty_members_compress_under_the_managed_memory_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input");
+    fs::create_dir_all(input.join("empty-dir")).unwrap();
+    fs::write(input.join("empty.bin"), b"").unwrap();
+    fs::write(input.join("one.bin"), b"x").unwrap();
+    let mut rng = Xorshift(0x5eed_0007);
+    let big = rng.bytes(5 * 1024 * 1024, true);
+    fs::write(input.join("big.bin"), &big).unwrap();
+    let sources = vec![
+        source(input.join("empty-dir"), "empty-dir"),
+        source(input.join("empty.bin"), "empty.bin"),
+        source(input.join("one.bin"), "one.bin"),
+        source(input.join("big.bin"), "big.bin"),
+        source(input.join("empty-dir"), "nested/also-empty"),
+    ];
+    let expected = vec![
+        ("empty-dir".to_string(), None),
+        ("empty.bin".to_string(), Some(Vec::new())),
+        ("one.bin".to_string(), Some(b"x".to_vec())),
+        ("big.bin".to_string(), Some(big)),
+        ("nested/also-empty".to_string(), None),
+    ];
+    for (level, name) in [
+        (Level::Store, "store.rar"),
+        (Level::Fast, "fast.rar"),
+        (Level::Normal, "normal.rar"),
+        (Level::Best, "best.rar"),
+    ] {
+        let archive = dir.path().join(name);
+        create_rar(&archive, &sources, &options(level), &|_, _, _| true).unwrap();
+        assert_roundtrip(&archive, &expected);
+        let a = RarArchive::open(&archive, None).unwrap();
+        let big = a.entries().iter().find(|e| e.name == "big.bin").unwrap();
+        if level == Level::Store {
+            assert_eq!(big.compressed_size, big.size, "{name}");
+        } else {
+            assert!(big.compressed_size < big.size / 4, "{name}");
+        }
+    }
+    assert!(listing(dir.path()).iter().all(|n| !n.ends_with(".part")));
+}
+
+#[cfg(unix)]
+#[test]
+fn sources_swapped_for_pipes_or_links_at_reopen_are_refused() {
+    let probe = tempfile::tempdir().unwrap();
+    let made = Command::new("mkfifo")
+        .arg(probe.path().join("probe"))
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !made {
+        eprintln!("skipped: mkfifo unavailable");
+        return;
+    }
+    // A FIFO with no writer blocks a plain open forever, so the whole case
+    // runs under a deadline.
+    bounded(Duration::from_secs(60), || {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.bin");
+        let b = dir.path().join("b.bin");
+        let mut rng = Xorshift(0x5eed_0008);
+        let data = rng.bytes(1024 * 1024, true);
+        fs::write(&b, b"second").unwrap();
+        let archive = dir.path().join("new.rar");
+        let swapped = |f: &(dyn Fn(&Path) + Sync)| {
+            let _ = fs::remove_file(&a);
+            fs::write(&a, &data).unwrap();
+            let once = std::sync::Once::new();
+            let error = create_rar(
+                &archive,
+                &[source(&a, "a.bin"), source(&b, "b.bin")],
+                &options(Level::Normal),
+                &|_, _, name| {
+                    if name == "b.bin" {
+                        once.call_once(|| f(&a));
+                    }
+                    true
+                },
+            )
+            .unwrap_err();
+            assert!(once.is_completed());
+            assert!(matches!(&error, Error::Io(_)), "{error}");
+            assert!(!archive.exists());
+            assert!(listing(dir.path()).iter().all(|n| !n.ends_with(".part")));
+            error.to_string()
+        };
+
+        let error = swapped(&|path| {
+            fs::remove_file(path).unwrap();
+            assert!(Command::new("mkfifo").arg(path).status().unwrap().success());
+        });
+        assert!(
+            error.contains("changed") || error.contains("regular") || error.contains("symbolic"),
+            "{error}"
+        );
+
+        let error = swapped(&|path| {
+            let target = path.with_file_name("elsewhere.bin");
+            fs::copy(path, &target).unwrap();
+            fs::remove_file(path).unwrap();
+            std::os::unix::fs::symlink(&target, path).unwrap();
+        });
+        assert!(
+            error.contains("changed") || error.contains("regular") || error.contains("symbolic"),
+            "{error}"
+        );
+
+        let error = swapped(&|path| {
+            fs::remove_file(path).unwrap();
+            fs::create_dir(path).unwrap();
+        });
+        assert!(
+            error.contains("changed") || error.contains("regular") || error.contains("symbolic"),
+            "{error}"
+        );
+    });
+}
+
+#[test]
+fn an_output_that_appears_during_the_write_is_preserved() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.bin");
+    let mut rng = Xorshift(0x5eed_0009);
+    fs::write(&a, rng.bytes(3 * 1024 * 1024, true)).unwrap();
+    let archive = dir.path().join("new.rar");
+    let calls = AtomicUsize::new(0);
+    let planted = std::sync::Once::new();
+    let error = create_rar(
+        &archive,
+        &[source(&a, "a.bin")],
+        &options(Level::Fast),
+        &|_, _, _| {
+            // The first callback scans `a`; later ones come from the write.
+            if calls.fetch_add(1, Ordering::Relaxed) >= 2 {
+                planted.call_once(|| fs::write(&archive, b"keep me").unwrap());
+            }
+            true
+        },
+    )
+    .unwrap_err();
+    assert!(planted.is_completed());
+    assert!(
+        matches!(&error, Error::Io(e) if e.kind() == ErrorKind::AlreadyExists),
+        "{error}"
+    );
+    assert_eq!(fs::read(&archive).unwrap(), b"keep me");
+    assert_eq!(
+        listing(dir.path()),
+        BTreeSet::from(["a.bin".to_string(), "new.rar".to_string()])
+    );
+}
+
+#[test]
 fn seeded_stress_trees_roundtrip_at_every_level() {
     bounded(Duration::from_secs(240), || {
         for (seed, level) in [

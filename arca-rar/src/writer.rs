@@ -1,11 +1,14 @@
 use super::{create_limits as limits, reader, CreateOptions, Progress, RarArchive, Source};
 use arca_core::{Error, Format, Level, Result};
+use rars::rar50::{
+    write_streaming_archive_with_progress, ArchiveEntry, ArchiveExtras, FilterPolicy, WriterOptions,
+};
 use rars::{
-    ArchiveVersion, Builder, EntrySource, ErrorKind, WriteCancellation, WriteProgress,
+    ArchiveVersion, EntrySource, ErrorKind, FeatureSet, WriteCancellation, WriteProgress,
     WriteProgressEvent, WriterResources,
 };
 use std::collections::HashSet;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -13,6 +16,8 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const HEADER_ALLOWANCE: u64 = 128;
+const DOS_ARCHIVE_ATTR: u64 = 0x20;
+const RAR50_HOST_UNIX: u64 = 1;
 
 /// What one source looked like when it was scanned. The opener compares the
 /// file against this every time the writer reopens it.
@@ -72,36 +77,74 @@ pub(super) fn create(
     let parent = parent_dir(output)?;
     let planned = plan(output, &parent, sources, progress)?;
     let total = planned.len();
-    let staging = tempfile::Builder::new()
+    let mut staging = tempfile::Builder::new()
         .prefix(".arca-")
         .suffix(".rar.part")
-        .tempfile_in(&parent)?
-        .into_temp_path();
+        .tempfile_in(&parent)?;
     let reporter = Reporter::new(progress, total);
-    // `with_max_memory_bytes` is deliberately absent: in rars 0.10.0 that
-    // ledger refuses every zero-length member (directories, empty files) with
-    // a workspace limit of 0, so the estimated workspace policy is the bound.
     let resources = WriterResources::new(limits::WRITER_MEMORY_BYTES)
+        .with_max_memory_bytes(limits::WRITER_MEMORY_BYTES)
         .with_max_spool_bytes(limits::MAX_SPOOL_BYTES)
         .with_max_prepared_header_bytes(limits::MAX_HEADER_BYTES)
         .with_max_preparation_bytes(limits::MAX_HEADER_BYTES)
         .with_temp_dir(&parent)
         .with_cancellation(reporter.token.clone());
-    let builder = build(&planned, options)?;
+    let entries = entries(&planned)?;
     reporter.poll();
     if reporter.is_cancelled() {
         return Err(Error::Cancelled);
     }
-    builder
-        .write_to_path_with_resources(&staging, &resources, Some(&reporter))
-        .map_err(|error| reporter.finish(error))?;
+    write(
+        staging.as_file_mut(),
+        &entries,
+        options,
+        &resources,
+        &reporter,
+    )
+    .map_err(|error| reporter.finish(error))?;
     if reporter.is_cancelled() {
         return Err(Error::Cancelled);
     }
+    let staging = staging.into_temp_path();
     verify(&staging, &planned, progress)?;
-    publish(&staging, output)?;
-    drop(staging);
+    publish(staging, output)?;
     let _ = progress(total, total, "");
+    Ok(())
+}
+
+/// Streams the members into `file` through the RAR 5 writer's public
+/// streaming entry point rather than `Builder`, which forces an automatic
+/// filter search for non-solid archives. That search plans every member as a
+/// whole and, in rars 0.10.0, reserves 0 bytes of the managed-memory ledger
+/// for a zero-length member, so its spool charge fails. Without a filter
+/// policy every member takes the streaming block path, whose workspace is
+/// priced per batch, and the hard ledger holds for empty files and
+/// directories too. The trade is that no data filter is tried for any level.
+fn write(
+    file: &mut File,
+    entries: &[ArchiveEntry],
+    options: &CreateOptions,
+    resources: &WriterResources,
+    reporter: &Reporter<'_>,
+) -> rars::Result<()> {
+    let level = match options.level {
+        Level::Store => 0,
+        Level::Fast => 1,
+        Level::Normal => 3,
+        Level::Best => 5,
+    };
+    let writer_options = WriterOptions::new(ArchiveVersion::Rar50, FeatureSet::store_only())
+        .with_compression_level(level);
+    let extras = ArchiveExtras::default().with_filter_policy(FilterPolicy::None);
+    write_streaming_archive_with_progress(
+        entries,
+        writer_options,
+        extras,
+        resources,
+        Some(reporter),
+        file,
+    )?;
+    file.sync_all()?;
     Ok(())
 }
 
@@ -261,29 +304,33 @@ fn validate_name(name: &str) -> Result<String> {
     Ok(parts.join("/"))
 }
 
-fn build(planned: &[Planned], options: &CreateOptions) -> Result<Builder> {
-    let builder = Builder::new(ArchiveVersion::Rar50).solid(false);
-    let mut builder = match options.level {
-        Level::Store => builder.store(true),
-        Level::Fast => builder.compression_level(Some(1)),
-        Level::Normal => builder.compression_level(Some(3)),
-        Level::Best => builder.compression_level(Some(5)),
-    };
-    for plan in planned {
-        let name = plan.name.as_bytes().to_vec();
-        let mtime = plan
-            .snapshot
-            .modified
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .and_then(|t| u32::try_from(t.as_secs()).ok());
-        let added = if plan.is_dir {
-            builder.add_directory(name, mtime, plan.mode)
-        } else {
-            builder.add_source(name, source(plan), mtime, plan.mode)
-        };
-        added.map_err(write_error)?;
-    }
-    Ok(builder)
+fn entries(planned: &[Planned]) -> Result<Vec<ArchiveEntry>> {
+    planned
+        .iter()
+        .map(|plan| {
+            let name =
+                rars::validate_entry_name(plan.name.as_bytes().to_vec()).map_err(write_error)?;
+            let mtime = plan
+                .snapshot
+                .modified
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .and_then(|t| u32::try_from(t.as_secs()).ok());
+            let (attributes, host_os) = match plan.mode {
+                Some(mode) => (u64::from(mode), RAR50_HOST_UNIX),
+                None => (DOS_ARCHIVE_ATTR, 0),
+            };
+            let source = if plan.is_dir {
+                EntrySource::from_bytes(Vec::new())
+            } else {
+                source(plan)
+            };
+            Ok(ArchiveEntry::new(name, source)
+                .with_directory(plan.is_dir)
+                .with_mtime(mtime)
+                .with_attributes(attributes)
+                .with_host_os(host_os))
+        })
+        .collect()
 }
 
 /// Reopens the file for every pass and refuses to read it once it stops
@@ -294,7 +341,7 @@ fn source(plan: &Planned) -> EntrySource {
     let path = plan.path.clone();
     let expected = plan.snapshot.clone();
     EntrySource::from_opener(expected.len, move || {
-        let file = File::open(&path)?;
+        let file = open_regular(&path)?;
         let meta = file.metadata()?;
         if !meta.is_file() {
             return Err(rars::Error::SourceChanged(
@@ -307,6 +354,39 @@ fn source(plan: &Planned) -> EntrySource {
             ));
         }
         Ok(Box::new(file))
+    })
+}
+
+/// Opens a source without following a final symbolic link and without
+/// blocking on a FIFO, so a path swapped for a link or a pipe after the scan
+/// is refused by the metadata check instead of followed or waited on.
+fn open_regular(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    #[cfg(not(any(unix, windows)))]
+    if fs::symlink_metadata(path)?.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "source is a symbolic link",
+        ));
+    }
+    options.open(path).map_err(|e| {
+        #[cfg(unix)]
+        if e.raw_os_error() == Some(libc::ELOOP) {
+            return io::Error::new(e.kind(), "source became a symbolic link");
+        }
+        e
     })
 }
 
@@ -357,24 +437,19 @@ fn verify(staging: &Path, planned: &[Planned], progress: &Progress<'_>) -> Resul
     Ok(())
 }
 
-/// Gives the finished archive its name without ever exposing a partial one.
-/// A hard link either creates the name complete or fails because it is taken.
-/// Where links are unavailable, `create_new` takes the name exclusively and
-/// the rename replaces only that reservation.
-fn publish(staging: &Path, output: &Path) -> Result<()> {
-    let link = match fs::hard_link(staging, output) {
-        Ok(()) => return Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Err(exists(output)),
-        Err(e) => e,
-    };
-    match File::create_new(output) {
-        Ok(_) => {}
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Err(exists(output)),
-        Err(_) => return Err(Error::Io(link)),
-    }
-    fs::rename(staging, output).map_err(|e| {
-        let _ = fs::remove_file(output);
-        Error::Io(e)
+/// Gives the finished archive its name without ever exposing a partial one
+/// or replacing a file that appeared since the plan. `persist_noclobber`
+/// renames with `RENAME_NOREPLACE` where the kernel offers it, links the new
+/// name and unlinks the staging name elsewhere on Unix, and moves without
+/// `MOVEFILE_REPLACE_EXISTING` on Windows; each either creates the name
+/// complete or fails, and a failure deletes the staging file.
+fn publish(staging: tempfile::TempPath, output: &Path) -> Result<()> {
+    staging.persist_noclobber(output).map_err(|failure| {
+        if failure.error.kind() == io::ErrorKind::AlreadyExists {
+            exists(output)
+        } else {
+            Error::Io(failure.error)
+        }
     })
 }
 
