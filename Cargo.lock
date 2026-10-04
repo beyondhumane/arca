@@ -350,7 +350,6 @@ name = "arca-iso"
 version = "0.7.2"
 dependencies = [
  "arca-core",
- "rayon",
  "tempfile",
 ]
 

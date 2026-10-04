@@ -9,7 +9,8 @@ description = "Read-only ISO 9660 reader for Arca"
 
 [dependencies]
 arca-core.workspace = true
-rayon.workspace = true
+
+[dev-dependencies]
 tempfile = "3"
 
 [lints.rust]

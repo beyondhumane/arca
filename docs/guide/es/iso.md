@@ -67,8 +67,9 @@ nunca un fallo. En cada imagen se comprueba:
   entre fichero y directorio.
 
 La extracción copia cada fichero en bloques de 256 KiB a un fichero temporal
-junto a su destino y lo renombra a su sitio al terminar. Un enlace que ya esté
-dentro del árbol de destino se rechaza en vez de seguirse. Se respetan omitir,
+junto a su destino y lo renombra a su sitio al terminar. Cada carpeta se abre
+por handle sin seguir enlaces, así que un enlace que ya esté dentro del árbol de
+destino, o que aparezca durante la extracción, se rechaza en vez de seguirse. Se respetan omitir,
 renombrar, sobrescribir y cancelar en los conflictos. Un fallo o una
 cancelación puede dejar los ficheros que ya estaban terminados. La vista previa
 está limitada a 64 MiB.

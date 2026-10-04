@@ -1,12 +1,10 @@
 //! Read-only ISO 9660 images. No image-writing API is exposed.
 
+use arca_core::extraction::{self, Destination};
 use arca_core::{Entry, Error, Result};
-use rayon::prelude::*;
-use std::collections::HashSet;
-use std::fs::{self, File};
-use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::fs::File;
+use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod parse;
 
@@ -115,80 +113,48 @@ impl IsoArchive {
         conflict: &dyn Fn(&Path) -> Conflict,
     ) -> Result<u64> {
         let selected = |i: usize| wanted.is_empty() || wanted.get(i).copied().unwrap_or(false);
-        fs::create_dir_all(dest)?;
-        let dest = dest.canonicalize()?;
-        let mut claimed = HashSet::new();
-        let mut jobs = Vec::new();
+        let total = (0..self.entries.len())
+            .filter(|&i| selected(i) && !self.entries[i].is_dir)
+            .count();
+        let mut destination = Destination::new(dest);
+        let mut source = File::open(&self.path)?;
+        let mut done = 0;
+        let mut written = 0;
         for (i, entry) in self.entries.iter().enumerate() {
             if !selected(i) {
                 continue;
             }
-            let path = dest.join(arca_core::safe_name(&entry.name)?);
-            reject_links(&path, &dest)?;
-            if entry.is_dir {
-                fs::create_dir_all(&path)?;
-                continue;
+            let carry_on = || progress(done, total, &entry.name);
+            if !carry_on() {
+                return Err(Error::Cancelled);
             }
-            if path.is_dir() {
-                return Err(Error::Format(format!(
-                    "file/directory conflict at '{}'",
-                    path.display()
-                )));
-            }
-            let (target, overwrite) = if path.exists() || claimed.contains(&path) {
-                match conflict(&path) {
-                    Conflict::Skip => continue,
-                    Conflict::Cancel => return Err(Error::Cancelled),
-                    Conflict::Overwrite => (path, true),
-                    Conflict::Rename => (free_name(&path, &claimed)?, false),
-                }
-            } else {
-                (path, false)
+            let mut reader = ExtentReader {
+                source: &mut source,
+                extents: &self.extents[i],
+                next: 0,
+                left: 0,
+                carry_on: &carry_on,
+                failure: None,
             };
-            claimed.insert(target.clone());
-            jobs.push((i, target, overwrite));
+            let result =
+                destination.write_entry(&entry.name, entry.is_dir, &mut reader, &mut |path| {
+                    match conflict(path) {
+                        Conflict::Overwrite => extraction::Conflict::Overwrite,
+                        Conflict::Skip => extraction::Conflict::Skip,
+                        Conflict::Rename => extraction::Conflict::Rename,
+                        Conflict::Cancel => extraction::Conflict::Cancel,
+                    }
+                });
+            match result {
+                Ok(bytes) => written += bytes.unwrap_or(0),
+                Err(e) => return Err(reader.failure.take().unwrap_or(e)),
+            }
+            if !entry.is_dir {
+                done += 1;
+            }
         }
-
-        let total = jobs.len();
-        let done = AtomicUsize::new(0);
-        let written = jobs
-            .par_iter()
-            .map(|(i, target, overwrite)| {
-                let entry = &self.entries[*i];
-                let carry_on = || progress(done.load(Ordering::Relaxed), total, &entry.name);
-                if !carry_on() {
-                    return Err(Error::Cancelled);
-                }
-                let parent = target
-                    .parent()
-                    .ok_or_else(|| Error::Format("missing destination parent".into()))?;
-                fs::create_dir_all(parent)?;
-                let mut output = tempfile::Builder::new()
-                    .prefix(".arca-")
-                    .suffix(".tmp")
-                    .tempfile_in(parent)?;
-                let mut writer = BufWriter::with_capacity(BUF, output.as_file_mut());
-                let bytes = copy(
-                    &mut File::open(&self.path)?,
-                    &self.extents[*i],
-                    &mut writer,
-                    &carry_on,
-                )?;
-                writer.flush()?;
-                drop(writer);
-                reject_links(target, &dest)?;
-                if *overwrite {
-                    output.persist(target)
-                } else {
-                    output.persist_noclobber(target)
-                }
-                .map_err(|e| Error::Io(e.error))?;
-                done.fetch_add(1, Ordering::Relaxed);
-                Ok(bytes)
-            })
-            .collect::<Result<Vec<u64>>>()?;
         let _ = progress(total, total, "");
-        Ok(written.iter().sum())
+        Ok(written)
     }
 }
 
@@ -224,45 +190,40 @@ fn copy(
     Ok(written)
 }
 
-// A link already in the destination tree would carry the write somewhere the
-// entry name never pointed.
-fn reject_links(path: &Path, root: &Path) -> Result<()> {
-    for ancestor in path.ancestors().take_while(|a| *a != root) {
-        match fs::symlink_metadata(ancestor) {
-            Ok(meta) => {
-                let link = meta.file_type().is_symlink();
-                #[cfg(windows)]
-                let link = {
-                    use std::os::windows::fs::MetadataExt;
-                    link || meta.file_attributes() & 0x400 != 0
-                };
-                if link {
-                    return Err(Error::Format(format!(
-                        "ISO destination contains a link: '{}'",
-                        ancestor.display()
-                    )));
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
+// Streams one file's extents in order, keeping why it stopped so the caller
+// can report a cancel or a short image instead of a bare I/O error.
+struct ExtentReader<'a> {
+    source: &'a mut File,
+    extents: &'a [Extent],
+    next: usize,
+    left: u64,
+    carry_on: &'a dyn Fn() -> bool,
+    failure: Option<Error>,
 }
 
-fn free_name(path: &Path, claimed: &HashSet<PathBuf>) -> Result<PathBuf> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| Error::Format("missing destination parent".into()))?;
-    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-    let extension = path
-        .extension()
-        .map(|e| format!(".{}", e.to_string_lossy()))
-        .unwrap_or_default();
-    (1..10_000)
-        .map(|n| parent.join(format!("{stem} ({n}){extension}")))
-        .find(|p| !p.exists() && !claimed.contains(p))
-        .ok_or_else(|| Error::Limit("cannot find an unused extraction name".into()))
+impl Read for ExtentReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        while self.left == 0 {
+            let Some(extent) = self.extents.get(self.next) else {
+                return Ok(0);
+            };
+            self.source.seek(SeekFrom::Start(extent.start))?;
+            self.left = extent.len;
+            self.next += 1;
+        }
+        if !(self.carry_on)() {
+            self.failure = Some(Error::Cancelled);
+            return Err(io::Error::other("cancelled"));
+        }
+        let want = self.left.min(buf.len() as u64) as usize;
+        let got = self.source.read(&mut buf[..want])?;
+        if got == 0 {
+            self.failure = Some(Error::Format("image ended in the middle of a file".into()));
+            return Err(io::Error::other("image ended in the middle of a file"));
+        }
+        self.left -= got as u64;
+        Ok(got)
+    }
 }
 
 #[cfg(test)]

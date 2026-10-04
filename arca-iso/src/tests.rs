@@ -1,5 +1,6 @@
 use super::*;
 use arca_core::Error;
+use std::fs;
 use std::io::Cursor;
 
 const S: usize = 2048;
@@ -306,7 +307,11 @@ fn links_already_in_the_destination_are_not_followed() {
     let elsewhere = tempfile::tempdir().unwrap();
     std::os::unix::fs::symlink(elsewhere.path(), out.path().join("docs")).unwrap();
     let result = a.extract(out.path(), &[], &|_, _, _| true, &|_| Conflict::Overwrite);
-    assert!(result.unwrap_err().to_string().contains("link"));
+    let error = result.unwrap_err().to_string();
+    assert!(
+        error.contains("link") || error.contains("directory"),
+        "{error}"
+    );
     assert_eq!(fs::read_dir(elsewhere.path()).unwrap().count(), 0);
 }
 

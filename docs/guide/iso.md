@@ -62,8 +62,9 @@ never a crash. Each image is checked for:
   collisions.
 
 Extraction streams each file in 256 KiB chunks into a temporary file next to its
-destination and renames it into place once complete. A link already inside the
-destination tree is refused instead of followed. Skip, rename, overwrite and
+destination and renames it into place once complete. Every folder is opened by
+handle without following links, so a link already inside the destination tree,
+or one swapped in while extracting, is refused instead of followed. Skip, rename, overwrite and
 cancel conflicts are honored. A failure or cancellation can leave files that
 were already finished. Previews are limited to 64 MiB.
 
