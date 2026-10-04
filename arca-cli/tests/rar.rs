@@ -317,6 +317,155 @@ fn duplicate_names_and_the_output_directory_are_refused() {
     assert_eq!(listing(dir.path()), ["one", "two"]);
 }
 
+#[cfg(feature = "rar")]
+#[test]
+fn a_dot_input_names_members_relative_to_the_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let expected = sample_tree(&work);
+    let result = run_in(
+        &work,
+        &["create".as_ref(), "../dot.rar".as_ref(), ".".as_ref()],
+    );
+    assert!(result.status.success(), "{}", stderr(&result));
+    assert_eq!(listing(dir.path()), ["dot.rar", "work"]);
+    assert_eq!(listing(&work), ["in", "top.txt"]);
+
+    let out = dir.path().join("dot.rar");
+    let result = run(&["list".as_ref(), out.as_os_str()]);
+    assert!(result.status.success(), "{}", stderr(&result));
+    let listed = stdout(&result);
+    for (name, _) in &expected {
+        assert!(
+            listed.lines().any(|l| l.ends_with(&format!("  {name}"))),
+            "{name}\n{listed}"
+        );
+    }
+    assert!(!listed.contains("./"), "{listed}");
+    assert_eq!(listed.lines().count(), expected.len());
+
+    let dest = dir.path().join("dest");
+    let result = run(&[
+        "extract".as_ref(),
+        out.as_os_str(),
+        "-o".as_ref(),
+        dest.as_os_str(),
+    ]);
+    assert!(result.status.success(), "{}", stderr(&result));
+    for (name, data) in &expected {
+        match data {
+            Some(data) => assert_eq!(std::fs::read(dest.join(name)).unwrap(), *data, "{name}"),
+            None => assert!(dest.join(name).is_dir(), "{name}"),
+        }
+    }
+}
+
+#[cfg(feature = "rar")]
+#[test]
+fn an_output_inside_the_tree_is_refused_not_stored() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    std::fs::create_dir_all(work.join("nested")).unwrap();
+    sample_tree(&work);
+    let before = listing(&work);
+
+    // An existing output inside the tree is met during the walk and refused
+    // as the archive being created; nothing is written.
+    std::fs::write(work.join("nested/taken.rar"), b"taken").unwrap();
+    let result = run_in(
+        &work,
+        &["create".as_ref(), "nested/taken.rar".as_ref(), ".".as_ref()],
+    );
+    assert!(!result.status.success());
+    assert!(
+        stderr(&result).contains("is the archive being created"),
+        "{}",
+        stderr(&result)
+    );
+    assert_eq!(
+        std::fs::read(work.join("nested/taken.rar")).unwrap(),
+        b"taken"
+    );
+    std::fs::remove_file(work.join("nested/taken.rar")).unwrap();
+
+    // A fresh output whose directory is part of the tree is refused by the
+    // writer as well, so an archive can never contain itself or its staging
+    // file; the tree is left untouched.
+    let result = run_in(
+        &work,
+        &["create".as_ref(), "nested/out.rar".as_ref(), ".".as_ref()],
+    );
+    assert!(!result.status.success());
+    assert!(
+        stderr(&result).contains("output directory"),
+        "{}",
+        stderr(&result)
+    );
+    assert_eq!(listing(&work), before);
+    assert_eq!(listing(&work.join("nested")), Vec::<String>::new());
+}
+
+#[cfg(all(feature = "rar", unix))]
+#[test]
+fn an_interrupt_cancels_the_creation_and_leaves_nothing_behind() {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    let dir = tempfile::tempdir().unwrap();
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut big = std::fs::File::create(dir.path().join("big.bin")).unwrap();
+    let mut chunk = vec![0u8; 1 << 16];
+    for _ in 0..(96 << 20) / chunk.len() {
+        for b in chunk.iter_mut() {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *b = (state >> 24) as u8;
+        }
+        big.write_all(&chunk).unwrap();
+    }
+    drop(big);
+    let out = dir.path().join("out.rar");
+    for signal in ["-INT", "-TERM"] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_arca"))
+            .args([
+                "create".as_ref(),
+                out.as_os_str(),
+                dir.path().join("big.bin").as_os_str(),
+            ])
+            .args(["-l", "best"])
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "{signal}: creation finished before the signal; the fixture is too small"
+        );
+        let kill = Command::new("kill")
+            .args([signal, &child.id().to_string()])
+            .status()
+            .unwrap();
+        assert!(kill.success());
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{signal}: did not stop within 30 s"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let mut err = String::new();
+        std::io::Read::read_to_string(child.stderr.as_mut().unwrap(), &mut err).unwrap();
+        assert_eq!(status.code(), Some(1), "{signal}: {status:?} {err}");
+        assert!(err.contains("cancelled"), "{signal}: {err}");
+        assert_eq!(listing(dir.path()), ["big.bin"], "{signal}");
+    }
+}
+
 #[cfg(all(feature = "rar", unix))]
 #[test]
 fn symlinks_and_special_files_are_refused_not_followed() {

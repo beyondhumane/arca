@@ -5,7 +5,8 @@ use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 /// Ceilings applied while the inputs are walked, before any name is kept
@@ -34,6 +35,7 @@ impl Bounds {
 struct Walk<'a> {
     bounds: Bounds,
     output: &'a Path,
+    cancelled: &'a AtomicBool,
     sources: Vec<Source>,
     names: HashSet<String>,
     pending: Vec<PathBuf>,
@@ -55,9 +57,12 @@ pub(super) fn create(
         return create_rar(out, &[], &CreateOptions::default(), &|_, _, _| true);
     }
     let options = options(level, codec, requested_threads, password, hide_names)?;
-    let walk = collect(out, inputs, Bounds::WRITER)?;
+    let cancelled = interruption()?;
+    let walk = collect(out, inputs, Bounds::WRITER, cancelled)?;
     let t0 = Instant::now();
-    create_rar(out, &walk.sources, &options, &|_, _, _| true)?;
+    create_rar(out, &walk.sources, &options, &|_, _, _| {
+        !cancelled.load(Ordering::SeqCst)
+    })?;
     println!(
         "{}: {} files, {} -> {} in {:.3} s (sequential)",
         out.display(),
@@ -107,10 +112,31 @@ fn options(
     Ok(CreateOptions { level })
 }
 
-fn collect<'a>(output: &'a Path, inputs: &[PathBuf], bounds: Bounds) -> Result<Walk<'a>> {
+/// Turns Ctrl-C (SIGINT) and SIGTERM into a flag that the walk and the
+/// writer's progress callback read, so an interrupted creation ends with
+/// `Error::Cancelled`, drops its staged file and never publishes. Installed
+/// before any input is read. SIGKILL and power loss are not covered.
+fn interruption() -> Result<&'static AtomicBool> {
+    static CANCELLED: AtomicBool = AtomicBool::new(false);
+    #[cfg(feature = "rar")]
+    ctrlc::try_set_handler(|| CANCELLED.store(true, Ordering::SeqCst)).map_err(|e| {
+        Error::Io(io::Error::other(format!(
+            "cannot watch for interruption during RAR creation: {e}"
+        )))
+    })?;
+    Ok(&CANCELLED)
+}
+
+fn collect<'a>(
+    output: &'a Path,
+    inputs: &[PathBuf],
+    bounds: Bounds,
+    cancelled: &'a AtomicBool,
+) -> Result<Walk<'a>> {
     let mut walk = Walk {
         bounds,
         output,
+        cancelled,
         sources: Vec::new(),
         names: HashSet::new(),
         pending: Vec::new(),
@@ -129,7 +155,15 @@ fn collect<'a>(output: &'a Path, inputs: &[PathBuf], bounds: Bounds) -> Result<W
 }
 
 impl Walk<'_> {
+    fn check_cancelled(&self) -> Result<()> {
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Err(Error::Cancelled);
+        }
+        Ok(())
+    }
+
     fn reserve(&self, queued: usize) -> Result<()> {
+        self.check_cancelled()?;
         if self.sources.len() + self.pending.len() + queued >= self.bounds.max_entries {
             return Err(Error::Limit(format!(
                 "RAR archive would hold more than {} members",
@@ -160,6 +194,7 @@ impl Walk<'_> {
     }
 
     fn visit(&mut self, path: &Path, base: &Path) -> Result<()> {
+        self.check_cancelled()?;
         let meta = fs::symlink_metadata(path).map_err(|e| {
             Error::Io(io::Error::new(
                 e.kind(),
@@ -184,11 +219,7 @@ impl Walk<'_> {
                 path.display()
             )));
         }
-        let name = path
-            .strip_prefix(base)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .replace('\\', "/");
+        let name = member_name(path, path.strip_prefix(base).unwrap_or(path))?;
         if name.len() > self.bounds.max_name_bytes {
             return Err(Error::Limit(format!(
                 "RAR member name of {} bytes exceeds {} bytes: '{}'",
@@ -197,7 +228,7 @@ impl Walk<'_> {
                 path.display()
             )));
         }
-        if name != "." {
+        if !name.is_empty() {
             if !self.names.insert(name.to_lowercase()) {
                 return Err(Error::Format(format!(
                     "duplicate RAR member name: '{name}' (from '{}')",
@@ -231,6 +262,28 @@ impl Walk<'_> {
     }
 }
 
+/// The stored name for `relative`: its normal components joined with `/`.
+/// `.` components (from inputs such as `.` or `./dir`) are dropped so the
+/// writer never sees `./a.txt`; `..` and absolute components are refused
+/// rather than normalized away.
+fn member_name(path: &Path, relative: &Path) -> Result<String> {
+    let mut parts: Vec<String> = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(Error::Format(format!(
+                    "RAR source '{}' has no name relative to its base ('..' and absolute \
+                     components are not stored)",
+                    path.display()
+                )))
+            }
+        }
+    }
+    Ok(parts.join("/"))
+}
+
 /// Whether `path` is the output file under another spelling, so an aliased
 /// source is refused with a clear message instead of being read.
 fn same_file(path: &Path, output: &Path) -> bool {
@@ -243,6 +296,8 @@ fn same_file(path: &Path, output: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static NEVER: AtomicBool = AtomicBool::new(false);
 
     fn small() -> Bounds {
         Bounds {
@@ -270,7 +325,7 @@ mod tests {
         fs::write(input.join("a.txt"), b"aa").unwrap();
         fs::write(input.join("sub/b.txt"), b"bbb").unwrap();
         let out = dir.path().join("out.rar");
-        let walk = collect(&out, std::slice::from_ref(&input), Bounds::WRITER).unwrap();
+        let walk = collect(&out, std::slice::from_ref(&input), Bounds::WRITER, &NEVER).unwrap();
         let names: Vec<&str> = walk.sources.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(
             names,
@@ -288,7 +343,7 @@ mod tests {
             fs::write(dir.path().join(format!("f{i}")), b"").unwrap();
         }
         let out = dir.path().join("out.rar");
-        let err = collect(&out, &[dir.path().to_path_buf()], small()).unwrap_err();
+        let err = collect(&out, &[dir.path().to_path_buf()], small(), &NEVER).unwrap_err();
         assert!(matches!(err, Error::Limit(m) if m.contains("more than 3 members")));
     }
 
@@ -299,7 +354,7 @@ mod tests {
             fs::write(dir.path().join(name), b"").unwrap();
         }
         let out = dir.path().join("out.rar");
-        let walk = collect(&out, &[], small()).unwrap();
+        let walk = collect(&out, &[], small(), &NEVER).unwrap();
         let names = walk.enumerate(dir.path()).unwrap();
         assert_eq!(names, ["a", "b", "c"]);
 
@@ -316,7 +371,7 @@ mod tests {
         fs::write(flat.join("x"), b"").unwrap();
         fs::write(flat.join("y"), b"").unwrap();
         let out = dir.path().join("out.rar");
-        let mut walk = collect(&out, &[], small()).unwrap();
+        let mut walk = collect(&out, &[], small(), &NEVER).unwrap();
         walk.pending.push(dir.path().join("queued-1"));
         assert_eq!(walk.enumerate(&flat).unwrap().len(), 2);
         walk.pending.push(dir.path().join("queued-2"));
@@ -338,13 +393,13 @@ mod tests {
             max_entries: 6,
             ..small()
         };
-        let err = collect(&out, std::slice::from_ref(&input), bounds).unwrap_err();
+        let err = collect(&out, std::slice::from_ref(&input), bounds, &NEVER).unwrap_err();
         assert!(matches!(err, Error::Limit(m) if m.contains("more than 6 members")));
         let bounds = Bounds {
             max_entries: 7,
             ..small()
         };
-        let walk = collect(&out, std::slice::from_ref(&input), bounds).unwrap();
+        let walk = collect(&out, std::slice::from_ref(&input), bounds, &NEVER).unwrap();
         let names: Vec<&str> = walk.sources.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(
             names,
@@ -363,7 +418,7 @@ mod tests {
         }
         fs::create_dir_all(&deep).unwrap();
         let out = dir.path().join("out.rar");
-        let walk = collect(&out, &[dir.path().join("in")], Bounds::WRITER).unwrap();
+        let walk = collect(&out, &[dir.path().join("in")], Bounds::WRITER, &NEVER).unwrap();
         assert_eq!(walk.sources.len(), 2001);
     }
 
@@ -377,7 +432,7 @@ mod tests {
             max_name_bytes: 12,
             ..small()
         };
-        let err = collect(&out, &[deep], bounds).unwrap_err();
+        let err = collect(&out, &[deep], bounds, &NEVER).unwrap_err();
         assert!(matches!(err, Error::Limit(m) if m.contains("13 bytes exceeds 12 bytes")));
     }
 
@@ -387,7 +442,7 @@ mod tests {
         fs::write(dir.path().join("a"), [0u8; 6]).unwrap();
         fs::write(dir.path().join("b"), [0u8; 6]).unwrap();
         let out = dir.path().join("out.rar");
-        let err = collect(&out, &[dir.path().to_path_buf()], small()).unwrap_err();
+        let err = collect(&out, &[dir.path().to_path_buf()], small(), &NEVER).unwrap_err();
         assert!(matches!(err, Error::Limit(m) if m.contains("exceeds 10 bytes")));
     }
 
@@ -403,12 +458,12 @@ mod tests {
             dir.path().join("one/Same.txt"),
             dir.path().join("two/same.txt"),
         ];
-        let err = collect(&out, &inputs, Bounds::WRITER).unwrap_err();
+        let err = collect(&out, &inputs, Bounds::WRITER, &NEVER).unwrap_err();
         assert!(
             matches!(err, Error::Format(m) if m.contains("duplicate RAR member name: 'same.txt'"))
         );
         let twice = [dir.path().join("one"), dir.path().join("one")];
-        let err = collect(&out, &twice, Bounds::WRITER).unwrap_err();
+        let err = collect(&out, &twice, Bounds::WRITER, &NEVER).unwrap_err();
         assert!(matches!(err, Error::Format(m) if m.contains("duplicate RAR member name: 'one'")));
     }
 
@@ -421,17 +476,51 @@ mod tests {
         fs::write(input.join("real.txt"), b"x").unwrap();
         std::os::unix::fs::symlink("real.txt", input.join("link.txt")).unwrap();
         let out = dir.path().join("out.rar");
-        let err = collect(&out, std::slice::from_ref(&input), Bounds::WRITER).unwrap_err();
+        let err = collect(&out, std::slice::from_ref(&input), Bounds::WRITER, &NEVER).unwrap_err();
         assert!(matches!(err, Error::Unsupported(m) if m.contains("symbolic link")));
-        let err = collect(&out, &[input.join("link.txt")], Bounds::WRITER).unwrap_err();
+        let err = collect(&out, &[input.join("link.txt")], Bounds::WRITER, &NEVER).unwrap_err();
         assert!(matches!(err, Error::Unsupported(m) if m.contains("symbolic link")));
+    }
+
+    #[test]
+    fn parent_components_are_refused_and_dot_components_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("in/sub")).unwrap();
+        fs::write(dir.path().join("in/sub/a.txt"), b"a").unwrap();
+        let out = dir.path().join("out.rar");
+        let err = collect(
+            &out,
+            &[dir.path().join("in/sub/..")],
+            Bounds::WRITER,
+            &NEVER,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Format(_)), "{err}");
+        assert!(err.to_string().contains("'..'"), "{err}");
+        assert_eq!(
+            member_name(Path::new("x"), Path::new("./in/./sub/a.txt")).unwrap(),
+            "in/sub/a.txt"
+        );
+        assert_eq!(member_name(Path::new("x"), Path::new(".")).unwrap(), "");
+        assert!(member_name(Path::new("x"), Path::new("/in/a.txt")).is_err());
+    }
+
+    #[test]
+    fn an_interruption_flag_stops_the_walk_with_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("in")).unwrap();
+        fs::write(dir.path().join("in/a.txt"), b"a").unwrap();
+        let out = dir.path().join("out.rar");
+        let stop = AtomicBool::new(true);
+        let err = collect(&out, &[dir.path().join("in")], Bounds::WRITER, &stop).unwrap_err();
+        assert!(matches!(err, Error::Cancelled), "{err}");
     }
 
     #[test]
     fn missing_sources_name_the_path() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("out.rar");
-        let err = collect(&out, &[dir.path().join("absent")], Bounds::WRITER).unwrap_err();
+        let err = collect(&out, &[dir.path().join("absent")], Bounds::WRITER, &NEVER).unwrap_err();
         assert!(matches!(err, Error::Io(e) if e.to_string().contains("absent")));
     }
 }

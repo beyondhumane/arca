@@ -21,9 +21,10 @@ arca-7z.workspace = true
 flate2.workspace = true
 clap.workspace = true
 rayon.workspace = true
+ctrlc = { version = "=3.4.7", features = ["termination"], optional = true }
 
 [features]
-rar = ["arca-rar/rar"]
+rar = ["arca-rar/rar", "dep:ctrlc"]
 default = ["codecs-native", "rar"]
 codecs-native = ["arca-zip/codecs-native", "arca-7z/codecs-native"]
 
