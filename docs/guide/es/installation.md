@@ -64,6 +64,18 @@ sudo mv arca /usr/local/bin/
 >
 > Si macOS se niega a ejecutar un binario descargado con el navegador, quita la marca de cuarentena con `xattr -d com.apple.quarantine ./arca`.
 
+### Nix
+
+En NixOS, o en cualquier Linux con Nix y los flakes activados, el repositorio es un flake. Compila los dos programas desde el código fuente e instala la entrada de escritorio:
+
+```sh
+nix run github:beyondhumane/arca              # abre la ventana
+nix run github:beyondhumane/arca#arca -- --help
+nix profile install github:beyondhumane/arca  # instala arca y arca-gui
+```
+
+`nix develop` abre una shell con el toolchain de Rust y las herramientas con las que comparan `interop.sh` y `bench.sh`.
+
 ## Compilar desde el código fuente
 
 Necesitas Rust 1.95 o más reciente. La compilación por defecto también compila libzstd, así que debe haber un compilador de C disponible (cc, clang o MSVC).
