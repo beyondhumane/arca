@@ -41,7 +41,7 @@ arca-icons = { path = "arca-icons" }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 crc32fast = "1"
 # Zstandard: bindings a libzstd, con su multihilo interno activado.
-zstd = { version = "0.13", features = ["zstdmt"] }
+zstd = { version = "0.14", features = ["zstdmt"] }
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
 
