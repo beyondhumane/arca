@@ -89,10 +89,11 @@ La creación rechaza, antes de leer ninguna entrada o escribir ningún fichero:
 El escritor prepara un fichero `.arca-*.rar.part` junto al destino, lo reabre
 con el propio lector de Arca para listar y decodificar por completo cada
 miembro y después lo publica sin sobrescribir nada. Cualquier fallo o la
-cancelación en el escritorio no deja nada en la ruta de destino. La CLI no tiene
-cancelación cooperativa: matar `arca` a mitad de la escritura nunca produce un
-archivo de salida, pero el fichero preparado puede quedar y hay que borrarlo a
-mano.
+cancelación no deja nada en la ruta de destino. En la CLI, Ctrl+C (SIGINT) o
+SIGTERM durante una creación RAR se atiende de forma cooperativa: el recorrido o
+el escritor se detienen en su siguiente comprobación, informan `cancelled` con
+estado de salida distinto de cero y el fichero preparado se elimina. SIGKILL y
+un corte de corriente no están cubiertos.
 
 No se admite en este incremento, y se rechaza en lugar de aproximarse: archivos
 sólidos, salida multivolumen, cifrado, registros de recuperación, filtros de

@@ -132,6 +132,7 @@ Decided and implemented after the read-only activation above, superseding the
   (bounded smoke in CI against official UnRAR 7.12 and 7-Zip 24.09; `--stress`
   for the larger campaign). Results and gaps: [RAR_CREATE_VALIDATION.md](../../arca-rar/RAR_CREATE_VALIDATION.md).
 - Still out of scope: modifying existing archives, repair/recovery, encrypted,
-  solid or multivolume output, RAR4 output, CBR creation, OS associations, and
-  cooperative Ctrl+C cancellation in the CLI (a kill mid-write leaves the staged
-  part file; this matches the existing ZIP/7z CLI behaviour and is a follow-up).
+  solid or multivolume output, RAR4 output, CBR creation and OS associations.
+  The CLI cancels RAR creation cooperatively on SIGINT/SIGTERM (`ctrlc`, flag
+  read by the walk and the progress callback); ZIP/7z creation still has no
+  signal handler and is a separate follow-up.

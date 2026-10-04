@@ -55,9 +55,10 @@ esa acción y cancelar deja el destino intacto. **Quitar contraseña** y
 volumen con el nivel elegido. Con RAR seleccionado el diálogo muestra el
 compresor RAR fijo y una nota de que la salida nunca se cifra; el campo de
 contraseña, **Ocultar nombres** y el selector de códec ZIP no aparecen, y una
-contraseña escrita para ZIP o 7z se conserva para cuando vuelvas. Un fichero de
-salida existente nunca se reemplaza, ni siquiera con la opción Reemplazar del
-diálogo de conflicto. El archivo nuevo se abre de solo lectura como cualquier
+contraseña escrita para ZIP o 7z se conserva para cuando vuelvas. Un nombre de
+salida ya ocupado se rechaza antes de escribir nada, con un mensaje para elegir
+otro nombre; no se ofrece Reemplazar porque la creación de RAR nunca sustituye
+un fichero. El archivo nuevo se abre de solo lectura como cualquier
 otro RAR, y Añadir, Borrar, Renombrar y contraseña siguen desactivados para él.
 No se puede crear CBR. Consulta [RAR](rar.md#crear-archivos-rar5).
 

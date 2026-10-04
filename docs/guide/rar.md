@@ -87,10 +87,11 @@ What creation refuses, before any input is read or any file is written:
 
 The writer stages a `.arca-*.rar.part` file beside the output, reopens it with
 Arca's own reader to list and fully decode every member, then publishes it
-without overwriting. Any failure or cancellation in the desktop leaves nothing
-at the output path. The CLI has no cooperative cancellation: killing `arca`
-mid-write never produces an output file, but the staged part file can remain
-and has to be deleted by hand.
+without overwriting. Any failure or cancellation leaves nothing at the output
+path. In the CLI, Ctrl+C (SIGINT) or SIGTERM during a RAR creation is handled
+cooperatively: the walk or the writer stops at its next check, reports
+`cancelled` with a nonzero exit status and the staged part file is removed.
+SIGKILL and power loss are not covered.
 
 Not supported in this increment, and refused rather than approximated: solid
 archives, multivolume output, encryption, recovery records, RAR data filters,
