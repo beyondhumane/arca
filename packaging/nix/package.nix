@@ -39,6 +39,7 @@ rustPlatform.buildRustPackage {
         ../../docs
         ../../windows
         ../../packaging
+        ../../flake.lock
         (lib.fileset.maybeMissing ../../target)
         (lib.fileset.fileFilter (f: f.hasExt "nix" || f.hasExt "md") ../..)
       ]
