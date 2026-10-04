@@ -14,6 +14,77 @@ use std::sync::mpsc::Sender;
 
 pub(crate) const BUF: usize = 256 * 1024;
 
+// Bytes of one entry between two looks at "carry on?". Progress is otherwise
+// only reported between entries, so one huge file would be written to the end
+// whatever the answer was.
+const STEP: u64 = 4 << 20;
+
+struct Watched<'a, W: Write> {
+    inner: W,
+    notify: &'a (dyn Fn(usize, usize, &str) -> bool + Sync),
+    progress: (usize, usize, &'a str),
+    since: u64,
+    cancelled: bool,
+}
+
+impl<W: Write> Write for Watched<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.since >= STEP {
+            self.since = 0;
+            let (done, total, name) = self.progress;
+            if !(self.notify)(done, total, name) {
+                self.cancelled = true;
+                // Not `Interrupted`: `io::copy` and `write_all` retry that one.
+                return Err(std::io::Error::other("cancelled"));
+            }
+        }
+        let n = self.inner.write(buf)?;
+        self.since += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+// Writes one entry to `path` while keeping `notify` in the loop, so a pause
+// holds and a stop lands inside the file rather than after it. A stop, like
+// any other failure, takes the half-written file away with it.
+fn unpack(
+    path: &Path,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+    progress: (usize, usize, &str),
+    fill: impl FnOnce(&mut dyn Write) -> arca_core::Result<u64>,
+) -> arca_core::Result<u64> {
+    let mut out = Watched {
+        inner: BufWriter::with_capacity(BUF, File::create(path)?),
+        notify,
+        progress,
+        since: 0,
+        cancelled: false,
+    };
+    let result = fill(&mut out);
+    let Watched {
+        mut inner,
+        cancelled,
+        ..
+    } = out;
+    let result = if cancelled {
+        Err(arca_core::Error::Cancelled)
+    } else {
+        result.and_then(|n| {
+            inner.flush()?;
+            Ok(n)
+        })
+    };
+    if result.is_err() {
+        drop(inner);
+        let _ = fs::remove_file(path);
+    }
+    result
+}
+
 pub(crate) fn open_source(archive: &Path, format: Format) -> std::io::Result<Box<dyn Read>> {
     let f = BufReader::with_capacity(BUF, File::open(archive)?);
     Ok(match format {
@@ -141,6 +212,7 @@ pub(crate) fn step_aside(archive: &Path) -> std::io::Result<()> {
 // The same walk as `extract_one` without the file at the end of it: a viewer
 // that wrote to the temporary folder on the way would have extracted the thing
 // it was only supposed to show.
+#[cfg(test)]
 pub(crate) fn read_entry(
     archive: &Path,
     index: usize,
@@ -258,13 +330,14 @@ pub(crate) fn extract_one(
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported("unknown format".into()));
     };
-    let mut out = BufWriter::with_capacity(BUF, File::create(&path)?);
     match format.container() {
         Container::SevenZ => unreachable!(),
         Container::Rar | Container::Iso => return Err(format.read_only()),
         Container::Zip => {
             let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
-            arca_zip::extract_entry_with(&mut source, entry, &mut out, password)?;
+            unpack(&path, notify, (0, 1, &entry.name), |out| {
+                arca_zip::extract_entry_with(&mut source, entry, out, password)
+            })?;
         }
         Container::Tar | Container::TarGz => {
             // A tar has no index, so the only way to one entry is through all
@@ -273,7 +346,9 @@ pub(crate) fn extract_one(
             let mut found = false;
             while let Some(e) = r.next_entry()? {
                 if e.entry.name == entry.name && !e.entry.is_dir {
-                    r.copy_data(&e, &mut out)?;
+                    unpack(&path, notify, (0, 1, &entry.name), |mut out| {
+                        r.copy_data(&e, &mut out)
+                    })?;
                     found = true;
                     break;
                 }
@@ -287,7 +362,6 @@ pub(crate) fn extract_one(
             }
         }
     }
-    out.flush()?;
     Ok(path)
 }
 
@@ -553,9 +627,10 @@ pub(crate) fn extract(
                 .par_iter()
                 .map(|(e, path)| {
                     let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
-                    let mut f = BufWriter::with_capacity(BUF, File::create(path)?);
-                    let w = arca_zip::extract_entry_with(&mut source, e, &mut f, password)?;
-                    f.flush()?;
+                    let at = (done.load(Ordering::Relaxed), total, e.name.as_str());
+                    let w = unpack(path, notify, at, |out| {
+                        arca_zip::extract_entry_with(&mut source, e, out, password)
+                    })?;
                     if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &e.name) {
                         return Err(arca_core::Error::Cancelled);
                     }
@@ -580,9 +655,8 @@ pub(crate) fn extract(
                 }
                 match dest_path(dest, &e.entry.name, e.entry.is_dir, ask, &mut claimed)? {
                     Some(path) => {
-                        let mut w = BufWriter::with_capacity(BUF, File::create(&path)?);
-                        bytes += r.copy_data(&e, &mut w)?;
-                        w.flush()?;
+                        let at = (i, total, e.entry.name.as_str());
+                        bytes += unpack(&path, notify, at, |mut out| r.copy_data(&e, &mut out))?;
                     }
                     None => r.skip_data(&e)?,
                 }
@@ -864,4 +938,76 @@ pub(crate) fn compress(
 pub(crate) enum Destination {
     Beside,
     Subfolder,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn room(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("arca-io-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn one_big_zip(dir: &Path) -> PathBuf {
+        let path = dir.join("big.zip");
+        let mut zip = arca_zip::ZipWriter::new(File::create(&path).unwrap());
+        zip.add(
+            "big.bin",
+            std::io::repeat(7).take(3 * STEP),
+            Codec::Deflate,
+            Level::Normal,
+            None,
+        )
+        .unwrap();
+        zip.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn stopping_inside_one_big_entry_removes_the_half_written_file() {
+        let dir = room("stop");
+        let archive = one_big_zip(&dir);
+        let dest = dir.join("out");
+        let looks = AtomicUsize::new(0);
+        let result = extract(
+            &archive,
+            &dest,
+            &[],
+            &|_, _, _| looks.fetch_add(1, Ordering::Relaxed) < 1,
+            &|_| Answer::Replace,
+            None,
+        );
+        assert!(
+            matches!(result, Err(arca_core::Error::Cancelled)),
+            "{result:?}"
+        );
+        assert!(!dest.join("big.bin").exists());
+        assert!(
+            looks.load(Ordering::Relaxed) >= 2,
+            "one entry has to be asked about more than once"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_big_entry_comes_out_whole_when_nobody_stops_it() {
+        let dir = room("whole");
+        let archive = one_big_zip(&dir);
+        let dest = dir.join("out");
+        let written = extract(
+            &archive,
+            &dest,
+            &[],
+            &|_, _, _| true,
+            &|_| Answer::Replace,
+            None,
+        )
+        .unwrap();
+        assert_eq!(written, 3 * STEP);
+        assert_eq!(fs::metadata(dest.join("big.bin")).unwrap().len(), 3 * STEP);
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }
