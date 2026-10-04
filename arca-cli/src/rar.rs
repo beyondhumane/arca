@@ -2,6 +2,7 @@ use super::{human, sevenz::is_link, CodecArg};
 use arca_core::{Error, Level, Result};
 use arca_rar::{create_limits, create_rar, CreateOptions, Source};
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -25,12 +26,17 @@ impl Bounds {
     };
 }
 
+/// Depth-first walk driven by an explicit stack. Every path is reserved
+/// against `max_entries` before it is queued, counting the entries already
+/// collected and those still pending, so neither a huge flat directory nor
+/// many pending sibling lists can grow past the cap.
 #[derive(Debug)]
 struct Walk<'a> {
     bounds: Bounds,
     output: &'a Path,
     sources: Vec<Source>,
     names: HashSet<String>,
+    pending: Vec<PathBuf>,
     bytes: u64,
     files: u64,
 }
@@ -107,17 +113,52 @@ fn collect<'a>(output: &'a Path, inputs: &[PathBuf], bounds: Bounds) -> Result<W
         output,
         sources: Vec::new(),
         names: HashSet::new(),
+        pending: Vec::new(),
         bytes: 0,
         files: 0,
     };
     for input in inputs {
         let base = input.parent().unwrap_or(Path::new(""));
-        walk.visit(input, base)?;
+        walk.reserve(0)?;
+        walk.pending.push(input.clone());
+        while let Some(path) = walk.pending.pop() {
+            walk.visit(&path, base)?;
+        }
     }
     Ok(walk)
 }
 
 impl Walk<'_> {
+    fn reserve(&self, queued: usize) -> Result<()> {
+        if self.sources.len() + self.pending.len() + queued >= self.bounds.max_entries {
+            return Err(Error::Limit(format!(
+                "RAR archive would hold more than {} members",
+                self.bounds.max_entries
+            )));
+        }
+        Ok(())
+    }
+
+    fn enumerate(&self, dir: &Path) -> Result<Vec<OsString>> {
+        let mut children = Vec::new();
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            self.reserve(children.len())?;
+            let child = entry.file_name();
+            if child.len() > self.bounds.max_name_bytes {
+                return Err(Error::Limit(format!(
+                    "RAR member name of {} bytes exceeds {} bytes: '{}'",
+                    child.len(),
+                    self.bounds.max_name_bytes,
+                    dir.join(&child).display()
+                )));
+            }
+            children.push(child);
+        }
+        children.sort();
+        Ok(children)
+    }
+
     fn visit(&mut self, path: &Path, base: &Path) -> Result<()> {
         let meta = fs::symlink_metadata(path).map_err(|e| {
             Error::Io(io::Error::new(
@@ -157,12 +198,6 @@ impl Walk<'_> {
             )));
         }
         if name != "." {
-            if self.sources.len() >= self.bounds.max_entries {
-                return Err(Error::Limit(format!(
-                    "RAR archive would hold more than {} members",
-                    self.bounds.max_entries
-                )));
-            }
             if !self.names.insert(name.to_lowercase()) {
                 return Err(Error::Format(format!(
                     "duplicate RAR member name: '{name}' (from '{}')",
@@ -188,11 +223,9 @@ impl Walk<'_> {
             });
         }
         if meta.is_dir() {
-            let mut children = fs::read_dir(path)?.collect::<io::Result<Vec<_>>>()?;
-            children.sort_by_key(|entry| entry.file_name());
-            for child in children {
-                self.visit(&child.path(), base)?;
-            }
+            let children = self.enumerate(path)?;
+            self.pending
+                .extend(children.into_iter().rev().map(|child| path.join(child)));
         }
         Ok(())
     }
@@ -257,6 +290,81 @@ mod tests {
         let out = dir.path().join("out.rar");
         let err = collect(&out, &[dir.path().to_path_buf()], small()).unwrap_err();
         assert!(matches!(err, Error::Limit(m) if m.contains("more than 3 members")));
+    }
+
+    #[test]
+    fn directory_enumeration_stops_at_the_entry_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["c", "a", "b"] {
+            fs::write(dir.path().join(name), b"").unwrap();
+        }
+        let out = dir.path().join("out.rar");
+        let walk = collect(&out, &[], small()).unwrap();
+        let names = walk.enumerate(dir.path()).unwrap();
+        assert_eq!(names, ["a", "b", "c"]);
+
+        fs::write(dir.path().join("d"), b"").unwrap();
+        let err = walk.enumerate(dir.path()).unwrap_err();
+        assert!(matches!(err, Error::Limit(m) if m.contains("more than 3 members")));
+    }
+
+    #[test]
+    fn pending_entries_count_against_the_cap_during_enumeration() {
+        let dir = tempfile::tempdir().unwrap();
+        let flat = dir.path().join("flat");
+        fs::create_dir_all(&flat).unwrap();
+        fs::write(flat.join("x"), b"").unwrap();
+        fs::write(flat.join("y"), b"").unwrap();
+        let out = dir.path().join("out.rar");
+        let mut walk = collect(&out, &[], small()).unwrap();
+        walk.pending.push(dir.path().join("queued-1"));
+        assert_eq!(walk.enumerate(&flat).unwrap().len(), 2);
+        walk.pending.push(dir.path().join("queued-2"));
+        let err = walk.enumerate(&flat).unwrap_err();
+        assert!(matches!(err, Error::Limit(m) if m.contains("more than 3 members")));
+    }
+
+    #[test]
+    fn nested_sibling_lists_cannot_compound_past_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in");
+        for sub in ["p", "q"] {
+            fs::create_dir_all(input.join(sub)).unwrap();
+            fs::write(input.join(sub).join("1"), b"").unwrap();
+            fs::write(input.join(sub).join("2"), b"").unwrap();
+        }
+        let out = dir.path().join("out.rar");
+        let bounds = Bounds {
+            max_entries: 6,
+            ..small()
+        };
+        let err = collect(&out, std::slice::from_ref(&input), bounds).unwrap_err();
+        assert!(matches!(err, Error::Limit(m) if m.contains("more than 6 members")));
+        let bounds = Bounds {
+            max_entries: 7,
+            ..small()
+        };
+        let walk = collect(&out, std::slice::from_ref(&input), bounds).unwrap();
+        let names: Vec<&str> = walk.sources.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["in", "in/p", "in/p/1", "in/p/2", "in/q", "in/q/1", "in/q/2"]
+        );
+        assert!(walk.pending.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deep_trees_do_not_recurse() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut deep = dir.path().join("in");
+        for _ in 0..2000 {
+            deep.push("d");
+        }
+        fs::create_dir_all(&deep).unwrap();
+        let out = dir.path().join("out.rar");
+        let walk = collect(&out, &[dir.path().join("in")], Bounds::WRITER).unwrap();
+        assert_eq!(walk.sources.len(), 2001);
     }
 
     #[test]
