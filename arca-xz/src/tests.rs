@@ -293,6 +293,11 @@ fn identify_looks_inside_instead_of_trusting_the_name() {
     let tar = compress(&tar.finish().unwrap(), Level::Fast, 1);
     let plain = compress(&sample(4_000), Level::Fast, 1);
     let empty_tar = compress(&[0; 10_240], Level::Fast, 1);
+    let end_marker = compress(&[0; 1_024], Level::Fast, 1);
+    let one_block = compress(&[0; 512], Level::Fast, 1);
+    let ragged = compress(&[0; 1_500], Level::Fast, 1);
+    let past_record = compress(&[0; 10_752], Level::Fast, 1);
+    let zeros = compress(&vec![0; 1 << 20], Level::Fast, 1);
     for (name, bytes, expected) in [
         ("a.tar.xz", &tar, Some(Format::TarXz)),
         ("a.xz", &tar, Some(Format::TarXz)),
@@ -302,6 +307,11 @@ fn identify_looks_inside_instead_of_trusting_the_name() {
         ("b.bin", &plain, Some(Format::Xz)),
         ("empty.txz", &empty_tar, Some(Format::TarXz)),
         ("zeros.xz", &empty_tar, Some(Format::Xz)),
+        ("arca-empty.tar.xz", &end_marker, Some(Format::TarXz)),
+        ("one-block.tar.xz", &one_block, Some(Format::Xz)),
+        ("ragged.tar.xz", &ragged, Some(Format::Xz)),
+        ("past-record.tar.xz", &past_record, Some(Format::Xz)),
+        ("zeros.tar.xz", &zeros, Some(Format::Xz)),
         ("x.zip", &tar, Some(Format::Zip)),
         ("fake.xz", &b"not xz at all".to_vec(), Some(Format::Xz)),
         ("plain.bin", &b"not xz at all".to_vec(), None),

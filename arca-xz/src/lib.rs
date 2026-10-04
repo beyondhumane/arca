@@ -302,7 +302,10 @@ pub fn identify(path: &Path) -> Option<Format> {
             Err(_) => return named.or(Some(Format::Xz)),
         }
     }
-    let empty_tar = named == Some(Format::TarXz) && block.iter().all(|&b| b == 0);
+    let empty_tar = named == Some(Format::TarXz)
+        && filled == block.len()
+        && block.iter().all(|&b| b == 0)
+        && rest_is_empty_tar(&mut decoder);
     Some(
         if filled == block.len() && (arca_tar::is_header(&block) || empty_tar) {
             Format::TarXz
@@ -310,6 +313,22 @@ pub fn identify(path: &Path) -> Option<Format> {
             Format::Xz
         },
     )
+}
+
+// An empty tar is only its end marker: at least two zero blocks, padded with
+// zero blocks up to one 10240-byte record. Any other run of zeros is a file.
+const EMPTY_TAR_MAX: usize = 20 * 512;
+
+fn rest_is_empty_tar(decoder: &mut impl Read) -> bool {
+    let mut rest = Vec::new();
+    let limit = (EMPTY_TAR_MAX - 512 + 1) as u64;
+    if decoder.take(limit).read_to_end(&mut rest).is_err() {
+        return false;
+    }
+    let total = 512 + rest.len();
+    (1024..=EMPTY_TAR_MAX).contains(&total)
+        && total.is_multiple_of(512)
+        && rest.iter().all(|&b| b == 0)
 }
 
 /// The xz preset for an Arca level. Store is preset 0: XZ has no stored mode.

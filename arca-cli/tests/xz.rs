@@ -178,6 +178,13 @@ fn the_contents_decide_between_tar_xz_and_plain_xz() {
     fs::copy(dir.join("plain.xz"), dir.join("plain.tar.xz")).unwrap();
     let listing = ok(dir, &["list", "plain.tar.xz"]);
     assert!(listing.trim_end().ends_with("plain.tar"), "{listing}");
+
+    let zeros = vec![0u8; 64 << 10];
+    fs::write(dir.join("zeros"), &zeros).unwrap();
+    ok(dir, &["create", "zeros.xz", "zeros"]);
+    fs::copy(dir.join("zeros.xz"), dir.join("zeros.tar.xz")).unwrap();
+    ok(dir, &["extract", "zeros.tar.xz", "-o", "zeros-out"]);
+    assert_eq!(fs::read(dir.join("zeros-out/zeros.tar")).unwrap(), zeros);
 }
 
 #[test]
