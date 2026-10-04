@@ -419,7 +419,7 @@ pub(super) fn build_dialog(
                 })
         }
         ModalKind::Add => {
-            let is_zip = shell.read(cx).controller.writable();
+            let is_zip = shell.read(cx).controller.state.format == super::Format::Zip;
             let is_sevenz = shell.read(cx).controller.state.format == super::Format::SevenZ;
             let count = shell.read(cx).controller.state.pending_inputs.len();
             let output_name = shell.read(cx).output_name.clone();
@@ -576,7 +576,7 @@ pub(super) fn build_dialog(
         ModalKind::Settings => {
             let lang = shell.read(cx).controller.state.settings.lang;
             let theme = shell.read(cx).controller.state.settings.theme;
-            let is_zip = shell.read(cx).controller.writable();
+            let is_zip = shell.read(cx).controller.state.format == super::Format::Zip;
             let page = shell.read(cx).controller.state.settings.page;
             let pages = arca_zip::pages::Page::ALL
                 .iter()

@@ -82,7 +82,7 @@ impl AppController {
                 &state.directory,
                 &state.filter,
                 state.order,
-                !self.state.browser.columns && self.state.settings.flat,
+                !self.state.browser.columns && self.flat(),
                 !self.state.browser.columns,
             )
         }

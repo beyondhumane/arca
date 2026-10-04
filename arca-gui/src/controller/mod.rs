@@ -680,7 +680,7 @@ impl AppController {
             while let Some(cut) = trimmed[at..].find('/') {
                 at += cut + 1;
                 let prefix = &trimmed[..at];
-                if !self.state.settings.flat && prefix.len() <= directory.len() {
+                if !self.flat() && prefix.len() <= directory.len() {
                     continue;
                 }
                 let all = *whole.entry(prefix.to_string()).or_insert_with(|| {
@@ -1587,8 +1587,15 @@ impl AppController {
     /// is underneath the folder you are in, so the folder shown beside a row is
     /// the part below here. Empty at the root and in the flat view, where a
     /// path is already read from the top.
+    /// The flat view reads every entry from the top, which only means
+    /// something inside an archive: on disk the entries are whatever folders
+    /// happen to be cached, so the setting waits until an archive is open.
+    pub(crate) fn flat(&self) -> bool {
+        self.state.settings.flat && !self.on_disk()
+    }
+
     pub(crate) fn row_root(&self) -> &str {
-        if self.state.settings.flat || self.state.filter.trim().is_empty() {
+        if self.flat() || self.state.filter.trim().is_empty() {
             ""
         } else {
             &self.state.current_dir
@@ -1600,7 +1607,7 @@ impl AppController {
             &self.state.current_dir,
             &self.state.filter,
             self.state.order,
-            self.state.settings.flat,
+            self.flat(),
             !self.state.browser.columns,
         )
     }

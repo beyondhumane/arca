@@ -278,3 +278,64 @@ fn an_archive_listing_that_lands_after_closing_is_ignored() {
     assert!(shown.iter().any(|name| name == "top.txt"), "{shown:?}");
     assert!(!shown.iter().any(|name| name == "late"), "{shown:?}");
 }
+
+#[test]
+fn refreshing_the_disk_keeps_the_selection_by_name() {
+    let room = populated();
+    let mut app = AppController::new(Settings::default());
+    app.browse_disk(&room.0);
+    let rows = app.visible_rows();
+    let top = rows
+        .iter()
+        .position(|row| row.label == "top.txt")
+        .expect("top.txt listed");
+    app.set_pane_cursor(app.state.browser.active, Some(top));
+    let entry = rows[top].entry.expect("a file row has an entry");
+    app.state.checked[entry] = true;
+    app.snapshot_active_pane();
+    assert_eq!(app.selected_disk_paths(), vec![room.path("top.txt")]);
+
+    std::fs::write(room.path("aaa.txt"), b"sorts first").unwrap();
+    app.refresh_disk();
+    assert_eq!(app.selected_disk_paths(), vec![room.path("top.txt")]);
+    let rows = app.visible_rows();
+    let cursor = app.state.cursor.expect("cursor survives a refresh");
+    assert_eq!(rows[cursor].label, "top.txt");
+    assert!(names(&app).contains(&"aaa.txt".to_string()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_name_with_a_backslash_is_left_out_rather_than_split() {
+    let room = populated();
+    let odd = room.path("a\\b");
+    std::fs::create_dir(&odd).unwrap();
+    std::fs::write(odd.join("inside.txt"), b"x").unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.browse_disk(&room.0);
+    assert_eq!(
+        names(&app),
+        vec!["nested".to_string(), "top.txt".to_string()]
+    );
+    assert!(app.state.entries.iter().all(|e| !e.name.contains('\\')));
+}
+
+#[test]
+fn a_remembered_flat_view_does_not_apply_on_disk() {
+    let room = populated();
+    let mut app = AppController::new(Settings {
+        flat: true,
+        ..Default::default()
+    });
+    app.transition_browser_view(false, true);
+    app.browse_disk(&room.0);
+    app.enter_folder_from_pane(
+        app.state.browser.active,
+        &format!("{}nested/", disk_dir(&room.0)),
+    );
+    assert!(!app.flat());
+    assert_eq!(
+        names(&app),
+        vec!["deeper".to_string(), "note.txt".to_string()]
+    );
+}

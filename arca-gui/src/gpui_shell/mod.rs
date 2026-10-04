@@ -1810,7 +1810,7 @@ impl GpuiShell {
                 self.name_value.clear();
                 self.controller.state.picking_group = Some(adding);
             }
-            Shortcut::View if archive.is_some() => {
+            Shortcut::View if archive.is_some() || self.controller.on_disk() => {
                 let cursor = self.controller.state.cursor;
                 let rows = self.controller.visible_rows();
                 match cursor
@@ -2386,7 +2386,7 @@ impl Render for GpuiShell {
                 input.set_value(output_value.clone(), window, cx);
             }
         });
-        let zip = self.controller.writable();
+        let zip = self.controller.state.format == Format::Zip;
         self.add_password.update(cx, |input, cx| {
             input.set_placeholder(s.password_optional, window, cx);
             input.set_disabled(!(matches!(modal, Some(ModalKind::Add)) && zip), cx);

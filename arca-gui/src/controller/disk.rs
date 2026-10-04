@@ -185,7 +185,7 @@ pub(crate) fn list_directory(dir: &str, show_hidden: bool) -> std::io::Result<Ve
     for item in fs::read_dir(disk_path(dir))? {
         let item = item?;
         let leaf = item.file_name().to_string_lossy().to_string();
-        if leaf.is_empty() || leaf.contains('/') {
+        if leaf.is_empty() || leaf.contains(['/', '\\']) {
             continue;
         }
         let meta = fs::metadata(item.path()).or_else(|_| item.metadata()).ok();
@@ -439,11 +439,50 @@ impl AppController {
         if !self.on_disk() {
             return;
         }
+        self.snapshot_active_pane();
         let dir = self.state.current_dir.clone();
+        let remembered: Vec<(Vec<String>, Option<String>)> = (0..self.state.browser.panes.len())
+            .map(|pane| {
+                let rows = self.pane_rows(pane);
+                let state = &self.state.browser.panes[pane];
+                let selected = state
+                    .selected
+                    .iter()
+                    .filter_map(|i| self.state.entries.get(*i))
+                    .map(|entry| entry.name.clone())
+                    .collect();
+                let cursor = state
+                    .cursor
+                    .and_then(|i| rows.get(i))
+                    .map(|row| row.path.clone());
+                (selected, cursor)
+            })
+            .collect();
         self.state.entries.clear();
         self.state.checked.clear();
         self.state.disk = Some(DiskState::default());
         self.load_disk_ancestors(&dir);
+        let by_name: HashMap<String, usize> = self
+            .state
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| (entry.name.clone(), i))
+            .collect();
+        for (pane, (selected, cursor)) in remembered.into_iter().enumerate() {
+            let rows = self.pane_rows(pane);
+            let state = &mut self.state.browser.panes[pane];
+            state.selected = selected
+                .iter()
+                .filter_map(|name| by_name.get(name).copied())
+                .collect();
+            state.cursor = cursor.and_then(|path| rows.iter().position(|row| row.path == path));
+        }
+        let active = &self.state.browser.panes[self.state.browser.active];
+        self.state.cursor = active.cursor;
+        self.state.checked = (0..self.state.entries.len())
+            .map(|i| active.selected.contains(&i))
+            .collect();
         self.navigate_panes(dir);
     }
 
