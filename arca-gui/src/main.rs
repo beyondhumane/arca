@@ -347,6 +347,10 @@ c76ecf12e8e05b8f4730fb9933450ea121fe1ce3699ab9b7d20b058f872815f4 *arca-setup-0.6
             ("plain.tar", "plain"),
             ("UPPER.ZIP", "UPPER"),
             ("dots.in.name.zip", "dots.in.name"),
+            ("comic.CBR", "comic"),
+            ("My.Book.EPUB", "My.Book"),
+            ("app-release.apk", "app-release"),
+            ("pkg-1.0-py3-none-any.whl", "pkg-1.0-py3-none-any"),
             ("no-extension", "no-extension"),
         ] {
             assert_eq!(archive_stem(Path::new(name)), stem, "{name}");

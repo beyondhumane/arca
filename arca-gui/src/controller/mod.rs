@@ -1,6 +1,8 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
+#[cfg(test)]
+mod container_tests;
 #[cfg(all(test, feature = "rar"))]
 mod rar_tests;
 mod state;
@@ -1087,7 +1089,7 @@ impl AppController {
                             self.state.password_wrong = false;
                             self.state.archive_password = None;
                             self.state.waiting_on_password =
-                                Some(if detect(&path) == Some(Format::Rar) {
+                                Some(if container_of(&path) == Some(Container::Rar) {
                                     Pending::ListArchive(path.clone())
                                 } else {
                                     Pending::OpenArchive
@@ -1114,11 +1116,7 @@ impl AppController {
                             path.file_name()
                                 .map(|x| x.to_string_lossy().to_string())
                                 .unwrap_or_default(),
-                            if detect(&path) == Some(Format::Rar) {
-                                " (RAR: experimental, read-only)"
-                            } else {
-                                ""
-                            }
+                            read_only_suffix(detect(&path))
                         );
                         self.state.archive = Some(path);
                         let restore_dir = self.state.reread_dir.take();
@@ -1146,7 +1144,7 @@ impl AppController {
                     }
                     Message::PasswordNeeded(path, wrong) => {
                         self.state.archive = Some(path.clone());
-                        self.state.format = Format::Rar;
+                        self.state.format = detect(&path).unwrap_or(Format::Rar);
                         self.state.entries.clear();
                         self.state.checked.clear();
                         self.state.folders = tree::Folder::default();

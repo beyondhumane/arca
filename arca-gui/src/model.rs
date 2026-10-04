@@ -11,10 +11,38 @@ pub enum ThemePreference {
     Dark,
 }
 
-pub(crate) use arca_core::Format;
+pub(crate) use arca_core::{Container, Format};
 
 pub(crate) fn detect(p: &Path) -> Option<Format> {
     Format::detect(p)
+}
+
+pub(crate) fn container_of(p: &Path) -> Option<Container> {
+    detect(p).map(Format::container)
+}
+
+pub(crate) fn open_filter() -> Vec<&'static str> {
+    let mut extensions = Vec::new();
+    for (suffix, format) in Format::SUFFIXES {
+        if format.container() == Container::Rar && !cfg!(feature = "rar") {
+            continue;
+        }
+        let extension = suffix.rsplit('.').next().unwrap_or(suffix);
+        if !extensions.contains(&extension) {
+            extensions.push(extension);
+        }
+    }
+    extensions
+}
+
+pub(crate) fn read_only_suffix(format: Option<Format>) -> String {
+    match format {
+        Some(f) if f.container() == Container::Rar => {
+            format!(" ({}: experimental, read-only)", f.label())
+        }
+        Some(f) if !f.can_write() => format!(" ({}: read-only)", f.label()),
+        _ => String::new(),
+    }
 }
 
 // The little triangle beside a column name that says which way it is sorted.
@@ -103,13 +131,7 @@ pub(crate) fn archive_stem(p: &Path) -> String {
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
-    let lower = name.to_ascii_lowercase();
-    for ext in [".tar.gz", ".tgz", ".zip", ".tar", ".rar", ".cbr"] {
-        if lower.ends_with(ext) {
-            return name[..name.len() - ext.len()].to_string();
-        }
-    }
-    name
+    Format::split_name(&name).map_or_else(|| name.clone(), |(stem, _)| stem.to_string())
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]

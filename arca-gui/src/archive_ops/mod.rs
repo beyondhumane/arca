@@ -284,8 +284,8 @@ pub(crate) fn run_job_blocking(
         | Job::Add { archive, .. } => Some(archive),
         _ => None,
     };
-    if mutation.is_some_and(|p| detect(p) == Some(Format::Rar)) {
-        return Err(arca_rar::read_only().to_string());
+    if let Some(format) = mutation.and_then(|p| detect(p)).filter(|f| !f.can_write()) {
+        return Err(format.read_only().to_string());
     }
     match job {
         Job::Extract {
