@@ -6,6 +6,7 @@ members = [
     "arca-tar",
     "arca-7z",
     "arca-rar",
+    "arca-iso",
     "arca-cli",
     "arca-gui",
     "arca-setup",
@@ -36,6 +37,7 @@ arca-zip  = { path = "arca-zip", default-features = false }
 arca-tar  = { path = "arca-tar" }
 arca-7z   = { path = "arca-7z", default-features = false }
 arca-rar = { path = "arca-rar" }
+arca-iso = { path = "arca-iso" }
 arca-icons = { path = "arca-icons" }
 # DEFLATE: zlib-rs, la implementacion en Rust mas rapida medida (ver diseno S02)
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }

@@ -29,7 +29,7 @@ Options:
   -V, --version  Print version
 ```
 
-`list`, `extract` and `test` also read the [ZIP containers](zip-containers.md) (.apk, .jar, .epub, .cbz and the rest) and, in builds with the [RAR reader](rar.md), .rar and .cbr. Those are read-only: `create` and `password` refuse them.
+`list`, `extract` and `test` also read the [ZIP containers](zip-containers.md) (.apk, .jar, .epub, .cbz and the rest), [ISO 9660 images](iso.md) and, in builds with the [RAR reader](rar.md), .rar and .cbr. Those are read-only: `create` and `password` refuse them.
 
 ## create · c
 
