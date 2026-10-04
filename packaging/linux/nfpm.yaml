@@ -1,0 +1,59 @@
+# Read by build.sh from inside the staged tree, with VERSION and GOARCH set.
+name: arca
+arch: ${GOARCH}
+platform: linux
+version: ${VERSION}
+release: "1"
+section: utils
+priority: optional
+maintainer: Proyecto Arca
+vendor: Beyond Humane
+homepage: https://arca.beyondhumane.com
+license: Apache-2.0
+description: |-
+  Fast and safe archive manager.
+  Creates, browses and extracts ZIP, TAR and TAR.GZ archives, from the
+  command line (arca) or the desktop window (arca-gui).
+
+contents:
+  - src: usr/bin/arca
+    dst: /usr/bin/arca
+    file_info: { mode: 0755 }
+  - src: usr/bin/arca-gui
+    dst: /usr/bin/arca-gui
+    file_info: { mode: 0755 }
+  - src: usr/share/applications/arca.desktop
+    dst: /usr/share/applications/arca.desktop
+  - src: usr/share/icons/hicolor/256x256/apps/arca.png
+    dst: /usr/share/icons/hicolor/256x256/apps/arca.png
+  - src: usr/share/doc/arca/README.md
+    dst: /usr/share/doc/arca/README.md
+  - src: usr/share/licenses/arca/LICENSE
+    dst: /usr/share/licenses/arca/LICENSE
+    type: license
+
+# arca-gui links libxcb and libxkbcommon and loads Wayland and EGL at
+# run time. RPM names them by soname, which Fedora and openSUSE both resolve.
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.35)
+      - libgcc-s1
+      - libxcb1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+    recommends:
+      - libwayland-client0
+      - libwayland-egl1
+      - libegl1
+  rpm:
+    depends:
+      - libc.so.6(GLIBC_2.35)(64bit)
+      - libm.so.6(GLIBC_2.35)(64bit)
+      - libxcb.so.1()(64bit)
+      - libxkbcommon.so.0()(64bit)
+      - libxkbcommon-x11.so.0()(64bit)
+    recommends:
+      - libwayland-client.so.0()(64bit)
+      - libwayland-egl.so.1()(64bit)
+      - libEGL.so.1()(64bit)
