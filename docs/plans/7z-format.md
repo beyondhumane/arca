@@ -13,10 +13,10 @@ are not part of this design.
 
 ZIP's central directory remains visible even with WinZip AES. 7z encrypted
 headers solve the hidden-name requirement without inventing a format. RAR
-reading is a separate opt-in, read-only integration. The UnRAR license restricts
+reading is a separate read-only integration, enabled by default. The UnRAR license restricts
 use of its code to develop a compatible compressor; it is not a universal ban
 on independent writers or evidence that readers require native code. See
-[the RAR design](../todos/rar-format.md) for its separate provenance review gate.
+[the RAR design](../todos/rar-format.md) for its separate provenance review.
 
 ## Dependency decision and safe-Rust boundary
 

@@ -27,7 +27,7 @@ Se recuerdan las preferencias y los anchos. Al estrechar la ventana, la barra la
 - **Espacio** alterna la fila del cursor; **Ctrl+A** selecciona las filas visibles. Las operaciones de selección solo afectan al panel activo. La fila de carpeta superior de Detalles nunca es un destino de esas operaciones.
 - Haz clic derecho en una fila para extraer, previsualizar, renombrar, eliminar y ver otras acciones aplicables. El espacio vacío del panel ofrece acciones sobre ese directorio.
 - Arrastra entradas a una carpeta o panel de directorio para moverlas dentro de un ZIP modificable. Suelta archivos externos sobre un directorio para añadirlos. El destino se resalta durante el arrastre.
-- El diálogo de nueva carpeta y los menús de pegado indican el destino. Las modificaciones ZIP se ejecutan de una en una; RAR sigue siendo de solo lectura.
+- El diálogo de nueva carpeta y los menús de pegado indican el destino. Las modificaciones ZIP se ejecutan de una en una; los RAR/CBR existentes siguen siendo de solo lectura.
 - Copiar, cortar, pegar archivos y arrastrarlos fuera conservan la integración existente con Windows. **Ctrl+Mayús+C** copia los nombres como texto.
 - **Más** reúne selección, cambios de contraseña, verificación, deshacer, ajustes y ayuda de atajos.
 
@@ -49,6 +49,19 @@ en segundo plano antes de extraer, probar, previsualizar o abrir; reintentar ret
 esa acción y cancelar deja el destino intacto. **Quitar contraseña** y
 **Establecer contraseña…** solo se aplican a ZIP, nunca a un 7z existente.
 
+## RAR
+
+**Crear** ofrece RAR junto a ZIP y 7z y escribe un archivo RAR5 nuevo de un solo
+volumen con el nivel elegido. Con RAR seleccionado el diálogo muestra el
+compresor RAR fijo y una nota de que la salida nunca se cifra; el campo de
+contraseña, **Ocultar nombres** y el selector de códec ZIP no aparecen, y una
+contraseña escrita para ZIP o 7z se conserva para cuando vuelvas. Un nombre de
+salida ya ocupado se rechaza antes de escribir nada, con un mensaje para elegir
+otro nombre; no se ofrece Reemplazar porque la creación de RAR nunca sustituye
+un fichero. El archivo nuevo se abre de solo lectura como cualquier
+otro RAR, y Añadir, Borrar, Renombrar y contraseña siguen desactivados para él.
+No se puede crear CBR. Consulta [RAR](rar.md#crear-archivos-rar5).
+
 ## 7z
 
 Crea 7z con Store o LZMA2 y los niveles existentes. La creación y la extracción
@@ -69,7 +82,7 @@ archivo a medias.
 ## Límites por formato
 
 Añadir, borrar, renombrar y cambiar contraseñas en archivos existentes sigue
-siendo exclusivo de ZIP. Arrastrar ficheros virtuales fuera de un 7z está
+siendo exclusivo de ZIP; 7z y RAR se pueden crear, pero no modificar después. Arrastrar ficheros virtuales fuera de un 7z está
 desactivado para no descodificar repetidamente bloques sólidos: usa Copiar o
 Extraer. El portapapeles de ficheros depende de la plataforma.
 

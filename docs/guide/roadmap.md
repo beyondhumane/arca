@@ -16,16 +16,18 @@ creation, passwords and hidden names are implemented for CLI and desktop. See
 [issue #2](https://github.com/beyondhumane/arca/issues/2) and the
 [accepted design](https://github.com/beyondhumane/arca/blob/main/docs/plans/7z-format.md).
 
+[RAR/CBR reading](rar.md) is enabled by default, including modern and legacy
+multivolume sets, passwords, previews and verified extraction. New single-volume
+RAR5 archives can be created at four levels. Existing RAR/CBR archives remain
+read-only: mutation, recovery/repair, encrypted, solid or multivolume output and
+CBR creation are not supported.
+
 Standalone `.xz` and `.tar.xz`/`.txz` can be created, listed, tested and
 extracted in CLI and desktop. See
 [issue #18](https://github.com/beyondhumane/arca/issues/18) and
 [Creating archives](creating-archives.md#xz).
 
 ## Not yet
-
-[RAR/CBR reading](rar.md) is experimental and opt-in with `--features rar`.
-Stable activation, provenance review and multi-volume support remain follow-up
-work. RAR creation and mutation are not supported.
 
 - **UDF:** ISO images are read through ISO 9660, so files stored only in UDF (such as `install.wim` on Windows media) are not listed yet.
 - **Symbolic links:** skipped for ZIP/TAR creation, rejected for 7z.

@@ -27,7 +27,7 @@ Layout choices and widths are remembered. Narrow windows temporarily reduce the 
 - **Space** toggles the cursor row; **Ctrl+A** selects visible rows. Selection commands operate only in the active pane. The parent row in Details is never a command target.
 - Right-click a row for extraction, preview, rename, delete and other applicable actions. Right-click empty pane space for destination actions.
 - Drag entries onto a folder or directory pane to move them within a writable ZIP. Drop external files onto a directory to add them. The target highlights during a drag.
-- New-folder dialogs and paste menus name their destination. ZIP mutations are serialized; RAR remains read-only.
+- New-folder dialogs and paste menus name their destination. ZIP mutations are serialized; existing RAR/CBR archives remain read-only.
 - File clipboard copy/cut/paste and drag-out retain their existing Windows integration. **Ctrl+Shift+C** copies names as text.
 - **More** includes selection tools, password changes, verification, undo, settings and shortcut help.
 
@@ -49,6 +49,18 @@ worker before extract/test/preview/open actions; retry resumes that action and
 cancel leaves the destination untouched. **Remove password** and **Set password…**
 apply only to ZIP, never to an existing 7z.
 
+## RAR
+
+**Create** offers RAR next to ZIP and 7z and writes a new single-volume RAR5
+archive at the chosen level. With RAR selected the dialog shows the fixed RAR
+compressor and a note that the output is never encrypted; the password field,
+**Hide file names** and the ZIP codec picker are not shown, and a password typed
+for ZIP or 7z is kept for when you switch back. An existing output name is
+refused before anything is written, with a message to pick another name; no
+Replace option is offered because RAR creation never replaces a file. The new archive
+opens read-only like any other RAR, and Add, Delete, Rename and password
+actions stay disabled for it. CBR cannot be created. See [RAR](rar.md#creating-rar5-archives).
+
 ## 7z
 
 Create 7z using Store or LZMA2 and the existing levels. Creation and extraction
@@ -68,7 +80,7 @@ and check it, and a stopped or failed creation leaves no half-written archive.
 ## Format limits
 
 Adding, deleting, renaming and changing passwords in an existing archive remain
-ZIP-only. 7z virtual-file drag-out is disabled to avoid repeatedly decoding solid
+ZIP-only; 7z and RAR can be created but not modified afterwards. 7z virtual-file drag-out is disabled to avoid repeatedly decoding solid
 blocks; use Copy or Extract instead. Copying to the system file clipboard is
 platform-dependent.
 
