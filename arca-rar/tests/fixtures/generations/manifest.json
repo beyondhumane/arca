@@ -1,0 +1,85 @@
+{
+  "license": "Apache-2.0 (upstream declaration, not independent legal clearance)",
+  "cases": [
+    {
+      "name": "rar13",
+      "producer": "RAR 1.402 (upstream README attribution, not reproduced locally)",
+      "source_path": "rar13/MULTIFIL.RAR",
+      "source_revision": "8aa1429cc51ba248d81e32ad5b5eac6e4ec63ba2",
+      "command": null,
+      "first": "set.rar",
+      "password": null,
+      "files": {
+        "set.rar": "9793edfd9b2793f599c758d041eb5d352a0d81ba701770f159714bf7c13d4ee4"
+      },
+      "payloads": {
+        "TINY.TXT": {
+          "size": 10,
+          "sha256": "d206dc60246d939acc46587b8aa30421d8331c98b7142673efda41f94cfa3655"
+        },
+        "HELLO.TXT": {
+          "size": 33,
+          "sha256": "f04a81f40cf9f9523a368dd16166e79dca9701b4f91dbd18e339c3b8106f07e0"
+        }
+      }
+    },
+    {
+      "name": "rar15",
+      "producer": "RAR 1.54 (upstream README attribution, not reproduced locally)",
+      "source_path": "rar15_40/rar154/readme_154_normal.rar",
+      "source_revision": "8aa1429cc51ba248d81e32ad5b5eac6e4ec63ba2",
+      "command": null,
+      "first": "set.rar",
+      "password": null,
+      "files": {
+        "set.rar": "d9d504970d565c784cf9146715f2c68885fd7b4ce825b35e0023ea1cf3c26445"
+      },
+      "payloads": {
+        "README.md": {
+          "size": 4198,
+          "sha256": "f3d51f2d627fdb20b876e61f9e7772d7b8bf869ca03aeea49d8a9b3153de6eff"
+        }
+      }
+    },
+    {
+      "name": "rar20",
+      "producer": "RAR 2.50 Unpack20 (upstream README attribution, not reproduced locally)",
+      "source_path": "rar15_40/rar250/AUTOREJ.RAR",
+      "source_revision": "8aa1429cc51ba248d81e32ad5b5eac6e4ec63ba2",
+      "command": null,
+      "first": "set.rar",
+      "password": null,
+      "files": {
+        "set.rar": "5c4ddd621c1d20b034575af975bfb439f8caf30254d9315a4d5563ecdfb4d020"
+      },
+      "payloads": {
+        "PLAIN.TXT": {
+          "size": 2300,
+          "sha256": "dfa78453a790fcfd9ccb70b8363b0a6f5376371082a78127d8281ec4fb6156db"
+        }
+      }
+    },
+    {
+      "name": "rar20-solid",
+      "producer": "RAR 2.50 Unpack20 (upstream README attribution, not reproduced locally)",
+      "source_path": "rar15_40/rar250/SOLID.RAR",
+      "source_revision": "8aa1429cc51ba248d81e32ad5b5eac6e4ec63ba2",
+      "command": null,
+      "first": "set.rar",
+      "password": null,
+      "files": {
+        "set.rar": "de2a9a528350dbaa33acce814021d860cc750c0defe28c8376ab278dce5e36d7"
+      },
+      "payloads": {
+        "SOLID2.TXT": {
+          "size": 13800,
+          "sha256": "548a9e748a8a7ced5c4872a87a4e47e12902c9f1f634e21952a7424b0b67a209"
+        },
+        "SOLID1.TXT": {
+          "size": 15840,
+          "sha256": "728a75735f7b98ed13c6416c03a60c6436593944ba47b91deee84771ce5619f2"
+        }
+      }
+    }
+  ]
+}

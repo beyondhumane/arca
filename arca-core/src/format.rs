@@ -46,12 +46,22 @@ impl Format {
             Some(Self::TarGz)
         } else if name.ends_with(".tar") {
             Some(Self::Tar)
-        } else if name.ends_with(".rar") || name.ends_with(".cbr") {
+        } else if name.ends_with(".rar") || name.ends_with(".cbr") || is_rar_volume(path) {
             Some(Self::Rar)
         } else {
             None
         }
     }
+}
+
+fn is_rar_volume(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    let ext = ext.as_bytes();
+    ext.len() == 3
+        && (b'r'..=b'z').contains(&ext[0].to_ascii_lowercase())
+        && ext[1..].iter().all(u8::is_ascii_digit)
 }
 
 #[cfg(test)]
@@ -72,11 +82,23 @@ mod tests {
 
     #[test]
     fn rar_is_readable_but_never_a_creation_format() {
-        for name in ["archive.RAR", "comic.CbR", "archive.part1.rar"] {
+        for name in [
+            "archive.RAR",
+            "comic.CbR",
+            "archive.part1.rar",
+            "archive.part04.rar",
+            "archive.r00",
+            "archive.R99",
+            "archive.s00",
+            "archive.z99",
+        ] {
             assert_eq!(Format::detect(Path::new(name)), Some(Format::Rar));
         }
         assert!(!Format::Rar.can_write());
         assert!(Format::WRITABLE.iter().all(|format| format.can_write()));
         assert_eq!(Format::detect(Path::new("x.tgz")), Some(Format::TarGz));
+        for name in ["x.r0", "x.r000", "x.rxx", "x.q00", "x.rev"] {
+            assert_eq!(Format::detect(Path::new(name)), None);
+        }
     }
 }

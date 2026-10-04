@@ -203,6 +203,45 @@ fn rar_mutation_jobs_are_rejected_before_touching_the_archive() {
 }
 
 #[test]
+fn opening_later_modern_and_legacy_volumes_lists_and_tests_the_complete_set() {
+    let dir = std::env::temp_dir().join(format!(
+        "arca-rar-volumes-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir(&dir).unwrap();
+    for (i, name) in ["volume.rar", "volume.r00", "volume.r01", "volume.r02"]
+        .iter()
+        .enumerate()
+    {
+        fs::copy(
+            fixture(&format!("volume.part{}.rar", i + 1)),
+            dir.join(name),
+        )
+        .unwrap();
+    }
+    for archive in [fixture("volume.part4.rar"), dir.join("volume.r02")] {
+        let mut controller = AppController::new(Settings::default());
+        controller.dispatch(AppAction::Open(archive.clone()));
+        settle(&mut controller);
+        assert!(!controller.state.error, "{}", controller.state.notice);
+        assert_eq!(controller.state.entries.len(), 4);
+        assert!(controller.state.window_title.contains("read-only"));
+        controller.run_job(Job::Test {
+            archive,
+            only: None,
+            password: None,
+        });
+        settle(&mut controller);
+        assert!(!controller.state.error, "{}", controller.state.notice);
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn switching_between_rar_sevenz_and_zip_keeps_passwords_scoped_to_the_archive() {
     let room = crate::test_support::Room::new();
     let sevenz = room.archive(Some("secret"), true);

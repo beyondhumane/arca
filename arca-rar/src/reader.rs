@@ -1,10 +1,12 @@
 use super::{Conflict, Progress, RarArchive};
 use arca_core::{Entry, Error, Method, Result};
-use rars::{Archive, ArchiveMemberDetail, ArchiveReadOptions, ArchiveReader, ReadCancellation};
+use rars::{ArchiveMemberDetail, ArchiveReadOptions, ReadCancellation};
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -13,7 +15,10 @@ const MAX_MEMBER: u64 = 4 * 1024 * MIB;
 const MAX_TOTAL: u64 = 16 * 1024 * MIB;
 const PREVIEW_LIMIT: u64 = 64 * MIB;
 
-fn options<'a>(password: Option<&'a str>, token: &'a ReadCancellation) -> ArchiveReadOptions<'a> {
+pub(super) fn options<'a>(
+    password: Option<&'a str>,
+    token: &'a ReadCancellation,
+) -> ArchiveReadOptions<'a> {
     ArchiveReadOptions::with_optional_password(password.map(str::as_bytes))
         .with_cancellation(token)
         .with_max_header_count(100_000)
@@ -25,7 +30,7 @@ fn options<'a>(password: Option<&'a str>, token: &'a ReadCancellation) -> Archiv
         .with_max_total_output_bytes(MAX_TOTAL)
 }
 
-fn error(error: rars::Error) -> Error {
+pub(super) fn error(error: rars::Error) -> Error {
     use rars::error::ErrorKind;
     match error.kind() {
         ErrorKind::PasswordRequired => Error::PasswordRequired,
@@ -40,6 +45,17 @@ fn error(error: rars::Error) -> Error {
     }
 }
 
+pub(super) fn at_path(error: Error, path: &Path) -> Error {
+    let context = |message| format!("RAR volume '{}': {message}", path.display());
+    match error {
+        Error::PasswordRequired | Error::BadPassword | Error::Cancelled => error,
+        Error::Limit(message) => Error::Limit(context(message)),
+        Error::Unsupported(message) => Error::Unsupported(context(message)),
+        Error::Io(e) => Error::Io(io::Error::new(e.kind(), context(e.to_string()))),
+        e => Error::Format(context(e.to_string())),
+    }
+}
+
 fn controlled<T>(
     progress: &Progress<'_>,
     work: impl FnOnce(&ReadCancellation) -> Result<T>,
@@ -48,7 +64,7 @@ fn controlled<T>(
     if !progress(0, 0, "RAR") {
         return Err(Error::Cancelled);
     }
-    std::thread::scope(|scope| {
+    let result = std::thread::scope(|scope| {
         let (done, wait) = channel::<()>();
         let token = &token;
         scope.spawn(move || {
@@ -65,7 +81,12 @@ fn controlled<T>(
         let result = work(token);
         drop(done);
         result
-    })
+    });
+    if token.is_cancelled() {
+        Err(Error::Cancelled)
+    } else {
+        result
+    }
 }
 
 pub(super) fn open(
@@ -74,45 +95,15 @@ pub(super) fn open(
     progress: &Progress<'_>,
 ) -> Result<RarArchive> {
     controlled(progress, |token| {
-        let inner =
-            ArchiveReader::read_reader_with_options(File::open(path)?, options(password, token))
-                .map_err(error)?;
-        if let Archive::Rar50Plus(a) = &inner {
-            match a.blocks.last() {
-                Some(rars::rar50::Block::End(end))
-                    if !end.has_next_volume() || a.main.is_volume() => {}
-                Some(rars::rar50::Block::End(_)) => {
-                    return Err(Error::Unsupported("RAR requires another volume".into()))
-                }
-                _ => {
-                    return Err(Error::Format(
-                        "RAR5 end header is missing (truncated archive)".into(),
-                    ))
-                }
-            }
-        }
-        let volume = match &inner {
-            Archive::Rar13(a) => a.main.is_volume(),
-            Archive::Rar15To40(a) => a.main.is_volume(),
-            Archive::Rar50Plus(a) => a.main.is_volume(),
-            _ => return Err(Error::Unsupported("unknown RAR family".into())),
-        };
-        if volume {
-            return Err(Error::Unsupported(format!(
-                "multi-volume RAR is not supported yet: '{}' requires its complete volume set",
-                path.display()
-            )));
-        }
+        let inner = super::volumes::Volumes::open(path, password, progress, token)?;
         let mut entries = Vec::new();
         let mut names = HashSet::new();
         let mut files = HashSet::new();
         let mut total = 0u64;
-        for (index, member) in inner.members().enumerate() {
+        for (index, member) in inner.members(token)?.into_iter().enumerate() {
             let meta = &member.meta;
-            if meta.is_split_before || meta.is_split_after {
-                return Err(Error::Unsupported(
-                    "split RAR member requires additional volumes".into(),
-                ));
+            if token.is_cancelled() {
+                return Err(Error::Cancelled);
             }
             let mode = meta.file_attr & 0o170000;
             if meta.is_redirection
@@ -246,10 +237,12 @@ pub(super) fn test(
     progress: &Progress<'_>,
 ) -> Result<()> {
     controlled(progress, |token| {
-        archive
-            .inner
-            .test_with_options(options(password, token))
-            .map_err(error)
+        rars::extract_volumes_to_with_options(
+            &archive.inner.archives,
+            options(password, token),
+            |_| Ok(Box::new(io::sink())),
+        )
+        .map_err(|e| archive.inner.error(e))
     })
 }
 
@@ -266,14 +259,63 @@ pub(super) fn read_entry(
         return Err(Error::Limit("RAR preview exceeds 64 MiB".into()));
     }
     let token = ReadCancellation::new();
-    archive
-        .inner
-        .read_member_at_with_options(
-            index,
-            options(password, &token).with_max_member_output_bytes(PREVIEW_LIMIT),
-        )
-        .map_err(error)?
-        .ok_or_else(|| Error::Unsupported("RAR entry has no file contents".into()))
+    if let [single] = archive.inner.archives.as_slice() {
+        return single
+            .read_member_at_with_options(
+                index,
+                options(password, &token).with_max_member_output_bytes(PREVIEW_LIMIT),
+            )
+            .map_err(|e| archive.inner.error(e))?
+            .ok_or_else(|| Error::Unsupported("RAR entry has no file contents".into()));
+    }
+    if entry.is_dir {
+        return Err(Error::Unsupported("RAR entry has no file contents".into()));
+    }
+    let buffer = Rc::new(RefCell::new(PreviewData::default()));
+    let mut current = 0;
+    let result = rars::extract_volumes_to_with_options(
+        &archive.inner.archives,
+        options(password, &token),
+        |_| {
+            let selected = current == index;
+            current += 1;
+            if selected {
+                Ok(Box::new(PreviewWriter(Rc::clone(&buffer))) as Box<dyn io::Write>)
+            } else {
+                Ok(Box::new(io::sink()) as Box<dyn io::Write>)
+            }
+        },
+    );
+    let mut buffer = buffer.borrow_mut();
+    if buffer.exceeded {
+        return Err(Error::Limit("RAR preview exceeds 64 MiB".into()));
+    }
+    result.map_err(|e| archive.inner.error(e))?;
+    Ok(std::mem::take(&mut buffer.bytes))
+}
+
+#[derive(Default)]
+struct PreviewData {
+    bytes: Vec<u8>,
+    exceeded: bool,
+}
+
+struct PreviewWriter(Rc<RefCell<PreviewData>>);
+
+impl io::Write for PreviewWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let mut buffer = self.0.borrow_mut();
+        if bytes.len() as u64 > PREVIEW_LIMIT - buffer.bytes.len() as u64 {
+            buffer.exceeded = true;
+            return Err(io::Error::other("RAR preview exceeds 64 MiB"));
+        }
+        buffer.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn reject_links(path: &Path) -> Result<()> {
@@ -312,22 +354,31 @@ pub(super) fn extract(
     let staging = tempfile::Builder::new().prefix("arca-rar-").tempdir()?;
     controlled(progress, |token| {
         let mut index = 0;
-        archive
-            .inner
-            .extract_with_control(options(password, token), |member| {
+        rars::extract_volumes_to_with_options(
+            &archive.inner.archives,
+            options(password, token),
+            |member| {
                 let current = index;
                 index += 1;
-                if member.meta.is_directory {
-                    return Ok(rars::ExtractionDecision::Skip);
+                let entry = archive
+                    .entries
+                    .get(current)
+                    .ok_or(rars::Error::InvalidHeader("RAR member order changed"))?;
+                if !progress(current, archive.entries.len(), &entry.name) {
+                    return Err(rars::Error::Cancelled);
+                }
+                if member.is_directory {
+                    return Ok(Box::new(io::sink()) as Box<dyn io::Write>);
                 }
                 let sink: Box<dyn io::Write> = if selected(current) {
                     Box::new(File::create(staging.path().join(current.to_string()))?)
                 } else {
                     Box::new(io::sink())
                 };
-                Ok(rars::ExtractionDecision::Extract(sink))
-            })
-            .map_err(error)?;
+                Ok(sink)
+            },
+        )
+        .map_err(|e| archive.inner.error(e))?;
         Ok(())
     })?;
     if !progress(0, archive.entries.len(), "RAR") {
@@ -429,6 +480,38 @@ pub(super) fn extract(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_writer_caps_actual_output_before_appending() {
+        use std::io::Write;
+        let buffer = Rc::new(RefCell::new(PreviewData {
+            bytes: vec![0; PREVIEW_LIMIT as usize - 1],
+            exceeded: false,
+        }));
+        let mut writer = PreviewWriter(Rc::clone(&buffer));
+        assert_eq!(writer.write(b"x").unwrap(), 1);
+        assert_eq!(writer.write(b"").unwrap(), 0);
+        assert!(writer.write(b"y").is_err());
+        assert_eq!(buffer.borrow().bytes.len(), PREVIEW_LIMIT as usize);
+        assert!(buffer.borrow().exceeded);
+    }
+
+    #[test]
+    fn cancellation_reaches_long_running_backend_work_and_preserves_its_kind() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = AtomicUsize::new(0);
+        let result = controlled::<()>(
+            &|_, _, _| calls.fetch_add(1, Ordering::SeqCst) == 0,
+            |token| {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                while !token.is_cancelled() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(Error::Format("decoder stopped after cancellation".into()))
+            },
+        );
+        assert!(matches!(result, Err(Error::Cancelled)));
+    }
 
     #[test]
     fn rejects_unsafe_and_ambiguous_names() {
