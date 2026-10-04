@@ -412,6 +412,16 @@ impl AppController {
             .collect()
     }
 
+    /// Text the create and settings dialogs show instead of the ZIP codec
+    /// picker and the password controls for a format that has its own fixed
+    /// compressor and no encryption, so nothing is accepted and then dropped.
+    pub(crate) fn create_policy_note(&self) -> Option<&'static str> {
+        match self.state.format {
+            Format::Rar => Some(self.s().rar_create_policy),
+            _ => None,
+        }
+    }
+
     pub(crate) fn set_create_format(&mut self, format: Format) {
         if !self.state.output_name.is_empty() {
             let path = Path::new(&self.state.output_name);

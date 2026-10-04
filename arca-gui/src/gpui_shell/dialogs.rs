@@ -482,6 +482,8 @@ pub(super) fn build_dialog(
         ModalKind::Add => {
             let is_zip = shell.read(cx).controller.state.format == super::Format::Zip;
             let is_sevenz = shell.read(cx).controller.state.format == super::Format::SevenZ;
+            let is_rar = shell.read(cx).controller.state.format == super::Format::Rar;
+            let policy_note = shell.read(cx).controller.create_policy_note();
             let count = shell.read(cx).controller.state.pending_inputs.len();
             let output_name = shell.read(cx).output_name.clone();
             let add_password = shell.read(cx).add_password.clone();
@@ -519,12 +521,22 @@ pub(super) fn build_dialog(
                             s.compressor,
                             if is_sevenz {
                                 div().child("LZMA2").into_any_element()
+                            } else if is_rar {
+                                div().child("RAR").into_any_element()
                             } else {
                                 codec_pick("add-codec", shell, &weak, is_zip, cx)
                             },
                         ))
                         .child(labelled(s.level, level_pick("add-level", shell, &weak, cx))),
                 );
+            if let Some(note) = policy_note {
+                body = body.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(note),
+                );
+            }
             if is_zip || is_sevenz {
                 body = body.child(Input::new(&add_password).mask_toggle());
             }
@@ -756,9 +768,20 @@ pub(super) fn build_dialog(
                         ))
                         .child(row(
                             s.compressor,
-                            codec_pick("settings-codec", shell, &weak, is_zip, cx),
+                            match shell.read(cx).controller.state.format {
+                                super::Format::SevenZ => div().child("LZMA2").into_any_element(),
+                                super::Format::Rar => div().child("RAR").into_any_element(),
+                                _ => codec_pick("settings-codec", shell, &weak, is_zip, cx),
+                            },
                         ))
                         .child(row(s.level, level_pick("settings-level", shell, &weak, cx)))
+                        .children(
+                            shell
+                                .read(cx)
+                                .controller
+                                .create_policy_note()
+                                .map(|note| div().text_sm().text_color(muted).child(note)),
+                        )
                         .child(updates)
                         .child(subfolder)
                         .child(Separator::horizontal())

@@ -443,6 +443,24 @@ fn rar_selector_offers_rar_only_with_the_feature_and_never_cbr_or_iso() {
 }
 
 #[test]
+fn rar_creation_shows_its_policy_instead_of_zip_controls() {
+    let mut app = AppController::new(Settings::default());
+    app.prepare_compress(vec![PathBuf::from("/source/a.txt")]);
+    assert!(app.create_policy_note().is_none());
+    app.set_create_format(Format::Rar);
+    let note = app.create_policy_note().expect("RAR policy note");
+    assert_eq!(note, crate::i18n::strings(Lang::En).rar_create_policy);
+    assert!(note.contains("no password"));
+    app.dispatch(AppAction::SetLanguage(Some(Lang::Es)));
+    assert_eq!(
+        app.create_policy_note(),
+        Some(crate::i18n::strings(Lang::Es).rar_create_policy)
+    );
+    app.set_create_format(Format::SevenZ);
+    assert!(app.create_policy_note().is_none());
+}
+
+#[test]
 fn rar_create_jobs_carry_only_the_options_the_writer_takes() {
     let mut app = AppController::new(Settings::default());
     app.prepare_compress(vec![PathBuf::from("/source/a.txt")]);
