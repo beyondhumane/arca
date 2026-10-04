@@ -74,13 +74,13 @@ struct PreviewRequest {
 
 struct PreviewResult {
     generation: u64,
+    verified_password: Option<String>,
     outcome: Result<PreviewContent, PreviewStatus>,
 }
 
 struct PreviewContent {
     viewed: Viewed,
     image: Option<Arc<image::RgbaImage>>,
-    verified_password: Option<String>,
 }
 
 impl AppController {
@@ -163,11 +163,11 @@ impl AppController {
         self.state.preview.running = None;
         if let Some(result) = result {
             if result.generation == self.state.preview.generation {
+                if let Some(password) = result.verified_password {
+                    self.state.archive_password = Some(password);
+                }
                 match result.outcome {
                     Ok(content) => {
-                        if let Some(password) = content.verified_password {
-                            self.state.archive_password = Some(password);
-                        }
                         self.state.preview.status = if content.viewed.bytes.is_empty() {
                             PreviewStatus::Empty
                         } else {
@@ -206,11 +206,7 @@ impl AppController {
         let (tx, rx) = channel();
         self.state.preview.running = Some(rx);
         std::thread::spawn(move || {
-            let outcome = read_preview(&request);
-            let _ = tx.send(PreviewResult {
-                generation: request.generation,
-                outcome,
-            });
+            let _ = tx.send(read_preview(&request));
         });
     }
 }
@@ -229,8 +225,26 @@ fn preview_error(error: Error) -> PreviewStatus {
     }
 }
 
-fn read_preview(request: &PreviewRequest) -> Result<PreviewContent, PreviewStatus> {
-    let bytes = read_bounded(request).map_err(preview_error)?;
+// A password is proven the moment the bytes come out decrypted, so it is
+// reported even when the preview itself is later refused as oversized.
+fn read_preview(request: &PreviewRequest) -> PreviewResult {
+    let bytes = read_bounded(request).map_err(preview_error);
+    let verified_password = bytes
+        .is_ok()
+        .then(|| request.entry.encrypted.then(|| request.password.clone()))
+        .flatten()
+        .flatten();
+    PreviewResult {
+        generation: request.generation,
+        verified_password,
+        outcome: bytes.and_then(|bytes| build_preview(request, bytes)),
+    }
+}
+
+fn build_preview(
+    request: &PreviewRequest,
+    bytes: Vec<u8>,
+) -> Result<PreviewContent, PreviewStatus> {
     if request.clock.load(Ordering::Relaxed) != request.generation {
         return Err(PreviewStatus::Hidden);
     }
@@ -270,11 +284,6 @@ fn read_preview(request: &PreviewRequest) -> Result<PreviewContent, PreviewStatu
             picture,
         },
         image,
-        verified_password: request
-            .entry
-            .encrypted
-            .then(|| request.password.clone())
-            .flatten(),
     })
 }
 
@@ -516,6 +525,7 @@ mod tests {
     fn fake_content(generation: u64) -> PreviewResult {
         PreviewResult {
             generation,
+            verified_password: None,
             outcome: Ok(PreviewContent {
                 viewed: Viewed {
                     name: "stale.txt".into(),
@@ -525,7 +535,6 @@ mod tests {
                     picture: false,
                 },
                 image: None,
-                verified_password: None,
             }),
         }
     }
@@ -610,7 +619,7 @@ mod tests {
                 _ => c.state.archive = Some(PathBuf::from("other.zip")),
             }
             let mut result = fake_content(generation);
-            result.outcome.as_mut().unwrap().verified_password = Some("stale-candidate".into());
+            result.verified_password = Some("stale-candidate".into());
             c.state.archive_password = Some("keep".into());
             tx.send(result).unwrap();
             c.poll_preview();
@@ -792,6 +801,39 @@ mod tests {
         assert_eq!(c.state.preview.status, PreviewStatus::Ready);
         assert!(c.state.viewing.as_ref().unwrap().picture);
         assert_eq!(c.state.preview.image.as_ref().unwrap().dimensions(), (2, 3));
+    }
+
+    #[test]
+    fn oversized_encrypted_pictures_still_promote_the_verified_password() {
+        let mut large = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(IMAGE_DIMENSION_LIMIT + 1, 1)
+            .write_to(&mut large, image::ImageFormat::Png)
+            .unwrap();
+        let entries: &[(&str, &[u8])] = &[("large.png", large.get_ref()), ("note.txt", b"hi")];
+        let fixture = Fixture::with_entries(entries, Some("preview-test-only"));
+        let mut c = fixture.controller();
+        c.request_preview_with_password(0, Some("wrong".into()));
+        settle(&mut c);
+        assert_eq!(
+            c.state.preview.status,
+            PreviewStatus::PasswordRequired { wrong: true }
+        );
+        assert_eq!(c.state.archive_password, None);
+        c.request_preview_with_password(0, Some("preview-test-only".into()));
+        settle(&mut c);
+        assert!(matches!(
+            c.state.preview.status,
+            PreviewStatus::Oversized { .. }
+        ));
+        assert!(c.state.viewing.is_none());
+        assert_eq!(
+            c.state.archive_password.as_deref(),
+            Some("preview-test-only")
+        );
+        c.request_preview(1);
+        settle(&mut c);
+        assert_eq!(c.state.preview.status, PreviewStatus::Ready);
+        assert_eq!(c.state.viewing.as_ref().unwrap().bytes.as_ref(), b"hi");
     }
 
     #[test]
