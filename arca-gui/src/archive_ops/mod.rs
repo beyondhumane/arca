@@ -3,6 +3,8 @@
 mod io;
 #[cfg(test)]
 mod sevenz_tests;
+#[cfg(test)]
+mod xz_tests;
 pub(crate) use io::*;
 
 use crate::i18n::Strings;
@@ -136,7 +138,7 @@ pub(crate) fn quick_output(inputs: &[PathBuf], format: Format) -> PathBuf {
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "archive".into());
-        if first.is_dir() {
+        if first.is_dir() || format == Format::Xz {
             name
         } else {
             Path::new(&name)
@@ -530,6 +532,9 @@ pub(crate) fn run_job_blocking(
         } => {
             if inputs.is_empty() {
                 return Err(s.nothing_to_do.to_string());
+            }
+            if format == Format::Xz && !(inputs.len() == 1 && inputs[0].is_file()) {
+                return Err(s.xz_one_file.to_string());
             }
             let (from, to) = compress(
                 &out,

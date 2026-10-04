@@ -23,7 +23,7 @@ A cross-platform archiver in Rust. ZIP, 7z and TAR, parallel Zstandard, AES-256,
 
 | Feature | Details |
 |---|---|
-| **Formats** | ZIP with Zip64 (store, Deflate, Zstandard), [7z](docs/guide/creating-archives.md#7z) (Store/LZMA2, solid reading), ustar TAR, `.tar.gz` |
+| **Formats** | ZIP with Zip64 (store, Deflate, Zstandard), [7z](docs/guide/creating-archives.md#7z) (Store/LZMA2, solid reading), ustar TAR, `.tar.gz`, [`.tar.xz` and `.xz`](docs/guide/creating-archives.md#xz) |
 | **Read-only** | [ZIP containers](docs/guide/zip-containers.md): `.apk` `.aar` `.jar` `.war` `.ear` `.epub` `.cbz` `.xpi` `.whl` `.nupkg` `.ipa` |
 | **Experimental** | [RAR/CBR reading](docs/guide/rar.md), opt-in with `--features rar`; never creates or modifies RAR |
 | **Speed** | Multi-threaded compression, parallel `.zip` extraction, sub-millisecond start |

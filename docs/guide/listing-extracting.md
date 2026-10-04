@@ -52,7 +52,7 @@ ZIP destinations are decided up front on one thread. 7z resolves conflicts seque
 
 ## Parallel extraction
 
-A `.zip` is random access: the central directory says where every entry starts, so one thread per core can each open the file and decompress a different entry. A `.tar` is a single stream, and a `.tar.gz` a single gzip stream on top of it, so there’s nothing to split and extraction stays sequential.
+A `.zip` is random access: the central directory says where every entry starts, so one thread per core can each open the file and decompress a different entry. A `.tar` is a single stream, and a `.tar.gz` or `.tar.xz` a single compressed stream on top of it, so there’s nothing to split and extraction stays sequential. TAR entries and a standalone `.xz` are written under a temporary name and renamed only once their data has been read and checked, so a truncated or corrupt archive leaves no short file under the real name. Entries that finished before the damage stay.
 
 | 287 MB in 16 text files · Windows 11 | Time |
 | --- | --- |

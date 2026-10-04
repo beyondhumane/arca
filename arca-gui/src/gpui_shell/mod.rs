@@ -4611,6 +4611,10 @@ fn build_dialog(
         ModalKind::Add => {
             let is_zip = shell.read(cx).controller.state.format == super::Format::Zip;
             let is_sevenz = shell.read(cx).controller.state.format == super::Format::SevenZ;
+            let is_lzma2 = matches!(
+                shell.read(cx).controller.state.format,
+                super::Format::SevenZ | super::Format::TarXz | super::Format::Xz
+            );
             let count = shell.read(cx).controller.state.pending_inputs.len();
             let output_name = shell.read(cx).output_name.clone();
             let add_password = shell.read(cx).add_password.clone();
@@ -4646,7 +4650,7 @@ fn build_dialog(
                         ))
                         .child(labelled(
                             s.compressor,
-                            if is_sevenz {
+                            if is_lzma2 {
                                 div().child("LZMA2").into_any_element()
                             } else {
                                 codec_pick("add-codec", shell, &weak, is_zip, cx)

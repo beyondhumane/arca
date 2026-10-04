@@ -7,7 +7,7 @@ keywords: cli command line options flags reference help exit status
 
 # CLI reference
 
-ZIP, 7z and TAR are enabled by default. [RAR/CBR reading](rar.md) requires
+ZIP, 7z, TAR (plain, gzip and XZ) and standalone XZ are enabled by default. [RAR/CBR reading](rar.md) requires
 `--features rar`; it supports `list`, `test` and `extract`, including `-p` for
 encrypted data or headers. RAR creation and mutation are always rejected.
 
@@ -37,11 +37,11 @@ Create an archive. The format is taken from the extension of the output file.
 
 | Argument / option | Default | Description |
 | --- | --- | --- |
-| `<OUT>` | required | Output archive: .zip, .7z, .tar, .tar.gz (or .tgz). |
+| `<OUT>` | required | Output archive: .zip, .7z, .tar, .tar.gz (or .tgz), .tar.xz (or .txz), .xz. An .xz takes exactly one file. |
 | `<INPUTS>...` | required | Files or directories to include. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
-| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto uses Deflate in .zip, LZMA2 in .7z. |
-| `-j, --threads <N>` | 0 | ZIP threads; 0 means every core. 7z creation is sequential. |
+| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto uses Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz. |
+| `-j, --threads <N>` | 0 | ZIP and XZ threads; 0 means every core. XZ uses as many as fit in 2 GiB. 7z creation is sequential. |
 | `-p, --password <PASSWORD>` | none | Encrypt with AES-256. Other tools will ask for it to open the archive. |
 | `--hide-names` | off | 7z only: encrypt headers; requires a nonempty password. |
 

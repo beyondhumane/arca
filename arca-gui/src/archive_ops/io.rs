@@ -14,12 +14,82 @@ use std::sync::mpsc::Sender;
 
 pub(crate) const BUF: usize = 256 * 1024;
 
-pub(crate) fn open_source(archive: &Path, format: Format) -> std::io::Result<Box<dyn Read>> {
+pub(crate) fn open_source(archive: &Path, format: Format) -> arca_core::Result<Box<dyn Read>> {
+    if format == Format::TarXz {
+        return Ok(Box::new(arca_xz::open(archive)?));
+    }
     let f = BufReader::with_capacity(BUF, File::open(archive)?);
     Ok(match format {
         Format::TarGz => Box::new(flate2::read::GzDecoder::new(f)),
         _ => Box::new(f),
     })
+}
+
+/// Passes the bytes through and asks `notify` every few megabytes whether to
+/// carry on, so one large stream can still be stopped halfway.
+struct Watched<'a, R> {
+    inner: R,
+    name: &'a str,
+    notify: &'a (dyn Fn(usize, usize, &str) -> bool + Sync),
+    since: u64,
+    stopped: bool,
+}
+
+impl<'a, R: Read> Watched<'a, R> {
+    fn new(
+        inner: R,
+        name: &'a str,
+        notify: &'a (dyn Fn(usize, usize, &str) -> bool + Sync),
+    ) -> Self {
+        Self {
+            inner,
+            name,
+            notify,
+            since: 0,
+            stopped: false,
+        }
+    }
+
+    fn check<T>(&self, result: arca_core::Result<T>) -> arca_core::Result<T> {
+        if self.stopped {
+            return Err(arca_core::Error::Cancelled);
+        }
+        result
+    }
+}
+
+impl<R: Read> Read for Watched<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.since >= 4 << 20 {
+            self.since = 0;
+            if !(self.notify)(0, 1, self.name) {
+                self.stopped = true;
+                return Err(std::io::Error::other("cancelled"));
+            }
+        }
+        let n = self.inner.read(buf)?;
+        self.since += n as u64;
+        Ok(n)
+    }
+}
+
+// Written under a temporary name beside `out` and renamed once complete, so a
+// stop or a failure halfway leaves no truncated archive under the real name.
+fn staged<T>(
+    out: &Path,
+    write: impl FnOnce(BufWriter<File>) -> arca_core::Result<T>,
+) -> arca_core::Result<T> {
+    let mut name = out.file_name().unwrap_or_default().to_os_string();
+    name.push(".arca-new");
+    let temp = out.with_file_name(name);
+    let result = File::create(&temp)
+        .map_err(arca_core::Error::from)
+        .and_then(|f| write(BufWriter::with_capacity(BUF, f)))
+        .and_then(|v| fs::rename(&temp, out).map(|()| v).map_err(Into::into));
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 pub(crate) fn list_entries(
@@ -44,7 +114,8 @@ pub(crate) fn list_entries(
                 .entries()
                 .to_vec(),
         ),
-        Container::Tar | Container::TarGz => {
+        Container::Xz => Ok(vec![arca_xz::entry(archive)?]),
+        Container::Tar | Container::TarGz | Container::TarXz => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let mut v = Vec::new();
             while let Some(e) = r.next_entry()? {
@@ -158,7 +229,19 @@ pub(crate) fn read_entry(
             let mut a = ZipArchive::open(File::open(archive)?)?;
             a.extract_to_with(index, out, password)?;
         }
-        Container::Tar | Container::TarGz => {
+        Container::Xz => {
+            if index != 0 {
+                return Err(arca_core::Error::Format(
+                    "that entry is not in the archive any more".into(),
+                ));
+            }
+            let name = arca_xz::output_name(archive);
+            let mut source = Watched::new(arca_xz::open(archive)?, &name, notify);
+            out.clear();
+            let result = std::io::copy(&mut source, out).map_err(Into::into);
+            source.check(result)?;
+        }
+        Container::Tar | Container::TarGz | Container::TarXz => {
             // A tar has no index, so the only way to one entry is through all
             // the ones before it.
             let mut r = TarReader::new(open_source(archive, format)?);
@@ -224,6 +307,17 @@ pub(crate) fn extract_one(
         )?;
         return Ok(path);
     }
+    if detect(archive) == Some(Format::Xz) {
+        let mut source = Watched::new(arca_xz::open(archive)?, &entry.name, notify);
+        let result = arca_core::extraction::Destination::new(&room).write_entry(
+            &entry.name,
+            false,
+            &mut source,
+            &mut |_| arca_core::extraction::Conflict::Overwrite,
+        );
+        source.check(result)?;
+        return Ok(path);
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -233,13 +327,13 @@ pub(crate) fn extract_one(
     };
     let mut out = BufWriter::with_capacity(BUF, File::create(&path)?);
     match format.container() {
-        Container::SevenZ => unreachable!(),
+        Container::SevenZ | Container::Xz => unreachable!(),
         Container::Rar => return Err(format.read_only()),
         Container::Zip => {
             let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
             arca_zip::extract_entry_with(&mut source, entry, &mut out, password)?;
         }
-        Container::Tar | Container::TarGz => {
+        Container::Tar | Container::TarGz | Container::TarXz => {
             // A tar has no index, so the only way to one entry is through all
             // the ones before it.
             let mut r = TarReader::new(open_source(archive, format)?);
@@ -428,19 +522,24 @@ fn write_sevenz_entry(
     ask: &dyn Fn(&Path) -> Answer,
 ) -> arca_core::Result<u64> {
     // This callback runs only after encrypted content has been validated.
+    write_entry(destination, &entry.name, entry.is_dir, reader, ask)
+}
+
+fn write_entry(
+    destination: &mut arca_core::extraction::Destination,
+    name: &str,
+    is_dir: bool,
+    reader: &mut dyn Read,
+    ask: &dyn Fn(&Path) -> Answer,
+) -> arca_core::Result<u64> {
     use arca_core::extraction::Conflict;
     destination
-        .write_entry(
-            &entry.name,
-            entry.is_dir,
-            reader,
-            &mut |path| match ask(path) {
-                Answer::Replace | Answer::ReplaceAll => Conflict::Overwrite,
-                Answer::Skip | Answer::SkipAll => Conflict::Skip,
-                Answer::Rename | Answer::RenameAll => Conflict::Rename,
-                Answer::Cancel => Conflict::Cancel,
-            },
-        )
+        .write_entry(name, is_dir, reader, &mut |path| match ask(path) {
+            Answer::Replace | Answer::ReplaceAll => Conflict::Overwrite,
+            Answer::Skip | Answer::SkipAll => Conflict::Skip,
+            Answer::Rename | Answer::RenameAll => Conflict::Rename,
+            Answer::Cancel => Conflict::Cancel,
+        })
         .map(|written| written.unwrap_or(0))
 }
 
@@ -529,8 +628,22 @@ pub(crate) fn extract(
             bytes = written.iter().sum();
             let _ = notify(total, total, "");
         }
-        Container::Tar | Container::TarGz => {
+        Container::Xz => {
+            if wanted.first().copied().unwrap_or(true) {
+                let name = arca_xz::output_name(archive);
+                let mut source = Watched::new(arca_xz::open(archive)?, &name, notify);
+                let mut destination = arca_core::extraction::Destination::new(dest);
+                let result = write_entry(&mut destination, &name, false, &mut source, ask);
+                bytes = source.check(result)?;
+            }
+            let _ = notify(1, 1, "");
+        }
+        // Each file goes in under a temporary name and is renamed only once
+        // its data has been read to the end, so a corrupt or truncated archive
+        // never leaves a short file under the real name.
+        Container::Tar | Container::TarGz | Container::TarXz => {
             let mut r = TarReader::new(open_source(archive, format)?);
+            let mut destination = arca_core::extraction::Destination::new(dest);
             let total = wanted.len();
             let mut i = 0usize;
             while let Some(e) = r.next_entry()? {
@@ -542,16 +655,12 @@ pub(crate) fn extract(
                     i += 1;
                     continue;
                 }
-                match dest_path(dest, &e.entry.name, e.entry.is_dir, ask, &mut claimed)? {
-                    Some(path) => {
-                        let mut w = BufWriter::with_capacity(BUF, File::create(&path)?);
-                        bytes += r.copy_data(&e, &mut w)?;
-                        w.flush()?;
-                    }
-                    None => r.skip_data(&e)?,
-                }
+                bytes += r.with_data(&e, |data| {
+                    write_entry(&mut destination, &e.entry.name, e.entry.is_dir, data, ask)
+                })?;
                 i += 1;
             }
+            arca_xz::drain(&mut r.into_inner())?;
             let _ = notify(i, i, "");
         }
     }
@@ -620,7 +729,20 @@ pub(crate) fn test_archive(
             }
             let _ = notify(total, total, "");
         }
-        Container::Tar | Container::TarGz => {
+        Container::Xz => {
+            let name = arca_xz::output_name(archive);
+            if only.is_none_or(|set| set.contains(&name)) {
+                let mut source = Watched::new(arca_xz::open(archive)?, &name, notify);
+                let result = arca_xz::drain(&mut source);
+                match source.check(result) {
+                    Ok(_) => good = 1,
+                    Err(arca_core::Error::Cancelled) => return Err(arca_core::Error::Cancelled),
+                    Err(err) => bad.push(format!("{name}: {err}")),
+                }
+            }
+            let _ = notify(1, 1, "");
+        }
+        Container::Tar | Container::TarGz | Container::TarXz => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let mut i = 0usize;
             while let Some(e) = r.next_entry()? {
@@ -630,13 +752,14 @@ pub(crate) fn test_archive(
                 if e.entry.is_dir || only.is_some_and(|set| !set.contains(&e.entry.name)) {
                     r.skip_data(&e)?;
                 } else {
-                    match r.copy_data(&e, &mut std::io::sink()) {
+                    match r.with_data(&e, |data| Ok(std::io::copy(data, &mut std::io::sink())?)) {
                         Ok(_) => good += 1,
                         Err(err) => bad.push(format!("{}: {err}", e.entry.name)),
                     }
                 }
                 i += 1;
             }
+            arca_xz::drain(&mut r.into_inner())?;
             let _ = notify(i, i, "");
         }
     }
@@ -729,6 +852,11 @@ pub(crate) fn compress(
         ));
     }
     let files = collect_sources(inputs, format == Format::SevenZ)?;
+    if format == Format::Xz && !(inputs.len() == 1 && files.len() == 1 && inputs[0].is_file()) {
+        return Err(arca_core::Error::Unsupported(
+            "an .xz holds exactly one file; make a .tar.xz to keep several".into(),
+        ));
+    }
     let total = files.len();
     let mut source_bytes = 0u64;
 
@@ -807,6 +935,38 @@ pub(crate) fn compress(
             }
             w.finish()?;
         }
+        Container::TarXz => staged(out, |f| {
+            let mut w = TarWriter::new(arca_xz::encoder(f, level, 0)?);
+            for (i, (path, name)) in files.iter().enumerate() {
+                if !notify(i, total, name) {
+                    return Err(arca_core::Error::Cancelled);
+                }
+                let meta = fs::metadata(path)?;
+                let mut f = Watched::new(
+                    BufReader::with_capacity(BUF, File::open(path)?),
+                    name,
+                    notify,
+                );
+                let result = w.add(name, meta.len(), mtime_of(&meta), 0o644, &mut f);
+                f.check(result)?;
+                source_bytes += meta.len();
+            }
+            w.finish()?.finish()?.flush()?;
+            Ok(())
+        })?,
+        Container::Xz => staged(out, |f| {
+            let (path, name) = &files[0];
+            let mut e = arca_xz::encoder(f, level, 0)?;
+            let mut f = Watched::new(
+                BufReader::with_capacity(BUF, File::open(path)?),
+                name,
+                notify,
+            );
+            let result = std::io::copy(&mut f, &mut e).map_err(Into::into);
+            source_bytes = f.check(result)?;
+            e.finish()?.flush()?;
+            Ok(())
+        })?,
     }
     let _ = notify(total, total, "");
     let final_size = fs::metadata(out).map(|m| m.len()).unwrap_or(0);

@@ -52,7 +52,7 @@ Los destinos ZIP se deciden de antemano en un hilo. 7z resuelve los conflictos s
 
 ## Extracción en paralelo
 
-Un `.zip` es de acceso aleatorio: el directorio central dice dónde empieza cada entrada, así que un hilo por núcleo puede abrir el archivo cada uno y descomprimir una entrada distinta. Un `.tar` es un único flujo, y un `.tar.gz` un único flujo gzip encima de este, así que no hay nada que dividir y la extracción sigue siendo secuencial.
+Un `.zip` es de acceso aleatorio: el directorio central dice dónde empieza cada entrada, así que un hilo por núcleo puede abrir el archivo cada uno y descomprimir una entrada distinta. Un `.tar` es un único flujo, y un `.tar.gz` o `.tar.xz` un único flujo comprimido encima de este, así que no hay nada que dividir y la extracción sigue siendo secuencial. Las entradas TAR y un `.xz` suelto se escriben con un nombre temporal y solo se renombran cuando sus datos se han leído y comprobado, así que un archivo truncado o dañado no deja un fichero a medias con el nombre real. Las entradas que terminaron antes del daño se quedan.
 
 | 287 MB en 16 archivos de texto · Windows 11 | Tiempo |
 | --- | --- |

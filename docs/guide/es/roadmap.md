@@ -16,13 +16,17 @@ Store/LZMA2, contraseñas y nombres ocultos en CLI y escritorio. Consulta el
 [issue #2](https://github.com/beyondhumane/arca/issues/2) y el
 [diseño aceptado](https://github.com/beyondhumane/arca/blob/main/docs/plans/7z-format.md).
 
+`.xz` suelto y `.tar.xz`/`.txz` se pueden crear, listar, probar y extraer en CLI
+y escritorio. Consulta el
+[issue #18](https://github.com/beyondhumane/arca/issues/18) y
+[Crear archivos](creating-archives.md#xz).
+
 ## Todavía no
 
 La [lectura RAR/CBR](../rar.md) es experimental y se activa con `--features rar`.
 La activación estable, la revisión de procedencia y los archivos multivolumen
 siguen pendientes. No se admite crear ni modificar RAR.
 
-- **xz independiente:** LZMA2 sí se admite dentro de 7z.
 - **Enlaces simbólicos:** se omiten al crear ZIP/TAR y se rechazan en 7z.
 - **Nombres largos de GNU tar.**
 - **Crear 7z sólidos:** se leen los existentes, pero se crean bloques independientes.

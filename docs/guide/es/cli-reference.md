@@ -7,7 +7,7 @@ keywords: cli línea de comandos opciones flags referencia ayuda estado de salid
 
 # Referencia de la CLI
 
-ZIP, 7z y TAR están activos por defecto. La [lectura RAR/CBR](../rar.md) requiere
+ZIP, 7z, TAR (sin comprimir, gzip y XZ) y XZ suelto están activos por defecto. La [lectura RAR/CBR](../rar.md) requiere
 `--features rar`; permite `list`, `test` y `extract`, con `-p` para datos o
 cabeceras cifradas. Crear o modificar RAR siempre se rechaza.
 
@@ -37,11 +37,11 @@ Crea un archivo. El formato se toma de la extensión del archivo de salida.
 
 | Argumento / opción | Por defecto | Descripción |
 | --- | --- | --- |
-| `<OUT>` | obligatorio | Archivo de salida: .zip, .7z, .tar, .tar.gz (o .tgz). |
+| `<OUT>` | obligatorio | Archivo de salida: .zip, .7z, .tar, .tar.gz (o .tgz), .tar.xz (o .txz), .xz. Un .xz admite un único fichero. |
 | `<INPUTS>...` | obligatorio | Archivos o directorios a incluir. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
-| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto usa Deflate en .zip y LZMA2 en .7z. |
-| `-j, --threads <N>` | 0 | Hilos ZIP; 0 usa todos los núcleos. La creación 7z es secuencial. |
+| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto usa Deflate en .zip y LZMA2 en .7z, .xz y .tar.xz. |
+| `-j, --threads <N>` | 0 | Hilos ZIP y XZ; 0 usa todos los núcleos. XZ usa tantos como quepan en 2 GiB. La creación 7z es secuencial. |
 | `-p, --password <PASSWORD>` | ninguna | Cifra con AES-256. Otras herramientas la pedirán para abrir el archivo. |
 | `--hide-names` | desactivado | Solo 7z: cifra cabeceras; exige una contraseña no vacía. |
 
