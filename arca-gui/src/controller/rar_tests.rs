@@ -21,12 +21,13 @@ fn settle(controller: &mut AppController) {
 fn encrypted_header_listing_prompts_retries_and_refreshes_in_a_worker() {
     let mut controller = AppController::new(Settings::default());
     let archive = fixture("headers.rar");
-    controller.load_listing(archive.clone());
+    controller.open(archive.clone());
     settle(&mut controller);
     assert!(controller.state.entries.is_empty());
-    assert!(
-        matches!(&controller.state.waiting_on_password, Some(Pending::ListArchive(path)) if path == &archive)
-    );
+    assert!(matches!(
+        &controller.state.waiting_on_password,
+        Some(Pending::OpenArchive)
+    ));
     assert!(!controller.state.password_wrong);
     controller.submit_password("wrong".into());
     settle(&mut controller);
@@ -77,7 +78,7 @@ fn opening_another_archive_does_not_reuse_the_cached_password() {
     settle(&mut controller);
     assert!(matches!(
         controller.state.waiting_on_password,
-        Some(Pending::ListArchive(_))
+        Some(Pending::OpenArchive)
     ));
     assert!(controller.state.archive_password.is_none());
     assert!(controller.state.entries.is_empty());
@@ -94,7 +95,7 @@ fn cancelling_standalone_encrypted_test_returns_to_browsing() {
     settle(&mut controller);
     assert!(matches!(
         controller.state.waiting_on_password,
-        Some(Pending::TestArchive(_))
+        Some(Pending::Extract(_))
     ));
     assert!(matches!(controller.state.view, View::Running));
     controller.dispatch(AppAction::SetPasswordInput("unfinished".into()));
@@ -110,11 +111,11 @@ fn cancelling_standalone_encrypted_test_returns_to_browsing() {
 #[test]
 fn visible_encrypted_entries_use_the_rar_password_flow() {
     let mut controller = AppController::new(Settings::default());
-    controller.load_listing(fixture("encrypted.rar"));
+    controller.open(fixture("encrypted.rar"));
     settle(&mut controller);
     assert!(matches!(
         controller.state.waiting_on_password,
-        Some(Pending::ListArchive(_))
+        Some(Pending::OpenArchive)
     ));
     controller.submit_password("arca-test-only".into());
     settle(&mut controller);
@@ -141,7 +142,7 @@ fn standalone_rar_test_prompts_from_the_worker() {
     settle(&mut controller);
     assert!(matches!(
         controller.state.waiting_on_password,
-        Some(Pending::TestArchive(_))
+        Some(Pending::Extract(_))
     ));
     controller.submit_password("arca-test-only".into());
     settle(&mut controller);
@@ -238,4 +239,126 @@ fn opening_later_modern_and_legacy_volumes_lists_and_tests_the_complete_set() {
         assert!(!controller.state.error, "{}", controller.state.notice);
     }
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn switching_between_rar_sevenz_and_zip_keeps_passwords_scoped_to_the_archive() {
+    let room = crate::test_support::Room::new();
+    let sevenz = room.archive(Some("secret"), true);
+    let input = room.path("zip-input.txt");
+    fs::write(&input, b"zip contents").unwrap();
+    let zip = room.path("encrypted.zip");
+    compress(
+        &zip,
+        &[input],
+        Format::Zip,
+        Codec::Store,
+        Level::Store,
+        &|_, _, _| true,
+        (Some("zip-secret"), false),
+    )
+    .unwrap();
+    let mut controller = AppController::new(Settings::default());
+    for (archive, format, password) in [
+        (fixture("headers.rar"), Format::Rar, "arca-test-only"),
+        (sevenz, Format::SevenZ, "secret"),
+        (zip, Format::Zip, "zip-secret"),
+        (fixture("encrypted.rar"), Format::Rar, "arca-test-only"),
+    ] {
+        controller.open(archive.clone());
+        settle(&mut controller);
+        assert!(controller.state.archive_password.is_none());
+        assert!(matches!(
+            controller.state.waiting_on_password,
+            Some(Pending::OpenArchive)
+        ));
+        controller.submit_password("wrong".into());
+        settle(&mut controller);
+        assert!(controller.state.password_wrong);
+        controller.submit_password(password.into());
+        settle(&mut controller);
+        assert!(!controller.state.error, "{}", controller.state.notice);
+        assert_eq!(controller.state.format, format);
+        assert_eq!(controller.state.archive_password.as_deref(), Some(password));
+        assert!(controller.state.waiting_on_password.is_none());
+        controller.dispatch(AppAction::Refresh);
+        settle(&mut controller);
+        assert_eq!(controller.state.archive.as_ref(), Some(&archive));
+        assert!(controller.state.waiting_on_password.is_none());
+        assert_eq!(
+            controller.state.window_title.contains("read-only"),
+            format == Format::Rar
+        );
+    }
+}
+
+#[test]
+fn rar_selected_extraction_retries_without_writing_and_resumes_only_the_selection() {
+    let room = crate::test_support::Room::new();
+    let dest = room.path("selected-rar");
+    let mut controller = AppController::new(Settings::default());
+    controller.open(fixture("encrypted.rar"));
+    settle(&mut controller);
+    controller.cancel_password();
+    controller.state.into_subfolder = false;
+    let index = controller
+        .state
+        .entries
+        .iter()
+        .position(|e| e.name == "folder/second.txt")
+        .unwrap();
+    controller.state.checked[index] = true;
+    controller.start_extract_to(true, dest.clone());
+    assert!(matches!(
+        controller.state.waiting_on_password,
+        Some(Pending::Read(_))
+    ));
+    controller.submit_password("wrong".into());
+    settle(&mut controller);
+    assert!(controller.state.password_wrong);
+    assert!(!dest.exists());
+    controller.submit_password("arca-test-only".into());
+    settle(&mut controller);
+    assert!(!controller.state.error, "{}", controller.state.notice);
+    assert!(!dest.join("first.txt").exists());
+    assert_eq!(
+        fs::read(dest.join("folder/second.txt")).unwrap(),
+        b"Arca RAR fixture beta\n".repeat(64)
+    );
+}
+
+#[test]
+fn stale_rar_listing_cannot_replace_a_new_sevenz_archive() {
+    let room = crate::test_support::Room::new();
+    let sevenz = room.archive(None, false);
+    let mut controller = AppController::new(Settings::default());
+    controller.open(fixture("headers.rar"));
+    let (old_tx, old_rx) = channel();
+    controller.state.channel = Some(old_rx);
+    controller.open(sevenz.clone());
+    assert!(old_tx
+        .send(Message::Listing(
+            fixture("headers.rar"),
+            Err(arca_core::Error::PasswordRequired),
+            None
+        ))
+        .is_err());
+    settle(&mut controller);
+    assert_eq!(controller.state.archive, Some(sevenz));
+    assert_eq!(controller.state.format, Format::SevenZ);
+    assert!(controller.state.waiting_on_password.is_none());
+    assert_eq!(controller.state.entries.len(), 4);
+}
+
+#[test]
+fn rar_open_file_obeys_the_worker_cancellation_callback() {
+    let room = crate::test_support::Room::new();
+    let archive = room.path("cancel-open.rar");
+    fs::copy(fixture("plain.rar"), &archive).unwrap();
+    let entries = list_entries(&archive, None, &|_, _, _| true).unwrap();
+    let entry = entries.iter().find(|e| !e.is_dir).unwrap();
+    assert!(matches!(
+        extract_one(&archive, entry, None, &|_, _, _| false),
+        Err(arca_core::Error::Cancelled)
+    ));
 }

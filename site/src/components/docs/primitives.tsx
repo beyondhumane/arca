@@ -1,7 +1,8 @@
 import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { Info, Lightbulb, TriangleAlert } from 'lucide-react';
 import { cn } from '@/utils/cn';
-import { useCopy } from '@/lib/i18n';
+import { useCopy, useLang } from '@/lib/i18n';
+import { docPath } from '@/lib/router';
 import { CopyButton, Kbd } from '../ui';
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
@@ -42,6 +43,9 @@ export function Strong({ children }: { children: ReactNode }) {
 }
 
 export function A({ href, children }: { href: string; children: ReactNode }) {
+  const { lang } = useLang();
+  const doc = /^(?:\.\.\/)?([a-z0-9-]+)\.md(#[a-z0-9-]+)?$/.exec(href);
+  if (doc) href = docPath(lang, doc[1]) + (doc[2] ?? '');
   const external = href.startsWith('http');
   return (
     <a

@@ -25,7 +25,7 @@ pub(crate) fn open_source(archive: &Path, format: Format) -> std::io::Result<Box
 pub(crate) fn list_entries(
     archive: &Path,
     password: Option<&str>,
-    notify: &arca_rar::Progress<'_>,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
 ) -> arca_core::Result<Vec<Entry>> {
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported(format!(
@@ -36,12 +36,14 @@ pub(crate) fn list_entries(
     match format {
         Format::Rar => {
             let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
-            if password.is_some() && a.entries().iter().any(|e| e.encrypted) {
-                a.test(password, notify)?;
-            }
             Ok(a.entries().to_vec())
         }
         Format::Zip => Ok(ZipArchive::open(File::open(archive)?)?.entries().to_vec()),
+        Format::SevenZ => Ok(
+            arca_7z::SevenZArchive::open(File::open(archive)?, password)?
+                .entries()
+                .to_vec(),
+        ),
         Format::Tar | Format::TarGz => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let mut v = Vec::new();
@@ -54,36 +56,41 @@ pub(crate) fn list_entries(
     }
 }
 
-// Only the central directory is read, which is a few kilobytes at the tail of
-// the file. A .tar has no encryption to look for.
-pub(crate) fn is_encrypted(archive: &Path, notify: &arca_rar::Progress<'_>) -> bool {
-    if detect(archive) == Some(Format::Rar) {
-        return match arca_rar::RarArchive::open_with_progress(archive, None, notify) {
-            Ok(a) => a.entries().iter().any(|e| e.encrypted),
-            Err(arca_core::Error::PasswordRequired) => true,
-            Err(_) => false,
-        };
+pub(crate) fn check_access(
+    archive: &Path,
+    password: Option<&str>,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+) -> arca_core::Result<()> {
+    match detect(archive) {
+        Some(Format::Rar) => {
+            let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
+            if a.entries().iter().any(|e| e.encrypted) {
+                let password = password.ok_or(arca_core::Error::PasswordRequired)?;
+                a.test(Some(password), notify)
+            } else {
+                Ok(())
+            }
+        }
+        Some(Format::SevenZ) => {
+            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            if a.has_encrypted() && password.is_none() {
+                return Err(arca_core::Error::PasswordRequired);
+            }
+            a.validate_encrypted(&mut |p| notify(p.entries_done, p.entries_total, p.name))
+        }
+        Some(Format::Zip) => {
+            let a = ZipArchive::open(File::open(archive)?)?;
+            if a.has_encrypted() {
+                let password = password.ok_or(arca_core::Error::PasswordRequired)?;
+                let entries = a.entries().to_vec();
+                arca_zip::check_password(&mut File::open(archive)?, &entries, password)
+            } else {
+                Ok(())
+            }
+        }
+        Some(_) => Ok(()),
+        None => Err(arca_core::Error::Unsupported("unknown format".into())),
     }
-    if detect(archive) != Some(Format::Zip) {
-        return false;
-    }
-    File::open(archive)
-        .ok()
-        .and_then(|f| ZipArchive::open(f).ok())
-        .map(|a| a.has_encrypted())
-        .unwrap_or(false)
-}
-
-// Reads a handful of bytes off the first encrypted entry, so a wrong password
-// is answered while the box is still open instead of at the first extraction.
-pub(crate) fn password_opens(archive: &Path, entries: &[Entry], password: &str) -> bool {
-    if detect(archive) != Some(Format::Zip) {
-        return true;
-    }
-    let Ok(mut f) = File::open(archive) else {
-        return true;
-    };
-    arca_zip::check_password(&mut f, entries, password).is_ok()
 }
 
 // The icon the desktop shows for this kind of file, kept as a texture per
@@ -131,11 +138,18 @@ pub(crate) fn read_entry(
     index: usize,
     out: &mut Vec<u8>,
     password: Option<&str>,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
 ) -> arca_core::Result<()> {
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported("unknown format".into()));
     };
     match format {
+        Format::SevenZ => {
+            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            *out = a.read_entry(index, crate::VIEW_LIMIT, &mut |p| {
+                notify(p.entries_done, p.entries_total, p.name)
+            })?;
+        }
         Format::Rar => {
             let a = arca_rar::RarArchive::open(archive, password)?;
             *out = a.read_entry(index, password)?;
@@ -169,12 +183,13 @@ pub(crate) fn extract_one(
     archive: &Path,
     entry: &Entry,
     password: Option<&str>,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
 ) -> arca_core::Result<PathBuf> {
-    let room = std::env::temp_dir()
+    let room = fs::canonicalize(std::env::temp_dir())?
         .join("Arca")
         .join(archive_stem(archive));
     if detect(archive) == Some(Format::Rar) {
-        let a = arca_rar::RarArchive::open(archive, password)?;
+        let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
         let index = usize::try_from(entry.offset)
             .map_err(|_| arca_core::Error::Format("invalid RAR entry index".into()))?;
         if a.entries().get(index).is_none_or(|e| e.name != entry.name) {
@@ -184,12 +199,31 @@ pub(crate) fn extract_one(
         }
         let mut wanted = vec![false; a.entries().len()];
         wanted[index] = true;
-        a.extract(&room, &wanted, password, &|_, _, _| true, &|_| {
+        a.extract(&room, &wanted, password, notify, &|_| {
             arca_rar::Conflict::Overwrite
         })?;
         return Ok(room.join(arca_core::safe_name(&entry.name)?));
     }
     let path = room.join(arca_core::safe_name(&entry.name)?);
+    if detect(archive) == Some(Format::SevenZ) {
+        let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+        let index = usize::try_from(entry.offset)
+            .map_err(|_| arca_core::Error::Format("invalid entry index".into()))?;
+        if a.entries().get(index).is_none_or(|e| e.name != entry.name) {
+            return Err(arca_core::Error::Format(
+                "7z entry changed since listing".into(),
+            ));
+        }
+        let mut destination = arca_core::extraction::Destination::new(&room);
+        a.extract(
+            &[index],
+            &mut |_, e, reader| {
+                write_sevenz_entry(&mut destination, e, reader, &|_| Answer::Replace).map(|_| ())
+            },
+            &mut |p| notify(p.entries_done, p.entries_total, p.name),
+        )?;
+        return Ok(path);
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -199,6 +233,7 @@ pub(crate) fn extract_one(
     };
     let mut out = BufWriter::with_capacity(BUF, File::create(&path)?);
     match format {
+        Format::SevenZ => unreachable!(),
         Format::Rar => return Err(arca_rar::read_only()),
         Format::Zip => {
             let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
@@ -349,11 +384,64 @@ pub(crate) fn dest_path(
     let chosen = match ask(&path) {
         Answer::Replace | Answer::ReplaceAll => path,
         Answer::Skip | Answer::SkipAll => return Ok(None),
-        Answer::Rename | Answer::RenameAll => free_name(&path, claimed),
+        Answer::Rename | Answer::RenameAll => {
+            let renamed = free_name(&path, claimed);
+            if renamed == path {
+                return Err(arca_core::Error::Limit(
+                    "no free extraction name available".into(),
+                ));
+            }
+            renamed
+        }
         Answer::Cancel => return Err(arca_core::Error::Format("cancelled".into())),
     };
     claimed.insert(chosen.clone());
     Ok(Some(chosen))
+}
+
+pub(crate) fn creation_output(
+    out: &Path,
+    ask: &dyn Fn(&Path) -> Answer,
+) -> arca_core::Result<PathBuf> {
+    if !out.exists() {
+        return Ok(out.to_path_buf());
+    }
+    match ask(out) {
+        Answer::Replace | Answer::ReplaceAll => Ok(out.to_path_buf()),
+        Answer::Rename | Answer::RenameAll => {
+            let renamed = free_name(out, &HashSet::new());
+            if renamed == out {
+                return Err(arca_core::Error::Limit(
+                    "no free archive name available".into(),
+                ));
+            }
+            Ok(renamed)
+        }
+        _ => Err(arca_core::Error::Cancelled),
+    }
+}
+
+fn write_sevenz_entry(
+    destination: &mut arca_core::extraction::Destination,
+    entry: &Entry,
+    reader: &mut dyn Read,
+    ask: &dyn Fn(&Path) -> Answer,
+) -> arca_core::Result<u64> {
+    // This callback runs only after encrypted content has been validated.
+    use arca_core::extraction::Conflict;
+    destination
+        .write_entry(
+            &entry.name,
+            entry.is_dir,
+            reader,
+            &mut |path| match ask(path) {
+                Answer::Replace | Answer::ReplaceAll => Conflict::Overwrite,
+                Answer::Skip | Answer::SkipAll => Conflict::Skip,
+                Answer::Rename | Answer::RenameAll => Conflict::Rename,
+                Answer::Cancel => Conflict::Cancel,
+            },
+        )
+        .map(|written| written.unwrap_or(0))
 }
 
 // A .zip is random access: the central directory says where every entry starts,
@@ -387,11 +475,28 @@ pub(crate) fn extract(
             Answer::Cancel => arca_rar::Conflict::Cancel,
         });
     }
-    fs::create_dir_all(dest)?;
+    if format != Format::SevenZ {
+        fs::create_dir_all(dest)?;
+    }
     let mut bytes = 0u64;
     let mut claimed: HashSet<PathBuf> = HashSet::new();
 
     match format {
+        Format::SevenZ => {
+            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let mut destination = arca_core::extraction::Destination::new(dest);
+            let indices: Vec<_> = (0..a.len())
+                .filter(|&i| wanted.is_empty() || wanted.get(i).copied().unwrap_or(false))
+                .collect();
+            a.extract(
+                &indices,
+                &mut |_, e, reader| {
+                    bytes += write_sevenz_entry(&mut destination, e, reader, ask)?;
+                    Ok(())
+                },
+                &mut |p| notify(p.entries_done, p.entries_total, p.name),
+            )?;
+        }
         Format::Rar => return Err(arca_rar::read_only()),
         Format::Zip => {
             let a = ZipArchive::open(File::open(archive)?)?;
@@ -468,6 +573,30 @@ pub(crate) fn test_archive(
     let mut bad = Vec::new();
 
     match format {
+        Format::SevenZ => {
+            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let indices: Vec<_> = a
+                .entries()
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| only.is_none_or(|set| set.contains(&e.name)))
+                .map(|(i, _)| i)
+                .collect();
+            if only.is_none() {
+                a.test(&mut |p| notify(p.entries_done, p.entries_total, p.name))?;
+                good = a.entries().iter().filter(|e| !e.is_dir).count();
+            } else {
+                a.extract(
+                    &indices,
+                    &mut |_, e, reader| {
+                        std::io::copy(reader, &mut std::io::sink())?;
+                        good += usize::from(!e.is_dir);
+                        Ok(())
+                    },
+                    &mut |p| notify(p.entries_done, p.entries_total, p.name),
+                )?;
+            }
+        }
         Format::Rar => {
             let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
             a.test(password, notify)?;
@@ -515,18 +644,38 @@ pub(crate) fn test_archive(
 }
 
 pub(crate) fn collect_files(inputs: &[PathBuf]) -> std::io::Result<Vec<(PathBuf, String)>> {
-    fn walk(p: &Path, base: &Path, out: &mut Vec<(PathBuf, String)>) -> std::io::Result<()> {
+    collect_sources(inputs, false)
+}
+
+fn collect_sources(
+    inputs: &[PathBuf],
+    directories: bool,
+) -> std::io::Result<Vec<(PathBuf, String)>> {
+    fn walk(
+        p: &Path,
+        base: &Path,
+        out: &mut Vec<(PathBuf, String)>,
+        directories: bool,
+    ) -> std::io::Result<()> {
         let meta = fs::symlink_metadata(p)?;
         let rel = p.strip_prefix(base).unwrap_or(p);
         let name = rel.to_string_lossy().replace('\\', "/");
         if meta.is_dir() {
+            if directories && rel.components().any(|c| c != std::path::Component::CurDir) {
+                out.push((p.to_path_buf(), format!("{name}/")));
+            }
             let mut children: Vec<_> = fs::read_dir(p)?.collect::<std::io::Result<Vec<_>>>()?;
             children.sort_by_key(|d| d.file_name());
             for c in children {
-                walk(&c.path(), base, out)?;
+                walk(&c.path(), base, out, directories)?;
             }
         } else if meta.is_file() {
             out.push((p.to_path_buf(), name));
+        } else if directories {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "7z sources must be regular files or directories",
+            ));
         }
         Ok(())
     }
@@ -534,7 +683,7 @@ pub(crate) fn collect_files(inputs: &[PathBuf]) -> std::io::Result<Vec<(PathBuf,
     let mut v = Vec::new();
     for e in inputs {
         let base = e.parent().unwrap_or(Path::new(""));
-        walk(e, base, &mut v)?;
+        walk(e, base, &mut v, directories)?;
     }
     Ok(v)
 }
@@ -560,21 +709,50 @@ pub(crate) fn compress(
     // Told how far along this is, and answers whether to carry on. False is
     // somebody pressing stop.
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
-    password: Option<&str>,
+    encryption: (Option<&str>, bool),
 ) -> arca_core::Result<(u64, u64)> {
+    let (password, hide_names) = encryption;
     if !format.can_write() || detect(out) == Some(Format::Rar) {
         return Err(arca_rar::read_only());
     }
-    if password.is_some() && format != Format::Zip {
+    if password.is_some() && !matches!(format, Format::Zip | Format::SevenZ) {
         return Err(arca_core::Error::Unsupported(
-            "encryption only exists in .zip".into(),
+            "encryption requires ZIP or 7z".into(),
         ));
     }
-    let files = collect_files(inputs)?;
+    if hide_names && format != Format::SevenZ {
+        return Err(arca_core::Error::Unsupported(
+            "hidden names require 7z".into(),
+        ));
+    }
+    let files = collect_sources(inputs, format == Format::SevenZ)?;
     let total = files.len();
     let mut source_bytes = 0u64;
 
     match format {
+        Format::SevenZ => {
+            let mut sources = Vec::with_capacity(files.len());
+            for (path, name) in &files {
+                let meta = fs::metadata(path)?;
+                if meta.is_file() {
+                    source_bytes += meta.len();
+                }
+                sources.push(arca_7z::Source {
+                    path: path.clone(),
+                    name: name.clone(),
+                });
+            }
+            arca_7z::create_7z(
+                out,
+                &sources,
+                &arca_7z::CreateOptions {
+                    level,
+                    password,
+                    hide_names,
+                },
+                &mut |p| notify(p.entries_done, p.entries_total, p.name),
+            )?;
+        }
         Format::Rar => return Err(arca_rar::read_only()),
         // Cada entrada de un zip se comprime por su cuenta, asi que esto entrega
         // la lista entera y deja que corra en todos los nucleos. Es la misma

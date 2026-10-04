@@ -11,17 +11,15 @@ description = "Interfaz grafica de Arca"
 name = "arca-gui"
 path = "src/main.rs"
 
-[features]
-default = []
-rar = ["arca-rar/rar"]
-
 [dependencies]
 arca-rar.workspace = true
 arca-core.workspace = true
 arca-zip.workspace = true
 arca-tar.workspace = true
+arca-7z.workspace = true
 arca-icons.workspace = true
 rayon.workspace = true
+tempfile = "3"
 
 # Dialogos de fichero nativos. Es lo unico que toca la plataforma.
 rfd = "0.15"
@@ -87,3 +85,8 @@ path = "../arca-drag"
 # contesta una maquina sin red.
 [dependencies.arca-net]
 path = "../arca-net"
+
+[features]
+rar = ["arca-rar/rar"]
+default = ["codecs-native"]
+codecs-native = ["arca-zip/codecs-native", "arca-7z/codecs-native"]

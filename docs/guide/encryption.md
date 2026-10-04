@@ -1,5 +1,5 @@
 ---
-description: AES-256 with WinZip AE-2: how it works, what it guarantees and what it doesn’t.
+description: ZIP and 7z AES-256, hidden names, password checks and integrity limits.
 group: Using Arca
 order: 7
 keywords: password aes aes-256 encrypt decrypt zipcrypto hmac pbkdf2 security
@@ -9,7 +9,7 @@ keywords: password aes aes-256 encrypt decrypt zipcrypto hmac pbkdf2 security
 
 Arca encrypts `.zip` archives with AES-256 using the WinZip AE-2 scheme, the same one 7-Zip, WinRAR and NanaZip write. `interop.sh` checks it in both directions against 7-Zip.
 
-## The scheme
+## The ZIP scheme
 
 | Step | Algorithm |
 | --- | --- |
@@ -43,6 +43,34 @@ arca extract secret.zip -o where/ -p "a password"
 7z t -p"a password" secret.zip        # 7-Zip reads it
 ```
 
+## 7z encryption and hidden names
+
+```sh
+arca create secret.7z folder/ -p "a password" --hide-names
+arca list secret.7z -p "a password"
+arca test secret.7z -p "a password"
+arca extract secret.7z -o where/ -p "a password"
+7z t -p"a password" secret.7z
+```
+
+7z uses AES-256-CBC and a SHA-256 password KDF (power 19 when Arca creates it),
+with fresh random salt/IV material per data block and header. It is not WinZip
+AE-2 and has no HMAC: CRC-32 detects accidental corruption but is **not
+cryptographic authentication**. An encrypted decode/CRC error means an incorrect
+password **or corrupted archive**, not proof of either one.
+
+Without `--hide-names`, file names stay visible and `list` needs no password.
+With it, headers are encrypted and even listing needs the password. All encrypted
+7z data is validated before extraction creates directories, opens destination
+files or replaces existing ones. Extraction then decodes the selected data again;
+the source must remain stable between the two passes. This protects destinations
+on failed password/CRC checks, not against malicious CRC forgery.
+
+The password must be nonempty. Empty-only input requires hidden names so a
+password can be verified. CLI passwords can appear in shell history/process
+arguments; use the desktop password field when that matters. Password fields are
+not a claim of secret-memory zeroization.
+
 ## Legacy ZipCrypto
 
 ZipCrypto, the old password scheme, is read but never written: an archive from another tool opens with its password, and `arca password` moves it to AES-256. The scheme is broken by design, so nothing new is created with it. Its password check is a single byte, so one wrong password in 256 slips past it and fails on the checksum instead.
@@ -65,4 +93,10 @@ arca password secret.zip -p "a password" -o clean.zip    # leaves the original a
 
 ### In the window
 
-The create dialog has a password field, and opening an encrypted archive asks for the password before extracting. The toolbar shows **Remove password** when the open archive is encrypted and **Set password…** when it isn’t.
+The create dialog offers passwords for ZIP and 7z, plus **Hide file names** for
+7z. Hidden headers prompt before listing; other encrypted 7z contents are
+validated in a background worker before extraction, testing, preview or opening
+a member. Retry resumes the original action; cancel does not write output.
+
+Changing an existing password, adding/deleting entries and renaming entries are
+**ZIP-only**. They are unavailable for 7z because solid blocks may need rewriting.

@@ -426,6 +426,9 @@ fn decompress_into<Rd: Read, W: Write>(
     cw: &mut CrcWriter<W>,
 ) -> Result<Rd> {
     match method_code {
+        Method::Lzma | Method::Lzma2 | Method::Bzip2 | Method::Other7z => {
+            Err(Error::Unsupported(format!("{} in ZIP", method_code.name())))
+        }
         Method::Rar => Err(Error::Unsupported(
             "RAR is not a ZIP compression method".into(),
         )),
@@ -788,12 +791,12 @@ impl<W: Write + Seek> ZipWriter<W> {
         let name_bytes = check_name(name_str)?;
         let method_code = method_of(codec);
         let offset = self.pos;
-        let zip_method = method_code.code()?;
-        let aes_extra = password.map(|_| aes::extra_field(zip_method));
+        let zip_code = method_code.code()?;
+        let aes_extra = password.map(|_| aes::extra_field(zip_code));
         let stored_code = if aes_extra.is_some() {
             aes::METHOD_AE
         } else {
-            method_code.code()?
+            zip_code
         };
         self.write_lfh(
             &name_bytes,
@@ -912,12 +915,12 @@ impl<W: Write + Seek> ZipWriter<W> {
         let (date_val, time_val) = arca_core::unix_to_dos(mtime.unwrap_or(0));
         let name_bytes = check_name(name_str)?;
         let offset = self.pos;
-        let zip_method = method_code.code()?;
-        let aes_extra = password.map(|_| aes::extra_field(zip_method));
+        let zip_code = method_code.code()?;
+        let aes_extra = password.map(|_| aes::extra_field(zip_code));
         let stored_code = if aes_extra.is_some() {
             aes::METHOD_AE
         } else {
-            method_code.code()?
+            zip_code
         };
         self.write_lfh(
             &name_bytes,
@@ -974,13 +977,9 @@ impl<W: Write + Seek> ZipWriter<W> {
         let (date_val, time_val) = arca_core::unix_to_dos(mtime.unwrap_or(0));
         let name_bytes = check_name(name_str)?;
         let offset = self.pos;
-        let zip_method = method_code.code()?;
-        let aes_extra = encrypted.then(|| aes::extra_field(zip_method));
-        let stored_code = if encrypted {
-            aes::METHOD_AE
-        } else {
-            method_code.code()?
-        };
+        let zip_code = method_code.code()?;
+        let aes_extra = encrypted.then(|| aes::extra_field(zip_code));
+        let stored_code = if encrypted { aes::METHOD_AE } else { zip_code };
         self.write_lfh(
             &name_bytes,
             stored_code,
@@ -1246,6 +1245,9 @@ fn compress_stream<R: Read, S: Write>(
     let mut buf = vec![0u8; STREAM_BUF];
 
     match method_code {
+        Method::Lzma | Method::Lzma2 | Method::Bzip2 | Method::Other7z => {
+            return Err(Error::Unsupported(format!("{} in ZIP", method_code.name())));
+        }
         Method::Rar => {
             return Err(Error::Unsupported(
                 "RAR is not a ZIP compression method".into(),

@@ -1,6 +1,8 @@
 //! Blocking archive jobs and their command-line entry points.
 
 mod io;
+#[cfg(test)]
+mod sevenz_tests;
 pub(crate) use io::*;
 
 use crate::i18n::Strings;
@@ -19,11 +21,11 @@ pub(crate) enum Job {
     },
     Test {
         archive: PathBuf,
+        password: Option<String>,
         // The names to check, or all of them. A selection is checked by walking
         // the whole archive and skipping what is not in the set: the entries
         // have to be read in the order they are filed anyway.
         only: Option<HashSet<String>>,
-        password: Option<String>,
     },
     // Rewriting an archive with a different password, or with none.
     Password {
@@ -83,6 +85,7 @@ pub(crate) enum Job {
         codec: Codec,
         level: Level,
         password: Option<String>,
+        hide_names: bool,
     },
     // Putting files in. Same rebuild as Delete, and for the same reason: the
     // central directory is at the end of the file.
@@ -179,6 +182,7 @@ pub(crate) fn parse_args() -> Startup {
             codec: Codec::Deflate,
             level: Level::Normal,
             password: None,
+            hide_names: false,
         }),
         other if !other.starts_with("--") => Startup::Browse(Some(PathBuf::from(other))),
         _ => Startup::Browse(None),
@@ -349,6 +353,9 @@ pub(crate) fn run_job_blocking(
             current,
             new,
         } => {
+            if detect(&archive) != Some(Format::Zip) {
+                return Err(s.only_zip_can_change.to_string());
+            }
             let temp = archive.with_file_name(format!(
                 "{}.arca-new",
                 archive
@@ -519,6 +526,7 @@ pub(crate) fn run_job_blocking(
             codec,
             level,
             password,
+            hide_names,
         } => {
             if inputs.is_empty() {
                 return Err(s.nothing_to_do.to_string());
@@ -530,7 +538,7 @@ pub(crate) fn run_job_blocking(
                 codec,
                 level,
                 notify,
-                password.as_deref(),
+                (password.as_deref(), hide_names),
             )
             .map_err(|e| e.to_string())?;
             let pct = if from == 0 {

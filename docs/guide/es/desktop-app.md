@@ -35,11 +35,26 @@ Haz clic derecho en una fila para ver qué se puede hacer con ella. Haz clic der
 
 ## Contraseñas
 
-El diálogo de creación tiene un campo de contraseña. Abrir un archivo cifrado pide la contraseña antes de extraer, y la barra de herramientas ofrece **Quitar contraseña** o **Establecer contraseña…** según el archivo.
+El diálogo admite contraseñas ZIP y 7z y permite **Ocultar nombres** en 7z.
+Las cabeceras 7z ocultas piden la contraseña antes de listar. Los datos se validan
+en segundo plano antes de extraer, probar, previsualizar o abrir; reintentar retoma
+esa acción y cancelar deja el destino intacto. **Quitar contraseña** y
+**Establecer contraseña…** solo se aplican a ZIP, nunca a un 7z existente.
+
+## 7z
+
+Crea 7z con Store o LZMA2 y los niveles existentes. La creación y la extracción
+son secuenciales. Las entradas seleccionadas de archivos sólidos comparten un
+decodificador por bloque y pasada, sin reabrirlo por cada entrada. La vista previa,
+abrir, Copiar y Extraer usan la misma ruta de lectura validada. Consulta
+[Cifrado](encryption.md) y los [límites de recursos](architecture.md#7z-boundaries).
 
 ## Lo que falta a propósito
 
-<kbd>Ctrl+V</kbd> no está, y tampoco lo está <kbd>Ctrl+C</kbd> copiando archivos al portapapeles. Pegar significaría añadir a un archivo que ya existe, algo que el escritor todavía no puede hacer; copiar archivos hacia fuera significa entregar al shell un objeto del que pueda extraer bytes bajo demanda. Ambas cosas necesitan trabajo real más allá de un atajo de teclado, así que se dejan fuera hasta que funcionen.
+Añadir, borrar, renombrar y cambiar contraseñas en archivos existentes sigue
+siendo exclusivo de ZIP. Arrastrar ficheros virtuales fuera de un 7z está
+desactivado para no descodificar repetidamente bloques sólidos: usa Copiar o
+Extraer. El portapapeles de ficheros depende de la plataforma.
 
 ## Accesibilidad
 
