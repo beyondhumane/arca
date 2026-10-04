@@ -158,6 +158,11 @@ impl GpuiShell {
             }
             body = body.child(browser);
         }
+        if !self.controller.state.one_shot {
+            if let Some(panel) = self.jobs_panel(false, cx) {
+                body = body.relative().child(panel);
+            }
+        }
         body
     }
 
@@ -194,6 +199,21 @@ impl GpuiShell {
                 s.checked
             )))
             .child(div().truncate().child(self.status()))
+            .when(!self.shown_tasks().is_empty(), |footer| {
+                let count = self.shown_tasks().len();
+                footer.child(
+                    Self::button(
+                        "jobs-toggle",
+                        fill(s.operations_count, &[("n", &count.to_string())]),
+                        s.operations_title.to_string(),
+                        !self.background_blocked(),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.jobs_open = !this.jobs_open;
+                        cx.notify();
+                    })),
+                )
+            })
             .child(
                 Self::button(
                     "preview-toggle",

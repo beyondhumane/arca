@@ -152,6 +152,11 @@ struct GpuiShell {
     delete_trigger_focus: FocusHandle,
     drop_trigger_focus: FocusHandle,
     conflict_trigger_focus: FocusHandle,
+    /// Whether the list of operations is on screen, and the newest task it
+    /// has been opened for, so a new one opens it and a hidden one stays
+    /// hidden.
+    jobs_open: bool,
+    jobs_seen: crate::controller::TaskId,
     /// Where the keyboard goes when a dialog closes, when somebody asked for
     /// it. None means leave it alone: a kit button holds its own focus and
     /// still has it when a native file dialog closes on top of it.
@@ -651,16 +656,17 @@ impl GpuiShell {
                         let pointer = shell.pointer;
                         shell.tick_wheel(pointer);
                         shell.controller.ask_about_updates();
-                        let conflict_was_open = shell.controller.state.conflict.is_some();
+                        let conflict_was_open = shell.controller.conflict().is_some();
                         let close_window = shell.controller.receive();
                         if close_window {
                             window.remove_window();
-                        } else if !conflict_was_open && shell.controller.state.conflict.is_some() {
+                        } else if !conflict_was_open && shell.controller.conflict().is_some() {
                             shell.remember_conflict_focus();
                         }
                         if shell.controller.state.cut_pending.is_some() {
                             shell.controller.cut_landed();
                         }
+                        shell.notice_new_tasks();
                         cx.notify();
                     })
                     .is_err()
@@ -687,6 +693,8 @@ impl GpuiShell {
             delete_trigger_focus: cx.focus_handle(),
             drop_trigger_focus: cx.focus_handle(),
             conflict_trigger_focus: cx.focus_handle(),
+            jobs_open: false,
+            jobs_seen: 0,
             dialog_return_focus: None,
             modal_seen: None,
             dialog_primary_focus: cx.focus_handle().tab_stop(true),
@@ -732,7 +740,7 @@ impl GpuiShell {
             (DialogKind::PickInputs { .. }, Some(ModalKind::Add)) => true,
             (_, modal) => modal.is_none(),
         };
-        if self.dialog.is_some() || self.controller.state.busy || !modal_allows {
+        if self.dialog.is_some() || self.controller.blocked() || !modal_allows {
             return;
         }
         if matches!(kind, DialogKind::Extract { .. })
@@ -1013,7 +1021,7 @@ impl GpuiShell {
     fn modal_kind(&self) -> Option<ModalKind> {
         if self.controller.state.waiting_on_password.is_some() {
             Some(ModalKind::Password)
-        } else if self.controller.state.conflict.is_some() {
+        } else if self.controller.conflict().is_some() {
             Some(ModalKind::Conflict)
         } else if self.controller.state.confirm_delete.is_some() {
             Some(ModalKind::Delete)
@@ -1834,14 +1842,14 @@ impl GpuiShell {
 
     /// The keys, and what each one does, in the two columns they are read in.
     fn background_idle(&self) -> bool {
-        !self.controller.state.busy && self.modal_kind().is_none() && self.dialog.is_none()
+        !self.controller.blocked() && self.modal_kind().is_none() && self.dialog.is_none()
     }
 
     /// Whether files dragged in from outside have somewhere to land. Wider than
     /// `background_idle` by exactly one box: the add box is a list of things to
     /// compress, so dropping onto it means something.
     fn accepts_drop(&self) -> bool {
-        if self.controller.state.busy || self.dialog.is_some() {
+        if self.controller.blocked() || self.dialog.is_some() {
             return false;
         }
         matches!(self.modal_kind(), None | Some(ModalKind::Add))
@@ -1870,7 +1878,7 @@ impl GpuiShell {
     }
 
     fn menu_enabled(&self) -> bool {
-        !self.controller.state.busy && self.modal_kind().is_none() && self.dialog.is_none()
+        !self.controller.blocked() && self.modal_kind().is_none() && self.dialog.is_none()
     }
 
     fn selected_count(&self) -> usize {
@@ -1965,6 +1973,28 @@ impl GpuiShell {
     fn status(&self) -> String {
         let s = self.controller.s();
         let state = &self.controller.state;
+        let active: Vec<_> = self
+            .controller
+            .active_tasks()
+            .filter(|t| !t.quiet)
+            .collect();
+        match active.as_slice() {
+            [] => {}
+            [task] => {
+                let progress = match (task.status, task.total) {
+                    (crate::controller::TaskStatus::Queued, _) => s.queued_word.to_string(),
+                    (_, 0) => s.working_word.to_string(),
+                    (_, total) if task.in_bytes => {
+                        format!("{} / {}", human(task.done as u64), human(total as u64))
+                    }
+                    (_, total) => format!("{} / {total}", task.done),
+                };
+                return format!("{} · {}", task.verb, progress);
+            }
+            many => {
+                return fill(s.operations_count, &[("n", &many.len().to_string())]);
+            }
+        }
         if state.busy || (matches!(state.view, View::Running) && state.notice.is_empty()) {
             let progress = if state.total_count == 0 {
                 s.working_word.to_string()
@@ -2640,11 +2670,14 @@ impl Render for GpuiShell {
                     .size_0(),
             );
 
-        if let Some(job) = self.job_panel(cx) {
-            content = content.child(job);
-        }
-
-        if self.controller.state.busy && self.controller.state.entries.is_empty() {
+        // A window opened for one job is that job: the list of operations is
+        // all there is to show in it.
+        let docked = self.controller.state.one_shot && !self.shown_tasks().is_empty();
+        if docked {
+            if let Some(panel) = self.jobs_panel(true, cx) {
+                content = content.child(panel);
+            }
+        } else if self.controller.state.busy && self.controller.state.entries.is_empty() {
             content = content.child({
                 let mut loading = div()
                     .id("loading-state")
@@ -3333,11 +3366,24 @@ mod tests {
         for answer in answers {
             let mut controller = AppController::new(Settings::default());
             let (tx, rx) = channel();
-            controller.state.replies = Some(tx);
-            controller.state.conflict = Some("already-there.txt".into());
+            controller.enqueue(crate::controller::Task::new(
+                "asking",
+                "x",
+                Box::new(move |messages, replies, _, _| {
+                    let _ = messages.send(crate::controller::Message::Conflict(
+                        "already-there.txt".into(),
+                    ));
+                    let _ = tx.send(replies.recv());
+                    let _ = messages.send(crate::controller::Message::Done(String::new()));
+                }),
+            ));
+            while controller.conflict().is_none() {
+                controller.receive();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
             controller.dispatch(AppAction::AnswerConflict(answer));
-            assert_eq!(rx.recv().unwrap(), answer);
-            assert!(controller.state.conflict.is_none());
+            assert_eq!(rx.recv().unwrap().unwrap(), answer);
+            assert!(controller.conflict().is_none());
         }
     }
 

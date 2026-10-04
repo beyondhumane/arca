@@ -1,5 +1,6 @@
 //! Controller protocol and pure runtime projections.
 
+use super::jobs::TaskId;
 use crate::archive_ops::*;
 use crate::i18n::Lang;
 use crate::model::*;
@@ -95,7 +96,10 @@ pub(crate) enum AppAction {
     RequestDelete,
     ConfirmDelete(bool),
     AnswerDrop(DropChoice),
-    CancelJob,
+    CancelTask(TaskId),
+    HoldTask(TaskId, bool),
+    DismissTask(TaskId),
+    ClearFinishedTasks,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
