@@ -25,7 +25,7 @@ A cross-platform archiver in Rust. ZIP, 7z, TAR and read-only RAR, parallel Zsta
 |---|---|
 | **Formats** | ZIP with Zip64 (store, Deflate, Zstandard), [7z](docs/guide/creating-archives.md#7z) (Store/LZMA2, solid reading), ustar TAR, `.tar.gz` |
 | **Read-only formats** | [RAR/CBR, including multivolume](docs/guide/rar.md), enabled by default; never creates or modifies RAR |
-| **Read-only** | [ZIP containers](docs/guide/zip-containers.md): `.apk` `.aar` `.jar` `.war` `.ear` `.epub` `.cbz` `.xpi` `.whl` `.nupkg` `.ipa` |
+| **Read-only** | [ZIP containers](docs/guide/zip-containers.md): `.apk` `.aar` `.jar` `.war` `.ear` `.epub` `.cbz` `.xpi` `.whl` `.nupkg` `.ipa`; [ISO 9660 images](docs/guide/iso.md) with Rock Ridge and Joliet names |
 | **Speed** | Multi-threaded compression, parallel `.zip` extraction, sub-millisecond start |
 | **Safety** | `#![forbid(unsafe_code)]` parsers, bounded header reads, Zip Slip defence |
 | **Encryption** | ZIP AES-256 (WinZip AE-2); 7z AES-256 with optional hidden names. [Limits](docs/guide/encryption.md) |

@@ -148,7 +148,7 @@ fn opening_another_archive_discards_entries_pending_actions_and_old_responses() 
     assert!(old_tx
         .send(Message::Listing(
             room.path("old.7z"),
-            Ok(vec![]),
+            Ok((vec![], vec![])),
             Some("old".into())
         ))
         .is_err());

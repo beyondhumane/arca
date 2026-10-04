@@ -1111,7 +1111,7 @@ impl GpuiShell {
             ModalKind::Drop => self
                 .controller
                 .dispatch(AppAction::AnswerDrop(DropChoice::Cancel)),
-            ModalKind::Add => self.controller.state.view = View::Browse,
+            ModalKind::Add => self.controller.cancel_compress(),
             ModalKind::Viewer => self.controller.state.viewing = None,
             ModalKind::NewFolder | ModalKind::Mask => self.close_name(),
             ModalKind::Settings => self.controller.state.show_settings = false,

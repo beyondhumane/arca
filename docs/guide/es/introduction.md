@@ -17,7 +17,7 @@ También es rápido. En la máquina donde se midió, Arca con Zstandard comprimi
 
 ## De un vistazo
 
-- **Formatos:** ZIP con Zip64 (Store/Deflate/Zstandard), 7z (creación Store/LZMA2 y lectura sólida), TAR ustar y `.tar.gz`.
+- **Formatos:** ZIP con Zip64 (Store/Deflate/Zstandard), 7z (creación Store/LZMA2 y lectura sólida), TAR ustar y `.tar.gz`. Las [imágenes ISO 9660](iso.md) se leen, nunca se escriben.
 - **Velocidad:** compresión multihilo, extracción paralela de `.zip`, y un arranque en frío por debajo del milisegundo.
 - **Seguridad:** analizadores sin código unsafe, lecturas de cabecera acotadas y defensa contra Zip Slip en cada nombre de entrada.
 - **Cifrado:** WinZip AE-2 en ZIP; AES-256 en 7z con cabeceras cifradas opcionales. Consulta los [límites de integridad](encryption.md).
