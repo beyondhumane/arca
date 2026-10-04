@@ -12,45 +12,53 @@
         "x86_64-linux"
         "aarch64-linux"
       ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system nixpkgs.legacyPackages.${system});
     in
     {
-      packages = forAllSystems (pkgs: {
-        default = self.packages.${pkgs.system}.arca;
-        arca = pkgs.callPackage ./packaging/nix/package.nix { };
-      });
+      packages = forAllSystems (
+        system: pkgs: {
+          default = self.packages.${system}.arca;
+          arca = pkgs.callPackage ./packaging/nix/package.nix { };
+        }
+      );
 
-      apps = forAllSystems (pkgs: {
-        default = {
-          type = "app";
-          program = "${self.packages.${pkgs.system}.arca}/bin/arca-gui";
-        };
-        arca = {
-          type = "app";
-          program = "${self.packages.${pkgs.system}.arca}/bin/arca";
-        };
-      });
+      apps = forAllSystems (
+        system: pkgs: {
+          default = {
+            type = "app";
+            program = "${self.packages.${system}.arca}/bin/arca-gui";
+            meta.description = "Arca desktop window";
+          };
+          arca = {
+            type = "app";
+            program = "${self.packages.${system}.arca}/bin/arca";
+            meta.description = "Arca command line";
+          };
+        }
+      );
 
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
-          inputsFrom = [ self.packages.${pkgs.system}.arca ];
-          packages = with pkgs; [
-            cargo
-            rustc
-            clippy
-            rustfmt
-            rust-analyzer
-            # interop.sh and bench.sh compare against these.
-            zip
-            unzip
-            _7zz
-            zstd
-            hyperfine
-          ];
-          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath self.packages.${pkgs.system}.arca.runtimeLibs;
-        };
-      });
+      devShells = forAllSystems (
+        system: pkgs: {
+          default = pkgs.mkShell {
+            inputsFrom = [ self.packages.${system}.arca ];
+            packages = with pkgs; [
+              cargo
+              rustc
+              clippy
+              rustfmt
+              rust-analyzer
+              # interop.sh and bench.sh compare against these.
+              zip
+              unzip
+              _7zz
+              zstd
+              hyperfine
+            ];
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath self.packages.${system}.arca.runtimeLibs;
+          };
+        }
+      );
 
-      formatter = forAllSystems (pkgs: pkgs.nixfmt);
+      formatter = forAllSystems (system: pkgs: pkgs.nixfmt);
     };
 }
