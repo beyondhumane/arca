@@ -175,7 +175,9 @@ impl Default for CreateOptions {
 /// `progress` receives `(members done, members total, member name)` during
 /// the source scan, the write (including compression progress inside large
 /// members) and the verification pass; returning `false` cancels and yields
-/// [`Error::Cancelled`].
+/// [`Error::Cancelled`]. The last call precedes publication, so a `false`
+/// there still leaves nothing behind; nothing is reported once the archive
+/// has its name.
 pub fn create_rar(
     output: &Path,
     sources: &[Source],

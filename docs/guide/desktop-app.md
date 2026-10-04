@@ -55,8 +55,9 @@ apply only to ZIP, never to an existing 7z.
 archive at the chosen level. With RAR selected the dialog shows the fixed RAR
 compressor and a note that the output is never encrypted; the password field,
 **Hide file names** and the ZIP codec picker are not shown, and a password typed
-for ZIP or 7z is kept for when you switch back. An existing output file is never
-replaced, even through the conflict dialog's Replace option. The new archive
+for ZIP or 7z is kept for when you switch back. An existing output name is
+refused before anything is written, with a message to pick another name; no
+Replace option is offered because RAR creation never replaces a file. The new archive
 opens read-only like any other RAR, and Add, Delete, Rename and password
 actions stay disabled for it. CBR cannot be created. See [RAR](rar.md#creating-rar5-archives).
 

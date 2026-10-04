@@ -602,52 +602,34 @@ fn rar_creation_rejects_unsupported_options_before_writing() {
 }
 
 #[test]
-fn rar_creation_never_replaces_an_existing_file() {
+fn rar_creation_refuses_an_existing_output_before_asking() {
     let room = crate::test_support::Room::new();
     let input = room.path("input.txt");
     fs::write(&input, b"new contents").unwrap();
     let out = room.path("existing.rar");
     fs::write(&out, b"original archive").unwrap();
-    for answer in [Answer::Cancel, Answer::Replace, Answer::Rename] {
-        let mut app = AppController::new(Settings::default());
-        app.run_job(rar_job(out.clone(), vec![input.clone()], Level::Fast));
-        let end = Instant::now() + Duration::from_secs(30);
-        while app.state.conflict.is_none() {
-            app.receive();
-            assert!(Instant::now() < end, "conflict was not delivered");
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        assert_eq!(fs::read(&out).unwrap(), b"original archive");
-        app.dispatch(AppAction::AnswerConflict(answer));
-        settle(&mut app);
-        assert_eq!(fs::read(&out).unwrap(), b"original archive");
-        match answer {
-            Answer::Rename => {
-                assert!(!app.state.error, "{}", app.state.notice);
-                assert_eq!(app.state.archive, Some(room.path("existing (1).rar")));
-                assert_eq!(app.state.entries[0].name, "input.txt");
-            }
-            Answer::Replace => {
-                assert!(app.state.error);
-                assert!(
-                    app.state.notice.contains("never replaces"),
-                    "{}",
-                    app.state.notice
-                );
-                assert!(app.state.archive.is_none());
-            }
-            _ => {
-                assert!(app.state.archive.is_none());
-                assert!(app.state.reread_after.is_none());
-            }
-        }
-    }
+    let mut app = AppController::new(Settings::default());
+    app.run_job(rar_job(out.clone(), vec![input.clone()], Level::Fast));
+    settle(&mut app);
+    assert!(
+        app.state.conflict.is_none(),
+        "RAR creation must not offer Replace"
+    );
+    assert!(app.state.error);
+    assert!(
+        app.state.notice.contains("already exists") && app.state.notice.contains("another name"),
+        "{}",
+        app.state.notice
+    );
+    assert!(app.state.archive.is_none());
+    assert!(app.state.reread_after.is_none());
+    assert_eq!(fs::read(&out).unwrap(), b"original archive");
     let mut leftovers: Vec<_> = fs::read_dir(room.path(""))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
         .collect();
     leftovers.sort();
-    assert_eq!(leftovers, ["existing (1).rar", "existing.rar", "input.txt"]);
+    assert_eq!(leftovers, ["existing.rar", "input.txt"]);
 }
 
 #[test]

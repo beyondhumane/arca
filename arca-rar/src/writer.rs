@@ -107,9 +107,10 @@ pub(super) fn create(
     }
     let staging = staging.into_temp_path();
     verify(&staging, &planned, progress)?;
-    publish(staging, output)?;
-    let _ = progress(total, total, "");
-    Ok(())
+    if !progress(total, total, "") {
+        return Err(Error::Cancelled);
+    }
+    publish(staging, output)
 }
 
 /// Streams the members into `file` through the RAR 5 writer's public

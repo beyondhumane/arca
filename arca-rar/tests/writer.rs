@@ -523,6 +523,39 @@ fn cancelling_before_and_during_the_write_leaves_nothing_behind() {
 }
 
 #[test]
+fn a_false_from_the_last_callback_cancels_before_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut rng = Xorshift(0x5eed_0007);
+    let data = dir.path().join("data.bin");
+    fs::write(&data, rng.bytes(300_000, true)).unwrap();
+    let before = listing(dir.path());
+    let sources = [source(&data, "data.bin")];
+    let archive = dir.path().join("new.rar");
+
+    let calls = AtomicUsize::new(0);
+    create_rar(&archive, &sources, &options(Level::Fast), &|_, _, _| {
+        calls.fetch_add(1, Ordering::Relaxed);
+        true
+    })
+    .unwrap();
+    let total_calls = calls.load(Ordering::Relaxed);
+    assert!(total_calls >= 2, "{total_calls}");
+    fs::remove_file(&archive).unwrap();
+    assert_eq!(listing(dir.path()), before);
+
+    for refuse_at in [total_calls - 1, total_calls - 2] {
+        let calls = AtomicUsize::new(0);
+        let error = create_rar(&archive, &sources, &options(Level::Fast), &|_, _, _| {
+            calls.fetch_add(1, Ordering::Relaxed) != refuse_at
+        })
+        .unwrap_err();
+        assert!(matches!(error, Error::Cancelled), "{error}");
+        assert_eq!(calls.load(Ordering::Relaxed), refuse_at + 1);
+        assert_eq!(listing(dir.path()), before);
+    }
+}
+
+#[test]
 fn sources_that_change_during_the_write_fail_without_output() {
     let dir = tempfile::tempdir().unwrap();
     let mut rng = Xorshift(0x5eed_0003);

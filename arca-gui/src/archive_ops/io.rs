@@ -500,6 +500,22 @@ pub(crate) fn dest_path(
     Ok(Some(chosen))
 }
 
+/// RAR creation never replaces a file, so an occupied output name is refused
+/// up front with the writer's own wording instead of a conflict prompt whose
+/// Replace answer could only fail.
+pub(crate) fn new_only_output(out: &Path) -> arca_core::Result<PathBuf> {
+    if out.exists() {
+        return Err(arca_core::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!(
+                "'{}' already exists; Arca creates new RAR archives only and never replaces a file. Pick another name",
+                out.display()
+            ),
+        )));
+    }
+    Ok(out.to_path_buf())
+}
+
 pub(crate) fn creation_output(
     out: &Path,
     ask: &dyn Fn(&Path) -> Answer,

@@ -5,7 +5,10 @@ Linux x86_64 (8 CPUs), 2026-10-04; Rust 1.97.1, Python 3.12, pinned
 `3b1c8d5b6e4a22d7289320324e5149b1a796754f`, CLI `0b28666`, GUI `21ca714` plus the
 integration dialog change (RAR shows its fixed compressor and a no-encryption
 policy note instead of disabled ZIP controls), merged
-on the `devin/1791110803-rar-create-integration` branch. This is engineering
+on the `devin/1791110803-rar-create-integration` branch, then the follow-up
+commit on the same branch (cooperative SIGINT/SIGTERM cancellation in the CLI,
+`.` member names, last writer callback before publication, GUI preflight of an
+occupied RAR output) recorded in the last section. This is engineering
 evidence for that revision, not a legal conclusion, a release approval or a
 claim of WinRAR equivalence. The earlier [read-only record](RAR_VALIDATION.md)
 is unchanged and its measurements were reader tests only.
@@ -19,9 +22,9 @@ the guide as unsupported must be refused before output exists.
 
 | Surface | Coverage | How |
 | --- | --- | --- |
-| Adapter | Every level round-trips through the reader; empty files/dirs under the managed memory ledger; malformed, duplicate, case-colliding and prefix-colliding names; links and special files; existing outputs never replaced, including one that appears mid-write; cancellation before and during the write leaves nothing; sources that change size/mtime/identity or are swapped for pipes/links at reopen fail without output; size/count/header budgets checked before reading; seeded stress trees; external tool read-back when a proven decoder is present | `cargo test -p arca-rar --features rar` (writer.rs, 62 tests with the feature, 2 without) |
-| CLI | Bounded iterative traversal (100000 entries counted before any directory is enumerated, 4096-byte names, 16 GiB aggregate) with injected bounds, wide and deep trees; refusals for password, hidden names, non-RAR codecs, `-j > 1`, `.cbr`, existing output, links, duplicates, output aliasing; feature-off errors | `cargo test -p arca-cli` with and without default features |
-| GUI | Selector feature gating; RAR policy note in English and Spanish replacing the ZIP codec and password controls; job options per level; password restore for ZIP; create then open read-only, Test, Add rejected with bytes unchanged; unsupported options leave no output; existing file never replaced for Cancel/Replace/Rename; cancellation leaves nothing; symlink refusal; traversal ceilings, cancellation between members, 400-deep tree without recursion | `cargo test -p arca-gui` with and without default features |
+| Adapter | Every level round-trips through the reader; empty files/dirs under the managed memory ledger; malformed, duplicate, case-colliding and prefix-colliding names; links and special files; existing outputs never replaced, including one that appears mid-write; cancellation before, during and at the last callback before publication leaves nothing; sources that change size/mtime/identity or are swapped for pipes/links at reopen fail without output; size/count/header budgets checked before reading; seeded stress trees; external tool read-back when a proven decoder is present | `cargo test -p arca-rar --features rar` (61 tests plus 2 ignored with the feature, 2 without; writer.rs 15) |
+| CLI | Bounded iterative traversal (100000 entries counted before any directory is enumerated, 4096-byte names, 16 GiB aggregate) with injected bounds, wide and deep trees; `.` inputs name members without `./`, `..` refused; an output inside the tree refused; SIGINT/SIGTERM mid-write exit 1 with `cancelled` and no file left (unix); refusals for password, hidden names, non-RAR codecs, `-j > 1`, `.cbr`, existing output, links, duplicates, output aliasing; feature-off errors | `cargo test -p arca-cli` with and without default features |
+| GUI | Selector feature gating; RAR policy note in English and Spanish replacing the ZIP codec and password controls; job options per level; password restore for ZIP; create then open read-only, Test, Add rejected with bytes unchanged; unsupported options leave no output; an existing output name is refused up front (no Replace prompt), bytes unchanged; cancellation leaves nothing; symlink refusal; traversal ceilings, cancellation between members, 400-deep tree without recursion | `cargo test -p arca-gui` with and without default features |
 | CLI harness | Seeded, process-isolated campaign below, comparing Arca, official UnRAR 7.12 and 7-Zip 24.09 extractions by exact tree hash | `arca-rar/tests/create-stress.py` |
 
 ### Harness: `python3 arca-rar/tests/create-stress.py --stress --require-tools`
@@ -35,9 +38,10 @@ for the 10k-entry archive, x8 for the 128 MiB stream). Tools:
 `SEVENZIP=/tmp/rar-tools/7z/7zz` (`7-Zip 24.09`, from `7z2409-linux-x64.tar.xz`,
 SHA-256 `914c7e20ad5ef8e4d3cf08620ff8894b28fe11b7eb99809d6930870fbe48a281`).
 Both decoders are first proven on the WinRAR-made fixture `tests/fixtures/plain.rar`
-(the VM's p7zip 16.02 fails that probe and is therefore not used). Result:
-10 pass, 1 warn, 0 fail, 0 skip; `report.json` holds per-process arguments,
-exit codes, durations and `ru_maxrss`.
+(the VM's p7zip 16.02 fails that probe and is therefore not used). Result on
+the first merged revision (`a8d917a`): 10 pass, 1 warn, 0 fail, 0 skip; the warn
+is the historical interrupt row below, corrected and rerun in the last section.
+`report.json` holds per-process arguments, exit codes, durations and `ru_maxrss`.
 
 | Check | Result |
 | --- | --- |
@@ -51,7 +55,7 @@ exit codes, durations and `ru_maxrss`.
 | many-entries | 10,000 files (text/random/repetitive/empty, 1,123,686 B) in 37 directories at fast: 1,488,499 B archive, create 0.68 s, test 0.09 s, extract 3.0 s, peak RSS 33 MiB; UnRAR and 7-Zip trees identical. |
 | large-stream | 128 MiB stream of 1 MiB repetitive/random/text/zero blocks plus a text tail (134,221,824 B) at normal: 36,030,497 B archive, create 71.2 s, test 1.7 s, extract 1.9 s, peak RSS 91 MiB; UnRAR and 7-Zip trees identical. |
 | cycles | 100 seeded create/list/test/extract cycles (1 to 12 members, five content kinds, nested and Unicode names, 31 store / 22 fast / 23 normal / 24 best): 1,500 members, 18,228,538 B in, 8,963,807 B out, every cycle hash-identical through Arca; every fifth cycle (20) also through UnRAR and 7-Zip. |
-| interrupt | **warn.** SIGINT and SIGTERM 0.5 s into a 128 MiB `best` write: no file ever appears at the output path, but the staged `.arca-*.rar.part` survives because the CLI has no signal handler. The same kill leaves `.tmp*` files for `.7z` and a partial `.zip` on the current code, so this is an existing CLI-wide gap, not a RAR regression; cooperative cancellation is covered by the adapter and GUI tests. |
+| interrupt | **warn on `a8d917a` (historical).** SIGINT and SIGTERM 0.5 s into a 128 MiB `best` write: no file ever appeared at the output path, but the staged `.arca-*.rar.part` survived because the CLI had no signal handler (the same kill leaves `.tmp*` files for `.7z` and a partial `.zip`, which is unchanged). Fixed by the follow-up commit; the corrected rerun is in the last section and the check now fails on any leftover. |
 
 The bounded smoke subset (`create-stress.py` without `--stress`: 400 files, 8 MiB
 stream, 8 cycles) passed with the same tools and is wired into the Linux
@@ -60,7 +64,8 @@ pinned SHA-256 for that job only.
 
 ## Workspace commands
 
-Status recorded after completion on the merged branch:
+Status recorded after completion on the merged branch at `a8d917a` (before the
+follow-up commit; the narrow reruns for that commit are in the last section):
 
 ```sh
 cargo fmt --all -- --check                                                           # pass
@@ -80,8 +85,8 @@ git diff --check                                                                
 
 Test totals summed over every workspace test binary: default features 434
 passed, 0 failed, 7 ignored; `codecs-native` without defaults 343 passed, 0
-failed, 5 ignored. The single `warn` in both harness runs is the CLI
-interruption case in the harness table above.
+failed, 5 ignored. The single `warn` in both harness runs is the historical CLI
+interruption case in the harness table above, corrected below.
 
 ## Explicit gaps and limits
 
@@ -98,12 +103,58 @@ interruption case in the harness table above.
 - The 4096-byte member-name ceiling cannot be reached through the Linux
   filesystem (PATH_MAX intervenes first); it is unit-tested with injected bounds.
   The 16 GiB spool ceiling, the 64 MiB header budget and the 256 MiB writer
-  memory ledger were exercised by adapter unit tests, not by the CLI harness.
+  memory ledger are configured on every write and the adapter tests run under
+  them (including empty files and directories, which once violated the
+  ledger); none of these three was driven to exhaustion, so their rejection
+  path at the ceiling is untested. The 100000-entry, 4096-byte-name, 4 GiB
+  member and 16 GiB aggregate checks were hit with injected bounds in unit
+  tests; only the entry ceiling was reached with real files (stress run).
 - Disk-full was checked on a Linux tmpfs only; quota exhaustion, Windows
   locks/antivirus, power loss and concurrent writers were not tested.
-- Killing the CLI mid-write leaves the staged part file (see interrupt above).
+- SIGINT/SIGTERM are cancelled cooperatively (see interrupt above); SIGKILL and
+  power loss can still leave the staged `.arca-*.rar.part` file behind.
 - The harness does not fuzz the writer's input beyond seeded trees, and the
   corruption check mutates Arca's own output; it is not a coverage-guided
   campaign.
 - These checks do not answer the open provenance questions in the
   [distribution review](../docs/plans/rars-0.10.0-distribution.md).
+
+## Follow-up: cooperative interruption and reviewer fixes
+
+Same VM and tools, 2026-10-04, on the follow-up commit after `a8d917a`. Changes
+under test: `arca-cli` installs a `ctrlc 3.4.7` (`termination` feature) handler
+before any input is read; the flag is read while the tree is walked and by the
+`create_rar` progress callback, so an interrupted creation ends with
+`Error::Cancelled`, exit status 1 and the staged file dropped by its owner (no
+manual deletion of anything else). `.` components in inputs are dropped from
+member names (`cd dir && arca create ../x.rar .` now works; `..` and absolute
+components stay refused). The writer's last progress callback runs before
+publication and a `false` there cancels with nothing at the output path. The GUI
+refuses an occupied RAR output name before writing instead of offering Replace.
+SIGKILL and power loss remain outside the guarantee.
+
+```sh
+cargo fmt --all -- --check                                                                         # pass
+cargo clippy -p arca-cli -p arca-rar -p arca-gui --all-targets -- -D warnings                      # pass
+cargo clippy -p arca-cli -p arca-rar -p arca-gui --all-targets --no-default-features --features codecs-native -- -D warnings  # pass
+cargo test -p arca-rar --features rar                                                              # 61 passed, 2 ignored (writer.rs 15, new: last callback)
+cargo test -p arca-cli                                                                             # 14 unit (new: member names, cancelled walk) + 3 + 14 in tests/rar.rs (new: dot input, output inside tree, SIGINT/SIGTERM)
+cargo test -p arca-cli -p arca-rar --no-default-features                                           # pass (feature-off errors unchanged)
+cargo test -p arca-gui rar_                                                                        # 26 passed (new: occupied output refused without a prompt)
+cargo build --release                                                                              # pass
+UNRAR=... SEVENZIP=... python3 arca-rar/tests/create-stress.py --require-tools                     # 10 pass, 0 warn, 0 fail, 0 skip
+UNRAR=... SEVENZIP=... python3 arca-rar/tests/create-stress.py --stress --require-tools            # 11 pass, 0 warn, 0 fail, 0 skip
+git diff --check                                                                                   # clean
+```
+
+Interrupt check, now required (a run that finishes before the signal is a
+`skip`, never a pass): SIGINT and SIGTERM 0.5 s into the `best` write of the
+large tree exit with status 1 and `arca: cancelled` on stderr after 0.66 to
+0.71 s, no file at the output path and no `.arca-*.rar.part` in the directory
+(smoke: 8 MiB tree; stress: 128 MiB tree). The other rows reproduce the first
+run within noise (10k entries 0.85 s create, 33 MiB RSS; 128 MiB stream 75.3 s
+at normal, 90 MiB RSS; 100 cycles; 25 corrupt archives rejected). Workspace-wide
+test totals were not recounted for this commit; the parent runs the broad
+baseline. `Cargo.lock` gained `ctrlc 3.4.7` and `nix 0.30.1` (Unix signal
+plumbing, safe Rust); `arca-rar/fuzz/Cargo.lock` is refreshed separately by the
+parent and untouched here.
