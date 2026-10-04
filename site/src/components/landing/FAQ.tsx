@@ -26,8 +26,8 @@ const FAQS_EN: { q: string; a: ReactNode }[] = [
     a: (
       <>
         ZIP (including Zip64) with Store, Deflate (via zlib-rs) and Zstandard; ustar TAR with checksum verification;
-        and <Code>.tar.gz</Code> / <Code>.tgz</Code>. Legacy ZipCrypto archives can be opened. The 7z format, xz/LZMA2,
-        symbolic links, GNU tar long names and solid archives are on the roadmap.
+        and <Code>.tar.gz</Code> / <Code>.tgz</Code>. 7z supports Store/LZMA2 creation, solid reading, passwords
+        and hidden names. Standalone xz, solid 7z creation and 7z mutation remain unsupported.
       </>
     ),
   },
@@ -35,7 +35,7 @@ const FAQS_EN: { q: string; a: ReactNode }[] = [
     q: 'Can other tools open the archives Arca creates?',
     a: (
       <>
-        Yes. <Code>interop.sh</Code> checks it across 35 cases verified by SHA-256: unzip, tar and 7-Zip read
+        Yes. <Code>interop.sh</Code> checks round trips using SHA-256, plus failure and cleanup cases: unzip, tar and 7-Zip read
         what Arca writes at all four levels, and Arca reads what they write. One caveat: Zstandard inside ZIP (method 93)
         isn’t read by classic unzip, which is why <Code>-c auto</Code> uses Deflate for <Code>.zip</Code>.
       </>
@@ -47,7 +47,8 @@ const FAQS_EN: { q: string; a: ReactNode }[] = [
       <>
         AES-256 using the WinZip AE-2 scheme: PBKDF2-HMAC-SHA1 key derivation, AES-256 in CTR mode, an HMAC-SHA1 over
         the ciphertext and a random 16-byte salt per entry, the same scheme 7-Zip, WinRAR and NanaZip write. ZIP
-        never encrypts file names, so the listing stays visible without the password.
+        never encrypts file names, so the listing stays visible without the password. 7z can hide names and uses
+        AES-256-CBC/SHA-256 with CRC, not cryptographic authentication. A failed encrypted check can mean a wrong password or corruption.
       </>
     ),
   },
@@ -106,8 +107,8 @@ const FAQS_ES: typeof FAQS_EN = [
     a: (
       <>
         ZIP (con Zip64) con Store, Deflate (sobre zlib-rs) y Zstandard; TAR ustar con verificación de la suma de control;
-        y <Code>.tar.gz</Code> / <Code>.tgz</Code>. Los archivos con el antiguo ZipCrypto se pueden abrir. El formato 7z,
-        xz/LZMA2, los enlaces simbólicos, los nombres largos de GNU tar y los archivos sólidos están en la hoja de ruta.
+        y <Code>.tar.gz</Code> / <Code>.tgz</Code>. 7z admite creación Store/LZMA2, lectura sólida, contraseñas y
+        nombres ocultos. xz independiente, crear 7z sólidos y modificar 7z siguen sin estar disponibles.
       </>
     ),
   },
@@ -115,7 +116,7 @@ const FAQS_ES: typeof FAQS_EN = [
     q: '¿Otras herramientas abren los archivos que crea Arca?',
     a: (
       <>
-        Sí. <Code>interop.sh</Code> lo comprueba en 35 casos verificados por SHA-256: unzip, tar y 7-Zip leen lo que
+        Sí. <Code>interop.sh</Code> verifica recorridos con SHA-256, además de fallos y limpieza: unzip, tar y 7-Zip leen lo que
         escribe Arca en los cuatro niveles, y Arca lee lo que escriben ellos. Una salvedad: el unzip clásico no lee
         Zstandard dentro de ZIP (método 93), y por eso <Code>-c auto</Code> usa Deflate para <Code>.zip</Code>.
       </>
@@ -128,6 +129,7 @@ const FAQS_ES: typeof FAQS_EN = [
         AES-256 con el esquema WinZip AE-2: derivación de clave PBKDF2-HMAC-SHA1, AES-256 en modo CTR, un HMAC-SHA1 sobre
         el texto cifrado y una sal aleatoria de 16 bytes por entrada, el mismo esquema que escriben 7-Zip, WinRAR y
         NanaZip. ZIP nunca cifra los nombres de los archivos, así que el listado se ve sin la contraseña.
+        7z permite ocultarlos y usa AES-256-CBC/SHA-256 con CRC, no autenticación criptográfica. Un fallo cifrado puede indicar contraseña incorrecta o corrupción.
       </>
     ),
   },

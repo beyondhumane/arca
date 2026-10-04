@@ -3,6 +3,7 @@ use std::io;
 
 mod format;
 pub use format::{Container, Format};
+pub mod extraction;
 
 pub mod limits {
     pub const MAX_NAME: usize = 4096;
@@ -29,6 +30,7 @@ pub enum Error {
     },
     Unsupported(String),
     PasswordRequired,
+    PasswordOrCorrupt,
     BadPassword,
     // Somebody pressed stop. Not a failure: nothing is wrong with the archive
     // and nothing needs reporting, so callers that clean up after themselves
@@ -55,7 +57,8 @@ impl fmt::Display for Error {
                 "'{name}' did not pass its authentication code: the archive was altered after it was encrypted"
             ),
             Error::Unsupported(m) => write!(f, "unsupported: {m}"),
-            Error::PasswordRequired => write!(f, "password required to open this archive"),
+            Error::PasswordRequired => write!(f, "a password is required for this archive"),
+            Error::PasswordOrCorrupt => write!(f, "wrong password or corrupt encrypted archive"),
             Error::BadPassword => write!(f, "incorrect archive password"),
             Error::Cancelled => write!(f, "cancelled"),
         }
@@ -84,6 +87,10 @@ pub enum Method {
     Store,
     Deflate,
     Zstd,
+    Lzma,
+    Lzma2,
+    Bzip2,
+    Other7z,
     Rar,
 }
 
@@ -93,18 +100,21 @@ impl Method {
             Method::Store => "store",
             Method::Deflate => "deflate",
             Method::Zstd => "zstd",
+            Method::Lzma => "lzma",
+            Method::Lzma2 => "lzma2",
+            Method::Bzip2 => "bzip2",
+            Method::Other7z => "7z",
             Method::Rar => "rar",
         }
     }
 
+    /// The ZIP method code, only for codecs supported by Arca's ZIP writer.
     pub fn code(self) -> Result<u16> {
         match self {
             Method::Store => Ok(0),
             Method::Deflate => Ok(8),
             Method::Zstd => Ok(93),
-            Method::Rar => Err(Error::Unsupported(
-                "RAR is not a ZIP compression method".into(),
-            )),
+            _ => Err(Error::Unsupported(format!("{} in ZIP", self.name()))),
         }
     }
 }

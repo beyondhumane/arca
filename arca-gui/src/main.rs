@@ -9,6 +9,8 @@ mod gpui_theme;
 mod i18n;
 mod model;
 mod settings;
+#[cfg(test)]
+mod test_support;
 mod tree;
 
 // Keep the GPUI view focused on presentation while exposing the application

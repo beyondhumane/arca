@@ -38,7 +38,7 @@ fn zip_containers_open_with_their_own_label() {
     ] {
         let archive = container(&dir, name);
         let mut controller = AppController::new(Settings::default());
-        controller.load_listing(archive.clone());
+        controller.load_listing(archive.clone(), None);
         settle(&mut controller);
         assert!(!controller.state.error, "{}", controller.state.notice);
         assert_eq!(controller.state.format, format);

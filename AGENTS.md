@@ -9,6 +9,7 @@ Arca is a cross-platform archiver written in Rust. The workspace contains:
 - `arca-core`: shared errors, bounded parsing, limits, and path safety.
 - `arca-zip`: ZIP/Zip64 reading and writing, compression, and encryption.
 - `arca-tar`: TAR reading and writing.
+- `arca-7z`: bounded 7z reading, solid extraction, and Store/LZMA2 writing.
 - `arca-cli`: the `arca` command-line binary.
 - `arca-gui`: the desktop window.
 - `arca-setup`: the installer window and engine; releases still ship the Inno Setup one.

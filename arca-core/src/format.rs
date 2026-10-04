@@ -4,6 +4,7 @@ use std::path::Path;
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Format {
     Zip,
+    SevenZ,
     Tar,
     TarGz,
     Rar,
@@ -26,17 +27,19 @@ pub enum Format {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Container {
     Zip,
+    SevenZ,
     Tar,
     TarGz,
     Rar,
 }
 
 impl Format {
-    pub const WRITABLE: [Self; 3] = [Self::Zip, Self::Tar, Self::TarGz];
+    pub const WRITABLE: [Self; 4] = [Self::Zip, Self::Tar, Self::TarGz, Self::SevenZ];
 
     /// Every recognized name suffix, longest first where one ends another.
-    pub const SUFFIXES: [(&'static str, Self); 17] = [
+    pub const SUFFIXES: [(&'static str, Self); 18] = [
         ("zip", Self::Zip),
+        ("7z", Self::SevenZ),
         ("tar.gz", Self::TarGz),
         ("tgz", Self::TarGz),
         ("tar", Self::Tar),
@@ -61,6 +64,7 @@ impl Format {
 
     pub fn container(self) -> Container {
         match self {
+            Self::SevenZ => Container::SevenZ,
             Self::Tar => Container::Tar,
             Self::TarGz => Container::TarGz,
             Self::Rar | Self::Cbr => Container::Rar,
@@ -89,6 +93,7 @@ impl Format {
     pub fn label(self) -> &'static str {
         match self {
             Self::Zip => "ZIP",
+            Self::SevenZ => "7z",
             Self::Tar => "TAR",
             Self::TarGz => "TAR.GZ",
             Self::Rar => "RAR",
@@ -137,6 +142,19 @@ impl Format {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sevenz_is_a_shared_writable_format() {
+        assert_eq!(
+            Format::detect(Path::new("archive.7Z")),
+            Some(Format::SevenZ)
+        );
+        assert_eq!(Format::SevenZ.extension(), "7z");
+        assert_eq!(Format::SevenZ.label(), "7z");
+        assert_eq!(Format::SevenZ.container(), Container::SevenZ);
+        assert!(Format::SevenZ.can_write());
+        assert!(!Format::WRITABLE.contains(&Format::Rar));
+    }
 
     #[test]
     fn rar_is_readable_but_never_a_creation_format() {

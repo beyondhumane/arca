@@ -53,6 +53,7 @@ pub(crate) struct AppState {
     pub(crate) password_wrong: bool,
     pub(crate) password_input: String,
     pub(crate) add_password: String,
+    pub(crate) hide_names: bool,
     // Held for the archive currently open in the window, so extracting from it
     // does not ask again for every button press.
     pub(crate) archive_password: Option<String>,
