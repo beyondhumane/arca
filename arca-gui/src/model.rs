@@ -21,15 +21,18 @@ pub(crate) fn container_of(p: &Path) -> Option<Container> {
     detect(p).map(Format::container)
 }
 
-pub(crate) fn open_filter() -> Vec<&'static str> {
+// GTK matches filter patterns case-sensitively, so APP.APK needs its own entry.
+pub(crate) fn open_filter() -> Vec<String> {
     let mut extensions = Vec::new();
     for (suffix, format) in Format::SUFFIXES {
         if format.container() == Container::Rar && !cfg!(feature = "rar") {
             continue;
         }
         let extension = suffix.rsplit('.').next().unwrap_or(suffix);
-        if !extensions.contains(&extension) {
-            extensions.push(extension);
+        for variant in [extension.to_string(), extension.to_ascii_uppercase()] {
+            if !extensions.contains(&variant) {
+                extensions.push(variant);
+            }
         }
     }
     extensions
