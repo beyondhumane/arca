@@ -4592,19 +4592,15 @@ fn build_dialog(
                     ),
                 )
                 .on_ok(move |_, _, cx| {
-                    let mut close = true;
                     let _ = submit.update(cx, |this, cx| {
                         let password = this.password.read(cx).value().to_string();
                         this.controller
                             .dispatch(AppAction::SubmitPassword(password));
-                        // The current password is the first of two questions,
-                        // and an empty box is no answer at all: closing on
-                        // either leaves the window waiting on a window that is
-                        // no longer there.
-                        close = this.controller.state.waiting_on_password.is_none();
                         cx.notify();
                     });
-                    close
+                    // Only sync_dialog closes this dialog: a fast password
+                    // failure can request it again before the next frame.
+                    false
                 })
         }
         ModalKind::Add => {

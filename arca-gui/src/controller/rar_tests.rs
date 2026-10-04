@@ -32,6 +32,10 @@ fn encrypted_header_listing_prompts_retries_and_refreshes_in_a_worker() {
     controller.submit_password("wrong".into());
     settle(&mut controller);
     assert!(controller.state.password_wrong);
+    assert!(matches!(
+        controller.state.waiting_on_password,
+        Some(Pending::OpenArchive)
+    ));
     assert!(controller.state.entries.is_empty());
     assert!(controller.state.archive_password.is_none());
     controller.submit_password("arca-test-only".into());
@@ -67,6 +71,34 @@ fn encrypted_header_listing_prompts_retries_and_refreshes_in_a_worker() {
             .count(),
         2
     );
+}
+
+#[test]
+fn a_failed_rar_password_can_be_cancelled_before_opening_another_archive() {
+    for name in ["headers.rar", "encrypted.rar"] {
+        let mut controller = AppController::new(Settings::default());
+        controller.dispatch(AppAction::Open(fixture(name)));
+        settle(&mut controller);
+        for _ in 0..2 {
+            controller.dispatch(AppAction::SubmitPassword("wrong".into()));
+            settle(&mut controller);
+            assert!(controller.state.password_wrong);
+            assert!(matches!(
+                controller.state.waiting_on_password,
+                Some(Pending::OpenArchive)
+            ));
+            assert!(!controller.state.busy);
+        }
+        controller.dispatch(AppAction::CancelPassword);
+        assert!(controller.state.waiting_on_password.is_none());
+        assert!(!controller.state.password_wrong);
+        assert!(controller.state.password_input.is_empty());
+        controller.dispatch(AppAction::Open(fixture("plain.rar")));
+        settle(&mut controller);
+        assert!(!controller.state.error, "{}", controller.state.notice);
+        assert!(controller.state.waiting_on_password.is_none());
+        assert!(!controller.state.entries.is_empty());
+    }
 }
 
 #[test]
