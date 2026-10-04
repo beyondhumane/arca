@@ -277,6 +277,7 @@ impl AppController {
         let total = wanted.iter().filter(|b| **b).count();
         let pw = self.state.archive_password.clone();
         self.state.close_when_done = false;
+        self.show_job(s.extracting, archive_stem(&archive), true);
         let (reply_tx, reply_rx) = channel::<Answer>();
         self.state.replies = Some(reply_tx);
         let (stop, hold) = self.fresh_flags();
@@ -312,6 +313,10 @@ impl AppController {
             return;
         };
         self.state.password_input.clear();
+        // Whatever the last attempt left in the status bar is answered by this
+        // one; a wrong password writes a fresh notice from `access_failed`.
+        self.state.notice.clear();
+        self.state.error = false;
         match pending {
             pending @ (Pending::Extract(_) | Pending::Read(_)) => {
                 self.authenticate(pending, Some(password))
@@ -2380,6 +2385,27 @@ mod password_tests {
         }];
         controller.state.checked = vec![false];
         controller
+    }
+
+    #[test]
+    fn a_new_password_attempt_takes_the_old_failure_off_the_status_bar() {
+        let mut controller = controller(true);
+        controller.access_failed(
+            Pending::OpenArchive,
+            Some("wrong"),
+            arca_core::Error::BadPassword,
+        );
+        assert!(controller.state.password_wrong);
+        assert!(!controller.state.notice.is_empty());
+        assert!(matches!(
+            controller.state.waiting_on_password,
+            Some(Pending::OpenArchive)
+        ));
+
+        controller.submit_password("right".into());
+        assert!(controller.state.notice.is_empty());
+        assert!(!controller.state.error);
+        assert!(controller.state.waiting_on_password.is_none());
     }
 
     #[test]
