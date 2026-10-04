@@ -182,6 +182,22 @@ jobs:
           fi
           cat "$FILE.sha256"
 
+      # AppImage, .deb and .rpm from the same binaries, so they need the same
+      # glibc as the tarball. See packaging/linux/build.sh.
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          set -eu
+          ARCH="${{ matrix.target }}"
+          ARCH="${ARCH%%-*}"
+          packaging/linux/build.sh "$VERSION" "$ARCH" \
+            "target/${{ matrix.target }}/release" dist/linux
+          cd dist/linux
+          for f in *.AppImage *.deb *.rpm; do
+            sha256sum "$f" > "../$f.sha256"
+            mv "$f" ..
+          done
+
       # Only on Windows: a real setup.exe, with its uninstaller in Installed
       # apps. The zip above is just loose binaries and installs no menus.
       - name: Windows installer
@@ -219,6 +235,9 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
             dist/*.sha256
           retention-days: 7
 
@@ -245,7 +264,7 @@ jobs:
       - name: Gather the files and the checksums
         run: |
           mkdir -p publish
-          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.exe' \) -exec cp {} publish/ \;
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -exec cp {} publish/ \;
           cat artifacts/*/*.sha256 | sed 's#.*/##' > publish/SHA256SUMS.txt
           ls -la publish
           cat publish/SHA256SUMS.txt
@@ -282,6 +301,9 @@ jobs:
           | macOS, Intel | \`arca-$TAG-macos-x86_64.tar.gz\` |
           | Linux x86_64 (glibc 2.35+) | \`arca-$TAG-linux-x86_64.tar.gz\` |
           | Linux arm64 (glibc 2.35+) | \`arca-$TAG-linux-arm64.tar.gz\` |
+          | Linux AppImage | \`arca-$TAG-linux-x86_64.AppImage\`, \`arca-$TAG-linux-arm64.AppImage\` |
+          | Debian, Ubuntu | \`arca_${V}-1_amd64.deb\`, \`arca_${V}-1_arm64.deb\` |
+          | Fedora, openSUSE | \`arca-$V-1.x86_64.rpm\`, \`arca-$V-1.aarch64.rpm\` |
 
           Verify a download with \`sha256sum -c SHA256SUMS.txt --ignore-missing\`
           (\`shasum -a 256 -c\` on macOS) or \`gh attestation verify <file> -R $GITHUB_REPOSITORY\`.

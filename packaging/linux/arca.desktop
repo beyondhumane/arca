@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Arca
+GenericName=Archive Manager
+Comment=Create, browse and extract ZIP and TAR archives
+Exec=arca-gui %f
+Icon=arca
+Terminal=false
+Categories=Utility;Archiving;Compression;
+MimeType=application/zip;application/x-tar;application/x-compressed-tar;
+Keywords=zip;tar;archive;extract;compress;
