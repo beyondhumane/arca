@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/beyondhumane/arca/compare/v0.8.0...v0.8.1) (2026-10-04)
+
+
+### Bug fixes
+
+* detect nested and output folders through symlinks and on Windows ([#44](https://github.com/beyondhumane/arca/issues/44)) ([63cddd7](https://github.com/beyondhumane/arca/commit/63cddd7501c5305a772c31780a32d503703675e9))
+
 ## [0.8.0](https://github.com/beyondhumane/arca/compare/v0.7.2...v0.8.0) (2026-10-04)
 
 
