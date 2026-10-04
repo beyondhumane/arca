@@ -27,20 +27,20 @@ struct Palette {
 }
 
 const DARK: Palette = Palette {
-    background: 0x070C1E,
-    surface: 0x0A1126,
-    raised: 0x131D3A,
-    border: 0x293A5C,
-    text: 0xF4F7FF,
-    muted: 0x9AAEC9,
-    selected: 0x1B3559,
-    focus: 0x3B9CFF,
-    link: 0x5FAEFF,
-    spark: 0xFF8A3D,
-    danger: 0xFF7A8A,
-    warning: 0xFFB366,
-    success: 0x4ADEA5,
-    state_foreground: 0x0E1628,
+    background: 0x16161E,
+    surface: 0x1A1B26,
+    raised: 0x232637,
+    border: 0x2F344D,
+    text: 0xC0CAF5,
+    muted: 0xA9B1D6,
+    selected: 0x2A3459,
+    focus: 0x7AA2F7,
+    link: 0x7AA2F7,
+    spark: 0xFF9E64,
+    danger: 0xF7768E,
+    warning: 0xE0AF68,
+    success: 0x9ECE6A,
+    state_foreground: 0x16161E,
 };
 
 const LIGHT: Palette = Palette {
@@ -133,7 +133,7 @@ fn paint(mode: ThemeMode, theme: &mut Theme) {
 
     theme.radius = px(6.);
     theme.radius_lg = px(12.);
-    theme.font_size = px(16.);
+    theme.font_size = px(14.);
     theme.mono_font_size = px(13.);
     theme.font_family = text_font();
     theme.mono_font_family = system_mono().into();
@@ -174,7 +174,7 @@ fn paint(mode: ThemeMode, theme: &mut Theme) {
     theme.accent_foreground = hex(p.text);
     theme.popover = hex(p.surface);
     theme.popover_foreground = hex(p.text);
-    theme.overlay = alpha(0x070C1E, if mode.is_dark() { 0.72 } else { 0.36 });
+    theme.overlay = alpha(0x0B0B10, if mode.is_dark() { 0.72 } else { 0.36 });
     theme.input = hex(p.border);
 
     theme.table = hex(p.background);

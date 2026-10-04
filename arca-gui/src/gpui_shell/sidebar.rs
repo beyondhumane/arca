@@ -14,14 +14,72 @@ fn place_icon(kind: PlaceKind) -> Icon {
     }
 }
 
+fn group_label(label: &'static str, cx: &App) -> gpui::Div {
+    div()
+        .px_2()
+        .pt_3()
+        .pb_1()
+        .text_xs()
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(cx.theme().muted_foreground)
+        .child(label.to_uppercase())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn place_row(
+    id: impl Into<ElementId>,
+    icon: Icon,
+    label: impl Into<gpui::SharedString>,
+    accessible: String,
+    selected: bool,
+    rail: bool,
+    enabled: bool,
+    cx: &App,
+) -> Stateful<gpui::Div> {
+    let theme = cx.theme();
+    let hover = theme.sidebar_accent;
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(accessible)
+        .aria_selected(selected)
+        .h(px(28.))
+        .w_full()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap_2()
+        .rounded(theme.radius)
+        .text_sm()
+        .text_color(theme.sidebar_foreground)
+        .map(|row| {
+            if rail {
+                row.justify_center()
+            } else {
+                row.px_2()
+            }
+        })
+        .when(selected, |row| row.bg(theme.list_active))
+        .when(enabled, |row| {
+            row.cursor_pointer().hover(move |style| style.bg(hover))
+        })
+        .when(!enabled, |row| row.opacity(0.5))
+        .child(icon.small().text_color(if selected {
+            theme.link
+        } else {
+            theme.muted_foreground
+        }))
+        .when(!rail, |row| {
+            row.child(div().flex_1().min_w_0().truncate().child(label.into()))
+        })
+}
+
 impl GpuiShell {
     pub(super) fn workspace_sidebar(
         &mut self,
         rail: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<gpui::Div> {
-        let s = self.controller.s();
-        let idle = self.background_idle();
         let mut sidebar = div()
             .id("workspace-sidebar")
             .h_full()
@@ -33,48 +91,11 @@ impl GpuiShell {
             .border_color(cx.theme().border)
             .when(rail, |sidebar| sidebar.w(px(44.)))
             .when(!rail, |sidebar| sidebar.w_full());
-        let mut actions = div()
-            .id("sidebar-actions")
-            .flex_none()
-            .flex()
-            .flex_col()
-            .p_1()
-            .gap_1();
-        actions = actions
-            .child(
-                Self::icon_button(
-                    cx,
-                    "sidebar-open",
-                    IconName::FolderOpen,
-                    s.open.into(),
-                    idle,
-                )
-                .when(!rail, |button| button.label(s.open))
-                .on_click(cx.listener(|this, _, _, cx| this.begin_dialog(DialogKind::Open, cx))),
-            )
-            .child(
-                Self::icon_button(
-                    cx,
-                    "sidebar-create",
-                    IconName::Plus,
-                    s.compress.into(),
-                    idle,
-                )
-                .when(!rail, |button| button.label(s.compress))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    let inputs = this.controller.selected_disk_paths();
-                    this.controller.dispatch(AppAction::PrepareCompress(inputs));
-                    cx.notify();
-                })),
-            );
-        sidebar = sidebar.child(actions);
-        if !rail {
-            let has_archive = self.controller.state.archive.is_some();
-            sidebar = sidebar.child(self.places_panel(has_archive, cx));
-            if has_archive {
-                sidebar = sidebar.child(self.recent_panel(true, cx));
-                sidebar = sidebar.child(div().flex_1().min_h_0().child(self.sidebar(cx)));
-            }
+        let has_archive = self.controller.state.archive.is_some();
+        sidebar = sidebar.child(self.places_panel(has_archive, rail, cx));
+        if !rail && has_archive {
+            sidebar = sidebar.child(self.recent_panel(true, cx));
+            sidebar = sidebar.child(div().flex_1().min_h_0().child(self.sidebar(cx)));
         }
         sidebar
     }
@@ -89,13 +110,7 @@ impl GpuiShell {
                 .when(standalone, |recent| recent.max_h(px(160.)).p_2())
                 .when(!standalone, |recent| recent.p_1())
                 .text_xs()
-                .child(
-                    div()
-                        .when(!standalone, |label| label.pt_1())
-                        .mb_1()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(s.recent_group),
-                );
+                .child(group_label(s.recent_group, cx));
             for (index, path) in self
                 .controller
                 .state
@@ -113,13 +128,22 @@ impl GpuiShell {
                     .unwrap_or_default();
                 let label = path.display().to_string();
                 recent = recent.child(
-                    Self::button(("sidebar-recent", index), name, label, idle)
-                        .w_full()
-                        .overflow_hidden()
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    place_row(
+                        ("sidebar-recent", index),
+                        Icon::new(IconName::Inbox),
+                        name,
+                        label,
+                        false,
+                        false,
+                        idle,
+                        cx,
+                    )
+                    .when(idle, |row| {
+                        row.on_click(cx.listener(move |this, _, _, cx| {
                             this.controller.dispatch(AppAction::Open(path.clone()));
                             cx.notify();
-                        })),
+                        }))
+                    }),
                 );
             }
             if standalone {
@@ -137,6 +161,7 @@ impl GpuiShell {
     pub(super) fn places_panel(
         &mut self,
         compact: bool,
+        rail: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let s = self.controller.s();
@@ -150,7 +175,11 @@ impl GpuiShell {
             .when(compact, |panel| panel.flex_none().max_h(px(220.)))
             .when(!compact, |panel| panel.flex_1().min_h_0())
             .overflow_y_scrollbar()
-            .p_1()
+            .px_1()
+            .py_1()
+            .flex()
+            .flex_col()
+            .gap(px(1.))
             .text_xs();
         let groups: [(&'static str, &'static str, Vec<Place>); 3] = [
             ("sidebar-place", s.places_group, self.controller.places()),
@@ -165,34 +194,31 @@ impl GpuiShell {
             if places.is_empty() {
                 continue;
             }
-            panel = panel.child(
-                div()
-                    .px_1()
-                    .pt_1()
-                    .mb_1()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(label),
-            );
+            if !rail {
+                panel = panel.child(group_label(label, cx));
+            }
             for (index, place) in places.into_iter().enumerate() {
                 let selected = current.as_deref() == Some(disk_dir(&place.path).as_str());
                 let path = place.path.clone();
                 let unpin_path = place.path.clone();
                 let pinned = place.kind == PlaceKind::Pinned;
                 let owner = cx.weak_entity();
-                let button = Self::icon_button(
-                    cx,
+                let button = place_row(
                     (group, index),
                     place_icon(place.kind),
+                    place.label.clone(),
                     place.path.display().to_string(),
+                    selected,
+                    rail,
                     idle,
+                    cx,
                 )
-                .label(place.label.clone())
-                .w_full()
-                .selected(selected)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.controller.dispatch(AppAction::Browse(path.clone()));
-                    this.route_changed(cx);
-                }));
+                .when(idle, |row| {
+                    row.on_click(cx.listener(move |this, _, _, cx| {
+                        this.controller.dispatch(AppAction::Browse(path.clone()));
+                        this.route_changed(cx);
+                    }))
+                });
                 let item = div()
                     .id(gpui::SharedString::from(format!("{group}-item-{index}")))
                     .w_full()
@@ -215,7 +241,7 @@ impl GpuiShell {
                 }
             }
         }
-        if !compact && !self.controller.state.settings.recent.is_empty() {
+        if !compact && !rail && !self.controller.state.settings.recent.is_empty() {
             panel = panel.child(self.recent_panel(false, cx));
         }
         panel

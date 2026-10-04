@@ -2458,21 +2458,6 @@ impl Render for GpuiShell {
         // can be pressed on purpose: the bar owns the drag, and a control
         // inside it would move the window when the hand wobbled on the way to
         // pressing it.
-        let title_bar = TitleBar::new().child(
-            div()
-                .id("window-title")
-                .role(Role::Heading)
-                .flex()
-                .items_center()
-                .gap_2()
-                .min_w_0()
-                .h_full()
-                .text_xs()
-                .text_color(cx.theme().foreground)
-                .child(brand_mark(22.))
-                .child(heading(self.controller.state.window_title.clone()).truncate()),
-        );
-
         // Abierta desde el menu del Explorador para anadir, la ventana existe
         // para el formulario y nada mas: no hay archivo que navegar detras.
         // Dibujar la barra de herramientas, la lista vacia y el pie solo
@@ -2480,6 +2465,24 @@ impl Render for GpuiShell {
         // del formulario.
         let solo_el_formulario =
             self.controller.state.one_shot && matches!(modal, Some(ModalKind::Add));
+        let title_bar = if solo_el_formulario {
+            TitleBar::new().child(
+                div()
+                    .id("window-title")
+                    .role(Role::Heading)
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .h_full()
+                    .text_xs()
+                    .text_color(cx.theme().foreground)
+                    .child(brand_mark(22.))
+                    .child(heading(self.controller.state.window_title.clone()).truncate()),
+            )
+        } else {
+            TitleBar::new().h(px(40.)).child(header)
+        };
         let mut root = div()
             .id("arca-gpui-background")
             .on_action(cx.listener(Self::focus_filter))
@@ -2488,8 +2491,7 @@ impl Render for GpuiShell {
             .flex_col()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(title_bar)
-            .when(!solo_el_formulario, |root| root.child(header));
+            .child(title_bar);
 
         // Files from outside arrive as an ordinary GPUI drag carrying
         // `ExternalPaths`, not as a `FileDropEvent`: the window translates
@@ -3276,6 +3278,7 @@ pub(crate) fn run() {
                         // estiraba la pequena hasta el ancho de la grande y el
                         // formulario quedaba flotando sobre una Arca vacia.
                         window_min_size: Some(size(px(floor.0), px(floor.1))),
+                        window_decorations: Some(gpui::WindowDecorations::Client),
                         ..TitleBar::window_options()
                     },
                     |window, cx| {
