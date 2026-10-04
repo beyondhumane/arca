@@ -25,6 +25,8 @@ Options:
   -V, --version  Print version
 ```
 
+`list`, `extract` y `test` también leen los [contenedores ZIP](zip-containers.md) (.apk, .jar, .epub, .cbz y el resto) y, en compilaciones con el [lector de RAR](rar.md), .rar y .cbr. Son de solo lectura: `create` y `password` los rechazan.
+
 ## create · c
 
 Crea un archivo. El formato se toma de la extensión del archivo de salida.
