@@ -7,15 +7,20 @@ keywords: interoperabilidad compatibilidad 7-zip unzip tar winrar nanazip sha-25
 
 # Interoperabilidad
 
-Un archivador solo es útil si otras herramientas pueden abrir lo que escribe. `interop.sh` comprueba 35 casos, verificando el SHA-256 del contenido cada vez.
+Un archivador solo es útil si otras herramientas pueden abrir lo que escribe.
+`interop.sh` compara hashes tras recorridos de ida y vuelta y comprueba rechazos
+y limpieza. El resumen final da el número según la compilación y las herramientas.
 
 ## Qué comprueba interop.sh
 
 - Lo que escribe Arca lo lee `unzip`, `tar` y 7-Zip, en los cuatro niveles.
 - Lo que escriben `zip`, `tar` y 7-Zip lo lee Arca sin perder un byte.
 - Un archivo que Arca cifró con AES-256 se abre en 7-Zip, y al revés.
-- Añadir y quitar la contraseña de un archivo existente, sea de Arca o de 7-Zip.
-- Un byte alterado lo detecta el CRC, o el HMAC cuando está cifrado.
+- Añadir y quitar la contraseña de un archivo ZIP existente, sea de Arca o de 7-Zip.
+- Un byte ZIP alterado lo detecta el CRC o el HMAC de AE-2 si está cifrado.
+- 7z Copy/LZMA2 en todos los niveles, contraseñas y cabeceras ocultas en ambas direcciones.
+- Entradas externas sólidas LZMA/LZMA2, nombres Unicode, entradas vacías y conflictos.
+- Extraer 7z con contraseña incorrecta deja el destino ausente o intacto.
 - Una entrada con `../../` se rechaza en lugar de escribir fuera del destino.
 
 ```sh
@@ -28,8 +33,26 @@ Zstandard es el método 93 de ZIP: registrado en la especificación, pero todav�
 
 ## Cifrado
 
-Los archivos AES-256 usan WinZip AE-2, el esquema que escriben 7-Zip, WinRAR y NanaZip. Los archivos ZipCrypto heredados de otras herramientas se abren con su contraseña y se pueden actualizar con `arca password`.
+ZIP AES-256 usa WinZip AE-2. Los ZIP ZipCrypto se pueden actualizar con
+`arca password`. 7z usa AES-256-CBC/SHA-256 y CRC, no cifrado autenticado: un fallo
+de CRC cifrado también puede indicar corrupción.
 
 ```sh
 7z t -p"a password" secret.zip        # 7-Zip lee lo que Arca cifró
 ```
+
+## Regresiones del parser
+
+```sh
+cargo test -p arca-7z
+cargo test -p arca-cli --test sevenz
+cargo test -p arca-7z --test interop -- --ignored
+cargo test -p arca-gui -- --ignored
+```
+
+Las pruebas ignoradas requieren `7z`. Las suites recorren todos los prefijos
+truncados de ejemplos sin cifrar, sólidos, cifrados y con cabeceras ocultas y
+exigen errores, no panics. También prueban cabeceras malformadas y límites de
+recursos. Son regresiones, no una garantía sobre todo archivo malicioso.
+No se publican nuevas cifras de rendimiento 7z. Las pruebas de plataforma e
+interfaz deben realizarse por separado.

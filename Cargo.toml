@@ -4,6 +4,7 @@ members = [
     "arca-core",
     "arca-zip",
     "arca-tar",
+    "arca-7z",
     "arca-rar",
     "arca-iso",
     "arca-cli",
@@ -16,7 +17,7 @@ members = [
 ]
 # Solo compila en Windows: se queda fuera del workspace para que
 # `cargo build` siga funcionando en Linux y macOS.
-exclude = ["windows/arca-shell"]
+exclude = ["windows/arca-shell", "arca-7z/vendor/sevenz-rust2"]
 
 [workspace.package]
 version = "0.7.2"
@@ -32,8 +33,9 @@ authors = ["Proyecto Arca"]
 # aqui no aporta nada porque estos crates no se publican en crates.io. Si algun
 # dia se publican, hay que devolver el `version` a los tres.
 arca-core = { path = "arca-core" }
-arca-zip  = { path = "arca-zip" }
+arca-zip  = { path = "arca-zip", default-features = false }
 arca-tar  = { path = "arca-tar" }
+arca-7z   = { path = "arca-7z", default-features = false }
 arca-rar = { path = "arca-rar" }
 arca-iso = { path = "arca-iso" }
 arca-icons = { path = "arca-icons" }
@@ -71,3 +73,6 @@ strip = true
 # `panic` aqui no hacia nada salvo un aviso en cada compilacion.
 [profile.bench]
 inherits = "release"
+
+[patch.crates-io]
+sevenz-rust2 = { path = "arca-7z/vendor/sevenz-rust2" }

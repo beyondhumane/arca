@@ -20,7 +20,7 @@ fn settle(controller: &mut AppController) {
 #[test]
 fn an_iso_opens_read_only_and_says_what_it_left_out() {
     let mut controller = AppController::new(Settings::default());
-    controller.load_listing(fixture("rockridge.iso"));
+    controller.load_listing(fixture("rockridge.iso"), None);
     settle(&mut controller);
     assert!(!controller.state.error, "{}", controller.state.notice);
     assert_eq!(controller.state.format, Format::Iso);
@@ -39,9 +39,9 @@ fn single_entries_preview_and_extract_by_index() {
     let entries = list_entries(&archive, None, &|_, _, _| true).unwrap().0;
     let index = entries.iter().position(|e| e.name == "readme.txt").unwrap();
     let mut out = Vec::new();
-    read_entry(&archive, index, &mut out, None).unwrap();
+    read_entry(&archive, index, &mut out, None, &|_, _, _| true).unwrap();
     assert_eq!(out, b"hello from arca\n");
-    let path = extract_one(&archive, &entries[index], None).unwrap();
+    let path = extract_one(&archive, &entries[index], None, &|_, _, _| true).unwrap();
     assert_eq!(fs::read(path).unwrap(), b"hello from arca\n");
     let (good, bad) = test_archive(&archive, None, None, &|_, _, _| true).unwrap();
     assert_eq!((good, bad.len()), (5, 0));
@@ -100,4 +100,16 @@ fn iso_mutation_jobs_are_rejected_before_touching_the_image() {
     controller.state.format = Format::Iso;
     controller.prepare_compress(Vec::new());
     assert_eq!(controller.state.format, Format::Zip);
+}
+
+#[test]
+fn cancelling_compress_keeps_the_open_iso_read_only() {
+    let mut controller = AppController::new(Settings::default());
+    controller.load_listing(fixture("rockridge.iso"), None);
+    settle(&mut controller);
+    controller.prepare_compress(Vec::new());
+    assert_eq!(controller.state.format, Format::Zip);
+    controller.cancel_compress();
+    assert!(matches!(controller.state.view, View::Browse));
+    assert_eq!(controller.state.format, Format::Iso);
 }

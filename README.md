@@ -7,7 +7,7 @@
 
 ### Pack faster. Unpack safer.
 
-A cross-platform archiver in Rust. ZIP and TAR, Zstandard on every core, AES-256, and parsers that can't corrupt memory.
+A cross-platform archiver in Rust. ZIP, 7z and TAR, parallel Zstandard, AES-256, and safe-Rust archive parsers.
 
 [![CI](https://github.com/beyondhumane/arca/actions/workflows/ci.yml/badge.svg)](https://github.com/beyondhumane/arca/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/beyondhumane/arca?color=0066FF)](https://github.com/beyondhumane/arca/releases/latest) [![License](https://img.shields.io/badge/license-Apache--2.0-FF8A3D)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.95%2B-0E1628)](Cargo.toml)
 
@@ -23,12 +23,12 @@ A cross-platform archiver in Rust. ZIP and TAR, Zstandard on every core, AES-256
 
 | Feature | Details |
 |---|---|
-| **Formats** | ZIP with Zip64 (store, Deflate, Zstandard), ustar TAR, `.tar.gz` |
+| **Formats** | ZIP with Zip64 (store, Deflate, Zstandard), [7z](docs/guide/creating-archives.md#7z) (Store/LZMA2, solid reading), ustar TAR, `.tar.gz` |
 | **Read-only** | [ISO 9660 images](docs/guide/iso.md) with Rock Ridge and Joliet names; never creates or modifies ISO |
 | **Experimental** | [RAR/CBR reading](docs/guide/rar.md), opt-in with `--features rar`; never creates or modifies RAR |
 | **Speed** | Multi-threaded compression, parallel `.zip` extraction, sub-millisecond start |
 | **Safety** | `#![forbid(unsafe_code)]` parsers, bounded header reads, Zip Slip defence |
-| **Encryption** | AES-256 (WinZip AE-2), opens in 7-Zip, WinRAR and NanaZip |
+| **Encryption** | ZIP AES-256 (WinZip AE-2); 7z AES-256 with optional hidden names. [Limits](docs/guide/encryption.md) |
 | **Interfaces** | `arca` command line, `arca-gui` desktop window, Windows 11 Explorer menu |
 | **Platforms** | Windows, macOS (Apple silicon and Intel), Linux |
 

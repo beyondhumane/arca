@@ -35,11 +35,26 @@ Right-click a row for what can be done to it. Right-click the header to switch c
 
 ## Passwords
 
-The create dialog has a password field. Opening an encrypted archive asks for the password before extracting, and the toolbar offers **Remove password** or **Set password…** depending on the archive.
+The create dialog offers ZIP and 7z passwords; 7z also offers **Hide file names**.
+Hidden 7z headers prompt before listing. Content validation runs in a background
+worker before extract/test/preview/open actions; retry resumes that action and
+cancel leaves the destination untouched. **Remove password** and **Set password…**
+apply only to ZIP, never to an existing 7z.
+
+## 7z
+
+Create 7z using Store or LZMA2 and the existing levels. Creation and extraction
+are sequential. Selected members of solid archives share one decoder per block
+per pass, rather than reopening it for each member. Preview, open-file, Copy and
+Extract use the same validated read path. See [Encryption](encryption.md) and
+[resource limits](architecture.md#7z-boundaries).
 
 ## Deliberately missing
 
-<kbd>Ctrl+V</kbd> isn’t there, and neither is <kbd>Ctrl+C</kbd> copying files onto the clipboard. Pasting means adding to an archive that already exists, which the writer can’t do yet; copying files out means handing the shell an object it can pull bytes from on demand. Both need real work beyond a key binding, so they’re left out until they work.
+Adding, deleting, renaming and changing passwords in an existing archive remain
+ZIP-only. 7z virtual-file drag-out is disabled to avoid repeatedly decoding solid
+blocks; use Copy or Extract instead. Copying to the system file clipboard is
+platform-dependent.
 
 ## Accessibility
 

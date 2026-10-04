@@ -11,19 +11,21 @@ description = "Arca: archivador rapido y seguro"
 name = "arca"
 path = "src/main.rs"
 
-[features]
-default = []
-rar = ["arca-rar/rar"]
-
 [dependencies]
 arca-rar.workspace = true
 arca-iso.workspace = true
 arca-core.workspace = true
 arca-zip.workspace = true
 arca-tar.workspace = true
+arca-7z.workspace = true
 flate2.workspace = true
 clap.workspace = true
 rayon.workspace = true
+
+[features]
+rar = ["arca-rar/rar"]
+default = ["codecs-native"]
+codecs-native = ["arca-zip/codecs-native", "arca-7z/codecs-native"]
 
 [target."cfg(windows)".build-dependencies]
 winresource = "0.1"
