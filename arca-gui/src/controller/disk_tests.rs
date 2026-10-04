@@ -31,6 +31,13 @@ fn populated() -> Room {
     std::fs::write(room.path("nested/note.txt"), b"note").unwrap();
     std::fs::write(room.path("top.txt"), b"top level").unwrap();
     std::fs::write(room.path(".hidden"), b"shh").unwrap();
+    #[cfg(windows)]
+    assert!(std::process::Command::new("attrib")
+        .arg("+h")
+        .arg(room.path(".hidden"))
+        .status()
+        .unwrap()
+        .success());
     room
 }
 
