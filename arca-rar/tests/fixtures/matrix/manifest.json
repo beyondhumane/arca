@@ -1,0 +1,846 @@
+{
+  "license": "Apache-2.0",
+  "payloads": {
+    "first.txt": {
+      "size": 1536,
+      "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+    },
+    "noise.bin": {
+      "size": 8192,
+      "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+    },
+    "nested/caf\u00e9-\u65e5\u672c.txt": {
+      "size": 352,
+      "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+    },
+    "empty.txt": {
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "cases": [
+    {
+      "name": "rar5-small-dict",
+      "producer": "RAR 7.23   Copyright (c) 1993-2026 Alexander Roshal   27 Jun 2026",
+      "encoder_sha256": "56c3c4fd46faa7a9f52264d30cb96813e19ec7c4587d9f18424d7e909cf78555",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma5",
+        "-md256k",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": null,
+      "first": "set.rar",
+      "files": {
+        "set.rar": "a88bf84b9da8da3993572cd49a2ca3c736d55b2ceff0333c2405ca32b7eea99d"
+      }
+    },
+    {
+      "name": "rar5-solid",
+      "producer": "RAR 7.23   Copyright (c) 1993-2026 Alexander Roshal   27 Jun 2026",
+      "encoder_sha256": "56c3c4fd46faa7a9f52264d30cb96813e19ec7c4587d9f18424d7e909cf78555",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma5",
+        "-s",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": null,
+      "first": "set.rar",
+      "files": {
+        "set.rar": "b029a5d8df9cf93d675e876e9012572b2faf3294688ce05ceb1e246b80bcdc46"
+      }
+    },
+    {
+      "name": "rar5-content",
+      "producer": "RAR 7.23   Copyright (c) 1993-2026 Alexander Roshal   27 Jun 2026",
+      "encoder_sha256": "56c3c4fd46faa7a9f52264d30cb96813e19ec7c4587d9f18424d7e909cf78555",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma5",
+        "-parca-test-only",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": "arca-test-only",
+      "first": "set.rar",
+      "files": {
+        "set.rar": "ebfa4832ae73f132ad7c3f544db7ea2a0c26ba93e55ad1c2ded43487f7ed0b89"
+      }
+    },
+    {
+      "name": "rar5-headers",
+      "producer": "RAR 7.23   Copyright (c) 1993-2026 Alexander Roshal   27 Jun 2026",
+      "encoder_sha256": "56c3c4fd46faa7a9f52264d30cb96813e19ec7c4587d9f18424d7e909cf78555",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma5",
+        "-s",
+        "-hparca-test-only",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": "arca-test-only",
+      "first": "set.rar",
+      "files": {
+        "set.rar": "ca49baddae974db800e7fd3af7d02835559c7d8cccea8f5863ea068f0d0337ca"
+      }
+    },
+    {
+      "name": "rar5-split",
+      "producer": "RAR 7.23   Copyright (c) 1993-2026 Alexander Roshal   27 Jun 2026",
+      "encoder_sha256": "56c3c4fd46faa7a9f52264d30cb96813e19ec7c4587d9f18424d7e909cf78555",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma5",
+        "-m0",
+        "-v4k",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": null,
+      "first": "set.part1.rar",
+      "files": {
+        "set.part1.rar": "e7a42be853a5508828e82fe348cb4f65f217e68b8b6923b1d0b09eb725863a5c",
+        "set.part2.rar": "a5dec7ccea82f72fecd98051f4bfee29b9698a471371e899c9bbe35603d87c3c",
+        "set.part3.rar": "2da64559e8fa58d904bef011b4c44e5279d98773f16ab5281ab66286a33df387"
+      }
+    },
+    {
+      "name": "rar5-padded",
+      "producer": "RAR 7.23   Copyright (c) 1993-2026 Alexander Roshal   27 Jun 2026",
+      "encoder_sha256": "56c3c4fd46faa7a9f52264d30cb96813e19ec7c4587d9f18424d7e909cf78555",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma5",
+        "-m0",
+        "-v1k",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": null,
+      "first": "set.part01.rar",
+      "files": {
+        "set.part01.rar": "7c61dab3c588fe90dabe035c76ae4353f5b9c42119ffc217aaf3686db4f53f18",
+        "set.part02.rar": "a02c71c7a4ff1943749c2e6e5a931469267d1ea1803386c039f268ba4afb25d3",
+        "set.part03.rar": "48f96c18c89fecb4a78473b39d59c893db53c9a86de5b564949ba8a3922c3be1",
+        "set.part04.rar": "0fb16b661232cd5763fb2f38e1eca8ccfda292db19508fd9e9fd05473f2c511e",
+        "set.part05.rar": "94b21875e274feee2c5c0222202d8da48654ecc324a56b1381104af0fcfeb87c",
+        "set.part06.rar": "d32abc2deb108e670da6451a61d14356fd096d0998e8b2c631dec8ba86fec5ea",
+        "set.part07.rar": "9435a753c6ef027323fa617ee973f7689c1afa08b9085d8e33b2c81d52252c17",
+        "set.part08.rar": "9f6d73b8af76fc7b87f9f7620830497e696ccc458829e95f7901626bc482939c",
+        "set.part09.rar": "9584f37d88426268610cbc561db6bce5b00497fafd13a6e285ba3baae84bc7d9",
+        "set.part10.rar": "fd48ed931a6927bf56284e6d4fc42372afa84580ca9cf9aff9af4bbc8d727d17",
+        "set.part11.rar": "7c6eefc548dcadb454916d961e35037f0f8653b88b176daf8b4e707e0b17ed64",
+        "set.part12.rar": "6441f937e37ac31079ced451c48dd3f1bba726819d72b8d2b6fe77b501af2ce5"
+      }
+    },
+    {
+      "name": "rar5-solid-split",
+      "producer": "RAR 7.23   Copyright (c) 1993-2026 Alexander Roshal   27 Jun 2026",
+      "encoder_sha256": "56c3c4fd46faa7a9f52264d30cb96813e19ec7c4587d9f18424d7e909cf78555",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma5",
+        "-s",
+        "-v4k",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": null,
+      "first": "set.part1.rar",
+      "files": {
+        "set.part1.rar": "aadad0d30bdaeec7447eac93d2d7ea8b63cb51d099ab6363d3218ce7c178f427",
+        "set.part2.rar": "bb53d5c1f58f7c52b391a33940ab90214f36dedfe09418a8fb35537ba2ffbbab",
+        "set.part3.rar": "7ce17799ce18c9972db574ebcc4f61601e24870782d01c78d24649684e23d5f2"
+      }
+    },
+    {
+      "name": "rar5-content-split",
+      "producer": "RAR 7.23   Copyright (c) 1993-2026 Alexander Roshal   27 Jun 2026",
+      "encoder_sha256": "56c3c4fd46faa7a9f52264d30cb96813e19ec7c4587d9f18424d7e909cf78555",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma5",
+        "-s",
+        "-parca-test-only",
+        "-v4k",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": "arca-test-only",
+      "first": "set.part1.rar",
+      "files": {
+        "set.part1.rar": "84b5174c5cedfe2260e413b6fd9209bcf94e0d2f3f41765d009e169372e47dfa",
+        "set.part2.rar": "3663097f228529e439eb3b6461319455cc24c72eddea04d7c823afd7f4e7a0fd",
+        "set.part3.rar": "a11557b3034a367b64d2b4810e2463563eceee14f03975caa0d7af54e80b9011"
+      }
+    },
+    {
+      "name": "rar5-headers-split",
+      "producer": "RAR 7.23   Copyright (c) 1993-2026 Alexander Roshal   27 Jun 2026",
+      "encoder_sha256": "56c3c4fd46faa7a9f52264d30cb96813e19ec7c4587d9f18424d7e909cf78555",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma5",
+        "-s",
+        "-hparca-test-only",
+        "-v4k",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": "arca-test-only",
+      "first": "set.part1.rar",
+      "files": {
+        "set.part1.rar": "ad24b0b02c00337ddee28163ac673724e01e46e3a9f85739c3a24f03d33a8f1c",
+        "set.part2.rar": "63475905e795a3e50bef9b11b73ed681963b912b1a59349bc3a7916e383ba23a",
+        "set.part3.rar": "d563806b7a11697b4877e7036a07d7c496543c9a56752061c99d4a4c9bd8f083"
+      }
+    },
+    {
+      "name": "rar5-dict64",
+      "producer": "RAR 7.23   Copyright (c) 1993-2026 Alexander Roshal   27 Jun 2026",
+      "encoder_sha256": "56c3c4fd46faa7a9f52264d30cb96813e19ec7c4587d9f18424d7e909cf78555",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma5",
+        "-md64m",
+        "set.rar",
+        "dictionary.bin"
+      ],
+      "payloads": {
+        "dictionary.bin": {
+          "size": 34603008,
+          "sha256": "15b20f0e1ed47e9be1d6c76679e90e3b4f6fcd94d1432fa1aa7715093cfc0b43"
+        }
+      },
+      "password": null,
+      "first": "set.rar",
+      "files": {
+        "set.rar": "7c8b35943b69fd3811d1579663d8da13877086247da3f658f9ca0fadf705fd3f"
+      }
+    },
+    {
+      "name": "rar4-plain",
+      "producer": "RAR 6.24   Copyright (c) 1993-2023 Alexander Roshal   3 Oct 2023",
+      "encoder_sha256": "71ab9088d575e438d243672fcc6d36d2f9a39f5a8d4d26e998129cea12dbf682",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma4",
+        "-md128k",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": null,
+      "first": "set.rar",
+      "files": {
+        "set.rar": "083f9161abb08beef5d6adca22c62a716ec77c5bb16afe81c7c75f844b086bb5"
+      }
+    },
+    {
+      "name": "rar4-solid",
+      "producer": "RAR 6.24   Copyright (c) 1993-2023 Alexander Roshal   3 Oct 2023",
+      "encoder_sha256": "71ab9088d575e438d243672fcc6d36d2f9a39f5a8d4d26e998129cea12dbf682",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma4",
+        "-s",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": null,
+      "first": "set.rar",
+      "files": {
+        "set.rar": "51dc9676f0e87e5e296fb463897ae1390ea6ec71787354bac5d1675fb6412450"
+      }
+    },
+    {
+      "name": "rar4-content",
+      "producer": "RAR 6.24   Copyright (c) 1993-2023 Alexander Roshal   3 Oct 2023",
+      "encoder_sha256": "71ab9088d575e438d243672fcc6d36d2f9a39f5a8d4d26e998129cea12dbf682",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma4",
+        "-parca-test-only",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": "arca-test-only",
+      "first": "set.rar",
+      "files": {
+        "set.rar": "09490491c8379ba2b060ba4f912d78f06e35a6dbc6d6fcab78d6f0b71e7dd14e"
+      }
+    },
+    {
+      "name": "rar4-headers",
+      "producer": "RAR 6.24   Copyright (c) 1993-2023 Alexander Roshal   3 Oct 2023",
+      "encoder_sha256": "71ab9088d575e438d243672fcc6d36d2f9a39f5a8d4d26e998129cea12dbf682",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma4",
+        "-s",
+        "-hparca-test-only",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": "arca-test-only",
+      "first": "set.rar",
+      "files": {
+        "set.rar": "625dc68dca1d07600904fc5c64e18281eee75190fd482d90e2880df2992fdc82"
+      }
+    },
+    {
+      "name": "rar4-legacy",
+      "producer": "RAR 6.24   Copyright (c) 1993-2023 Alexander Roshal   3 Oct 2023",
+      "encoder_sha256": "71ab9088d575e438d243672fcc6d36d2f9a39f5a8d4d26e998129cea12dbf682",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma4",
+        "-vn",
+        "-m0",
+        "-v4k",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": null,
+      "first": "set.rar",
+      "files": {
+        "set.r00": "aed58ff367305ad0014a5b18dfb005941c64b27d872b5df2a143b0869b54a2de",
+        "set.r01": "894b2d4b561be85276a1b6a310a805ad69b59e23619c733d245a2c0db1a33c8f",
+        "set.rar": "92e1c9aceea1504c410e8544506faea3fef8f2de17d829c0a3cca9643ba8a202"
+      }
+    },
+    {
+      "name": "rar4-legacy-solid",
+      "producer": "RAR 6.24   Copyright (c) 1993-2023 Alexander Roshal   3 Oct 2023",
+      "encoder_sha256": "71ab9088d575e438d243672fcc6d36d2f9a39f5a8d4d26e998129cea12dbf682",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma4",
+        "-vn",
+        "-s",
+        "-v4k",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": null,
+      "first": "set.rar",
+      "files": {
+        "set.r00": "cff80791823a9f14e9f7175a1ed207c8bf3732b4082076f6d626f1da117012d8",
+        "set.r01": "e2391f4fea8198bf3aaa081b8101bc9ee19f65f232d465adffca0416341f74ac",
+        "set.rar": "ece1a6ba1c090432906d602a4f50567e470852d89f1f9c73eef33b2c24a9b812"
+      }
+    },
+    {
+      "name": "rar4-legacy-content",
+      "producer": "RAR 6.24   Copyright (c) 1993-2023 Alexander Roshal   3 Oct 2023",
+      "encoder_sha256": "71ab9088d575e438d243672fcc6d36d2f9a39f5a8d4d26e998129cea12dbf682",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma4",
+        "-vn",
+        "-s",
+        "-parca-test-only",
+        "-v4k",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": "arca-test-only",
+      "first": "set.rar",
+      "files": {
+        "set.r00": "fcc5e80b88a765e3fb286b8dd3060b82f1ed2d221a719292272218416df0f19b",
+        "set.r01": "b56248cc2d9311cf790b8173eabba81d064f7070a7f058ad221ce69c88102dcc",
+        "set.rar": "accfa31d0bc9f45cdb9b76b63e016079f884a455ee777ae9bfc325354650adc1"
+      }
+    },
+    {
+      "name": "rar4-legacy-headers",
+      "producer": "RAR 6.24   Copyright (c) 1993-2023 Alexander Roshal   3 Oct 2023",
+      "encoder_sha256": "71ab9088d575e438d243672fcc6d36d2f9a39f5a8d4d26e998129cea12dbf682",
+      "command": [
+        "rar",
+        "a",
+        "-cfg-",
+        "-idq",
+        "-mt1",
+        "-ts-",
+        "-ds",
+        "-ma4",
+        "-vn",
+        "-s",
+        "-hparca-test-only",
+        "-v4k",
+        "set.rar",
+        "first.txt",
+        "noise.bin",
+        "nested/caf\u00e9-\u65e5\u672c.txt",
+        "empty.txt"
+      ],
+      "payloads": {
+        "first.txt": {
+          "size": 1536,
+          "sha256": "036d3ad1c9b690c7176ff1bfbe0a42e8826b3ae57306d6e1ff1fd00d5ba851e4"
+        },
+        "noise.bin": {
+          "size": 8192,
+          "sha256": "c85db4139599740e651132f8430011928e479caf6d377294f7d05a78f3b2b452"
+        },
+        "nested/caf\u00e9-\u65e5\u672c.txt": {
+          "size": 352,
+          "sha256": "8e6f687735b5345028cc5dca9f8157d80e9a14ab5fa73a93e9ff5bd8ef452d24"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "password": "arca-test-only",
+      "first": "set.rar",
+      "files": {
+        "set.r00": "6b303f1c8df3b00561ce780ab3d2b44266eccc1c62b60bd98b4d697711514756",
+        "set.r01": "b3291123c06c375e4ad956553820aab66b508ab2b3230459843951c600c63504",
+        "set.rar": "895e9d8333549dd2738798d620cd2f8fa1b90150a64cdc3336a23b68ed64b175"
+      }
+    }
+  ]
+}

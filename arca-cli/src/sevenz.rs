@@ -99,7 +99,7 @@ fn collect(
     Ok(())
 }
 
-fn is_link(meta: &fs::Metadata) -> bool {
+pub(super) fn is_link(meta: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;

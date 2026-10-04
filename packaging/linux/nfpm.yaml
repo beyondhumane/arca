@@ -30,7 +30,8 @@ contents:
     dst: /usr/share/doc/arca/README.md
   - src: usr/share/licenses/arca/LICENSE
     dst: /usr/share/licenses/arca/LICENSE
-    type: license
+  - src: usr/share/licenses/arca/RAR-NOTICES.txt
+    dst: /usr/share/licenses/arca/RAR-NOTICES.txt
 
 # arca-gui links libxcb and libxkbcommon and loads Wayland and EGL at
 # run time. RPM names them by soname, which Fedora and openSUSE both resolve.

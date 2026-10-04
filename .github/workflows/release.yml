@@ -152,6 +152,7 @@ jobs:
           fi
           "$BIN" --version
           "$BIN" --help > /dev/null
+          "$BIN" test arca-rar/tests/fixtures/volume.part4.rar
 
       - name: Package
         shell: bash
@@ -166,7 +167,7 @@ jobs:
             cp "target/${{ matrix.target }}/release/arca" "dist/$NAME/"
             cp "target/${{ matrix.target }}/release/arca-gui" "dist/$NAME/"
           fi
-          cp README.md LICENSE "dist/$NAME/"
+          cp README.md LICENSE RAR-NOTICES.txt "dist/$NAME/"
           cd dist
           if [ "$RUNNER_OS" = "Windows" ]; then
             7z a -tzip "$NAME.zip" "$NAME" > /dev/null

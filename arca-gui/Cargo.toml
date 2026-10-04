@@ -90,5 +90,5 @@ path = "../arca-net"
 
 [features]
 rar = ["arca-rar/rar"]
-default = ["codecs-native"]
+default = ["codecs-native", "rar"]
 codecs-native = ["arca-zip/codecs-native", "arca-7z/codecs-native"]

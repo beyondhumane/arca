@@ -1,0 +1,21 @@
+[package]
+name = "arca-rar-bounded-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[workspace]
+
+[dependencies]
+arca-rar = { path = "..", features = ["rar"] }
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

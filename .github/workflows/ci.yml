@@ -53,21 +53,26 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: python3 arca-rar/tests/check-features.py
-      - run: cargo clippy --workspace --all-targets --features rar -- -D warnings
-      - run: cargo test --workspace --features rar
+      - run: python3 packaging/rar-notices.py --check
+      - run: cargo clippy --workspace --all-targets --no-default-features --features codecs-native -- -D warnings
+      - run: cargo test --workspace --no-default-features --features codecs-native
+      - name: Bounded RAR mutation campaign
+        run: |
+          cargo fmt --manifest-path arca-rar/fuzz/Cargo.toml -- --check
+          cargo clippy --locked --manifest-path arca-rar/fuzz/Cargo.toml --all-targets -- -D warnings
+          cargo build --locked --manifest-path arca-rar/fuzz/Cargo.toml
+          python3 arca-rar/fuzz/run.py --runs 2000 --seed 140014 --seconds 300 --output "$RUNNER_TEMP/rar-fuzz"
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["counts"]["executions"] == 2010 and len(r["baseline"]) == 10 and not r["failures"], "incomplete fuzz campaign"' "$RUNNER_TEMP/rar-fuzz/report.json"
 
       # Interoperability exercises the CLI; there is no reason to build GPUI
       # just to obtain arca for this check.
-      - name: Build CLI without the C codecs
+      - name: Build CLI without default features
         run: cargo build --no-default-features -p arca-cli
       - name: Build CLI with the default codecs
         run: cargo build -p arca-cli
       - name: Interoperability verified by hash
         run: ARCA="$GITHUB_WORKSPACE/target/debug/arca" bash interop.sh
-      - name: Experimental RAR fixture interoperability
-        run: |
-          cargo build -p arca-cli --features rar --locked
-          ARCA="$GITHUB_WORKSPACE/target/debug/arca" ARCA_TEST_RAR=1 bash interop.sh
+
 
   # rust-version in Cargo.toml is a promise; this job keeps it honest. Raise
   # both together when a dependency needs a newer compiler.
@@ -87,7 +92,7 @@ jobs:
           libxi-dev libgl1-mesa-dev libxcursor-dev libxinerama-dev
           libfontconfig1-dev
       - run: cargo check --workspace --all-targets --locked
-      - run: cargo check --workspace --all-targets --features rar --locked
+      - run: cargo check --workspace --all-targets --no-default-features --locked
 
   build:
     name: Build on ${{ matrix.name }}
@@ -132,10 +137,46 @@ jobs:
       - name: Build release binaries
         run: cargo build --release
 
-      - name: Experimental RAR reader
+      - name: Archive readers with default features
         run: |
-          cargo test -p arca-core -p arca-7z -p arca-rar -p arca-cli --features rar --locked
-          cargo check -p arca-gui --features rar --locked
+          cargo test -p arca-core -p arca-7z -p arca-rar -p arca-cli --locked
+          python3 arca-rar/tests/check-features.py
+
+      - name: Release RAR smoke test
+        shell: bash
+        run: target/release/arca test arca-rar/tests/fixtures/volume.part4.rar
+
+      # Official UnRAR and 7-Zip are reference decoders for the archives Arca
+      # writes; the release binary is already built here. They are downloaded
+      # for this job only, pinned by SHA-256, and never enter a build or a
+      # release artifact.
+      - name: Official RAR reference decoders
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p "$RUNNER_TEMP/rar-tools"
+          cd "$RUNNER_TEMP/rar-tools"
+          curl -fsSL -o rar.tgz https://www.rarlab.com/rar/rarlinux-x64-712.tar.gz
+          curl -fsSL -o 7z.txz https://github.com/ip7z/7zip/releases/download/24.09/7z2409-linux-x64.tar.xz
+          sha256sum -c <<'SUMS'
+          630d9a9dd131367273667bee079ad103f469f1b7cdbc9b42a4f283cc2993bab2  rar.tgz
+          914c7e20ad5ef8e4d3cf08620ff8894b28fe11b7eb99809d6930870fbe48a281  7z.txz
+          SUMS
+          tar -xzf rar.tgz rar/unrar
+          mkdir 7z && tar -xJf 7z.txz -C 7z 7zz
+          echo "UNRAR=$PWD/rar/unrar" >> "$GITHUB_ENV"
+          echo "SEVENZIP=$PWD/7z/7zz" >> "$GITHUB_ENV"
+      - name: Bounded RAR creation smoke (seeded; --stress for the full campaign)
+        if: matrix.os == 'ubuntu-latest'
+        run: >-
+          python3 arca-rar/tests/create-stress.py --arca target/release/arca
+          --require-tools --seed 20261004 --output "$RUNNER_TEMP/rar-create-stress"
+      - name: Keep RAR creation artifacts on failure
+        if: failure() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rar-create-stress
+          path: ${{ runner.temp }}/rar-create-stress
+          if-no-files-found: ignore
 
       - name: Shell extension
         if: matrix.os == 'windows-latest'

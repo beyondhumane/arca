@@ -768,11 +768,16 @@ impl GpuiShell {
         self.dialog = Some(rx);
         std::thread::spawn(move || {
             let result = match kind {
-                DialogKind::Open => DialogResult::Open(
-                    rfd::FileDialog::new()
-                        .add_filter("Archives", &super::open_filter())
-                        .pick_file(),
-                ),
+                DialogKind::Open => {
+                    let dialog =
+                        rfd::FileDialog::new().add_filter("Archives", &super::open_filter());
+                    let dialog = if cfg!(feature = "rar") {
+                        dialog.add_filter("All files (including RAR volumes)", &["*"])
+                    } else {
+                        dialog
+                    };
+                    DialogResult::Open(dialog.pick_file())
+                }
                 DialogKind::PickInputs { folders } => DialogResult::Inputs(if folders {
                     rfd::FileDialog::new().pick_folders()
                 } else {
@@ -1099,7 +1104,17 @@ impl GpuiShell {
                 None => return,
             },
         };
-        window.on_next_frame(move |window, cx| window.focus(&target, cx));
+        let shell = cx.weak_entity();
+        window.on_next_frame(move |window, cx| {
+            let Some(shell) = shell.upgrade() else {
+                return;
+            };
+            let shell = shell.read(cx);
+            // An asynchronous retry can open another modal before this runs.
+            if shell.modal_kind() == current && shell.dialog.is_none() {
+                window.focus(&target, cx);
+            }
+        });
     }
 
     fn answer_conflict(&mut self, answer: Answer) {
