@@ -42,6 +42,7 @@ fn hidden_headers_retry_without_listing_and_cancel_cleanly() {
     assert_eq!(app.state.entries.len(), 4);
     assert!(app.state.waiting_on_password.is_none());
     assert_eq!(app.state.archive_password.as_deref(), Some("secret"));
+    assert_ne!(app.state.notice, app.s().password_or_corrupt);
 }
 
 #[test]
@@ -75,6 +76,8 @@ fn clear_headers_keep_names_and_resume_the_original_preview_after_retry() {
         Some(Pending::Read(_))
     ));
     assert!(app.state.viewing.is_none());
+    let complaint = app.state.notice.clone();
+    assert!(!complaint.is_empty());
     app.submit_password("secret".into());
     settle(&mut app);
     assert_eq!(
@@ -82,6 +85,7 @@ fn clear_headers_keep_names_and_resume_the_original_preview_after_retry() {
         b"second contents"
     );
     assert!(app.state.waiting_on_password.is_none());
+    assert_ne!(app.state.notice, complaint);
 }
 
 #[test]

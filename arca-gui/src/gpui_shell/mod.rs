@@ -702,14 +702,7 @@ impl GpuiShell {
             let result = match kind {
                 DialogKind::Open => DialogResult::Open(
                     rfd::FileDialog::new()
-                        .add_filter(
-                            "Archives",
-                            if cfg!(feature = "rar") {
-                                &["zip", "tar", "gz", "tgz", "rar", "cbr"][..]
-                            } else {
-                                &["zip", "tar", "gz", "tgz"][..]
-                            },
-                        )
+                        .add_filter("Archives", &super::open_filter())
                         .pick_file(),
                 ),
                 DialogKind::PickInputs { folders } => DialogResult::Inputs(if folders {
@@ -920,6 +913,7 @@ impl GpuiShell {
     /// that inside `render` would repaint from inside a repaint.
     fn sync_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let want = self.modal_kind().filter(|kind| Self::kit_dialog(*kind));
+        self.open_modal = self.shown_modal(window, cx);
         if want == self.open_modal {
             return;
         }
@@ -958,6 +952,16 @@ impl GpuiShell {
             }
         }
         self.open_modal = want;
+    }
+
+    /// The modal the kit is really showing.
+    ///
+    /// A dialog closes itself when its OK handler says so, without the shell
+    /// hearing about it. A wrong password that comes back before the next
+    /// frame asks for the same modal again, and only the kit's stack can tell
+    /// that it is no longer on screen.
+    fn shown_modal(&self, window: &mut Window, cx: &mut App) -> Option<ModalKind> {
+        self.open_modal.filter(|_| window.has_active_dialog(cx))
     }
 
     fn modal_kind(&self) -> Option<ModalKind> {
@@ -2811,7 +2815,8 @@ impl Render for GpuiShell {
         }
         // The kit's stack is imperative and this shell's modal is derived, so
         // they are reconciled after the frame rather than during it.
-        if self.modal_kind().filter(|kind| Self::kit_dialog(*kind)) != self.open_modal {
+        if self.modal_kind().filter(|kind| Self::kit_dialog(*kind)) != self.shown_modal(window, cx)
+        {
             let shell = cx.weak_entity();
             window.on_next_frame(move |window, cx| {
                 if let Some(shell) = shell.upgrade() {

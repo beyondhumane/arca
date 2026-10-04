@@ -1,6 +1,8 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
+#[cfg(test)]
+mod container_tests;
 mod panes;
 mod preview;
 #[cfg(all(test, feature = "rar"))]
@@ -144,6 +146,7 @@ impl AppController {
             } else {
                 error.to_string()
             };
+            self.state.password_notice = Some(self.state.notice.clone());
         } else {
             self.state.waiting_on_password = None;
             self.state.error = !matches!(error, arca_core::Error::Cancelled);
@@ -152,6 +155,12 @@ impl AppController {
             } else {
                 self.s().stopped.to_string()
             };
+        }
+    }
+
+    fn forget_password_notice(&mut self) {
+        if self.state.password_notice.take().as_ref() == Some(&self.state.notice) {
+            self.state.notice.clear();
         }
     }
 
@@ -220,7 +229,7 @@ impl AppController {
             return;
         };
         if detect(&archive) != Some(Format::Zip) {
-            self.state.notice = self.s().only_zip_can_change.to_string();
+            self.state.notice = self.cannot_change(detect(&archive));
             self.state.error = true;
             return;
         }
@@ -448,7 +457,7 @@ impl AppController {
     }
     pub(crate) fn request_delete(&mut self) {
         if self.state.format != Format::Zip {
-            self.state.notice = self.s().only_zip_can_change.to_string();
+            self.state.notice = self.cannot_change(Some(self.state.format));
             self.state.error = true;
             return;
         }
@@ -519,6 +528,7 @@ impl AppController {
                 replies: None,
                 waiting_on_password: None,
                 password_wrong: false,
+                password_notice: None,
                 password_input: String::new(),
                 add_password: String::new(),
                 hide_names: false,
@@ -669,6 +679,13 @@ impl AppController {
             self.navigate_panes(self.state.history[self.state.here].clone());
         }
     }
+    fn cannot_change(&self, format: Option<Format>) -> String {
+        match format {
+            Some(f) if !f.can_write() => f.read_only().to_string(),
+            _ => self.s().only_zip_can_change.to_string(),
+        }
+    }
+
     pub(crate) fn s(&self) -> &'static Strings {
         strings(self.state.settings.effective_lang())
     }
@@ -1333,6 +1350,7 @@ impl AppController {
                     self.state.archive_password = password;
                     self.state.waiting_on_password = None;
                     self.state.password_wrong = false;
+                    self.forget_password_notice();
                     if v.iter().any(|e| e.encrypted) && self.state.archive_password.is_none() {
                         self.state.password_input.clear();
                         self.state.password_wrong = false;
@@ -1360,11 +1378,7 @@ impl AppController {
                         path.file_name()
                             .map(|x| x.to_string_lossy().to_string())
                             .unwrap_or_default(),
-                        if detect(&path) == Some(Format::Rar) {
-                            " (RAR: experimental, read-only)"
-                        } else {
-                            ""
-                        }
+                        read_only_suffix(detect(&path))
                     );
                     self.state.archive = Some(path);
                     let restore_dir = self.state.reread_dir.take();
@@ -1385,7 +1399,10 @@ impl AppController {
                     self.state.overlay = false;
                     close = true;
                     match result {
-                        Ok(()) => resume = Some((pending, password)),
+                        Ok(()) => {
+                            self.forget_password_notice();
+                            resume = Some((pending, password));
+                        }
                         Err(error) => self.access_failed(pending, password.as_deref(), error),
                     }
                 }
@@ -1702,7 +1719,7 @@ impl AppController {
             if all_archives {
                 open_first(self, paths);
             } else {
-                self.state.notice = self.s().only_zip_can_change.to_string();
+                self.state.notice = self.cannot_change(detect(&archive));
                 self.state.error = true;
             }
             return;
@@ -1866,7 +1883,7 @@ impl AppController {
         | Job::NewFolder { archive, .. } = &job
         {
             if detect(archive) != Some(Format::Zip) {
-                self.state.notice = self.s().only_zip_can_change.to_string();
+                self.state.notice = self.cannot_change(detect(archive));
                 self.state.error = true;
                 return;
             }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::Container;
 use arca_core::{Entry, Error};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -394,8 +395,8 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
         request,
         exceeded: false,
     };
-    let result = match format {
-        Format::Zip => {
+    let result = match format.container() {
+        Container::Zip => {
             let mut archive = arca_zip::ZipArchive::open(fs::File::open(&request.archive)?)?;
             let entry = archive
                 .entries()
@@ -406,7 +407,7 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
                 .extract_to_with(request.index, &mut out, request.password.as_deref())
                 .map(|_| ())
         }
-        Format::Tar | Format::TarGz => {
+        Container::Tar | Container::TarGz => {
             let mut archive = arca_tar::TarReader::new(CancellableRead {
                 inner: open_source(&request.archive, format)?,
                 request,
@@ -424,7 +425,7 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
                 index += 1;
             }
         }
-        Format::SevenZ => {
+        Container::SevenZ => {
             let mut archive = arca_7z::SevenZArchive::open(
                 fs::File::open(&request.archive)?,
                 request.password.as_deref(),
@@ -439,7 +440,7 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
             })?;
             out.write_all(&bytes).map_err(Error::from)
         }
-        Format::Rar => {
+        Container::Rar => {
             let archive = arca_rar::RarArchive::open_with_progress(
                 &request.archive,
                 request.password.as_deref(),

@@ -54,6 +54,9 @@ pub(crate) struct AppState {
     // The last password typed to open the archive did not match. The box stays
     // open and says so, which is the one moment the answer is still to hand.
     pub(crate) password_wrong: bool,
+    // What the status line was told when a password failed, so the right one
+    // can take it back without wiping a newer message.
+    pub(crate) password_notice: Option<String>,
     pub(crate) password_input: String,
     pub(crate) add_password: String,
     pub(crate) hide_names: bool,
