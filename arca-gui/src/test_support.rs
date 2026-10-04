@@ -8,9 +8,12 @@ impl Room {
     pub(crate) fn new() -> Self {
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = std::fs::canonicalize(std::env::temp_dir())
-            .unwrap()
-            .join(format!("arca-gui-7z-{}-{serial}", std::process::id()));
+        let temp = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        let temp = match temp.to_str().and_then(|t| t.strip_prefix(r"\\?\")) {
+            Some(plain) => PathBuf::from(plain),
+            None => temp,
+        };
+        let path = temp.join(format!("arca-gui-7z-{}-{serial}", std::process::id()));
         std::fs::create_dir(&path).unwrap();
         Self(path)
     }
