@@ -73,6 +73,7 @@ jobs:
       - name: Interoperability verified by hash
         run: ARCA="$GITHUB_WORKSPACE/target/debug/arca" bash interop.sh
 
+
   # rust-version in Cargo.toml is a promise; this job keeps it honest. Raise
   # both together when a dependency needs a newer compiler.
   msrv:
@@ -144,6 +145,38 @@ jobs:
       - name: Release RAR smoke test
         shell: bash
         run: target/release/arca test arca-rar/tests/fixtures/volume.part4.rar
+
+      # Official UnRAR and 7-Zip are reference decoders for the archives Arca
+      # writes; the release binary is already built here. They are downloaded
+      # for this job only, pinned by SHA-256, and never enter a build or a
+      # release artifact.
+      - name: Official RAR reference decoders
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p "$RUNNER_TEMP/rar-tools"
+          cd "$RUNNER_TEMP/rar-tools"
+          curl -fsSL -o rar.tgz https://www.rarlab.com/rar/rarlinux-x64-712.tar.gz
+          curl -fsSL -o 7z.txz https://github.com/ip7z/7zip/releases/download/24.09/7z2409-linux-x64.tar.xz
+          sha256sum -c <<'SUMS'
+          630d9a9dd131367273667bee079ad103f469f1b7cdbc9b42a4f283cc2993bab2  rar.tgz
+          914c7e20ad5ef8e4d3cf08620ff8894b28fe11b7eb99809d6930870fbe48a281  7z.txz
+          SUMS
+          tar -xzf rar.tgz rar/unrar
+          mkdir 7z && tar -xJf 7z.txz -C 7z 7zz
+          echo "UNRAR=$PWD/rar/unrar" >> "$GITHUB_ENV"
+          echo "SEVENZIP=$PWD/7z/7zz" >> "$GITHUB_ENV"
+      - name: Bounded RAR creation smoke (seeded; --stress for the full campaign)
+        if: matrix.os == 'ubuntu-latest'
+        run: >-
+          python3 arca-rar/tests/create-stress.py --arca target/release/arca
+          --require-tools --seed 20261004 --output "$RUNNER_TEMP/rar-create-stress"
+      - name: Keep RAR creation artifacts on failure
+        if: failure() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rar-create-stress
+          path: ${{ runner.temp }}/rar-create-stress
+          if-no-files-found: ignore
 
       - name: Shell extension
         if: matrix.os == 'windows-latest'
