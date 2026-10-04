@@ -205,6 +205,7 @@ fn plan(
         return Err(exists(output));
     }
     let parent_identity = identity(&fs::metadata(parent)?);
+    let parent_real = fs::canonicalize(parent).ok();
     let total = sources.len();
     let mut planned = Vec::with_capacity(total);
     let mut names = HashSet::new();
@@ -244,7 +245,11 @@ fn plan(
                 source.path.display()
             )));
         }
-        if meta.is_dir() && parent_identity.is_some() && identity(&meta) == parent_identity {
+        let is_parent = match parent_identity {
+            Some(parent) => identity(&meta) == Some(parent),
+            None => parent_real.is_some() && fs::canonicalize(&source.path).ok() == parent_real,
+        };
+        if meta.is_dir() && is_parent {
             return Err(Error::Format(format!(
                 "RAR source '{}' is the output directory",
                 source.path.display()
