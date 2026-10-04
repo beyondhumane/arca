@@ -164,7 +164,7 @@ impl From<LevelArg> for Level {
 fn detect(p: &Path) -> Result<Format> {
     Format::detect(p).ok_or_else(|| {
         Error::Unsupported(format!(
-            "unrecognized extension in '{}' (.zip, .7z, .tar, .tar.gz, .rar and .cbr are recognized)",
+            "unrecognized extension in '{}' (.zip, .7z, .tar, .tar.gz, .rar, .cbr and .iso are recognized)",
             p.display()
         ))
     })
@@ -290,8 +290,10 @@ fn create(
     hide_names: bool,
 ) -> Result<()> {
     let format_kind = detect(out)?;
-    if !format_kind.can_write() {
-        return Err(arca_rar::read_only());
+    match format_kind {
+        Format::Iso => return Err(arca_iso::read_only()),
+        f if !f.can_write() => return Err(arca_rar::read_only()),
+        _ => {}
     }
     if format_kind == Format::SevenZ {
         return sevenz::create(out, inputs, level, codec_arg, password, hide_names);
@@ -334,6 +336,7 @@ fn create(
         // Nothing to report while it runs -- the summary is printed at the end
         // -- so the answer to "carry on?" is always yes.
         Format::Rar => return Err(arca_rar::read_only()),
+        Format::Iso => return Err(arca_iso::read_only()),
         Format::Zip => arca_zip::create_zip(out, &files, threads, password, &|_, _, _| true)?,
         Format::Tar | Format::TarGz => {
             let f = BufWriter::with_capacity(BUF, File::create(out)?);
@@ -406,6 +409,21 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
         }
         Format::Rar => {
             let a = arca_rar::RarArchive::open(archive, password)?;
+            for e in a.entries() {
+                writeln!(
+                    out,
+                    "{:>12}  {:>7}  {:>5.1}%  {}",
+                    e.size,
+                    e.method.name(),
+                    e.ratio() * 100.0,
+                    e.name
+                )?;
+                n += 1;
+                bytes += e.size;
+            }
+        }
+        Format::Iso => {
+            let a = open_iso(archive)?;
             for e in a.entries() {
                 writeln!(
                     out,
@@ -522,7 +540,7 @@ fn extract(
     if format_kind == Format::SevenZ {
         return sevenz::extract(archive, dest, policy, password);
     }
-    if format_kind != Format::Rar {
+    if !matches!(format_kind, Format::Rar | Format::Iso) {
         fs::create_dir_all(dest)?;
     }
     let t0 = Instant::now();
@@ -538,6 +556,20 @@ fn extract(
                 OnConflict::Overwrite => arca_rar::Conflict::Overwrite,
                 OnConflict::Skip => arca_rar::Conflict::Skip,
                 OnConflict::Rename => arca_rar::Conflict::Rename,
+            })?;
+            println!(
+                "{} written in {:.3} s",
+                human(bytes),
+                t0.elapsed().as_secs_f64()
+            );
+            return Ok(());
+        }
+        Format::Iso => {
+            let a = open_iso(archive)?;
+            let bytes = a.extract(dest, &[], &|_, _, _| true, &|_| match policy {
+                OnConflict::Overwrite => arca_iso::Conflict::Overwrite,
+                OnConflict::Skip => arca_iso::Conflict::Skip,
+                OnConflict::Rename => arca_iso::Conflict::Rename,
             })?;
             println!(
                 "{} written in {:.3} s",
@@ -641,7 +673,7 @@ fn change_password(
 ) -> Result<()> {
     if detect(archive)? != Format::Zip {
         return Err(Error::Unsupported(
-            "only ZIP passwords can be changed; 7z password changes are not supported and RAR is read-only".into(),
+            "only ZIP passwords can be changed; 7z password changes are not supported and RAR and ISO are read-only".into(),
         ));
     }
     let entries = ZipArchive::open(File::open(archive)?)?.entries().to_vec();
@@ -693,6 +725,16 @@ fn change_password(
     Ok(())
 }
 
+// What the listing leaves out goes to stderr so `arca l` output stays a
+// clean list for scripts.
+fn open_iso(archive: &Path) -> Result<arca_iso::IsoArchive> {
+    let a = arca_iso::IsoArchive::open(archive)?;
+    for notice in a.notices() {
+        eprintln!("note: {notice}");
+    }
+    Ok(a)
+}
+
 fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
     let format_kind = detect(archive)?;
     let t0 = Instant::now();
@@ -708,6 +750,11 @@ fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
         Format::Rar => {
             let a = arca_rar::RarArchive::open(archive, password)?;
             a.test(password, &|_, _, _| true)?;
+            n = a.entries().iter().filter(|e| !e.is_dir).count() as u64;
+        }
+        Format::Iso => {
+            let a = open_iso(archive)?;
+            a.test(&[], &|_, _, _| true)?;
             n = a.entries().iter().filter(|e| !e.is_dir).count() as u64;
         }
         Format::Zip => {

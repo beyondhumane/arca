@@ -1,6 +1,8 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
+#[cfg(test)]
+mod iso_tests;
 #[cfg(all(test, feature = "rar"))]
 mod rar_tests;
 #[cfg(test)]
@@ -347,6 +349,15 @@ impl AppController {
     /// Adding rather than replacing is what lets a selection be built out of
     /// both files and folders: the native dialog only offers one or the other,
     /// so a mixed selection takes more than one pass through here.
+    /// Compress borrows `state.format` for the new archive's format, so leaving
+    /// it without creating anything gives back the format of what is open;
+    /// otherwise a read-only archive would show the ZIP editing controls.
+    pub(crate) fn cancel_compress(&mut self) {
+        self.state.view = View::Browse;
+        if let Some(format) = self.state.archive.as_deref().and_then(detect) {
+            self.state.format = format;
+        }
+    }
     pub(crate) fn prepare_compress(&mut self, inputs: Vec<PathBuf>) {
         if !self.state.format.can_write() {
             self.state.format = Format::Zip;
@@ -1268,8 +1279,8 @@ impl AppController {
                     self.state.overlay = false;
                     self.state.view = View::Browse;
                     close = true;
-                    let v = match result {
-                        Ok(v) => v,
+                    let (v, notices) = match result {
+                        Ok(listing) => listing,
                         Err(error) => {
                             self.access_failed(Pending::OpenArchive, password.as_deref(), error);
                             continue;
@@ -1305,12 +1316,16 @@ impl AppController {
                         path.file_name()
                             .map(|x| x.to_string_lossy().to_string())
                             .unwrap_or_default(),
-                        if detect(&path) == Some(Format::Rar) {
-                            " (RAR: experimental, read-only)"
-                        } else {
-                            ""
+                        match detect(&path) {
+                            Some(Format::Rar) => " (RAR: experimental, read-only)",
+                            Some(Format::Iso) => " (ISO: read-only)",
+                            _ => "",
                         }
                     );
+                    if !notices.is_empty() {
+                        self.state.notice = notices.join(" ");
+                        self.state.error = false;
+                    }
                     self.state.archive = Some(path);
                     let restore_dir = self.state.reread_dir.take();
                     self.state.history = vec![String::new()];

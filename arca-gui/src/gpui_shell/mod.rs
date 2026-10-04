@@ -947,9 +947,9 @@ impl GpuiShell {
                         .add_filter(
                             "Archives",
                             if cfg!(feature = "rar") {
-                                &["zip", "7z", "tar", "gz", "tgz", "rar", "cbr"][..]
+                                &["zip", "7z", "tar", "gz", "tgz", "rar", "cbr", "iso"][..]
                             } else {
-                                &["zip", "7z", "tar", "gz", "tgz"][..]
+                                &["zip", "7z", "tar", "gz", "tgz", "iso"][..]
                             },
                         )
                         .pick_file(),
@@ -1113,7 +1113,7 @@ impl GpuiShell {
             ModalKind::Drop => self
                 .controller
                 .dispatch(AppAction::AnswerDrop(DropChoice::Cancel)),
-            ModalKind::Add => self.controller.state.view = View::Browse,
+            ModalKind::Add => self.controller.cancel_compress(),
             ModalKind::Viewer => self.controller.state.viewing = None,
             ModalKind::NewFolder | ModalKind::Mask => self.close_name(),
             ModalKind::Settings => self.controller.state.show_settings = false,

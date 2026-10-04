@@ -104,7 +104,9 @@ pub(crate) fn archive_stem(p: &Path) -> String {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     let lower = name.to_ascii_lowercase();
-    for ext in [".tar.gz", ".tgz", ".zip", ".7z", ".tar", ".rar", ".cbr"] {
+    for ext in [
+        ".tar.gz", ".tgz", ".zip", ".7z", ".tar", ".rar", ".cbr", ".iso",
+    ] {
         if lower.ends_with(ext) {
             return name[..name.len() - ext.len()].to_string();
         }
