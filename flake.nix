@@ -1,0 +1,56 @@
+{
+  description = "Arca, a fast and safe archive manager";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs =
+    { self, nixpkgs }:
+    let
+      # GPUI on macOS compiles its Metal shaders with Xcode, which the Nix
+      # sandbox does not have, so the flake is Linux only.
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
+      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+    in
+    {
+      packages = forAllSystems (pkgs: {
+        default = self.packages.${pkgs.system}.arca;
+        arca = pkgs.callPackage ./packaging/nix/package.nix { };
+      });
+
+      apps = forAllSystems (pkgs: {
+        default = {
+          type = "app";
+          program = "${self.packages.${pkgs.system}.arca}/bin/arca-gui";
+        };
+        arca = {
+          type = "app";
+          program = "${self.packages.${pkgs.system}.arca}/bin/arca";
+        };
+      });
+
+      devShells = forAllSystems (pkgs: {
+        default = pkgs.mkShell {
+          inputsFrom = [ self.packages.${pkgs.system}.arca ];
+          packages = with pkgs; [
+            cargo
+            rustc
+            clippy
+            rustfmt
+            rust-analyzer
+            # interop.sh and bench.sh compare against these.
+            zip
+            unzip
+            _7zz
+            zstd
+            hyperfine
+          ];
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath self.packages.${pkgs.system}.arca.runtimeLibs;
+        };
+      });
+
+      formatter = forAllSystems (pkgs: pkgs.nixfmt);
+    };
+}

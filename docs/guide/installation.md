@@ -45,6 +45,18 @@ sudo mv arca /usr/local/bin/
 >
 > If macOS refuses to run a binary downloaded through the browser, clear the quarantine flag with `xattr -d com.apple.quarantine ./arca`.
 
+### Nix
+
+On NixOS or any Linux with Nix and flakes enabled, the repository is a flake. It builds both programs from source and installs the desktop entry:
+
+```sh
+nix run github:beyondhumane/arca              # opens the window
+nix run github:beyondhumane/arca#arca -- --help
+nix profile install github:beyondhumane/arca  # installs arca and arca-gui
+```
+
+`nix develop` gives a shell with the Rust toolchain and the tools `interop.sh` and `bench.sh` compare against.
+
 ## Build from source
 
 You need Rust 1.95 or newer. The default build also compiles libzstd, so a C compiler (cc, clang or MSVC) must be available.
