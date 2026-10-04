@@ -67,7 +67,12 @@
         {
           "type": "toml",
           "path": "Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value == 'arca-7z' || @.name.value == 'arca-cli' || @.name.value == 'arca-core' || @.name.value == 'arca-drag' || @.name.value == 'arca-gui' || @.name.value == 'arca-icons' || @.name.value == 'arca-net' || @.name.value == 'arca-notify' || @.name.value == 'arca-rar' || @.name.value == 'arca-setup' || @.name.value == 'arca-tar' || @.name.value == 'arca-zip')].version"
+          "jsonpath": "$.package[?(@.name.value == 'arca-7z' || @.name.value == 'arca-cli' || @.name.value == 'arca-core' || @.name.value == 'arca-drag' || @.name.value == 'arca-gui' || @.name.value == 'arca-icons' || @.name.value == 'arca-iso' || @.name.value == 'arca-net' || @.name.value == 'arca-notify' || @.name.value == 'arca-rar' || @.name.value == 'arca-setup' || @.name.value == 'arca-tar' || @.name.value == 'arca-xz' || @.name.value == 'arca-zip')].version"
+        },
+        {
+          "type": "toml",
+          "path": "arca-rar/fuzz/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value == 'arca-core' || @.name.value == 'arca-rar')].version"
         }
       ]
     }
