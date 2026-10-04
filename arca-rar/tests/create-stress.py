@@ -683,10 +683,11 @@ class Harness:
         dest.rmdir()
 
     def test_interrupt(self, area, total):
-        """SIGINT/SIGTERM mid-write. Nothing may ever appear at the output path.
-        The CLI has no signal handler (no creation path has one: 7z and ZIP
-        behave the same), so the staged `.arca-*.rar.part` file can survive
-        process death; that is recorded as a warning, not hidden."""
+        """SIGINT and SIGTERM mid-write must be honoured cooperatively: the CLI
+        exits by itself with a nonzero status and 'cancelled' on stderr, nothing
+        ever appears at the output path and no staged `.arca-*.rar.part` file is
+        left in the directory. A run that finishes before the signal is a skip,
+        not a pass. SIGKILL and power loss are not covered."""
         rng = random.Random(self.rng.random())
         root = area / "large"
         self.large_tree(root, rng, total)
@@ -694,19 +695,20 @@ class Harness:
         for sig in (signal.SIGINT, signal.SIGTERM):
             out = area / f"{sig.name}.rar"
             run = self.arca("create", str(out), str(root), "-l", "best", signal_after=0.5, sig=sig)
+            temps = sorted(p.name for p in area.iterdir() if TEMP_PATTERN.match(p.name))
             if run.rc == 0:
-                detail[sig.name] = "finished before the signal; make --large-mib bigger to exercise interruption"
-                out.unlink()
-                continue
+                raise Skip(f"{sig.name}: creation finished in {run.seconds:.2f}s before the signal; "
+                           "raise --large-mib to exercise interruption")
             if out.exists():
                 raise Failure(f"{sig.name}: an output file exists after interruption")
-            temps = sorted(p.name for p in area.iterdir() if TEMP_PATTERN.match(p.name))
-            detail[sig.name] = {"rc": run.rc, "seconds": round(run.seconds, 3), "staged_left_behind": temps}
-            for name in temps:
-                (area / name).unlink()
             if temps:
-                detail.setdefault("warnings", []).append(
-                    f"{sig.name} left {len(temps)} staged part file(s); the CLI has no cooperative cancellation")
+                raise Failure(f"{sig.name}: staged files left behind: {temps}")
+            if run.rc < 0:
+                raise Failure(f"{sig.name}: the CLI died from the signal (rc={run.rc}) instead of cancelling")
+            if "cancelled" not in run.stderr.lower():
+                raise Failure(f"{sig.name}: rc={run.rc} without a cancellation message: {run.stderr.strip()[-200:]}")
+            detail[sig.name] = {"rc": run.rc, "seconds": round(run.seconds, 3),
+                                "stderr": run.stderr.strip()[-120:], "output_exists": False, "staged_left_behind": []}
         return detail
 
     def test_disk_full(self, area):
