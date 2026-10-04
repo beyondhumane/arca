@@ -140,6 +140,7 @@ impl AppController {
             } else {
                 error.to_string()
             };
+            self.state.password_notice = Some(self.state.notice.clone());
         } else {
             self.state.waiting_on_password = None;
             self.state.error = !matches!(error, arca_core::Error::Cancelled);
@@ -148,6 +149,12 @@ impl AppController {
             } else {
                 self.s().stopped.to_string()
             };
+        }
+    }
+
+    fn forget_password_notice(&mut self) {
+        if self.state.password_notice.take().as_ref() == Some(&self.state.notice) {
+            self.state.notice.clear();
         }
     }
 
@@ -504,6 +511,7 @@ impl AppController {
                 replies: None,
                 waiting_on_password: None,
                 password_wrong: false,
+                password_notice: None,
                 password_input: String::new(),
                 add_password: String::new(),
                 hide_names: false,
@@ -1278,6 +1286,7 @@ impl AppController {
                     self.state.archive_password = password;
                     self.state.waiting_on_password = None;
                     self.state.password_wrong = false;
+                    self.forget_password_notice();
                     if v.iter().any(|e| e.encrypted) && self.state.archive_password.is_none() {
                         self.state.password_input.clear();
                         self.state.password_wrong = false;
@@ -1329,7 +1338,10 @@ impl AppController {
                     self.state.overlay = false;
                     close = true;
                     match result {
-                        Ok(()) => resume = Some((pending, password)),
+                        Ok(()) => {
+                            self.forget_password_notice();
+                            resume = Some((pending, password));
+                        }
                         Err(error) => self.access_failed(pending, password.as_deref(), error),
                     }
                 }
