@@ -187,7 +187,7 @@ pub(super) fn open(
     })
 }
 
-fn validate_name(name: &str) -> Result<()> {
+pub(super) fn validate_name(name: &str) -> Result<()> {
     if name.starts_with('/')
         || name
             .chars()

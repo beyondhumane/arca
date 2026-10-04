@@ -1,15 +1,16 @@
 ---
-description: Lee archivos RAR/CBR de solo lectura, con multivolumen, contraseñas y extracción verificada.
+description: Lee archivos RAR/CBR, con multivolumen, contraseñas y extracción verificada, y crea nuevos archivos RAR5 de un solo volumen.
 group: Reference
 order: 20
-keywords: rar cbr solo lectura cifrado sólido multivolumen part1 r00
+keywords: rar cbr solo lectura crear rar5 cifrado sólido multivolumen part1 r00
 ---
 
-# Lector RAR
+# RAR
 
-RAR es un formato **de solo lectura**, activo por defecto en la CLI y la ventana
-de escritorio. Las compilaciones normales y los paquetes creados con ellas lo
-incluyen:
+Arca lee todas las familias RAR y **crea nuevos archivos RAR5 de un solo
+volumen**. Los archivos RAR y CBR existentes nunca se modifican. RAR está activo
+por defecto en la CLI y la ventana de escritorio; las compilaciones normales y
+los paquetes creados con ellas lo incluyen:
 
 ```sh
 cargo build --release
@@ -18,13 +19,13 @@ cargo build --release -p arca-cli
 ```
 
 El adaptador `arca-rar` fija `rars` en 0.10.0, desactiva sus opciones por defecto
-y habilita únicamente `encryption`. No compila su escritor ni necesita UnRAR,
-RAR/WinRAR o 7-Zip instalados para funcionar. Para compilar sin RAR, usa
+y habilita únicamente `encryption` y `write`; `recovery` y `parallel` siguen
+desactivadas. No necesita UnRAR, RAR/WinRAR o 7-Zip instalados para funcionar. Para compilar sin RAR, usa
 `--no-default-features --features codecs-native`; omite `codecs-native` para
 excluir también los códecs nativos de ZIP/7z. Una compilación Rust puro con RAR
 usa `--no-default-features --features rar`. No hay un interruptor en la interfaz.
 
-## Uso
+## Lectura
 
 ```sh
 arca list archive.rar
@@ -47,12 +48,56 @@ correcta antes de concluir que el archivo está dañado.
 Se admiten listado, comprobación, vistas previas y extracción. Los archivos
 sólidos se decodifican secuencialmente. Incluso una extracción parcial verifica
 todos los miembros antes de publicar los seleccionados. La comprobación en la
-GUI siempre verifica el RAR completo. El título indica que es de solo lectura;
-no se añaden asociaciones del sistema operativo.
+GUI siempre verifica el RAR completo. El título indica que el archivo abierto es
+de solo lectura; no se añaden asociaciones del sistema operativo.
 
-RAR no aparece entre los formatos de creación. No se permite crear, añadir,
-borrar, renombrar, mover, crear carpetas internas ni cambiar contraseñas en RAR.
-Copiar el contenedor como archivo no modifica su contenido.
+No se permite añadir, borrar, renombrar, mover, crear carpetas internas ni
+cambiar contraseñas en un RAR o CBR existente. Copiar el contenedor como archivo
+no modifica su contenido.
+
+## Crear archivos RAR5
+
+```sh
+arca create backup.rar documents/ notes.txt
+arca create photos.rar photos/ -l best
+arca create plain.rar big.iso -c store      # equivale a -l store
+```
+
+La salida es un archivo RAR5 nuevo, de un solo volumen, no sólido y sin cifrar,
+que UnRAR y 7-Zip oficiales abren. `-l store|fast|normal|best` elige la fuerza
+del compresor RAR; `-c` solo admite `auto` o `store`. El diálogo **Crear** del
+escritorio ofrece RAR junto a ZIP y 7z con los mismos niveles. Se guardan los
+ficheros y directorios vacíos, se conservan las fechas de modificación y los
+directorios se recorren en orden, así que la misma entrada produce siempre los
+mismos bytes.
+
+La creación rechaza, antes de leer ninguna entrada o escribir ningún fichero:
+
+- Una contraseña u **Ocultar nombres**: la salida RAR nunca se cifra. Usa ZIP o
+  7z para eso.
+- `-c deflate|zstd|lzma2`, `-j` mayor que 1 (la creación RAR es secuencial), un
+  destino `.cbr` o cualquier otro sufijo distinto de `.rar`.
+- Un destino que ya exista, incluso como enlace roto. Arca solo crea archivos
+  RAR nuevos y nunca reemplaza un fichero, tampoco uno que aparezca mientras se
+  escribe. La carpeta padre del destino debe existir.
+- Entradas que sean enlaces simbólicos, puntos de reanálisis o ficheros
+  especiales (no se siguen), entradas que coincidan con el destino o su carpeta,
+  y nombres no válidos, duplicados o que solo difieran en mayúsculas.
+- Más de 100.000 miembros, nombres de más de 4096 bytes, un fichero de más de
+  4 GiB o más de 16 GiB en total.
+
+El escritor prepara un fichero `.arca-*.rar.part` junto al destino, lo reabre
+con el propio lector de Arca para listar y decodificar por completo cada
+miembro y después lo publica sin sobrescribir nada. Cualquier fallo o la
+cancelación en el escritorio no deja nada en la ruta de destino. La CLI no tiene
+cancelación cooperativa: matar `arca` a mitad de la escritura nunca produce un
+archivo de salida, pero el fichero preparado puede quedar y hay que borrarlo a
+mano.
+
+No se admite en este incremento, y se rechaza en lugar de aproximarse: archivos
+sólidos, salida multivolumen, cifrado, registros de recuperación, filtros de
+datos RAR, salida RAR4, creación de CBR, y añadir, borrar, renombrar o reparar
+dentro de un archivo existente.
 
 ## Conjuntos multivolumen
 
@@ -95,8 +140,12 @@ tiene cabecera final, los siguientes también deben tenerla.
 | Salida total, incluidos miembros no seleccionados | 16 GiB |
 | Vista previa en memoria | 64 MiB |
 
-Son límites del decodificador, no un aislamiento estricto de memoria o tiempo
-de CPU. Algunos filtros necesitan más memoria de la permitida y se rechazan.
+La creación tiene sus propios techos (miembros, bytes de nombre, 4 GiB por
+fichero, 16 GiB en total, 64 MiB de cabeceras y un libro de memoria gestionada
+de 256 MiB para el escritor; consulta
+[`arca_rar::create_limits`](https://github.com/beyondhumane/arca/blob/main/arca-rar/src/lib.rs)).
+Son límites del decodificador y del escritor, no un aislamiento estricto de
+memoria o tiempo de CPU. Algunos filtros necesitan más memoria de la permitida y se rechazan.
 La cancelación se comprueba al buscar, analizar y decodificar, y entre los pasos
 de publicación.
 
@@ -127,16 +176,23 @@ de integridad depende de las sumas y autenticadores presentes en el archivo.
 
 ## Exclusiones y notas sobre dependencias
 
-- No hay escritura RAR, recuperación/reparación ni asociaciones automáticas.
-  Los métodos o metadatos no admitidos devuelven un error.
+- No hay modificación de archivos existentes, recuperación/reparación ni
+  asociaciones automáticas. Los métodos o metadatos no admitidos devuelven un
+  error. La creación se limita al perfil RAR5 de un solo volumen descrito arriba.
 - Los fixtures independientes, comparaciones con UnRAR y fuzzing acotado
-  amplían la cobertura, pero no demuestran compatibilidad exhaustiva.
+  amplían la cobertura del lector; el harness de creación con semilla compara
+  los archivos que Arca escribe con UnRAR y 7-Zip oficiales. No demuestran
+  compatibilidad exhaustiva. Consulta el
+  [registro de validación del lector](https://github.com/beyondhumane/arca/blob/main/arca-rar/RAR_VALIDATION.md)
+  y el [registro de validación de la creación](https://github.com/beyondhumane/arca/blob/main/arca-rar/RAR_CREATE_VALIDATION.md).
 - La [revisión de procedencia](https://github.com/beyondhumane/arca/blob/main/docs/plans/rars-0.10.0-distribution.md)
   recoge la declaración Apache-2.0 del autor y dudas sobre fuentes e
   investigación. No demostró una infracción ni una incompatibilidad de licencia
   que impida distribuir el lector. Esas observaciones no son una garantía legal
   ni un motivo para etiquetarlo como experimental. Los textos de licencia y
   avisos publicados para las dependencias del adaptador acompañan los paquetes.
+  Activar el escritor no añadió ninguna dependencia que la rama del lector no
+  tuviera ya, así que el paquete de avisos no cambia.
 
 Comprobaciones reproducibles:
 
@@ -145,6 +201,9 @@ python3 arca-rar/tests/check-features.py
 cargo test --workspace
 cargo test --workspace --no-default-features --features codecs-native
 cargo clippy --workspace --all-targets -- -D warnings
+cargo build --release -p arca-cli
+python3 arca-rar/tests/create-stress.py            # smoke acotado; omite las herramientas ausentes
+UNRAR=/ruta/a/unrar SEVENZIP=/ruta/a/7zz python3 arca-rar/tests/create-stress.py --stress --require-tools
 ```
 
 Consulta el [registro de decisiones](https://github.com/beyondhumane/arca/blob/main/docs/todos/rar-format.md)

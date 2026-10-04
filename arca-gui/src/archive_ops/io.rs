@@ -765,6 +765,159 @@ pub(crate) fn collect_files(inputs: &[PathBuf]) -> std::io::Result<Vec<(PathBuf,
     collect_sources(inputs, false)
 }
 
+/// Ceilings for walking the sources of a new RAR archive. The writer checks
+/// the same ones again, so these only keep the walk itself from growing past
+/// what the writer would refuse anyway.
+#[derive(Clone, Copy)]
+pub(crate) struct RarSourceLimits {
+    pub(crate) entries: usize,
+    pub(crate) name_bytes: usize,
+    pub(crate) member_bytes: u64,
+    pub(crate) total_bytes: u64,
+}
+
+impl RarSourceLimits {
+    pub(crate) const WRITER: Self = Self {
+        entries: arca_rar::create_limits::MAX_ENTRIES,
+        name_bytes: arca_rar::create_limits::MAX_NAME_BYTES,
+        member_bytes: arca_rar::create_limits::MAX_MEMBER_BYTES,
+        total_bytes: arca_rar::create_limits::MAX_TOTAL_BYTES,
+    };
+}
+
+/// Walks `inputs` into RAR members the same way `collect_sources` does for 7z,
+/// without recursion: a stack of pending paths replaces the call stack, and
+/// every path counts against the entries ceiling and the stop request before
+/// it is queued, so neither a wide nor a deep tree can grow any list past the
+/// ceiling before the writer sees it.
+pub(crate) fn collect_rar_sources(
+    inputs: &[PathBuf],
+    limits: &RarSourceLimits,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+) -> arca_core::Result<Vec<arca_rar::Source>> {
+    struct Pending {
+        path: PathBuf,
+        base: PathBuf,
+    }
+
+    struct Walk<'a> {
+        limits: &'a RarSourceLimits,
+        notify: &'a (dyn Fn(usize, usize, &str) -> bool + Sync),
+        out: Vec<arca_rar::Source>,
+        pending: Vec<Pending>,
+        total_bytes: u64,
+    }
+
+    impl Walk<'_> {
+        fn member_name(path: &Path, base: &Path) -> String {
+            let rel = path.strip_prefix(base).unwrap_or(path);
+            rel.to_string_lossy().replace('\\', "/")
+        }
+
+        /// Accounts for one more path about to be remembered anywhere: the
+        /// output list and the queue together never exceed the ceiling.
+        fn reserve(&mut self, queued_extra: usize, name: &str) -> arca_core::Result<()> {
+            let seen = self.out.len() + self.pending.len() + queued_extra;
+            if !(self.notify)(self.out.len(), seen + 1, name) {
+                return Err(arca_core::Error::Cancelled);
+            }
+            if seen >= self.limits.entries {
+                return Err(arca_core::Error::Limit(format!(
+                    "RAR archive would hold more than {} members",
+                    self.limits.entries
+                )));
+            }
+            if name.len() > self.limits.name_bytes {
+                return Err(arca_core::Error::Limit(format!(
+                    "RAR member name of {} bytes exceeds {}",
+                    name.len(),
+                    self.limits.name_bytes
+                )));
+            }
+            Ok(())
+        }
+
+        fn queue(&mut self, path: PathBuf, base: &Path) -> arca_core::Result<()> {
+            let name = Self::member_name(&path, base);
+            self.reserve(0, &name)?;
+            self.pending.push(Pending {
+                path,
+                base: base.to_path_buf(),
+            });
+            Ok(())
+        }
+
+        fn visit(&mut self, item: Pending) -> arca_core::Result<()> {
+            let Pending { path, base } = item;
+            let meta = fs::symlink_metadata(&path)?;
+            let name = Self::member_name(&path, &base);
+            if meta.is_dir() {
+                let rel = path.strip_prefix(&base).unwrap_or(&path);
+                if rel.components().any(|c| c != std::path::Component::CurDir) {
+                    self.out.push(arca_rar::Source {
+                        path: path.clone(),
+                        name: format!("{name}/"),
+                    });
+                }
+                let mut children: Vec<PathBuf> = Vec::new();
+                for child in fs::read_dir(&path)? {
+                    let child = child?.path();
+                    let child_name = Self::member_name(&child, &base);
+                    self.reserve(children.len(), &child_name)?;
+                    children.push(child);
+                }
+                children.sort();
+                for child in children.into_iter().rev() {
+                    self.pending.push(Pending {
+                        path: child,
+                        base: base.clone(),
+                    });
+                }
+            } else if meta.is_file() {
+                if meta.len() > self.limits.member_bytes {
+                    return Err(arca_core::Error::Limit(format!(
+                        "RAR member '{name}' exceeds {} bytes",
+                        self.limits.member_bytes
+                    )));
+                }
+                self.total_bytes = self
+                    .total_bytes
+                    .checked_add(meta.len())
+                    .filter(|n| *n <= self.limits.total_bytes)
+                    .ok_or_else(|| {
+                        arca_core::Error::Limit(format!(
+                            "RAR archive input exceeds {} bytes",
+                            self.limits.total_bytes
+                        ))
+                    })?;
+                self.out.push(arca_rar::Source { path, name });
+            } else {
+                return Err(arca_core::Error::Unsupported(format!(
+                    "RAR source '{}' is not a regular file or directory; links are not followed",
+                    path.display()
+                )));
+            }
+            Ok(())
+        }
+    }
+
+    let mut walk = Walk {
+        limits,
+        notify,
+        out: Vec::new(),
+        pending: Vec::new(),
+        total_bytes: 0,
+    };
+    for input in inputs.iter().rev() {
+        let base = input.parent().unwrap_or(Path::new(""));
+        walk.queue(input.clone(), base)?;
+    }
+    while let Some(item) = walk.pending.pop() {
+        walk.visit(item)?;
+    }
+    Ok(walk.out)
+}
+
 fn collect_sources(
     inputs: &[PathBuf],
     directories: bool,
@@ -833,10 +986,10 @@ pub(crate) fn compress(
         return Err(arca_iso::read_only());
     }
     let (password, hide_names) = encryption;
-    if !format.can_write() {
+    if !format.can_create() {
         return Err(format.read_only());
     }
-    if let Some(named) = detect(out).filter(|named| !named.can_write()) {
+    if let Some(named) = detect(out).filter(|named| !named.can_create()) {
         return Err(named.read_only());
     }
     if password.is_some() && !matches!(format, Format::Zip | Format::SevenZ) {
@@ -848,6 +1001,18 @@ pub(crate) fn compress(
         return Err(arca_core::Error::Unsupported(
             "hidden names require 7z".into(),
         ));
+    }
+    if format == Format::Rar {
+        let sources = collect_rar_sources(inputs, &RarSourceLimits::WRITER, notify)?;
+        let source_bytes = sources
+            .iter()
+            .filter_map(|source| fs::metadata(&source.path).ok())
+            .filter(|meta| meta.is_file())
+            .map(|meta| meta.len())
+            .sum();
+        arca_rar::create_rar(out, &sources, &arca_rar::CreateOptions { level }, notify)?;
+        let final_size = fs::metadata(out).map(|m| m.len()).unwrap_or(0);
+        return Ok((source_bytes, final_size));
     }
     let files = collect_sources(inputs, format == Format::SevenZ)?;
     let total = files.len();

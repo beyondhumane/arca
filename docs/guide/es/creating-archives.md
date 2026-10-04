@@ -1,8 +1,8 @@
 ---
-description: Niveles, códecs, hilos y formatos para arca create.
+description: Niveles, códecs, hilos y formatos para arca create, incluidos los nuevos archivos RAR5.
 group: Uso de Arca
 order: 4
-keywords: crear comprimir nivel códec zstd deflate store hilos tar gzip -l -c -j create compress level codec zstd deflate store threads tar gzip -l -c -j
+keywords: crear comprimir nivel códec zstd deflate store hilos tar gzip rar rar5 -l -c -j create compress level codec zstd deflate store threads tar gzip rar rar5 -l -c -j
 ---
 
 # Crear archivos
@@ -14,9 +14,9 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | Opción | Valores | Por defecto | Descripción |
 | --- | --- | --- | --- |
 | `-l, --level` | store · fast · normal · best | normal | Nivel de compresión. |
-| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate en .zip, LZMA2 en .7z. |
-| `-j, --threads` | un número | 0 | Límite de hilos ZIP. 0 usa todos los núcleos; 7z es secuencial. |
-| `-p, --password` | texto | ninguna | Cifra ZIP o 7z con AES-256. |
+| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate en .zip, LZMA2 en .7z, el compresor RAR en .rar (solo auto o store). |
+| `-j, --threads` | un número | 0 | Límite de hilos ZIP. 0 usa todos los núcleos; 7z y RAR son secuenciales. |
+| `-p, --password` | texto | ninguna | Cifra ZIP o 7z con AES-256. Se rechaza en .rar. |
 | `--hide-names` | indicador | desactivado | Cifra también las cabeceras 7z; exige una contraseña no vacía. |
 
 ## Niveles
@@ -73,6 +73,27 @@ solo lo sustituye al terminar correctamente; un fallo conserva el destino anteri
 La carpeta padre del destino debe existir. Si todas las entradas están vacías, el
 cifrado 7z exige `--hide-names` para que se pueda comprobar la contraseña.
 
+## RAR
+
+```sh
+arca create backup.rar documents/ notes.txt -l best
+arca create stored.rar big.iso -c store
+```
+
+Crea un archivo RAR5 nuevo, de un solo volumen, no sólido y sin cifrar, que
+UnRAR y 7-Zip oficiales abren. Los cuatro niveles eligen la fuerza del compresor
+RAR; `-c store` equivale a `-l store` y cualquier otro códec explícito se
+rechaza. La creación es secuencial (`-j` mayor que 1 se rechaza), guarda
+ficheros y directorios vacíos y rechaza enlaces simbólicos y ficheros especiales
+en lugar de seguirlos.
+
+La salida RAR nunca se cifra (`-p` y `--hide-names` se rechazan), nunca es un
+`.cbr`, nunca es sólida ni multivolumen y nunca reemplaza un fichero existente:
+el archivo se prepara junto al destino, se verifica con el lector de Arca y solo
+se publica si el nombre sigue libre. Los RAR/CBR existentes siguen siendo de
+solo lectura. Los límites y la lista completa de rechazos están en la
+[guía de RAR](rar.md#crear-archivos-rar5).
+
 ## TAR y gzip
 
 ```sh
@@ -87,7 +108,7 @@ La capa gzip respeta el nivel elegido. TAR no tiene dónde poner el cifrado, as�
 - Los directorios se recorren de forma recursiva en orden alfabético, así que la misma entrada siempre produce el mismo orden de entradas.
 - Las rutas se guardan relativas al padre de cada entrada: `arca create a.zip ~/work/site` guarda las entradas como `site/…`.
 - Se preservan las fechas de modificación.
-- ZIP/TAR añaden ficheros normales y omiten enlaces simbólicos. 7z también conserva directorios vacíos y rechaza enlaces simbólicos (ver arriba).
+- ZIP/TAR añaden ficheros normales y omiten enlaces simbólicos. 7z y RAR también conservan directorios vacíos y rechazan enlaces simbólicos (ver arriba).
 
 ## Cifrar al crear
 

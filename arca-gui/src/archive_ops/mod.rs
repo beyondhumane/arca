@@ -1,6 +1,8 @@
 //! Blocking archive jobs and their command-line entry points.
 
 mod io;
+#[cfg(all(test, feature = "rar"))]
+mod rar_tests;
 #[cfg(test)]
 mod sevenz_tests;
 pub(crate) use io::*;

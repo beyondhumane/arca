@@ -17,8 +17,10 @@ creation, passwords and hidden names are implemented for CLI and desktop. See
 [accepted design](https://github.com/beyondhumane/arca/blob/main/docs/plans/7z-format.md).
 
 [RAR/CBR reading](rar.md) is enabled by default, including modern and legacy
-multivolume sets, passwords, previews and verified extraction. RAR remains
-read-only: creation, mutation and recovery/repair are not supported.
+multivolume sets, passwords, previews and verified extraction. New single-volume
+RAR5 archives can be created at four levels. Existing RAR/CBR archives remain
+read-only: mutation, recovery/repair, encrypted, solid or multivolume output and
+CBR creation are not supported.
 
 ## Not yet
 

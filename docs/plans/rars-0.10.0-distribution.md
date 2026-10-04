@@ -294,3 +294,35 @@ acceptance work remains in the [RAR record](../todos/rar-format.md).
 [seven-license]: https://www.7-zip.org/license.txt
 [release]: https://github.com/beyondhumane/arca/blob/c8918c8f7d9804a98cda45aaf84f8e7483082150/.github/workflows/release.yml
 [fixtures]: https://github.com/beyondhumane/arca/blob/c8918c8f7d9804a98cda45aaf84f8e7483082150/arca-rar/tests/fixtures/README.md
+
+## Scope update: writer feature enabled (2026-10-04)
+
+This section records a later change of technical scope. The findings above are
+unchanged and remain the record of the reader-only review; they are not
+reinterpreted as writer evidence.
+
+- `arca-rar/Cargo.toml` now resolves `rars 0.10.0` with
+  `features = ["encryption", "write"]`. `recovery` and `parallel` remain off and
+  the crate defaults remain disabled; `python3 arca-rar/tests/check-features.py`
+  asserts exactly `encryption,write` for every default build and no `rars` in the
+  opt-out builds.
+- Compiled scope: creation of new single-volume, non-solid, unencrypted RAR5
+  archives through the public `rars::rar50` streaming API. No existing archive
+  is modified, no recovery records are produced, no RARLAB code or binaries are
+  bundled, and reference decoders used by the test harness are downloaded
+  per CI job only, pinned by SHA-256, never redistributed.
+- Dependency obligations: the `write` feature adds only `getrandom`, which the
+  adapter's `tempfile` branch already pulled in. `python3 packaging/rar-notices.py`
+  therefore regenerates an identical `RAR-NOTICES.txt` for all five release
+  targets (verified with `--check` on the locked sources). No new license text,
+  notice or compound expression entered the bundle; the Apache-2.0 obligations
+  for `rars` and the MIT/Apache/Unicode notices listed above are unchanged in
+  kind. The feature-gated writer source that the earlier review noted as
+  present-but-uncompiled is now compiled; the open questions about upstream
+  source provenance below still apply to it in the same way they apply to the
+  reader, neither more nor less.
+- What this does not establish: it is not a legal clearance, not a resolution
+  of the open provenance questions, and not a claim that the writer is
+  WinRAR-equivalent. The creation validation record
+  ([RAR_CREATE_VALIDATION.md](../../arca-rar/RAR_CREATE_VALIDATION.md)) states
+  which interoperability checks were actually run and with which tool versions.
