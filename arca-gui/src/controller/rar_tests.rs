@@ -235,6 +235,28 @@ fn rar_mutation_jobs_are_rejected_before_touching_the_archive() {
 }
 
 #[test]
+fn rar_and_cbr_keep_their_read_only_titles() {
+    let room = crate::test_support::Room::new();
+    for (name, format, label) in [
+        ("archive.RAR", Format::Rar, "RAR"),
+        ("comic.CBR", Format::Cbr, "CBR"),
+    ] {
+        let archive = room.path(name);
+        fs::copy(fixture("plain.rar"), &archive).unwrap();
+        let mut controller = AppController::new(Settings::default());
+        controller.open(archive);
+        settle(&mut controller);
+        assert!(!controller.state.error, "{}", controller.state.notice);
+        assert_eq!(controller.state.format, format);
+        assert!(controller
+            .state
+            .window_title
+            .contains(&format!("({label}: read-only)")));
+        assert!(!controller.state.entries.is_empty());
+    }
+}
+
+#[test]
 fn opening_later_modern_and_legacy_volumes_lists_and_tests_the_complete_set() {
     let dir = std::env::temp_dir().join(format!(
         "arca-rar-volumes-{}-{}",
