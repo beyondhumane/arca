@@ -4,6 +4,7 @@ members = [
     "arca-core",
     "arca-zip",
     "arca-tar",
+    "arca-xz",
     "arca-7z",
     "arca-rar",
     "arca-iso",
@@ -35,6 +36,7 @@ authors = ["Proyecto Arca"]
 arca-core = { path = "arca-core" }
 arca-zip  = { path = "arca-zip", default-features = false }
 arca-tar  = { path = "arca-tar" }
+arca-xz   = { path = "arca-xz" }
 arca-7z   = { path = "arca-7z", default-features = false }
 arca-rar = { path = "arca-rar" }
 arca-iso = { path = "arca-iso" }
