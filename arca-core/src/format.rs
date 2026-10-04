@@ -6,6 +6,7 @@ pub enum Format {
     Tar,
     TarGz,
     Rar,
+    Iso,
 }
 
 impl Format {
@@ -21,6 +22,7 @@ impl Format {
             Self::Tar => "tar",
             Self::TarGz => "tar.gz",
             Self::Rar => "rar",
+            Self::Iso => "iso",
         }
     }
 
@@ -30,6 +32,7 @@ impl Format {
             Self::Tar => "TAR",
             Self::TarGz => "TAR.GZ",
             Self::Rar => "RAR (experimental, read-only)",
+            Self::Iso => "ISO (read-only)",
         }
     }
 
@@ -43,6 +46,8 @@ impl Format {
             Some(Self::Tar)
         } else if name.ends_with(".rar") || name.ends_with(".cbr") {
             Some(Self::Rar)
+        } else if name.ends_with(".iso") {
+            Some(Self::Iso)
         } else {
             None
         }
@@ -61,5 +66,13 @@ mod tests {
         assert!(!Format::Rar.can_write());
         assert!(Format::WRITABLE.iter().all(|format| format.can_write()));
         assert_eq!(Format::detect(Path::new("x.tgz")), Some(Format::TarGz));
+    }
+
+    #[test]
+    fn iso_is_readable_but_never_a_creation_format() {
+        for name in ["image.iso", "DISC.ISO", "ubuntu-24.04-desktop-amd64.iso"] {
+            assert_eq!(Format::detect(Path::new(name)), Some(Format::Iso));
+        }
+        assert!(!Format::Iso.can_write());
     }
 }

@@ -8,7 +8,7 @@ use arca_core::Entry;
 use std::path::{Path, PathBuf};
 
 pub(crate) enum Message {
-    Listing(PathBuf, Vec<Entry>),
+    Listing(PathBuf, Vec<Entry>, Vec<String>),
     PasswordNeeded(PathBuf, bool),
     JobPasswordNeeded(Box<Job>),
     // The installer is down and checked. It ends in a file to run rather than

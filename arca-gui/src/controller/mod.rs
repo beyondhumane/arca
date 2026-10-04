@@ -1,6 +1,8 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
+#[cfg(test)]
+mod iso_tests;
 #[cfg(all(test, feature = "rar"))]
 mod rar_tests;
 mod state;
@@ -1081,7 +1083,7 @@ impl AppController {
         if let Some(rx) = &self.state.channel {
             while let Ok(m) = rx.try_recv() {
                 match m {
-                    Message::Listing(path, v) => {
+                    Message::Listing(path, v, notices) => {
                         if v.iter().any(|e| e.encrypted) && self.state.archive_password.is_none() {
                             self.state.password_input.clear();
                             self.state.password_wrong = false;
@@ -1114,12 +1116,16 @@ impl AppController {
                             path.file_name()
                                 .map(|x| x.to_string_lossy().to_string())
                                 .unwrap_or_default(),
-                            if detect(&path) == Some(Format::Rar) {
-                                " (RAR: experimental, read-only)"
-                            } else {
-                                ""
+                            match detect(&path) {
+                                Some(Format::Rar) => " (RAR: experimental, read-only)",
+                                Some(Format::Iso) => " (ISO: read-only)",
+                                _ => "",
                             }
                         );
+                        if !notices.is_empty() {
+                            self.state.notice = notices.join(" ");
+                            self.state.error = false;
+                        }
                         self.state.archive = Some(path);
                         let restore_dir = self.state.reread_dir.take();
                         self.state.history = vec![String::new()];
@@ -1551,7 +1557,7 @@ impl AppController {
         self.spawn(0, move |tx| {
             let notify = |_, _, _: &str| !stop.load(std::sync::atomic::Ordering::Relaxed);
             let m = match list_entries(&path, password.as_deref(), &notify) {
-                Ok(v) => Message::Listing(path, v),
+                Ok((v, notices)) => Message::Listing(path, v, notices),
                 Err(arca_core::Error::PasswordRequired) => Message::PasswordNeeded(path, false),
                 Err(arca_core::Error::BadPassword) => Message::PasswordNeeded(path, true),
                 Err(e) => Message::Failed(e.to_string()),

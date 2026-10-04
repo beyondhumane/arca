@@ -947,9 +947,9 @@ impl GpuiShell {
                         .add_filter(
                             "Archives",
                             if cfg!(feature = "rar") {
-                                &["zip", "tar", "gz", "tgz", "rar", "cbr"][..]
+                                &["zip", "tar", "gz", "tgz", "rar", "cbr", "iso"][..]
                             } else {
-                                &["zip", "tar", "gz", "tgz"][..]
+                                &["zip", "tar", "gz", "tgz", "iso"][..]
                             },
                         )
                         .pick_file(),

@@ -17,6 +17,7 @@ rar = ["arca-rar/rar"]
 
 [dependencies]
 arca-rar.workspace = true
+arca-iso.workspace = true
 arca-core.workspace = true
 arca-zip.workspace = true
 arca-tar.workspace = true

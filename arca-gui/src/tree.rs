@@ -24,7 +24,7 @@ pub fn kind_of(name: &str, is_dir: bool) -> Kind {
         }
         "txt" | "md" | "log" | "csv" | "tsv" | "json" | "xml" | "yml" | "yaml" | "toml" | "ini"
         | "cfg" | "conf" | "rs" | "py" | "js" | "ts" | "html" | "css" | "sh" | "ps1" => Kind::Text,
-        "zip" | "tar" | "gz" | "tgz" | "7z" | "rar" | "xz" | "bz2" | "zst" => Kind::Archive,
+        "zip" | "tar" | "gz" | "tgz" | "7z" | "rar" | "iso" | "xz" | "bz2" | "zst" => Kind::Archive,
         "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" => Kind::Audio,
         "mp4" | "mkv" | "avi" | "mov" | "webm" | "wmv" => Kind::Video,
         _ => Kind::Other,
