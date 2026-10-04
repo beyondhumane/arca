@@ -1248,29 +1248,11 @@ impl GpuiShell {
     }
 
     fn start_add(&mut self, cx: &mut Context<Self>) {
-        let Some(first) = self.controller.state.pending_inputs.first() else {
+        let Some(job) = self.controller.compression_job() else {
             return;
         };
         self.dialog_return_focus = Some(self.add_start_focus.clone());
-        let dir = first.parent().map(PathBuf::from).unwrap_or_default();
-        let name = {
-            let name = self.controller.state.output_name.trim();
-            if name.is_empty() {
-                format!("archive.{}", self.controller.state.format.extension())
-            } else {
-                name.to_string()
-            }
-        };
-        self.controller.dispatch(AppAction::Run(Job::Compress {
-            out: dir.join(name),
-            inputs: self.controller.state.pending_inputs.clone(),
-            format: self.controller.state.format,
-            codec: self.controller.state.codec,
-            level: self.controller.state.level,
-            password: (self.controller.state.format == super::Format::Zip
-                && !self.controller.state.add_password.is_empty())
-            .then(|| self.controller.state.add_password.clone()),
-        }));
+        self.controller.dispatch(AppAction::Run(job));
         cx.notify();
     }
 
@@ -2472,7 +2454,12 @@ impl Render for GpuiShell {
                                 app.stop_active_drag(window);
                                 dragging.update(app, |shell, cx| {
                                     shell.carrying = false;
-                                    shell.controller.drag_out();
+                                    if shell.controller.state.format == super::Format::SevenZ {
+                                        shell.controller.state.notice =
+                                            shell.controller.s().sevenz_copy.to_string();
+                                    } else {
+                                        shell.controller.drag_out();
+                                    }
                                     cx.notify();
                                 });
                             }

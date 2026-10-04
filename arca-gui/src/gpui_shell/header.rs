@@ -93,7 +93,11 @@ impl GpuiShell {
                                                     Job::Test {
                                                         archive,
                                                         only: None,
-                                                        password: None,
+                                                        password: this
+                                                            .controller
+                                                            .state
+                                                            .archive_password
+                                                            .clone(),
                                                     },
                                                 ));
                                             }
@@ -578,7 +582,7 @@ impl GpuiShell {
                     this.controller.dispatch(AppAction::Run(Job::Test {
                         archive,
                         only: None,
-                        password: None,
+                        password: this.controller.state.archive_password.clone(),
                     }));
                     cx.notify();
                 }

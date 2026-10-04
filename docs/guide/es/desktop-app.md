@@ -41,6 +41,29 @@ El panel muestra nombre, tamaño, fecha y tipo, e indica expresamente los metada
 
 Los estados de carga, vacío, contraseña necesaria, contraseña incorrecta, formato no compatible, tamaño excesivo y error aparecen en el propio panel. La lectura, preparación de texto y decodificación de imágenes se ejecutan en segundo plano con límites, independientemente de las operaciones de modificación. Cambiar la navegación o selección invalida los resultados anteriores. Las contraseñas y el contenido no se guardan en los ajustes.
 
+## Contraseñas
+
+El diálogo admite contraseñas ZIP y 7z y permite **Ocultar nombres** en 7z.
+Las cabeceras 7z ocultas piden la contraseña antes de listar. Los datos se validan
+en segundo plano antes de extraer, probar, previsualizar o abrir; reintentar retoma
+esa acción y cancelar deja el destino intacto. **Quitar contraseña** y
+**Establecer contraseña…** solo se aplican a ZIP, nunca a un 7z existente.
+
+## 7z
+
+Crea 7z con Store o LZMA2 y los niveles existentes. La creación y la extracción
+son secuenciales. Las entradas seleccionadas de archivos sólidos comparten un
+decodificador por bloque y pasada, sin reabrirlo por cada entrada. La vista previa,
+abrir, Copiar y Extraer usan la misma ruta de lectura validada. Consulta
+[Cifrado](encryption.md) y los [límites de recursos](architecture.md#7z-boundaries).
+
+## Límites por formato
+
+Añadir, borrar, renombrar y cambiar contraseñas en archivos existentes sigue
+siendo exclusivo de ZIP. Arrastrar ficheros virtuales fuera de un 7z está
+desactivado para no descodificar repetidamente bloques sólidos: usa Copiar o
+Extraer. El portapapeles de ficheros depende de la plataforma.
+
 ## Operaciones y teclado
 
 Progreso, pausa, cancelación, finalización y errores se mantienen visibles sin bloquear la exploración cuando la operación permite navegar. No se inicia una segunda modificación mientras otra está en curso. Las operaciones puntuales del Explorador conservan su comportamiento al terminar.

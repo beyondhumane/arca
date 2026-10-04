@@ -20,8 +20,11 @@ Get the file for your platform from the [latest release](https://github.com/beyo
 | macOS | `arca-v<version>-macos-arm64.tar.gz` | Apple silicon |
 | macOS Intel | `arca-v<version>-macos-x86_64.tar.gz` | Intel |
 | Linux | `arca-v<version>-linux-x86_64.tar.gz` | x86\_64 |
+| Linux ARM | `arca-v<version>-linux-arm64.tar.gz` | arm64 |
 
-Every asset for every version, with its SHA-256 digest, is on the [releases page](https://github.com/beyondhumane/arca/releases).
+Every asset for every version, with its SHA-256 digest, is on the [releases page](https://github.com/beyondhumane/arca/releases). Each one also carries a build provenance attestation, which `gh attestation verify <file> -R beyondhumane/arca` checks.
+
+On Linux the desktop window needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, current Fedora, Arch and openSUSE) and the command line 2.34, so it also runs on RHEL 9. Older systems, such as Debian 11, can [build from source](#build-from-source).
 
 ### Windows
 

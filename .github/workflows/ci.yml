@@ -1,9 +1,23 @@
 name: CI
 
+# A change that only touches the site or the guide does not rebuild Rust; the
+# Pages workflow checks those.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "site/**"
+      - "docs/**"
+      - "**/*.md"
+      - ".github/workflows/pages.yml"
+      - ".github/dependabot.yml"
   pull_request:
+    paths-ignore:
+      - "site/**"
+      - "docs/**"
+      - "**/*.md"
+      - ".github/workflows/pages.yml"
+      - ".github/dependabot.yml"
 
 env:
   CARGO_TERM_COLOR: always
@@ -120,7 +134,7 @@ jobs:
 
       - name: Experimental RAR reader
         run: |
-          cargo test -p arca-rar -p arca-cli --features rar --locked
+          cargo test -p arca-core -p arca-7z -p arca-rar -p arca-cli --features rar --locked
           cargo check -p arca-gui --features rar --locked
 
       - name: Shell extension

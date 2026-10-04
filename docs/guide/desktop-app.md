@@ -41,6 +41,29 @@ The panel shows the filename, size, date and type, with unavailable metadata lab
 
 Loading, empty, password-required, wrong-password, unsupported, oversized and error states are shown in place. Reads, text preparation and image decoding run in a bounded background worker, independently of mutation jobs. Navigation or selection changes invalidate old results. Passwords and preview contents are not written to settings.
 
+## Passwords
+
+The create dialog offers ZIP and 7z passwords; 7z also offers **Hide file names**.
+Hidden 7z headers prompt before listing. Content validation runs in a background
+worker before extract/test/preview/open actions; retry resumes that action and
+cancel leaves the destination untouched. **Remove password** and **Set password…**
+apply only to ZIP, never to an existing 7z.
+
+## 7z
+
+Create 7z using Store or LZMA2 and the existing levels. Creation and extraction
+are sequential. Selected members of solid archives share one decoder per block
+per pass, rather than reopening it for each member. Preview, open-file, Copy and
+Extract use the same validated read path. See [Encryption](encryption.md) and
+[resource limits](architecture.md#7z-boundaries).
+
+## Format limits
+
+Adding, deleting, renaming and changing passwords in an existing archive remain
+ZIP-only. 7z virtual-file drag-out is disabled to avoid repeatedly decoding solid
+blocks; use Copy or Extract instead. Copying to the system file clipboard is
+platform-dependent.
+
 ## Jobs and keyboard access
 
 Progress, pause, cancel, completion and errors remain visible without a browsing modal when the operation permits navigation. Mutation commands cannot start another job while one is running. Explorer one-shot operations retain their existing completion behavior.

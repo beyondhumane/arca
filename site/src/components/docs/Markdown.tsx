@@ -8,11 +8,6 @@ import { headingSlug } from './registry';
 const LANGS: Record<string, Lang> = { sh: 'bash', bash: 'bash', text: 'text', yaml: 'yaml', toml: 'toml', rust: 'rust' };
 const CALLOUTS = { NOTE: 'note', TIP: 'tip', WARNING: 'warning' } as const;
 
-function href(url: string) {
-  const doc = /^([a-z0-9-]+)\.md(#[a-z0-9-]+)?$/.exec(url);
-  return doc ? `../${doc[1]}/${doc[2] ?? ''}` : url;
-}
-
 function inline(tokens: Token[]): ReactNode[] {
   const out: ReactNode[] = [];
   for (let i = 0; i < tokens.length; i++) {
@@ -29,7 +24,7 @@ function inline(tokens: Token[]): ReactNode[] {
         break;
       case 'link':
         out.push(
-          <A key={i} href={href((t as Tokens.Link).href)}>
+          <A key={i} href={(t as Tokens.Link).href}>
             {inline((t as Tokens.Link).tokens)}
           </A>,
         );

@@ -5,6 +5,8 @@ mod panes;
 mod preview;
 #[cfg(all(test, feature = "rar"))]
 mod rar_tests;
+#[cfg(test)]
+mod sevenz_tests;
 mod state;
 pub(crate) use actions::*;
 pub(crate) use panes::{BrowserState, DirectoryPane};
@@ -41,7 +43,118 @@ fn rename_destination(path: &str, name: &str) -> String {
     }
 }
 
+fn worker_notify<'a>(
+    tx: &'a Sender<Message>,
+    stop: &'a std::sync::atomic::AtomicBool,
+    hold: &'a std::sync::atomic::AtomicBool,
+) -> impl Fn(usize, usize, &str) -> bool + Sync + 'a {
+    move |i, n, name| {
+        use std::sync::atomic::Ordering;
+        if tx.send(Message::Progress(i, n, name.to_string())).is_err() {
+            return false;
+        }
+        while hold.load(Ordering::Relaxed) && !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
+        !stop.load(Ordering::Relaxed)
+    }
+}
+
+fn password_error(error: &arca_core::Error) -> bool {
+    arca_7z::password_required(error)
+        || matches!(error, arca_core::Error::BadPassword)
+        || matches!(error, arca_core::Error::Format(text) if text.contains("wrong password"))
+}
+
 impl AppController {
+    fn read_access(&mut self, action: AppAction) -> bool {
+        if self.state.busy || self.state.waiting_on_password.is_some() {
+            return false;
+        }
+        if self.state.archive_password.is_none() && self.state.entries.iter().any(|e| e.encrypted) {
+            self.state.password_input.clear();
+            self.state.password_wrong = false;
+            self.state.waiting_on_password = Some(Pending::Read(Box::new(action)));
+            return false;
+        }
+        true
+    }
+
+    fn authenticate(&mut self, pending: Pending, password: Option<String>) {
+        let paths = match &pending {
+            Pending::Extract(job) => match &**job {
+                Job::Extract { archives, .. } => archives.clone(),
+                Job::Test { archive, .. } => vec![archive.clone()],
+                _ => return,
+            },
+            Pending::Read(_) => self.state.archive.iter().cloned().collect(),
+            _ => return,
+        };
+        self.state.waiting_on_password = None;
+        self.state.password_input.clear();
+        self.state.password_wrong = false;
+        self.state.close_when_done = false;
+        self.show_job(
+            self.s().opening,
+            paths.first().map(|p| archive_stem(p)).unwrap_or_default(),
+            self.state.archive.is_some(),
+        );
+        let (stop, hold) = self.fresh_flags();
+        self.spawn(0, move |tx| {
+            let notify = worker_notify(tx, &stop, &hold);
+            let result = paths.iter().try_for_each(|path| {
+                if !notify(0, 0, "") {
+                    return Err(arca_core::Error::Cancelled);
+                }
+                check_access(path, password.as_deref(), &notify)
+            });
+            let _ = tx.send(Message::AccessChecked(pending, password, result));
+        });
+    }
+
+    fn resume_access(&mut self, pending: Pending, password: Option<String>) {
+        match pending {
+            Pending::Extract(mut job) => {
+                match &mut *job {
+                    Job::Extract { password: pw, .. } | Job::Test { password: pw, .. } => {
+                        *pw = password
+                    }
+                    _ => return,
+                }
+                self.run_authorized_job(*job);
+            }
+            Pending::Read(action) => {
+                self.state.archive_password = password;
+                self.dispatch(*action);
+            }
+            _ => {}
+        }
+    }
+
+    fn access_failed(&mut self, pending: Pending, password: Option<&str>, error: arca_core::Error) {
+        self.state.busy = false;
+        self.state.overlay = false;
+        self.state.reread_after = None;
+        if password_error(&error) {
+            self.state.password_wrong = password.is_some();
+            self.state.archive_password = None;
+            self.state.waiting_on_password = Some(pending);
+            self.state.notice = if matches!(error, arca_core::Error::PasswordOrCorrupt) {
+                self.s().password_or_corrupt.to_string()
+            } else {
+                error.to_string()
+            };
+        } else {
+            self.state.waiting_on_password = None;
+            self.state.error = !matches!(error, arca_core::Error::Cancelled);
+            self.state.notice = if self.state.error {
+                error.to_string()
+            } else {
+                self.s().stopped.to_string()
+            };
+        }
+    }
+
     pub(crate) fn dispatch(&mut self, action: AppAction) {
         match action {
             AppAction::Open(path) => self.open(path),
@@ -59,6 +172,7 @@ impl AppController {
             AppAction::Copy { cut } => self.copy_to_clipboard(cut),
             AppAction::Paste => self.paste_from_clipboard(),
             AppAction::OpenFile(index) => self.open_file(index),
+            AppAction::Preview(index) => self.view_entry(index),
             AppAction::Navigate(path) => self.go_to(path),
             AppAction::Back => self.go_back(),
             AppAction::Forward => self.go_forward(),
@@ -105,7 +219,12 @@ impl AppController {
         let Some(archive) = self.state.archive.clone() else {
             return;
         };
-        if self.state.format != Format::Zip || self.state.busy {
+        if detect(&archive) != Some(Format::Zip) {
+            self.state.notice = self.s().only_zip_can_change.to_string();
+            self.state.error = true;
+            return;
+        }
+        if self.state.busy {
             return;
         }
         let job = Job::Password {
@@ -137,7 +256,10 @@ impl AppController {
     }
 
     pub(crate) fn start_extract_to(&mut self, only_checked: bool, mut dest: PathBuf) {
-        if self.state.busy {
+        if !self.read_access(AppAction::ExtractTo {
+            only_checked,
+            dest: dest.clone(),
+        }) {
             return;
         }
         let Some(archive) = self.state.archive.clone() else {
@@ -157,13 +279,9 @@ impl AppController {
         self.state.close_when_done = false;
         let (reply_tx, reply_rx) = channel::<Answer>();
         self.state.replies = Some(reply_tx);
-        let stop = self.state.stop.clone();
-        stop.store(false, std::sync::atomic::Ordering::Relaxed);
+        let (stop, hold) = self.fresh_flags();
         self.spawn(total, move |tx| {
-            let notify = |i: usize, n: usize, name: &str| {
-                let _ = tx.send(Message::Progress(i, n, name.to_string()));
-                !stop.load(std::sync::atomic::Ordering::Relaxed)
-            };
+            let notify = worker_notify(tx, &stop, &hold);
             let ask = conflict_asker(tx, &reply_rx);
             let result = extract(&archive, &dest, &wanted, &notify, &ask, pw.as_deref());
             let _ = tx.send(match result {
@@ -195,41 +313,13 @@ impl AppController {
         };
         self.state.password_input.clear();
         match pending {
-            Pending::Extract(job) => {
-                if let Job::Extract { archives, dest, .. } = *job {
-                    self.run_job(Job::Extract {
-                        archives,
-                        dest,
-                        password: Some(password),
-                    });
-                }
-            }
-            Pending::ListArchive(path) => {
-                self.state.password_wrong = false;
-                self.state.archive_password = Some(password);
-                self.load_listing(path);
-            }
-            Pending::TestArchive(job) => {
-                if let Job::Test { archive, only, .. } = *job {
-                    self.run_job(Job::Test {
-                        archive,
-                        only,
-                        password: Some(password),
-                    });
-                }
+            pending @ (Pending::Extract(_) | Pending::Read(_)) => {
+                self.authenticate(pending, Some(password))
             }
             Pending::OpenArchive => {
-                let ok = match &self.state.archive {
-                    Some(path) => password_opens(path, &self.state.entries, &password),
-                    None => true,
-                };
-                if !ok {
-                    self.state.password_wrong = true;
-                    self.state.waiting_on_password = Some(Pending::OpenArchive);
-                    return;
+                if let Some(path) = self.state.archive.clone() {
+                    self.load_listing(path, Some(password));
                 }
-                self.state.password_wrong = false;
-                self.state.archive_password = Some(password);
             }
             Pending::CurrentPassword(job) => {
                 if let Job::Password { archive, new, .. } = *job {
@@ -285,6 +375,56 @@ impl AppController {
         }
         self.state.view = View::Add;
     }
+
+    pub(crate) fn set_create_format(&mut self, format: Format) {
+        if !self.state.output_name.is_empty() {
+            let path = Path::new(&self.state.output_name);
+            let stem = archive_stem(path);
+            self.state.output_name = path
+                .with_file_name(format!("{stem}.{}", format.extension()))
+                .to_string_lossy()
+                .to_string();
+        }
+        self.state.format = format;
+        if format != Format::SevenZ {
+            self.state.hide_names = false;
+        }
+    }
+
+    pub(crate) fn compression_job(&self) -> Option<Job> {
+        let first = self.state.pending_inputs.first()?;
+        let format = self.state.format;
+        let typed = self.state.output_name.trim();
+        let name = if typed.is_empty() {
+            format!("archive.{}", format.extension())
+        } else if typed
+            .to_ascii_lowercase()
+            .ends_with(&format!(".{}", format.extension()))
+        {
+            typed.to_string()
+        } else {
+            Path::new(typed)
+                .with_file_name(format!(
+                    "{}.{}",
+                    archive_stem(Path::new(typed)),
+                    format.extension()
+                ))
+                .to_string_lossy()
+                .to_string()
+        };
+        let password = (matches!(format, Format::Zip | Format::SevenZ)
+            && !self.state.add_password.is_empty())
+        .then(|| self.state.add_password.clone());
+        Some(Job::Compress {
+            out: first.parent().unwrap_or(Path::new("")).join(name),
+            inputs: self.state.pending_inputs.clone(),
+            format,
+            codec: self.state.codec,
+            level: self.state.level,
+            password,
+            hide_names: format == Format::SevenZ && self.state.hide_names,
+        })
+    }
     pub(crate) fn select_all_visible(&mut self) {
         self.cancel_preview();
         for row in self.visible_rows() {
@@ -302,6 +442,11 @@ impl AppController {
         self.snapshot_active_pane();
     }
     pub(crate) fn request_delete(&mut self) {
+        if self.state.format != Format::Zip {
+            self.state.notice = self.s().only_zip_can_change.to_string();
+            self.state.error = true;
+            return;
+        }
         let names = self.selected_names();
         if !names.is_empty() {
             self.state.confirm_delete = Some(names);
@@ -348,6 +493,7 @@ impl AppController {
                 notice: String::new(),
                 error: false,
                 busy: false,
+                listing: false,
                 done_count: 0,
                 total_count: 0,
                 current_file: String::new(),
@@ -370,6 +516,7 @@ impl AppController {
                 password_wrong: false,
                 password_input: String::new(),
                 add_password: String::new(),
+                hide_names: false,
                 archive_password: None,
                 reread_after: None,
                 reread_dir: None,
@@ -535,12 +682,12 @@ impl AppController {
     // of the fifteen hundred files inside it, and the Explorer pastes a folder
     // rather than a heap of loose files.
     pub(crate) fn cancel_password(&mut self) {
-        let was_job = matches!(
-            self.state.waiting_on_password,
-            Some(Pending::Extract(_) | Pending::TestArchive(_))
-        );
+        let was_job = matches!(self.state.waiting_on_password, Some(Pending::Extract(_)));
         self.state.waiting_on_password = None;
         self.state.password_input.clear();
+        self.state.password_wrong = false;
+        self.state.reread_after = None;
+        self.state.reread_dir = None;
         // Only a job left the window on the running view with nothing running.
         if was_job {
             self.state.view = View::Browse;
@@ -611,6 +758,12 @@ impl AppController {
         std::sync::Arc<std::sync::atomic::AtomicBool>,
         std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) {
+        self.state
+            .stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.state
+            .hold
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.state.stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         self.state.hold = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         (self.state.stop.clone(), self.state.hold.clone())
@@ -892,6 +1045,10 @@ impl AppController {
         let Some(archive) = self.state.archive.clone() else {
             return;
         };
+        if detect(&archive) == Some(Format::SevenZ) {
+            self.state.notice = self.s().sevenz_copy.to_string();
+            return;
+        }
         let picked = self.dragged_files();
         if picked.is_empty() {
             return;
@@ -909,7 +1066,7 @@ impl AppController {
         let deliver = Box::new(move |i: usize| {
             entries
                 .get(i)
-                .and_then(|e| extract_one(&archive, e, password.as_deref()).ok())
+                .and_then(|e| extract_one(&archive, e, password.as_deref(), &|_, _, _| true).ok())
         });
         // Copy only. Moving would mean taking the entries out of the archive,
         // and the one gesture that does that already asks first.
@@ -983,7 +1140,7 @@ impl AppController {
     // The exception is dropping an archive onto an archive, which is honestly
     // both, so it asks instead of picking one and being wrong half the time.
     pub(crate) fn copy_to_clipboard(&mut self, cut: bool) {
-        if self.state.busy {
+        if !self.read_access(AppAction::Copy { cut }) {
             return;
         }
         let s: &'static Strings = self.s();
@@ -1000,9 +1157,15 @@ impl AppController {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let dir = std::env::temp_dir()
-            .join("Arca")
-            .join(format!("clip-{stamp:x}"));
+        let temp = match fs::canonicalize(std::env::temp_dir()) {
+            Ok(path) => path,
+            Err(error) => {
+                self.state.notice = error.to_string();
+                self.state.error = true;
+                return;
+            }
+        };
+        let dir = temp.join("Arca").join(format!("clip-{stamp:x}"));
         let previous = self.state.clip_dir.replace(dir.clone());
         let names = self.selected_names();
         // Before the old folder is thrown away further down: an earlier cut
@@ -1035,11 +1198,9 @@ impl AppController {
         let total = wanted.iter().filter(|b| **b).count();
         let pw = self.state.archive_password.clone();
         self.state.close_when_done = false;
+        let (stop, hold) = self.fresh_flags();
         self.spawn(total, move |tx| {
-            let notify = |i: usize, n: usize, name: &str| {
-                let _ = tx.send(Message::Progress(i, n, name.to_string()));
-                true
-            };
+            let notify = worker_notify(tx, &stop, &hold);
             // A folder nobody has seen yet has nothing in it to overwrite, so
             // there is no question to put on screen.
             let ask = |_: &Path| Answer::Replace;
@@ -1085,7 +1246,7 @@ impl AppController {
     // this can be wrong leaves the archive untouched, which is the side to be
     // wrong on when there is no undo.
     pub(crate) fn open_file(&mut self, index: usize) {
-        if self.state.busy {
+        if !self.read_access(AppAction::OpenFile(index)) {
             return;
         }
         let Some(archive) = self.state.archive.clone() else {
@@ -1102,10 +1263,17 @@ impl AppController {
         self.state.close_when_done = false;
         self.state.title = s.opening.to_string();
         self.state.view = View::Running;
+        let (stop, hold) = self.fresh_flags();
         self.spawn(1, move |tx| {
             let _ = tx.send(Message::Progress(0, 1, entry.name.clone()));
-            let outcome = extract_one(&archive, &entry, password.as_deref())
-                .and_then(|path| launch_with_system(&path).map(|()| path));
+            let notify = worker_notify(tx, &stop, &hold);
+            let outcome =
+                extract_one(&archive, &entry, password.as_deref(), &notify).and_then(|path| {
+                    if !notify(1, 1, &entry.name) {
+                        return Err(arca_core::Error::Cancelled);
+                    }
+                    launch_with_system(&path).map(|()| path)
+                });
             let _ = tx.send(match outcome {
                 Ok(path) => Message::Done(fill(
                     s.opened_with_system,
@@ -1132,6 +1300,7 @@ impl AppController {
         }
         let mut close = false;
         let mut finished_ok = false;
+        let mut resume = None;
         // Set when the installer is down and checked, and answered as "close
         // the window": running it is Inno replacing the program that is open.
         let mut installing = false;
@@ -1143,17 +1312,27 @@ impl AppController {
             .unwrap_or_default();
         for m in messages {
             match m {
-                Message::Listing(path, v) => {
+                Message::Listing(path, result, password) => {
+                    self.state.busy = false;
+                    self.state.listing = false;
+                    self.state.overlay = false;
+                    self.state.view = View::Browse;
+                    close = true;
+                    let v = match result {
+                        Ok(v) => v,
+                        Err(error) => {
+                            self.access_failed(Pending::OpenArchive, password.as_deref(), error);
+                            continue;
+                        }
+                    };
+                    self.state.archive_password = password;
+                    self.state.waiting_on_password = None;
+                    self.state.password_wrong = false;
                     if v.iter().any(|e| e.encrypted) && self.state.archive_password.is_none() {
                         self.state.password_input.clear();
                         self.state.password_wrong = false;
                         self.state.archive_password = None;
-                        self.state.waiting_on_password =
-                            Some(if detect(&path) == Some(Format::Rar) {
-                                Pending::ListArchive(path.clone())
-                            } else {
-                                Pending::OpenArchive
-                            });
+                        self.state.waiting_on_password = Some(Pending::OpenArchive);
                     }
                     // Nothing picked to begin with. It used to be
                     // everything, which was invisible while the ticks were
@@ -1196,30 +1375,19 @@ impl AppController {
                     self.state.busy = false;
                     close = true;
                 }
-                Message::JobPasswordNeeded(job) => {
+                Message::AccessChecked(pending, password, result) => {
                     self.state.busy = false;
-                    self.state.password_input.clear();
-                    self.state.password_wrong = false;
-                    self.state.waiting_on_password = Some(if matches!(*job, Job::Test { .. }) {
-                        Pending::TestArchive(job)
-                    } else {
-                        Pending::Extract(job)
-                    });
-                }
-                Message::PasswordNeeded(path, wrong) => {
-                    self.state.archive = Some(path.clone());
-                    self.state.format = Format::Rar;
-                    self.state.entries.clear();
-                    self.state.checked.clear();
-                    self.state.folders = tree::Folder::default();
-                    self.state.current_dir.clear();
-                    self.reset_browser_panes();
-                    self.state.archive_password = None;
-                    self.state.password_input.clear();
-                    self.state.password_wrong = wrong;
-                    self.state.waiting_on_password = Some(Pending::ListArchive(path));
-                    self.state.busy = false;
+                    self.state.overlay = false;
                     close = true;
+                    match result {
+                        Ok(()) => resume = Some((pending, password)),
+                        Err(error) => self.access_failed(pending, password.as_deref(), error),
+                    }
+                }
+                Message::Created(path, password) => {
+                    if !self.state.close_when_done {
+                        self.state.reread_after = Some((path, password, String::new()));
+                    }
                 }
                 Message::Conflict(path) => {
                     self.state.conflict = Some(path);
@@ -1236,6 +1404,7 @@ impl AppController {
                     finished_ok = true;
                 }
                 Message::Failed(text) => {
+                    self.state.reread_after = None;
                     self.state.reread_dir = None;
                     // Stopping is not failing. Nothing is wrong with the
                     // archive and there is nothing to report in red: the
@@ -1290,11 +1459,15 @@ impl AppController {
         if finished_ok {
             if let Some((path, pw, dir)) = self.state.reread_after.take() {
                 let notice = std::mem::take(&mut self.state.notice);
-                self.state.reread_dir = Some(dir);
                 self.open_with_password(path, pw);
+                self.state.reread_dir = Some(dir);
+
                 self.state.notice = notice;
                 self.state.view = View::Browse;
             }
+        }
+        if let Some((pending, password)) = resume {
+            self.resume_access(pending, password);
         }
         installing
             || (finished_ok
@@ -1547,6 +1720,9 @@ impl AppController {
         {
             self.set_pane_cursor(self.state.browser.active, Some(cursor));
         }
+        if !self.read_access(AppAction::Preview(index)) {
+            return;
+        }
         self.request_preview(index);
     }
 
@@ -1555,11 +1731,47 @@ impl AppController {
         self.open_with_password(path, None);
     }
 
-    fn open_with_password(&mut self, path: PathBuf, password: Option<String>) {
-        if self.state.busy {
+    // A listing still on its way can be replaced by opening something else;
+    // a mutation in flight cannot, or the archive would be swapped under it.
+    pub(crate) fn open_with_password(&mut self, path: PathBuf, password: Option<String>) {
+        if self.state.busy && !self.state.listing {
             return;
         }
-        self.state.archive_password = password;
+        self.state.channel = None;
+        self.state.replies = None;
+        self.state.waiting_on_password = None;
+        self.state.password_input.clear();
+        self.state.password_wrong = false;
+        self.state.reread_after = None;
+        self.state.reread_dir = None;
+        self.state.entries.clear();
+        self.state.checked.clear();
+        self.state.folders = tree::Folder::default();
+        self.state.current_dir.clear();
+        self.state.history = vec![String::new()];
+        self.state.here = 0;
+        self.state.cursor = None;
+        self.state.filter.clear();
+        self.state.viewing = None;
+        self.state.confirm_delete = None;
+        self.state.confirm_drop = None;
+        self.state.renaming = None;
+        self.state.asking_folder = false;
+        self.state.conflict = None;
+        self.state.undo = None;
+        self.state.overlay = false;
+        self.state.close_when_done = false;
+        self.state.view = View::Browse;
+        self.state.archive = Some(path.clone());
+        if let Some(format) = detect(&path) {
+            self.state.format = format;
+        }
+        self.state.window_title = format!(
+            "{} - Arca",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        );
+        self.reset_browser_panes();
+        self.state.archive_password = None;
         // Whatever was cut belonged to the listing being replaced, and so did
         // whatever the status bar was saying: the summary of the archive being
         // closed sat there over the one that had just opened.
@@ -1569,7 +1781,7 @@ impl AppController {
         self.state.notice.clear();
         self.state.error = false;
         self.remember(&path);
-        self.load_listing(path);
+        self.load_listing(path, password);
     }
 
     fn refresh(&mut self) {
@@ -1577,26 +1789,29 @@ impl AppController {
             return;
         }
         if let Some(path) = self.state.archive.clone() {
-            self.state.reread_dir = Some(self.state.current_dir.clone());
-            let password = self.state.archive_password.clone();
-            self.open_with_password(path, password);
+            let dir = self.state.current_dir.clone();
+            self.open_with_password(path, self.state.archive_password.clone());
+            self.state.reread_dir = Some(dir);
         }
     }
 
-    fn load_listing(&mut self, path: PathBuf) {
+    fn load_listing(&mut self, path: PathBuf, password: Option<String>) {
         self.cancel_preview();
-        let password = self.state.archive_password.clone();
-        let stop = self.state.stop.clone();
-        stop.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.state.listing = true;
+        self.show_job(self.s().opening, archive_stem(&path), true);
+        let (stop, hold) = self.fresh_flags();
         self.spawn(0, move |tx| {
-            let notify = |_, _, _: &str| !stop.load(std::sync::atomic::Ordering::Relaxed);
-            let m = match list_entries(&path, password.as_deref(), &notify) {
-                Ok(v) => Message::Listing(path, v),
-                Err(arca_core::Error::PasswordRequired) => Message::PasswordNeeded(path, false),
-                Err(arca_core::Error::BadPassword) => Message::PasswordNeeded(path, true),
-                Err(e) => Message::Failed(e.to_string()),
-            };
-            let _ = tx.send(m);
+            let notify = worker_notify(tx, &stop, &hold);
+            let result = (|| {
+                if password.is_some() {
+                    check_access(&path, password.as_deref(), &notify)?;
+                }
+                if !notify(0, 0, "") {
+                    return Err(arca_core::Error::Cancelled);
+                }
+                list_entries(&path, password.as_deref(), &notify)
+            })();
+            let _ = tx.send(Message::Listing(path, result, password));
         });
     }
 
@@ -1627,6 +1842,28 @@ impl AppController {
         {
             if password.is_none() && self.state.archive.as_ref() == Some(archive) {
                 *password = self.state.archive_password.clone();
+            }
+        }
+        if let Job::Extract { password, .. } | Job::Test { password, .. } = &job {
+            let password = password.clone();
+            self.authenticate(Pending::Extract(Box::new(job)), password);
+            return;
+        }
+        self.run_authorized_job(job);
+    }
+
+    fn run_authorized_job(&mut self, job: Job) {
+        if let Job::Password { archive, .. }
+        | Job::Delete { archive, .. }
+        | Job::Rename { archive, .. }
+        | Job::Add { archive, .. }
+        | Job::Move { archive, .. }
+        | Job::NewFolder { archive, .. } = &job
+        {
+            if detect(archive) != Some(Format::Zip) {
+                self.state.notice = self.s().only_zip_can_change.to_string();
+                self.state.error = true;
+                return;
             }
         }
         let s: &'static Strings = self.s();
@@ -1733,25 +1970,32 @@ impl AppController {
                 });
                 return;
             }
-            let needs_password = match &job {
-                Job::Test {
-                    archive,
-                    password: None,
-                    ..
-                } => is_encrypted(archive, &notify),
-                Job::Extract {
-                    archives,
-                    password: None,
-                    ..
-                } => archives.iter().any(|a| is_encrypted(a, &notify)),
-                _ => false,
-            };
-            if needs_password {
-                let _ = tx.send(Message::JobPasswordNeeded(Box::new(job)));
-                return;
-            }
             let ask = conflict_asker(tx, &reply_rx);
+            let mut job = job;
+            let created = if let Job::Compress {
+                out,
+                password,
+                format: Format::SevenZ,
+                ..
+            } = &mut job
+            {
+                match creation_output(out, &ask) {
+                    Ok(path) => *out = path,
+                    Err(error) => {
+                        let _ = tx.send(Message::Failed(error.to_string()));
+                        return;
+                    }
+                }
+                Some((out.clone(), password.clone()))
+            } else {
+                None
+            };
             let outcome = run_job_blocking(job, s, &notify, &ask);
+            if outcome.is_ok() {
+                if let Some((path, password)) = created {
+                    let _ = tx.send(Message::Created(path, password));
+                }
+            }
             let _ = tx.send(match outcome {
                 Ok(text) => Message::Done(text),
                 Err(text) => Message::Failed(text),
@@ -2072,6 +2316,7 @@ mod compress_tests {
             codec: Codec::Deflate,
             level: Level::Normal,
             password,
+            hide_names: false,
         }
     }
 

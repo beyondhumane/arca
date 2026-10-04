@@ -107,7 +107,7 @@ fn archive_stem(p: &std::path::Path) -> String {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     let lower = name.to_ascii_lowercase();
-    for ext in [".tar.gz", ".tgz", ".zip", ".tar"] {
+    for ext in [".tar.gz", ".tgz", ".zip", ".tar", ".7z"] {
         if lower.ends_with(ext) {
             return name[..name.len() - ext.len()].to_string();
         }
@@ -120,7 +120,7 @@ fn archive_stem(p: &std::path::Path) -> String {
 // with an archive is hand its path to arca.exe.
 fn is_archive(p: &std::path::Path) -> bool {
     let n = p.to_string_lossy().to_ascii_lowercase();
-    [".zip", ".tar", ".tar.gz", ".tgz"]
+    [".zip", ".tar", ".tar.gz", ".tgz", ".7z"]
         .iter()
         .any(|e| n.ends_with(e))
 }
@@ -139,8 +139,12 @@ fn paths_from(items: Option<&IShellItemArray>) -> Vec<PathBuf> {
             return v;
         };
         for i in 0..n {
-            let Ok(item) = items.GetItemAt(i) else { continue };
-            let Ok(name) = item.GetDisplayName(SIGDN_FILESYSPATH) else { continue };
+            let Ok(item) = items.GetItemAt(i) else {
+                continue;
+            };
+            let Ok(name) = item.GetDisplayName(SIGDN_FILESYSPATH) else {
+                continue;
+            };
             if let Ok(s) = name.to_string() {
                 v.push(PathBuf::from(s));
             }
@@ -354,7 +358,10 @@ struct Enumerator {
 
 impl Enumerator {
     fn new(items: Vec<IExplorerCommand>) -> Self {
-        Enumerator { items, pos: std::cell::Cell::new(0) }
+        Enumerator {
+            items,
+            pos: std::cell::Cell::new(0),
+        }
     }
 }
 
@@ -385,7 +392,8 @@ impl IEnumExplorerCommand_Impl for Enumerator_Impl {
     }
 
     fn Skip(&self, count: u32) -> Result<()> {
-        self.pos.set((self.pos.get() + count as usize).min(self.items.len()));
+        self.pos
+            .set((self.pos.get() + count as usize).min(self.items.len()));
         Ok(())
     }
 
@@ -606,7 +614,6 @@ pub extern "system" fn DllGetClassObject(
     }
 }
 
-
 // Explorer keeps this DLL loaded for the life of the process on purpose.
 // Saying it can be unloaded invites Explorer to drop it while a menu is still
 // on screen, and the crash that follows is Explorer's, not ours.
@@ -632,6 +639,8 @@ mod tests {
     fn the_folder_in_the_label_is_the_one_that_gets_created() {
         for (file, folder) in [
             (r"C:\x\game.zip", "game"),
+            (r"C:\x\game.7z", "game"),
+            (r"C:\x\UPPER.7Z", "UPPER"),
             (r"C:\x\backup.tar.gz", "backup"),
             (r"C:\x\backup.tgz", "backup"),
             (r"C:\x\plain.tar", "plain"),
@@ -651,8 +660,14 @@ mod tests {
     #[test]
     fn the_file_in_the_quick_label_is_the_one_that_gets_made() {
         // Nothing at these paths, so they count as files: extension dropped.
-        assert_eq!(quick_output_name(&[PathBuf::from(r"C:\x\notes.txt")]), "notes.zip");
-        assert_eq!(quick_output_name(&[PathBuf::from(r"C:\x\a.b.c.txt")]), "a.b.c.zip");
+        assert_eq!(
+            quick_output_name(&[PathBuf::from(r"C:\x\notes.txt")]),
+            "notes.zip"
+        );
+        assert_eq!(
+            quick_output_name(&[PathBuf::from(r"C:\x\a.b.c.txt")]),
+            "a.b.c.zip"
+        );
         assert_eq!(
             text(Action::CompressZip, &[r"C:\x\notes.txt"]),
             "Add to \"notes.zip\""
@@ -671,14 +686,20 @@ mod tests {
 
     #[test]
     fn several_things_are_named_after_the_folder_holding_them() {
-        let two = [PathBuf::from(r"C:\projects\one.txt"), PathBuf::from(r"C:\projects\two.txt")];
+        let two = [
+            PathBuf::from(r"C:\projects\one.txt"),
+            PathBuf::from(r"C:\projects\two.txt"),
+        ];
         assert_eq!(quick_output_name(&two), "projects.zip");
     }
 
     #[test]
     fn several_archives_get_the_generic_wording() {
         let two = [r"C:\x\one.zip", r"C:\x\two.zip"];
-        assert_eq!(text(Action::ExtractToFolder, &two), "Extract to a new folder");
+        assert_eq!(
+            text(Action::ExtractToFolder, &two),
+            "Extract to a new folder"
+        );
     }
 
     // A folder alongside the archive must not change the label: only archives
@@ -686,7 +707,10 @@ mod tests {
     #[test]
     fn a_folder_in_the_selection_is_not_counted() {
         let mixed = [r"C:\x\game.zip", r"C:\x\some folder"];
-        assert_eq!(text(Action::ExtractToFolder, &mixed), "Extract to \"game\\\"");
+        assert_eq!(
+            text(Action::ExtractToFolder, &mixed),
+            "Extract to \"game\\\""
+        );
     }
 
     #[test]
@@ -725,6 +749,22 @@ mod tests {
                 Action::CompressZip
             ]
         );
+    }
+
+    #[test]
+    fn sevenz_offers_read_actions_and_creates_new_archives() {
+        let archive = [PathBuf::from(r"C:\x\backup.7Z")];
+        assert_eq!(
+            applicable_actions(&archive),
+            vec![
+                Action::Open,
+                Action::ExtractHere,
+                Action::ExtractToFolder,
+                Action::AddToArchive,
+                Action::CompressZip
+            ]
+        );
+        assert_eq!(quick_output_name(&archive), "backup.zip");
     }
 
     #[test]

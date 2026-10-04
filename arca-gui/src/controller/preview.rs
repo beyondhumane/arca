@@ -214,7 +214,9 @@ impl AppController {
 fn preview_error(error: Error) -> PreviewStatus {
     match error {
         Error::PasswordRequired => PreviewStatus::PasswordRequired { wrong: false },
-        Error::BadPassword => PreviewStatus::PasswordRequired { wrong: true },
+        Error::BadPassword | Error::PasswordOrCorrupt => {
+            PreviewStatus::PasswordRequired { wrong: true }
+        }
         // The ZIP engine predates Error::BadPassword and still returns Format.
         Error::Format(text) if text.ends_with("': wrong password") => {
             PreviewStatus::PasswordRequired { wrong: true }
@@ -421,6 +423,21 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
                 archive.skip_data(&entry)?;
                 index += 1;
             }
+        }
+        Format::SevenZ => {
+            let mut archive = arca_7z::SevenZArchive::open(
+                fs::File::open(&request.archive)?,
+                request.password.as_deref(),
+            )?;
+            let entry = archive
+                .entries()
+                .get(request.index)
+                .ok_or_else(|| Error::Format("entry missing".into()))?;
+            verify_entry(entry, &request.entry)?;
+            let bytes = archive.read_entry(request.index, VIEW_LIMIT, &mut |_| {
+                request.clock.load(Ordering::Relaxed) == request.generation
+            })?;
+            out.write_all(&bytes).map_err(Error::from)
         }
         Format::Rar => {
             let archive = arca_rar::RarArchive::open_with_progress(
