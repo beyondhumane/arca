@@ -7,11 +7,19 @@ keywords: gui window arca-gui desktop app gpui accessibility nvda narrator
 
 # The desktop workspace
 
-`arca-gui` browses archives in a native GPUI window. The title bar keeps the Arca branding and window controls; one navigation band contains history, breadcrumbs, view selection, filtering, extraction, testing and the **More** menu.
+`arca-gui` browses the disk and archives in a native GPUI window. The title bar keeps the Arca branding and window controls; one navigation band contains history, breadcrumbs, view selection, filtering, extraction, testing and the **More** menu.
+
+## Browsing the disk
+
+Started without an archive, the window shows the folder it was last in (or your home folder) as a normal file explorer. Folders open in the same Columns or Details views used for archives; each folder is read when you enter it, not ahead of time. The sidebar lists **Places** (home and the standard user folders), **Pinned** folders and **Devices** (the mounted volumes, or the drives on Windows). Click one to jump there; right-click a folder row and choose **Pin to sidebar** to keep it at hand, and right-click a pinned entry to unpin it. **More > View > Show hidden files** toggles dot files and hidden entries.
+
+Double-clicking an archive in a supported format (`.zip`, `.7z`, `.tar`, `.iso` and the ZIP containers) opens it in place: the breadcrumbs, tree and panes switch to its contents and the usual archive actions become available. **Up** or **Backspace** at the archive root, or the **Close archive** button, returns to the folder it came from with the cursor on the archive. Other files open with the system application; the preview panel shows local files the same way it shows archive entries.
+
+On the disk, **Compress** uses the ticked rows as its input, **Copy path** puts absolute paths on the clipboard, and the archive-only actions (extract, test, rename, delete, paste, new folder) stay off. The last folder visited, the pinned folders and the hidden-files preference are remembered between sessions.
 
 ## Navigation and layout
 
-**Open** and **Create** are in the sidebar, alongside recent archives and the current archive's folder tree. The sidebar button cycles between expanded, icon rail and hidden. Drag the divider to resize the expanded sidebar. **More > View** also controls its visibility.
+**Open** and **Create** are in the sidebar, alongside recent archives and, when an archive is open, its folder tree. The sidebar button cycles between expanded, icon rail and hidden. Drag the divider to resize the expanded sidebar. **More > View** also controls its visibility.
 
 The default **Columns** view keeps a directory in each vertical pane. Click a folder to open its child pane; ancestors remain to the left. Choosing another folder replaces only the descendants. Each pane retains its own cursor, selection, scrolling, filter and sort order. Click or focus a pane before working on its contents. Drag pane dividers to resize them, and scroll horizontally to reach ancestors. The active pane is revealed when navigation changes it.
 

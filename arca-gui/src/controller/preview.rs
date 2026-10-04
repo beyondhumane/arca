@@ -66,6 +66,7 @@ struct PreviewContext {
 
 struct PreviewRequest {
     archive: PathBuf,
+    on_disk: bool,
     index: usize,
     entry: Entry,
     password: Option<String>,
@@ -92,10 +93,15 @@ impl AppController {
     pub(crate) fn request_preview_with_password(&mut self, index: usize, password: Option<String>) {
         self.cancel_preview();
         self.state.preview.status = PreviewStatus::Empty;
-        let (Some(archive), Some(entry)) = (
-            self.state.archive.clone(),
-            self.state.entries.get(index).cloned(),
-        ) else {
+        let Some(entry) = self.state.entries.get(index).cloned() else {
+            return;
+        };
+        let on_disk = self.on_disk();
+        let archive = if on_disk {
+            super::disk::disk_path(&entry.name)
+        } else if let Some(archive) = self.state.archive.clone() {
+            archive
+        } else {
             return;
         };
         if entry.is_dir {
@@ -114,6 +120,7 @@ impl AppController {
         }
         let request = PreviewRequest {
             archive,
+            on_disk,
             index,
             entry,
             password,
@@ -388,13 +395,22 @@ fn verify_entry(actual: &Entry, expected: &Entry) -> arca_core::Result<()> {
 }
 
 fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
-    let format =
-        detect(&request.archive).ok_or_else(|| Error::Unsupported("unknown format".into()))?;
     let mut out = BoundedBytes {
         bytes: Vec::new(),
         request,
         exceeded: false,
     };
+    if request.on_disk {
+        let mut file = fs::File::open(&request.archive)?;
+        let result = std::io::copy(&mut file, &mut out).map(|_| ());
+        if out.exceeded {
+            return Err(Error::Limit("preview byte limit exceeded".into()));
+        }
+        result?;
+        return Ok(out.bytes);
+    }
+    let format =
+        detect(&request.archive).ok_or_else(|| Error::Unsupported("unknown format".into()))?;
     let result = match format.container() {
         Container::Zip => {
             let mut archive = arca_zip::ZipArchive::open(fs::File::open(&request.archive)?)?;
@@ -735,6 +751,7 @@ mod tests {
         settle(&mut c);
         assert!(matches!(c.state.preview.status, PreviewStatus::Error(_)));
         let request = PreviewRequest {
+            on_disk: false,
             archive: fixture.0.clone(),
             index: 0,
             entry: c.state.entries[0].clone(),

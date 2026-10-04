@@ -1,5 +1,19 @@
 use super::*;
 
+fn place_icon(kind: PlaceKind) -> Icon {
+    match kind {
+        PlaceKind::Home => Icon::empty().path("icons/house.svg"),
+        PlaceKind::Desktop => Icon::empty().path("icons/monitor.svg"),
+        PlaceKind::Documents => Icon::new(IconName::FileText),
+        PlaceKind::Downloads => Icon::empty().path("icons/download.svg"),
+        PlaceKind::Pictures => Icon::empty().path("icons/image.svg"),
+        PlaceKind::Music => Icon::empty().path("icons/music.svg"),
+        PlaceKind::Videos => Icon::empty().path("icons/film.svg"),
+        PlaceKind::Computer | PlaceKind::Drive => Icon::new(IconName::HardDrive),
+        PlaceKind::Pinned => Icon::empty().path("icons/pin.svg"),
+    }
+}
+
 impl GpuiShell {
     pub(super) fn workspace_sidebar(
         &mut self,
@@ -48,22 +62,36 @@ impl GpuiShell {
                 )
                 .when(!rail, |button| button.label(s.compress))
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.controller
-                        .dispatch(AppAction::PrepareCompress(Vec::new()));
+                    let inputs = this.controller.selected_disk_paths();
+                    this.controller.dispatch(AppAction::PrepareCompress(inputs));
                     cx.notify();
                 })),
             );
         sidebar = sidebar.child(actions);
         if !rail {
+            let has_archive = self.controller.state.archive.is_some();
+            sidebar = sidebar.child(self.places_panel(has_archive, cx));
+            if has_archive {
+                sidebar = sidebar.child(self.recent_panel(true, cx));
+                sidebar = sidebar.child(div().flex_1().min_h_0().child(self.sidebar(cx)));
+            }
+        }
+        sidebar
+    }
+
+    fn recent_panel(&mut self, standalone: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let s = self.controller.s();
+        let idle = self.background_idle();
+        {
             let mut recent = div()
                 .id("sidebar-recents")
-                .max_h(px(160.))
                 .flex_none()
-                .overflow_y_scrollbar()
-                .p_2()
+                .when(standalone, |recent| recent.max_h(px(160.)).p_2())
+                .when(!standalone, |recent| recent.p_1())
                 .text_xs()
                 .child(
                     div()
+                        .when(!standalone, |label| label.pt_1())
                         .mb_1()
                         .text_color(cx.theme().muted_foreground)
                         .child(s.recent_group),
@@ -94,11 +122,103 @@ impl GpuiShell {
                         })),
                 );
             }
-            sidebar = sidebar
-                .child(recent)
-                .child(div().flex_1().min_h_0().child(self.sidebar(cx)));
+            if standalone {
+                recent.overflow_y_scrollbar().into_any_element()
+            } else {
+                recent.into_any_element()
+            }
         }
-        sidebar
+    }
+
+    /// Where the disk can be entered from: the user's folders, what was pinned
+    /// by hand, and the volumes that are mounted. Each is a jump, and the one
+    /// being shown is marked so the list and the panel agree about where you
+    /// are.
+    pub(super) fn places_panel(
+        &mut self,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let s = self.controller.s();
+        let idle = self.background_idle();
+        let current = self
+            .controller
+            .on_disk()
+            .then(|| self.controller.state.current_dir.clone());
+        let mut panel = div()
+            .id("sidebar-places")
+            .when(compact, |panel| panel.flex_none().max_h(px(220.)))
+            .when(!compact, |panel| panel.flex_1().min_h_0())
+            .overflow_y_scrollbar()
+            .p_1()
+            .text_xs();
+        let groups: [(&'static str, &'static str, Vec<Place>); 3] = [
+            ("sidebar-place", s.places_group, self.controller.places()),
+            (
+                "sidebar-pinned",
+                s.pinned_group,
+                self.controller.pinned_places(),
+            ),
+            ("sidebar-device", s.devices_group, self.controller.devices()),
+        ];
+        for (group, label, places) in groups {
+            if places.is_empty() {
+                continue;
+            }
+            panel = panel.child(
+                div()
+                    .px_1()
+                    .pt_1()
+                    .mb_1()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(label),
+            );
+            for (index, place) in places.into_iter().enumerate() {
+                let selected = current.as_deref() == Some(disk_dir(&place.path).as_str());
+                let path = place.path.clone();
+                let unpin_path = place.path.clone();
+                let pinned = place.kind == PlaceKind::Pinned;
+                let owner = cx.weak_entity();
+                let button = Self::icon_button(
+                    cx,
+                    (group, index),
+                    place_icon(place.kind),
+                    place.path.display().to_string(),
+                    idle,
+                )
+                .label(place.label.clone())
+                .w_full()
+                .selected(selected)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.controller.dispatch(AppAction::Browse(path.clone()));
+                    this.route_changed(cx);
+                }));
+                let item = div()
+                    .id(gpui::SharedString::from(format!("{group}-item-{index}")))
+                    .w_full()
+                    .child(button);
+                if pinned {
+                    let unpin = s.unpin_word;
+                    panel = panel.child(item.context_menu(move |menu, _, _| {
+                        let owner = owner.clone();
+                        let unpin_path = unpin_path.clone();
+                        menu.item(PopupMenuItem::new(unpin).on_click(move |_, _, cx| {
+                            let _ = owner.update(cx, |this, cx| {
+                                this.controller
+                                    .dispatch(AppAction::TogglePinned(unpin_path.clone()));
+                                cx.notify();
+                            });
+                        }))
+                    }));
+                } else {
+                    panel = panel.child(item);
+                }
+            }
+        }
+        if !compact && !self.controller.state.settings.recent.is_empty() {
+            panel = panel.child(self.recent_panel(false, cx));
+        }
+        panel
     }
 
     /// Grow the kit's tree from the archive's folders, and put the mark on the
@@ -150,7 +270,7 @@ impl GpuiShell {
         let widest = self.widest_folder_row(cx);
         let dropping = cx.weak_entity();
         let menu_owner = cx.weak_entity();
-        let writable = self.controller.state.format == super::Format::Zip;
+        let writable = self.controller.writable();
         let strings = self.controller.s();
         // The branch being renamed, and only while the field is the tree's.
         let renaming = self

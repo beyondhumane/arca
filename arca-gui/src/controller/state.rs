@@ -46,6 +46,8 @@ pub(crate) struct AppState {
     pub(crate) one_shot: bool,
     pub(crate) title: String,
     pub(crate) window_title: String,
+    pub(crate) disk: Option<super::DiskState>,
+    pub(crate) origin: Option<super::Origin>,
     pub(crate) current_dir: String,
     pub(crate) show_settings: bool,
     pub(crate) conflict: Option<String>,

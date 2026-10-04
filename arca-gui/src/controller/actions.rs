@@ -60,6 +60,11 @@ pub(crate) enum View {
 
 pub(crate) enum AppAction {
     Open(PathBuf),
+    Browse(PathBuf),
+    CloseArchive,
+    Up,
+    TogglePinned(PathBuf),
+    SetShowHidden(bool),
     Refresh,
     Run(Job),
     ExtractTo { only_checked: bool, dest: PathBuf },

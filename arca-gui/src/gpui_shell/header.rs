@@ -16,7 +16,7 @@ impl GpuiShell {
             .take(RECENT_MAX)
             .cloned()
             .collect::<Vec<_>>();
-        let writable = has_archive && self.controller.state.format == super::Format::Zip;
+        let writable = self.controller.writable();
         let can_undo = has_archive && self.controller.state.undo.is_some();
         let can_copy = self.can_copy_files();
         let can_paste = self.can_paste_files();
@@ -28,6 +28,8 @@ impl GpuiShell {
             .map(|release| fill(s.update_ready, &[("version", &release.tag)]));
         let destination = format!("{}: /{}", s.paste_word, self.controller.state.current_dir);
         let flat_view = self.controller.state.settings.flat;
+        let show_hidden = self.controller.state.settings.show_hidden;
+        let on_disk = self.controller.on_disk();
         let folders_on = self.controller.state.settings.folders;
         let visible_columns = Columns::ALL
             .iter()
@@ -312,6 +314,19 @@ impl GpuiShell {
                                     });
                                 }),
                         );
+                        let hidden_owner = view_owner.clone();
+                        submenu = submenu.item(
+                            PopupMenuItem::new(s.show_hidden)
+                                .disabled(!on_disk)
+                                .checked(show_hidden)
+                                .on_click(move |_, _, cx| {
+                                    let _ = hidden_owner.update(cx, |this, cx| {
+                                        this.controller
+                                            .dispatch(AppAction::SetShowHidden(!show_hidden));
+                                        cx.notify();
+                                    });
+                                }),
+                        );
                         // Las columnas, en su propio sitio. Estaban sueltas debajo
                         // de estas dos, y son otra cosa: una dice como se dispone
                         // la ventana y la otra que datos se ensenan de cada fila.
@@ -414,7 +429,7 @@ impl GpuiShell {
                 "up",
                 IconName::ArrowUp,
                 s.up,
-                !self.controller.state.current_dir.is_empty(),
+                self.controller.can_go_up(),
                 2,
             ),
         ] {
@@ -424,13 +439,26 @@ impl GpuiShell {
                         match action {
                             0 => this.controller.go_back(),
                             1 => this.controller.go_forward(),
-                            _ => this
-                                .controller
-                                .go_to(parent_of(&this.controller.state.current_dir)),
+                            _ => this.controller.go_up(),
                         }
                         this.route_changed(cx);
                     }),
                 ),
+            );
+        }
+        if self.controller.can_close_archive() {
+            nav = nav.child(
+                Self::icon_button(
+                    cx,
+                    "close-archive",
+                    IconName::CircleX,
+                    s.close_archive.into(),
+                    browsing,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.controller.dispatch(AppAction::CloseArchive);
+                    this.route_changed(cx);
+                })),
             );
         }
         let crumbs = self.crumbs();

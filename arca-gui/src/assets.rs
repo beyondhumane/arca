@@ -1,13 +1,20 @@
 use gpui::{AssetSource, Result, SharedString};
 use std::borrow::Cow;
 
-const CUSTOM: [&str; 6] = [
+const CUSTOM: [&str; 13] = [
     "brand/mark.svg",
     "icons/clipboard-paste.svg",
     "icons/file-output.svg",
     "icons/lock.svg",
     "icons/scissors.svg",
     "icons/trash-2.svg",
+    "icons/house.svg",
+    "icons/download.svg",
+    "icons/image.svg",
+    "icons/music.svg",
+    "icons/film.svg",
+    "icons/pin.svg",
+    "icons/monitor.svg",
 ];
 
 pub const FONT_FILES: [&[u8]; 2] = [
@@ -26,6 +33,13 @@ impl AssetSource for Assets {
             "icons/lock.svg" => include_bytes!("../assets/icons/lock.svg"),
             "icons/scissors.svg" => include_bytes!("../assets/icons/scissors.svg"),
             "icons/trash-2.svg" => include_bytes!("../assets/icons/trash-2.svg"),
+            "icons/house.svg" => include_bytes!("../assets/icons/house.svg"),
+            "icons/download.svg" => include_bytes!("../assets/icons/download.svg"),
+            "icons/image.svg" => include_bytes!("../assets/icons/image.svg"),
+            "icons/music.svg" => include_bytes!("../assets/icons/music.svg"),
+            "icons/film.svg" => include_bytes!("../assets/icons/film.svg"),
+            "icons/pin.svg" => include_bytes!("../assets/icons/pin.svg"),
+            "icons/monitor.svg" => include_bytes!("../assets/icons/monitor.svg"),
             _ => return gpui::AssetSource::load(&gpui_kit_assets::Assets, path),
         };
         Ok(Some(Cow::Borrowed(data)))

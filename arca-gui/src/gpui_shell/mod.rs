@@ -16,8 +16,9 @@ use super::{
     Startup, Strings, ThemePreference, View, SIDEBAR_LEAST, SIDEBAR_MOST,
 };
 use crate::{
-    clipboard, gpui_theme,
+    clipboard, disk_dir, disk_path, gpui_theme,
     tree::{children_of, Folder, Kind},
+    Place, PlaceKind,
 };
 use gpui::{actions, point};
 use gpui::{
@@ -164,6 +165,7 @@ struct GpuiShell {
     /// same thing -- a row in a list of preferences -- and `SettingsControl`
     /// already says which is which.
     settings_focus: Vec<FocusHandle>,
+    settings_section: SettingsSection,
     /// Which row the right button was pressed on, and where the pointer was,
     /// so the menu opens under it instead of in a fixed corner.
     /// The band being drawn, while it is being drawn.
@@ -238,10 +240,13 @@ enum RowAction {
     CopyNames,
     SelectAll,
     NewFolder,
+    Compress,
+    CopyPath,
+    Pin,
 }
 
 impl RowAction {
-    const ALL: [RowAction; 13] = [
+    const ALL: [RowAction; 16] = [
         RowAction::Open,
         RowAction::ExtractSelection,
         RowAction::ExtractHere,
@@ -255,6 +260,9 @@ impl RowAction {
         RowAction::CopyNames,
         RowAction::SelectAll,
         RowAction::NewFolder,
+        RowAction::Compress,
+        RowAction::CopyPath,
+        RowAction::Pin,
     ];
 
     /// What the menu offers where there is no row under the pointer: the
@@ -302,6 +310,9 @@ impl RowAction {
             RowAction::CopyNames => (s.copy_names, "Ctrl+Shift+C"),
             RowAction::SelectAll => (s.select_all, "Ctrl+A"),
             RowAction::NewFolder => (s.new_folder, ""),
+            RowAction::Compress => (s.compress_selection, "Ctrl+N"),
+            RowAction::CopyPath => (s.copy_path, ""),
+            RowAction::Pin => (s.pin_word, ""),
         }
     }
 
@@ -328,6 +339,27 @@ impl RowAction {
     fn offered(self) -> bool {
         !matches!(self, RowAction::Copy | RowAction::Cut | RowAction::Paste) || clipboard::AVAILABLE
     }
+
+    /// Whether the entry makes sense where the list is showing: the disk has
+    /// nothing to extract or test, and an archive has no path to copy.
+    fn shown(self, on_disk: bool) -> bool {
+        if on_disk {
+            !matches!(
+                self,
+                Self::ExtractSelection
+                    | Self::ExtractHere
+                    | Self::TestSelection
+                    | Self::Rename
+                    | Self::Delete
+                    | Self::Copy
+                    | Self::Cut
+                    | Self::Paste
+                    | Self::NewFolder
+            )
+        } else {
+            !matches!(self, Self::Compress | Self::CopyPath | Self::Pin)
+        }
+    }
 }
 
 fn row_action_icon(action: RowAction) -> Option<Icon> {
@@ -345,6 +377,9 @@ fn row_action_icon(action: RowAction) -> Option<Icon> {
         RowAction::CopyNames => Some(Icon::new(IconName::FileText)),
         RowAction::SelectAll => Some(Icon::new(IconName::Check)),
         RowAction::NewFolder => Some(Icon::new(IconName::Folder)),
+        RowAction::Compress => Some(Icon::new(IconName::Inbox)),
+        RowAction::CopyPath => Some(Icon::new(IconName::Copy)),
+        RowAction::Pin => Some(Icon::empty().path("icons/pin.svg")),
     }
 }
 
@@ -375,6 +410,15 @@ impl SettingsControl {
         SettingsControl::Updates,
         SettingsControl::Subfolder,
     ];
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsSection {
+    General,
+    Appearance,
+    Keybindings,
+    Updates,
+    About,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -443,6 +487,7 @@ impl GpuiShell {
                     strings,
                     idle: true,
                     writable: false,
+                    on_disk: false,
                 },
                 window,
                 cx,
@@ -647,6 +692,7 @@ impl GpuiShell {
             dialog_primary_focus: cx.focus_handle().tab_stop(true),
             dialog_cancel_focus: cx.focus_handle().tab_stop(true),
             add_start_focus: cx.focus_handle().tab_stop(true),
+            settings_section: SettingsSection::General,
             settings_focus: SettingsControl::ALL
                 .iter()
                 .map(|_| cx.focus_handle().tab_stop(true))
@@ -1143,7 +1189,7 @@ impl GpuiShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.controller.state.format != super::Format::Zip {
+        if !self.controller.writable() {
             return;
         }
         // The name on its own, never the path the row is labelled with while a
@@ -1271,7 +1317,10 @@ impl GpuiShell {
         if !self.background_idle() {
             return;
         }
-        if action.writable_only() && self.controller.state.format != Format::Zip {
+        if action.writable_only() && !self.controller.writable() {
+            return;
+        }
+        if !action.shown(self.controller.on_disk()) {
             return;
         }
         let rows = self.controller.visible_rows();
@@ -1341,6 +1390,27 @@ impl GpuiShell {
             }
             RowAction::SelectAll => self.controller.dispatch(AppAction::SelectAllVisible),
             RowAction::NewFolder => self.overflow_action(OverflowAction::NewFolder, cx),
+            RowAction::Compress => {
+                let inputs = self.controller.selected_disk_paths();
+                self.controller.dispatch(AppAction::PrepareCompress(inputs));
+            }
+            RowAction::Pin => {
+                if let Some(row) = row.filter(|row| row.is_dir && !row.up) {
+                    self.controller
+                        .dispatch(AppAction::TogglePinned(disk_path(&row.path)));
+                }
+            }
+            RowAction::CopyPath => {
+                let paths = self
+                    .controller
+                    .selected_disk_paths()
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>();
+                if !paths.is_empty() {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(paths.join("\r\n")));
+                }
+            }
         }
         cx.notify();
     }
@@ -1680,9 +1750,10 @@ impl GpuiShell {
                 self.route_changed(cx);
             }
             Shortcut::Open => self.begin_dialog(DialogKind::Open, cx),
-            Shortcut::Compress => self
-                .controller
-                .dispatch(AppAction::PrepareCompress(Vec::new())),
+            Shortcut::Compress => {
+                let inputs = self.controller.selected_disk_paths();
+                self.controller.dispatch(AppAction::PrepareCompress(inputs));
+            }
             Shortcut::ExtractAll if archive.is_some() => self.begin_dialog(
                 DialogKind::Extract {
                     only_checked: false,
@@ -1915,13 +1986,16 @@ impl GpuiShell {
     }
 
     fn crumbs(&self) -> Vec<(String, String)> {
-        let Some(archive) = &self.controller.state.archive else {
+        let root = if let Some(archive) = &self.controller.state.archive {
+            archive
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default()
+        } else if self.controller.on_disk() {
+            self.controller.s().computer_word.to_string()
+        } else {
             return Vec::new();
         };
-        let root = archive
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_default();
         let mut crumbs = vec![(root, String::new())];
         let mut walked = String::new();
         for part in self
@@ -2095,8 +2169,7 @@ impl GpuiShell {
         }
         let modifiers = event.keystroke.modifiers;
         let key = event.keystroke.key.to_ascii_lowercase();
-        if key == "delete" && self.background_idle() && self.controller.state.format == Format::Zip
-        {
+        if key == "delete" && self.background_idle() && self.controller.writable() {
             self.dialog_return_focus = Some(self.delete_trigger_focus.clone());
             window.focus(&self.delete_trigger_focus, cx);
             self.controller.dispatch(AppAction::RequestDelete);
@@ -2108,10 +2181,9 @@ impl GpuiShell {
         if rows.is_empty() {
             if matches!(key.as_str(), "backspace" | "left" | "arrowleft")
                 && !modifiers.alt
-                && !self.controller.state.current_dir.is_empty()
+                && self.controller.can_go_up()
             {
-                let parent = parent_of(&self.controller.state.current_dir);
-                self.controller.dispatch(AppAction::Navigate(parent));
+                self.controller.dispatch(AppAction::Up);
                 self.route_changed(cx);
                 cx.stop_propagation();
             }
@@ -2158,9 +2230,8 @@ impl GpuiShell {
             return;
         }
         if matches!(key.as_str(), "backspace" | "left" | "arrowleft") && !modifiers.alt {
-            if !self.controller.state.current_dir.is_empty() {
-                let parent = parent_of(&self.controller.state.current_dir);
-                self.controller.dispatch(AppAction::Navigate(parent));
+            if self.controller.can_go_up() {
+                self.controller.dispatch(AppAction::Up);
                 self.route_changed(cx);
             }
             cx.stop_propagation();
@@ -2315,7 +2386,7 @@ impl Render for GpuiShell {
                 input.set_value(output_value.clone(), window, cx);
             }
         });
-        let zip = self.controller.state.format == super::Format::Zip;
+        let zip = self.controller.writable();
         self.add_password.update(cx, |input, cx| {
             input.set_placeholder(s.password_optional, window, cx);
             input.set_disabled(!(matches!(modal, Some(ModalKind::Add)) && zip), cx);
@@ -2330,11 +2401,11 @@ impl Render for GpuiShell {
             });
         }
         self.sync_workspace(window, cx);
-        let has_archive = self.controller.state.archive.is_some();
+        let has_archive = self.controller.state.archive.is_some() || self.controller.on_disk();
         let selected = self.selected_count();
         let rows = self.controller.visible_rows();
-        let visible = rows.len();
-        self.row_count = visible;
+        let visible = rows.iter().filter(|row| !row.up).count();
+        self.row_count = rows.len();
         let header = self.header(cx);
 
         // Everything that used to sit in the flow — the list, the empty states,
@@ -2659,8 +2730,10 @@ impl Render for GpuiShell {
                                             .disabled(!idle)
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 if this.background_idle() {
+                                                    let inputs =
+                                                        this.controller.selected_disk_paths();
                                                     this.controller.dispatch(
-                                                        AppAction::PrepareCompress(Vec::new()),
+                                                        AppAction::PrepareCompress(inputs),
                                                     );
                                                     cx.notify();
                                                 }
@@ -3118,7 +3191,7 @@ fn apply_startup(controller: &mut AppController, startup: Startup) {
     controller.state.one_shot = !matches!(startup, Startup::Browse(_));
     match startup {
         Startup::Browse(Some(path)) => controller.open(path),
-        Startup::Browse(None) => {}
+        Startup::Browse(None) => controller.start_browsing(),
         Startup::Run(job) => controller.run_job(job),
         Startup::Add(files) => controller.dispatch(AppAction::PrepareCompress(files)),
     }
@@ -3230,7 +3303,7 @@ mod tests {
         );
         assert_eq!(
             dialog_dimensions(ModalKind::Settings, viewport).0.width,
-            px(560.)
+            px(720.)
         );
     }
 

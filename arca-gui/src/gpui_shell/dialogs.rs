@@ -118,8 +118,8 @@ pub(super) fn dialog_dimensions(
     viewport: gpui::Size<gpui::Pixels>,
 ) -> (gpui::Size<gpui::Pixels>, gpui::Pixels) {
     let preferred_width = match kind {
-        ModalKind::Conflict | ModalKind::Settings => 560.,
-        ModalKind::Shortcuts => 720.,
+        ModalKind::Conflict => 560.,
+        ModalKind::Settings | ModalKind::Shortcuts => 720.,
         ModalKind::Add => 600.,
         _ => 448.,
     };
@@ -313,74 +313,11 @@ pub(super) fn build_dialog(
             // Keystrokes, not printed key names: the kit spells each one the
             // way the platform does, so the window stops claiming Supr on a
             // keyboard whose key says Delete.
-            let left: [(&[&str], &str); 16] = [
-                (&["ctrl-o"], s.open),
-                (&["ctrl-n"], s.compress),
-                (&["ctrl-e"], s.extract_all),
-                (&["alt-w"], s.extract_here),
-                (&["f3"], s.view_word),
-                (&["ctrl-t"], s.test_word),
-                (&["f5"], s.refresh_word),
-                (&["ctrl-f"], s.find_word),
-                (&["ctrl-z"], s.undo_word),
-                (&["ctrl-a"], s.select_all),
-                (&["ctrl-i"], s.invert_selection),
-                (&["escape"], s.clear_selection),
-                (&["space"], s.toggle_word),
-                (&["+", "-"], s.select_group),
-                (&["f2"], s.rename_word),
-                (&["delete"], s.delete_word),
-            ];
-            let right: [(&[&str], &str); 15] = [
-                (&["f1"], s.shortcuts_title),
-                (&["ctrl-c"], s.copy_word),
-                (&["ctrl-x"], s.cut_word),
-                (&["ctrl-v"], s.paste_word),
-                (&["ctrl-shift-c"], s.copy_names),
-                (&["enter"], s.open_word),
-                (&["backspace", "left"], s.up),
-                (&["right"], s.enter_folder),
-                (&["alt-left"], s.back),
-                (&["alt-right"], s.forward),
-                (&["up", "down"], s.move_word),
-                (&["home", "end"], s.move_word),
-                (&["pageup", "pagedown"], s.move_word),
-                (&["tab"], s.focus_word),
-                (&["a"], s.jump_word),
-            ];
-            let column = |rows: &[(&[&str], &str)]| {
-                rows.iter()
-                    .fold(div().flex().flex_col().gap_1(), |column, (keys, what)| {
-                        column.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_3()
-                                .text_sm()
-                                .child(
-                                    div()
-                                        .w(px(130.))
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .gap_1()
-                                        .children(keys.iter().filter_map(|key| {
-                                            gpui::Keystroke::parse(key).ok().map(Kbd::new)
-                                        })),
-                                )
-                                .child(what.to_string()),
-                        )
-                    })
-            };
             // No close button of its own: the kit's own close, escape and
             // backdrop are the way out of every dialog now.
-            dialog.title(heading(s.shortcuts_title)).child(
-                div()
-                    .flex()
-                    .gap_8()
-                    .child(column(&left))
-                    .child(column(&right)),
-            )
+            dialog
+                .title(heading(s.shortcuts_title))
+                .child(shortcuts_table(s))
         }
         ModalKind::Password => {
             // Three questions wear this one window: the password to open an
@@ -482,7 +419,7 @@ pub(super) fn build_dialog(
                 })
         }
         ModalKind::Add => {
-            let is_zip = shell.read(cx).controller.state.format == super::Format::Zip;
+            let is_zip = shell.read(cx).controller.writable();
             let is_sevenz = shell.read(cx).controller.state.format == super::Format::SevenZ;
             let count = shell.read(cx).controller.state.pending_inputs.len();
             let output_name = shell.read(cx).output_name.clone();
@@ -639,7 +576,7 @@ pub(super) fn build_dialog(
         ModalKind::Settings => {
             let lang = shell.read(cx).controller.state.settings.lang;
             let theme = shell.read(cx).controller.state.settings.theme;
-            let is_zip = shell.read(cx).controller.state.format == super::Format::Zip;
+            let is_zip = shell.read(cx).controller.writable();
             let page = shell.read(cx).controller.state.settings.page;
             let pages = arca_zip::pages::Page::ALL
                 .iter()
@@ -728,68 +665,138 @@ pub(super) fn build_dialog(
                         });
                     })
             };
-            dialog
-                .title(heading(s.settings))
-                .child(DialogDescription::new().child(s.defaults_title))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .child(row(s.language, language.into_any_element()))
-                        .child(row(s.theme, appearance.into_any_element()))
-                        .child(row(
+            let show_hidden = shell.read(cx).controller.state.settings.show_hidden;
+            let hidden = {
+                let weak = weak.clone();
+                Switch::new("settings-hidden")
+                    .label(s.show_hidden)
+                    .checked(show_hidden)
+                    .on_click(move |_, _, cx| {
+                        let _ = weak.update(cx, |this, cx| {
+                            this.controller
+                                .dispatch(AppAction::SetShowHidden(!show_hidden));
+                            cx.notify();
+                        });
+                    })
+            };
+            let section = shell.read(cx).settings_section;
+            let sections = [
+                (SettingsSection::General, s.settings_general),
+                (SettingsSection::Appearance, s.settings_appearance),
+                (SettingsSection::Keybindings, s.shortcuts_title),
+                (SettingsSection::Updates, s.settings_updates),
+                (SettingsSection::About, s.settings_about),
+            ];
+            let mut nav = div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .w(px(150.))
+                .flex_none()
+                .pr_3()
+                .border_r_1()
+                .border_color(cx.theme().border);
+            for (index, (candidate, label)) in sections.into_iter().enumerate() {
+                let weak = weak.clone();
+                nav = nav.child(
+                    GpuiShell::button(("settings-section", index), label, label.to_string(), true)
+                        .w_full()
+                        .selected(candidate == section)
+                        .on_click(move |_, _, cx| {
+                            let _ = weak.update(cx, |this, cx| {
+                                this.settings_section = candidate;
+                                cx.notify();
+                            });
+                        }),
+                );
+            }
+            let version = format!("Arca {}", env!("CARGO_PKG_VERSION"));
+            let newer = shell
+                .read(cx)
+                .controller
+                .state
+                .update
+                .as_ref()
+                .map(|r| format!("· {}", r.tag));
+            let body = match section {
+                SettingsSection::General => div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(row(s.language, language.into_any_element()))
+                    .child(row(
+                        s.name_encoding,
+                        pick(
+                            "settings-page",
                             s.name_encoding,
-                            pick(
-                                "settings-page",
-                                s.name_encoding,
-                                pages,
-                                page,
-                                true,
-                                weak.clone(),
-                                |this, page| this.controller.reread_names(page),
-                            ),
-                        ))
-                        .child(Separator::horizontal())
-                        .child(div().text_sm().text_color(muted).child(s.defaults_title))
-                        .child(row(
-                            s.format,
-                            format_pick("settings-format", shell, &weak, cx),
-                        ))
-                        .child(row(
-                            s.compressor,
-                            codec_pick("settings-codec", shell, &weak, is_zip, cx),
-                        ))
-                        .child(row(s.level, level_pick("settings-level", shell, &weak, cx)))
-                        .child(updates)
-                        .child(subfolder)
-                        .child(Separator::horizontal())
-                        // Que version es esta. El numero se compila dentro del
-                        // binario, asi que es el del programa abierto y no el
-                        // de lo que haya instalado en otro sitio: con dos
-                        // copias en el disco las ventanas son identicas y no
-                        // habia forma de distinguirlas desde dentro. Al lado,
-                        // cuando la hay, la que ha salido.
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .text_sm()
-                                .text_color(muted)
-                                .child(brand_mark(28.))
-                                .child(heading(format!("Arca {}", env!("CARGO_PKG_VERSION"))))
-                                .children(
-                                    shell
-                                        .read(cx)
-                                        .controller
-                                        .state
-                                        .update
-                                        .as_ref()
-                                        .map(|r| format!("· {}", r.tag)),
-                                ),
+                            pages,
+                            page,
+                            true,
+                            weak.clone(),
+                            |this, page| this.controller.reread_names(page),
                         ),
-                )
+                    ))
+                    .child(hidden)
+                    .child(Separator::horizontal())
+                    .child(div().text_sm().text_color(muted).child(s.defaults_title))
+                    .child(row(
+                        s.format,
+                        format_pick("settings-format", shell, &weak, cx),
+                    ))
+                    .child(row(
+                        s.compressor,
+                        codec_pick("settings-codec", shell, &weak, is_zip, cx),
+                    ))
+                    .child(row(s.level, level_pick("settings-level", shell, &weak, cx)))
+                    .child(subfolder)
+                    .into_any_element(),
+                SettingsSection::Appearance => div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(row(s.theme, appearance.into_any_element()))
+                    .into_any_element(),
+                SettingsSection::Keybindings => shortcuts_table(s).into_any_element(),
+                SettingsSection::Updates => div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(updates)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(version.clone())
+                            .children(newer.clone()),
+                    )
+                    .into_any_element(),
+                SettingsSection::About => div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(brand_mark(40.))
+                            .child(heading(version.clone()))
+                            .children(newer.clone()),
+                    )
+                    .child(div().text_sm().text_color(muted).child(s.about_blurb))
+                    .into_any_element(),
+            };
+            dialog.title(heading(s.settings)).child(
+                div()
+                    .flex()
+                    .gap_4()
+                    .min_h(px(320.))
+                    .child(nav)
+                    .child(div().flex_1().min_w_0().child(body)),
+            )
         }
         ModalKind::NewFolder | ModalKind::Mask => {
             let (title, hint, confirm) = match kind {
@@ -937,4 +944,73 @@ pub(super) fn pending_list(
         );
     }
     list
+}
+
+/// The keys and what they do, in two columns: shown by F1 and again under
+/// the settings.
+pub(super) fn shortcuts_table(s: &'static Strings) -> impl IntoElement {
+    let left: [(&[&str], &str); 16] = [
+        (&["ctrl-o"], s.open),
+        (&["ctrl-n"], s.compress),
+        (&["ctrl-e"], s.extract_all),
+        (&["alt-w"], s.extract_here),
+        (&["f3"], s.view_word),
+        (&["ctrl-t"], s.test_word),
+        (&["f5"], s.refresh_word),
+        (&["ctrl-f"], s.find_word),
+        (&["ctrl-z"], s.undo_word),
+        (&["ctrl-a"], s.select_all),
+        (&["ctrl-i"], s.invert_selection),
+        (&["escape"], s.clear_selection),
+        (&["space"], s.toggle_word),
+        (&["+", "-"], s.select_group),
+        (&["f2"], s.rename_word),
+        (&["delete"], s.delete_word),
+    ];
+    let right: [(&[&str], &str); 15] = [
+        (&["f1"], s.shortcuts_title),
+        (&["ctrl-c"], s.copy_word),
+        (&["ctrl-x"], s.cut_word),
+        (&["ctrl-v"], s.paste_word),
+        (&["ctrl-shift-c"], s.copy_names),
+        (&["enter"], s.open_word),
+        (&["backspace", "left"], s.up),
+        (&["right"], s.enter_folder),
+        (&["alt-left"], s.back),
+        (&["alt-right"], s.forward),
+        (&["up", "down"], s.move_word),
+        (&["home", "end"], s.move_word),
+        (&["pageup", "pagedown"], s.move_word),
+        (&["tab"], s.focus_word),
+        (&["a"], s.jump_word),
+    ];
+    let column = |rows: &[(&[&str], &str)]| {
+        rows.iter()
+            .fold(div().flex().flex_col().gap_1(), |column, (keys, what)| {
+                column.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .text_sm()
+                        .child(
+                            div()
+                                .w(px(130.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .children(keys.iter().filter_map(|key| {
+                                    gpui::Keystroke::parse(key).ok().map(Kbd::new)
+                                })),
+                        )
+                        .child(what.to_string()),
+                )
+            })
+    };
+    div()
+        .flex()
+        .gap_8()
+        .child(column(&left))
+        .child(column(&right))
 }

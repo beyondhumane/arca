@@ -17,6 +17,7 @@ pub(super) struct FileTable {
     pub(super) strings: &'static Strings,
     pub(super) idle: bool,
     pub(super) writable: bool,
+    pub(super) on_disk: bool,
 }
 
 impl FileTable {
@@ -370,6 +371,7 @@ impl TableDelegate for FileTable {
         let empty_space = self.rows.get(row_ix).is_none();
         let row = self.rows.get(row_ix);
         let writable = self.writable;
+        let on_disk = self.on_disk;
         let strings = self.strings;
         let shell = self.shell.clone();
         let mut menu = menu;
@@ -381,10 +383,12 @@ impl TableDelegate for FileTable {
         };
         for action in offered.into_iter().filter(|action| {
             action.offered()
+                && action.shown(on_disk)
                 && (!action.writable_only() || writable)
                 && (!row.is_some_and(|row| row.up) || action.about_the_place())
                 && (*action != RowAction::Rename || writable)
                 && (*action != RowAction::View || is_file)
+                && (*action != RowAction::Pin || !is_file)
         }) {
             // Never as the first thing in the menu: a rule with nothing above
             // it is a line, not a grouping.

@@ -68,7 +68,7 @@ fn normalized(e: &Entry) -> String {
 }
 
 pub fn children_of(entries: &[Entry], dir: &str) -> Vec<Row> {
-    let mut folders: BTreeMap<String, (u64, u64, usize)> = BTreeMap::new();
+    let mut folders: BTreeMap<String, (u64, u64, usize, Option<usize>)> = BTreeMap::new();
     let mut files: Vec<Row> = Vec::new();
 
     for (i, e) in entries.iter().enumerate() {
@@ -83,7 +83,7 @@ pub fn children_of(entries: &[Entry], dir: &str) -> Vec<Row> {
         match rest.find('/') {
             Some(cut) => {
                 let seg = rest[..cut].to_string();
-                let slot = folders.entry(seg).or_insert((0, 0, 0));
+                let slot = folders.entry(seg).or_insert((0, 0, 0, None));
                 if !e.is_dir {
                     slot.0 += e.size;
                     slot.1 += e.compressed_size;
@@ -92,7 +92,7 @@ pub fn children_of(entries: &[Entry], dir: &str) -> Vec<Row> {
             }
             None => {
                 if e.is_dir {
-                    folders.entry(rest.to_string()).or_insert((0, 0, 0));
+                    folders.entry(rest.to_string()).or_insert((0, 0, 0, None)).3 = Some(i);
                 } else {
                     files.push(Row {
                         label: rest.to_string(),
@@ -120,26 +120,29 @@ pub fn children_of(entries: &[Entry], dir: &str) -> Vec<Row> {
 
     let mut rows: Vec<Row> = folders
         .into_iter()
-        .map(|(name, (size, packed, count))| Row {
-            path: format!("{dir}{name}/"),
-            label: name,
-            kind: Kind::Dir,
-            is_dir: true,
-            entry: None,
-            size,
-            packed,
-            method: "",
-            encrypted: false,
-            zipcrypto: false,
-            // A folder in the list is made up out of the names under it, not
-            // read from an entry: there is nothing of its own to report.
-            mtime: None,
-            created: None,
-            accessed: None,
-            attributes: 0,
-            crc32: None,
-            count,
-            up: false,
+        .map(|(name, (size, packed, count, own))| {
+            // A folder made up out of the names under it has no dates of its
+            // own; one the archive (or the disk) lists as an entry does.
+            let own = own.map(|i| &entries[i]);
+            Row {
+                path: format!("{dir}{name}/"),
+                label: name,
+                kind: Kind::Dir,
+                is_dir: true,
+                entry: None,
+                size,
+                packed,
+                method: "",
+                encrypted: false,
+                zipcrypto: false,
+                mtime: own.and_then(|e| e.mtime),
+                created: own.and_then(|e| e.created),
+                accessed: own.and_then(|e| e.accessed),
+                attributes: own.map_or(0, |e| e.attributes),
+                crc32: None,
+                count,
+                up: false,
+            }
         })
         .collect();
     rows.append(&mut files);

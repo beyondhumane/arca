@@ -1,8 +1,12 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
+mod disk;
+pub(crate) use disk::{disk_dir, disk_path, DiskState, Origin, Place, PlaceKind};
 #[cfg(test)]
 mod container_tests;
+#[cfg(test)]
+mod disk_tests;
 #[cfg(test)]
 mod iso_tests;
 mod panes;
@@ -157,6 +161,9 @@ impl AppController {
             } else {
                 self.s().stopped.to_string()
             };
+            if matches!(pending, Pending::OpenArchive) && self.state.origin.is_some() {
+                self.close_archive();
+            }
         }
     }
 
@@ -169,6 +176,15 @@ impl AppController {
     pub(crate) fn dispatch(&mut self, action: AppAction) {
         match action {
             AppAction::Open(path) => self.open(path),
+            AppAction::Browse(path) => {
+                self.state.notice.clear();
+                self.state.error = false;
+                self.browse_disk(&path);
+            }
+            AppAction::CloseArchive => self.close_archive(),
+            AppAction::Up => self.go_up(),
+            AppAction::TogglePinned(path) => self.toggle_pinned(&path),
+            AppAction::SetShowHidden(show) => self.set_show_hidden(show),
             AppAction::Refresh => self.refresh(),
             AppAction::Run(job) => self.run_job(job),
             AppAction::ExtractTo { only_checked, dest } => {
@@ -468,7 +484,7 @@ impl AppController {
         self.snapshot_active_pane();
     }
     pub(crate) fn request_delete(&mut self) {
-        if self.state.format != Format::Zip {
+        if !self.writable() {
             self.state.notice = self.cannot_change(Some(self.state.format));
             self.state.error = true;
             return;
@@ -535,6 +551,8 @@ impl AppController {
                 one_shot: false,
                 title: String::new(),
                 window_title: "Arca".to_string(),
+                disk: None,
+                origin: None,
                 current_dir: String::new(),
                 show_settings: false,
                 conflict: None,
@@ -581,6 +599,21 @@ impl AppController {
     }
     pub(crate) fn summary(&self) -> String {
         let s = self.s();
+        if self.on_disk() {
+            let rows = children_of(&self.state.entries, &self.state.current_dir);
+            let raw: u64 = rows
+                .iter()
+                .filter(|row| !row.is_dir)
+                .map(|row| row.size)
+                .sum();
+            return format!(
+                "{} {} · {} {}",
+                rows.len(),
+                s.items_word,
+                human(raw),
+                s.in_folder
+            );
+        }
         let n = self.state.entries.iter().filter(|e| !e.is_dir).count();
         let raw: u64 = self.state.entries.iter().map(|e| e.size).sum();
         let packed: u64 = self.state.entries.iter().map(|e| e.compressed_size).sum();
@@ -718,7 +751,11 @@ impl AppController {
     // rather than a heap of loose files.
     pub(crate) fn cancel_password(&mut self) {
         let was_job = matches!(self.state.waiting_on_password, Some(Pending::Extract(_)));
+        let was_opening = matches!(self.state.waiting_on_password, Some(Pending::OpenArchive));
         self.state.waiting_on_password = None;
+        if was_opening && self.state.origin.is_some() && self.state.archive_password.is_none() {
+            self.close_archive();
+        }
         self.state.password_input.clear();
         self.state.password_wrong = false;
         self.state.reread_after = None;
@@ -1018,6 +1055,8 @@ impl AppController {
     pub(crate) fn go_to(&mut self, path: String) {
         self.navigate_panes(path);
         self.record_pane_history();
+        self.refresh_disk_title();
+        self.remember_folder();
     }
 
     // Every folder starts with nothing picked, the way the Explorer does.
@@ -1281,6 +1320,10 @@ impl AppController {
     // this can be wrong leaves the archive untouched, which is the side to be
     // wrong on when there is no undo.
     pub(crate) fn open_file(&mut self, index: usize) {
+        if self.on_disk() {
+            self.open_disk_entry(index);
+            return;
+        }
         if !self.read_access(AppAction::OpenFile(index)) {
             return;
         }
@@ -1348,6 +1391,9 @@ impl AppController {
         for m in messages {
             match m {
                 Message::Listing(path, result, password) => {
+                    if self.on_disk() {
+                        continue;
+                    }
                     self.state.busy = false;
                     self.state.listing = false;
                     self.state.overlay = false;
@@ -1778,6 +1824,12 @@ impl AppController {
         if self.state.busy && !self.state.listing {
             return;
         }
+        if self.on_disk() {
+            self.state.origin = Some(Origin {
+                directory: self.state.current_dir.clone(),
+                path: String::new(),
+            });
+        }
         self.state.channel = None;
         self.state.replies = None;
         self.state.waiting_on_password = None;
@@ -1827,6 +1879,10 @@ impl AppController {
 
     fn refresh(&mut self) {
         if self.state.busy {
+            return;
+        }
+        if self.on_disk() {
+            self.refresh_disk();
             return;
         }
         if let Some(path) = self.state.archive.clone() {
