@@ -1,6 +1,7 @@
-# RAR format (read-only)
+# RAR format
 
-Status: read-only RAR enabled by default in CLI and GUI.
+Status: RAR/CBR reading and new single-volume RAR5 creation enabled by default
+in CLI and GUI; existing archives stay read-only.
 Tracks [#3](https://github.com/beyondhumane/arca/issues/3) and
 [#14](https://github.com/beyondhumane/arca/issues/14). Modern and legacy
 multivolume assembly is implemented. The dependency review records provenance
