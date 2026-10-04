@@ -1,14 +1,19 @@
-//! Opt-in GPUI surface for the G4.1 toolbar and navigation migration.
-//!
-//! This view translates user input into `AppAction`s. Archive work stays in
-//! `AppController` workers; native file dialogs are bridged from a thread so
-//! they never block GPUI's UI thread. The file table uses GPUI's virtualized
-//! `uniform_list`; dialog state and overlays are rendered by GPUI, while native
-//! file pickers stay on worker threads.
+mod columns;
+mod details;
+mod dialogs;
+mod header;
+mod jobs;
+mod layout;
+mod preview;
+mod sidebar;
+mod table;
+use dialogs::*;
+use table::FileTable;
 
 use super::{
-    fill, human, parent_of, saved_of, when, Answer, AppAction, AppController, Columns, DropChoice,
-    Job, Pending, Settings, SortColumn, Startup, Strings, View, SIDEBAR_LEAST, SIDEBAR_MOST,
+    clock, fill, hex_line, human, parent_of, saved_of, when, Answer, AppAction, AppController,
+    Codec, Columns, DropChoice, Format, Job, Lang, Level, Look, Pending, Row, Settings, SortColumn,
+    Startup, Strings, ThemePreference, View, SIDEBAR_LEAST, SIDEBAR_MOST,
 };
 use crate::{
     clipboard, gpui_theme,
@@ -31,7 +36,6 @@ use gpui_component::progress::Progress;
 use gpui_component::radio::RadioGroup;
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::separator::Separator;
-use gpui_component::status_bar::StatusBar;
 use gpui_component::switch::Switch;
 use gpui_component::table::{Column, ColumnSort, DataTable, TableDelegate, TableEvent, TableState};
 use gpui_component::tree::{tree, TreeItem, TreeState};
@@ -190,12 +194,13 @@ struct GpuiShell {
     /// the dialog is answered.
     name_value: String,
     /// Text, Hex and Picture, in that order.
-    viewer_focus: Vec<FocusHandle>,
+    preview_password: Entity<InputState>,
+    preview_return_focus: Option<FocusHandle>,
     viewer_scroll: UniformListScrollHandle,
     /// The decoded picture, kept by the name it came out of the archive under.
     /// Handing GPUI a fresh `Image` every frame would decode a thirty megabyte
     /// photograph sixty times a second.
-    viewer_image: Option<(String, std::sync::Arc<gpui::Image>)>,
+    viewer_image: Option<(u64, std::sync::Arc<gpui::RenderImage>)>,
     /// The archive's folders as the kit's tree, and the archive they were
     /// grown from. Rebuilding the items every frame would throw away which
     /// branches are open, so they are grown once per archive and the key says
@@ -204,6 +209,15 @@ struct GpuiShell {
     folders_key: Option<(Option<PathBuf>, usize, u64)>,
     /// How the sidebar and the file list divide the window between them.
     sidebar_state: Entity<ResizableState>,
+    preview_state: Entity<ResizableState>,
+    columns_state: Entity<ResizableState>,
+    pane_surfaces: Vec<columns::PaneSurface>,
+    columns_scroll: gpui::ScrollHandle,
+    revealed_pane: Option<usize>,
+    workspace_width: f32,
+    workspace_height: f32,
+    effective_layout: Option<layout::Layout>,
+    filter_open: bool,
 }
 
 /// What the menu on a row offers. Everything here already exists as a
@@ -258,6 +272,19 @@ impl RowAction {
         )
     }
 
+    fn destination(self, row: Option<&Row>, directory: &str) -> Option<String> {
+        matches!(self, Self::Paste | Self::NewFolder).then(|| {
+            row.filter(|row| row.is_dir)
+                .map_or(directory, |row| row.path.as_str())
+                .to_string()
+        })
+    }
+
+    fn destination_label(self, label: &str, row: Option<&Row>, directory: &str) -> String {
+        self.destination(row, directory)
+            .map_or_else(|| label.to_string(), |path| format!("{label}: /{path}"))
+    }
+
     /// What it is called, and the keys that do the same thing. A menu that does
     /// not name the shortcut is a menu nobody graduates from.
     fn label(self, s: &'static Strings) -> (&'static str, &'static str) {
@@ -291,6 +318,13 @@ impl RowAction {
     /// Copy, cut and paste are left out rather than greyed out where the shell
     /// has nowhere to put them: a menu entry that can never do anything is
     /// worse than no entry.
+    fn writable_only(self) -> bool {
+        matches!(
+            self,
+            Self::Rename | Self::Delete | Self::Cut | Self::Paste | Self::NewFolder
+        )
+    }
+
     fn offered(self) -> bool {
         !matches!(self, RowAction::Copy | RowAction::Cut | RowAction::Paste) || clipboard::AVAILABLE
     }
@@ -350,7 +384,6 @@ enum ModalKind {
     Delete,
     Drop,
     Add,
-    Viewer,
     NewFolder,
     Mask,
     Settings,
@@ -383,9 +416,10 @@ impl GpuiShell {
         });
         cx.subscribe_in(&filter, window, |shell, state, event, _, cx| {
             if matches!(event, InputEvent::Change) {
-                shell
-                    .controller
-                    .dispatch(AppAction::SetFilter(state.read(cx).value().to_string()));
+                let value = state.read(cx).value().to_string();
+                if value != shell.controller.state.filter {
+                    shell.controller.dispatch(AppAction::SetFilter(value));
+                }
                 cx.notify();
             }
         })
@@ -433,7 +467,9 @@ impl GpuiShell {
                     // mouse; the shell's cursor follows it, and the marking stays
                     // the shell's business.
                     TableEvent::SelectRow(row) => {
-                        shell.controller.state.cursor = Some(*row);
+                        shell
+                            .controller
+                            .set_pane_cursor(shell.controller.state.browser.active, Some(*row));
                         cx.notify();
                     }
                     // Right clicking something that is not picked picks it, which
@@ -442,13 +478,16 @@ impl GpuiShell {
                     TableEvent::RightClickedRow(Some(row)) => {
                         if let Some(target) = shell.controller.visible_rows().get(*row).cloned() {
                             if !shell.controller.is_checked(&target) {
+                                shell.controller.clear_picked();
                                 shell.controller.dispatch(AppAction::SetChecked {
                                     row: target,
                                     value: true,
                                 });
                             }
                         }
-                        shell.controller.state.cursor = Some(*row);
+                        shell
+                            .controller
+                            .set_pane_cursor(shell.controller.state.browser.active, Some(*row));
                         cx.notify();
                     }
                     // Written when the kit says the pull is over, so dragging an
@@ -541,6 +580,10 @@ impl GpuiShell {
         .detach();
         let _ = owner;
         let mut controller = AppController::new(Settings::load());
+        let columns =
+            controller.state.settings.browser_view == crate::settings::BrowserView::Columns;
+        let flat = controller.state.settings.flat;
+        controller.transition_browser_view(columns, flat);
         apply_startup(&mut controller, startup);
         // The stored preference decides light, dark or whatever the desktop is
         // set to, and it has to land before the first frame or the window opens
@@ -615,309 +658,24 @@ impl GpuiShell {
             row_count: 0,
             resizing: None,
             name_value: String::new(),
-            viewer_focus: (0..3).map(|_| cx.focus_handle().tab_stop(true)).collect(),
+            preview_password: cx
+                .new(|cx| InputState::new(window, cx).masked(true).context_menu(false)),
+            preview_return_focus: None,
             viewer_scroll: UniformListScrollHandle::new(),
             viewer_image: None,
             folders,
             folders_key: None,
             sidebar_state: cx.new(|_| ResizableState::default()),
+            preview_state: cx.new(|_| ResizableState::default()),
+            columns_state: cx.new(|_| ResizableState::default()),
+            pane_surfaces: Vec::new(),
+            columns_scroll: gpui::ScrollHandle::new(),
+            revealed_pane: None,
+            workspace_width: 1000.,
+            workspace_height: 660.,
+            effective_layout: None,
+            filter_open: false,
         }
-    }
-
-    /// Grow the kit's tree from the archive's folders, and put the mark on the
-    /// folder the list is showing.
-    ///
-    /// The items are only rebuilt when the archive contents change: they carry
-    /// which branches are open, and handing the tree a fresh set every frame
-    /// would shut the lot on every repaint. Revealing the current folder opens
-    /// the branch that leads to it, so an archive opened three levels down does
-    /// not present a closed tree to re-walk by hand.
-    fn sync_folders(&mut self, cx: &mut Context<Self>) {
-        let mut folder_hash = std::collections::hash_map::DefaultHasher::new();
-        for entry in &self.controller.state.entries {
-            entry.name.hash(&mut folder_hash);
-            entry.is_dir.hash(&mut folder_hash);
-        }
-        let key = (
-            self.controller.state.archive.clone(),
-            self.controller.state.entries.len(),
-            folder_hash.finish(),
-        );
-        if self.folders_key.as_ref() != Some(&key) {
-            self.folders_key = Some(key);
-            let root = TreeItem::new("", self.controller.s().archive_root)
-                .expanded(true)
-                .children(folder_items(&self.controller.state.folders, ""));
-            self.folders
-                .update(cx, |state, cx| state.set_items(vec![root], cx));
-        }
-        let current: gpui::SharedString = self.controller.state.current_dir.clone().into();
-        self.folders.update(cx, |state, cx| {
-            if state.selected_item().map(|item| item.id.clone()) == Some(current.clone()) {
-                return;
-            }
-            state.reveal_item(&current, ScrollStrategy::Top, cx);
-            let at = state.index_of(&current);
-            state.set_selected_index(at, cx);
-        });
-    }
-
-    /// The archive's folders, down the left edge.
-    ///
-    /// Breadcrumbs say where you are; this says what else there is. A deep
-    /// archive was previously only navigable by descending one double-click at
-    /// a time and reversing back out.
-    fn sidebar(&mut self, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
-        self.sync_folders(cx);
-        let folders = self.controller.s().archive_folders;
-        let widest = self.widest_folder_row(cx);
-        let dropping = cx.weak_entity();
-        let menu_owner = cx.weak_entity();
-        let writable = self.controller.state.format == super::Format::Zip;
-        let strings = self.controller.s();
-        // The branch being renamed, and only while the field is the tree's.
-        let renaming = self
-            .controller
-            .state
-            .renaming
-            .as_ref()
-            .filter(|_| self.renaming_in_tree)
-            .map(|(path, _)| path.clone());
-        let rename_input = self.rename_input.clone();
-        div()
-            .id("archive-folders")
-            .size_full()
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .bg(cx.theme().sidebar)
-            .border_r_1()
-            .border_color(cx.theme().border)
-            .p_2()
-            .role(Role::Tree)
-            .aria_label(folders)
-            .child(
-                heading(folders)
-                    .px_2()
-                    .py_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground),
-            )
-            .child(
-                div()
-                    .id("archive-folders-scroll")
-                    .w_full()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_x_scrollbar()
-                    .child(
-                        tree(&self.folders, move |_, entry, selected, _, cx| {
-                            let open = entry.is_expanded();
-                            let icon = if entry.is_root() {
-                                IconName::Inbox
-                            } else if open {
-                                IconName::FolderOpen
-                            } else {
-                                IconName::Folder
-                            };
-                            // The kit's tree draws no disclosure mark of its own, and a
-                            // branch with nothing to say it has one is a branch nobody
-                            // opens.
-                            let chevron = if entry.is_folder() {
-                                Some(Icon::new(if open {
-                                    IconName::ChevronDown
-                                } else {
-                                    IconName::ChevronRight
-                                }))
-                            } else {
-                                None
-                            };
-                            // A folder here takes what is dropped on it, the
-                            // same move a folder row in the list takes: the
-                            // tree is the only way to reach a folder that is
-                            // not a child of the one being shown.
-                            let target = entry.item().id.to_string();
-                            let shell = dropping.clone();
-                            // The same pull a folder row of the list takes:
-                            // into another folder it is a move, out of the
-                            // window it is arca-drag's lazy extraction. The
-                            // root is the archive itself and has nowhere to go.
-                            let carrier = dropping.clone();
-                            let from = entry.item().id.to_string();
-                            let carried = entry.item().label.clone();
-                            ListItem::new(entry.item().id.clone())
-                                .when(!from.is_empty(), |item| {
-                                    item.on_drag(DraggedRows, move |_, offset, _, app| {
-                                        let preview = DragPreview {
-                                            label: carried.to_string(),
-                                            extra: 0,
-                                            offset,
-                                        };
-                                        let _ = carrier.update(app, |shell, _| {
-                                            shell.controller.pick_folder(&from);
-                                            shell.carrying = true;
-                                        });
-                                        app.new(|_| preview)
-                                    })
-                                })
-                                // What is under the pointer is what it lands in,
-                                // and without saying so the whole gesture is a
-                                // guess until the archive has been rewritten.
-                                .drag_over::<DraggedRows>(|style, _, _, cx| {
-                                    style
-                                        .bg(cx.theme().drop_target)
-                                        .border_color(cx.theme().drag_border)
-                                })
-                                .border_1()
-                                .border_color(gpui::transparent_black())
-                                .on_drop(move |_: &DraggedRows, _, cx| {
-                                    let _ = shell.update(cx, |shell, cx| {
-                                        let carried = shell.controller.selected_roots();
-                                        if !carried.is_empty() {
-                                            shell.controller.move_into(&carried, &target);
-                                        }
-                                        shell.carrying = false;
-                                        cx.notify();
-                                    });
-                                })
-                                .pr_1()
-                                .pl(px(4. + 12. * entry.depth() as f32))
-                                .selected(selected)
-                                .role(Role::TreeItem)
-                                .aria_label(entry.item().label.clone())
-                                .aria_level(entry.depth() + 1)
-                                .aria_selected(selected)
-                                .aria_expanded(open)
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .w(px(14.))
-                                                .flex_none()
-                                                .children(chevron.map(|icon| icon.small())),
-                                        )
-                                        .child(Icon::new(icon).small().text_color(cx.theme().link))
-                                        // The name is typed over where it is
-                                        // read, so the branch does not move
-                                        // under the hand mid-rename.
-                                        .map(|row| {
-                                            if renaming.as_deref() == Some(entry.item().id.as_ref())
-                                            {
-                                                row.child(
-                                                    div()
-                                                        .flex_1()
-                                                        .h(px(22.))
-                                                        .border_1()
-                                                        .border_color(cx.theme().border)
-                                                        .bg(cx.theme().background)
-                                                        .px_1()
-                                                        .child(
-                                                            Input::new(&rename_input)
-                                                                .small()
-                                                                .appearance(false),
-                                                        ),
-                                                )
-                                            } else {
-                                                row.child(
-                                                    div()
-                                                        .flex_1()
-                                                        .truncate()
-                                                        .child(entry.item().label.clone()),
-                                                )
-                                            }
-                                        }),
-                                )
-                        })
-                        // The same menu a folder row of the list carries, plus
-                        // the folder being made inside it: a folder is the same
-                        // thing in both panels, and a menu that offered less
-                        // here would be a second set of rules to learn.
-                        .context_menu(move |_, entry, menu, _, _| {
-                            let path = entry.item().id.to_string();
-                            // The archive itself, which is a place and nothing
-                            // else: it cannot be renamed, copied or deleted
-                            // from inside the window that has it open.
-                            let root = path.is_empty();
-                            let mut menu = menu;
-                            let mut drawn = false;
-                            for action in RowAction::ALL.into_iter().filter(|action| {
-                                action.offered()
-                                    // The list is where an entry is looked at,
-                                    // and what "all" is counted against. The
-                                    // tree has no bytes to show and no rows.
-                                    && !matches!(
-                                        action,
-                                        RowAction::View | RowAction::SelectAll
-                                    )
-                                    && (!root || action.about_the_place())
-                                    && (!matches!(action, RowAction::Rename | RowAction::NewFolder)
-                                        || writable)
-                            }) {
-                                if action.starts_group() && drawn {
-                                    menu = menu.separator();
-                                }
-                                drawn = true;
-                                let (label, _) = action.label(strings);
-                                let shell = menu_owner.clone();
-                                let path = path.clone();
-                                let item =
-                                    PopupMenuItem::new(label).on_click(move |_, window, cx| {
-                                        let _ = shell.update(cx, |shell, cx| {
-                                            shell.folder_action(action, &path, window, cx);
-                                        });
-                                    });
-                                menu = menu.item(match row_action_icon(action) {
-                                    Some(icon) => item.icon(icon),
-                                    None => item,
-                                });
-                            }
-                            menu
-                        })
-                        .h_full()
-                        .w(px(widest))
-                        .flex_none(),
-                    ),
-            )
-    }
-
-    /// How wide the sidebar is right now: what the pull left it at, and the
-    /// remembered width until the first frame has laid the panels out.
-    fn sidebar_width(&self, cx: &App) -> f32 {
-        self.sidebar_state
-            .read(cx)
-            .sizes()
-            .first()
-            .map(|width| f32::from(*width))
-            .filter(|width| *width > 0.0)
-            .unwrap_or(self.controller.state.settings.sidebar)
-    }
-
-    /// The sidebar width the pull ended on, kept where the column widths are
-    /// kept so it survives the window.
-    fn remember_sidebar(&mut self, width: f32, cx: &mut Context<Self>) {
-        self.controller.state.settings.sidebar = width.clamp(SIDEBAR_LEAST, SIDEBAR_MOST);
-        self.controller.state.settings.save();
-        cx.notify();
-    }
-
-    /// Lo ancha que se dibuja una fila del arbol: lo que se ve del panel, y no
-    /// mas.
-    ///
-    /// Antes se medía el nombre mas largo -- a siete pixeles por letra -- y se
-    /// dibujaba el arbol de ese ancho, de modo que un nombre profundo se leia
-    /// desplazandose a lo ancho en vez de quedar cortado. El precio era que la
-    /// fila señalada se pintaba mas ancha que el panel y su recuadro se cerraba
-    /// fuera de lo que se ve: por la derecha parecia abierto siempre, con el
-    /// panel estrecho, porque el borde estaba a 240 con el panel en 160.
-    ///
-    /// Encajandolas, el nombre se recorta con puntos suspensivos y el recuadro
-    /// se cierra. Un nombre que no cabe se lee ensanchando el panel, que se
-    /// arrastra entre 160 y 520.
-    fn widest_folder_row(&self, cx: &App) -> f32 {
-        sidebar_inner(self.sidebar_width(cx))
     }
 
     fn begin_dialog(&mut self, kind: DialogKind, cx: &mut Context<Self>) {
@@ -1026,11 +784,14 @@ impl GpuiShell {
             cx.stop_propagation();
             return;
         }
+        self.filter_open = true;
+        cx.notify();
         let handle = self.filter.read(cx).focus_handle(cx).clone();
         window.focus(&handle, cx);
     }
 
     fn route_changed(&mut self, cx: &mut Context<Self>) {
+        self.controller.cancel_preview();
         cx.notify();
     }
 
@@ -1107,7 +868,6 @@ impl GpuiShell {
                 .controller
                 .dispatch(AppAction::AnswerDrop(DropChoice::Cancel)),
             ModalKind::Add => self.controller.cancel_compress(),
-            ModalKind::Viewer => self.controller.state.viewing = None,
             ModalKind::NewFolder | ModalKind::Mask => self.close_name(),
             ModalKind::Settings => self.controller.state.show_settings = false,
             ModalKind::Shortcuts => self.controller.state.show_shortcuts = false,
@@ -1128,7 +888,6 @@ impl GpuiShell {
                 | ModalKind::NewFolder
                 | ModalKind::Mask
                 | ModalKind::Settings
-                | ModalKind::Viewer
                 | ModalKind::Add
         )
     }
@@ -1216,8 +975,6 @@ impl GpuiShell {
             Some(ModalKind::Drop)
         } else if matches!(self.controller.state.view, View::Add) {
             Some(ModalKind::Add)
-        } else if self.controller.state.viewing.is_some() {
-            Some(ModalKind::Viewer)
         } else if self.controller.state.asking_folder {
             Some(ModalKind::NewFolder)
         } else if self.controller.state.picking_group.is_some() {
@@ -1264,7 +1021,6 @@ impl GpuiShell {
                 self.dialog_primary_focus.clone()
             }
             Some(ModalKind::Add) => self.output_name.read(cx).focus_handle(cx).clone(),
-            Some(ModalKind::Viewer) => self.viewer_focus[0].clone(),
             Some(ModalKind::NewFolder | ModalKind::Mask) => {
                 self.name_input.read(cx).focus_handle(cx).clone()
             }
@@ -1366,37 +1122,6 @@ impl GpuiShell {
                 self.begin_dialog(DialogKind::SaveCopy { name, directory }, cx);
             }
         }
-    }
-
-    /// An entry out of the archive, looked at without taking it out: as text,
-    /// as hex, or as the picture it is.
-    ///
-    /// The text and the hex go through `uniform_list`, so only the lines on
-    /// screen are laid out and a log of a million lines opens as fast as a
-    /// note of three.
-    fn viewer_picture(
-        &mut self,
-        name: &str,
-        bytes: &std::sync::Arc<[u8]>,
-    ) -> Option<std::sync::Arc<gpui::Image>> {
-        if let Some((cached, image)) = &self.viewer_image {
-            if cached == name {
-                return Some(image.clone());
-            }
-        }
-        let format = match image::guess_format(bytes).ok()? {
-            image::ImageFormat::Png => gpui::ImageFormat::Png,
-            image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
-            image::ImageFormat::Gif => gpui::ImageFormat::Gif,
-            image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
-            image::ImageFormat::WebP => gpui::ImageFormat::Webp,
-            // The `image` crate is built with five decoders on purpose; any
-            // other tag here is a format this build cannot read anyway.
-            _ => return None,
-        };
-        let image = std::sync::Arc::new(gpui::Image::from_bytes(format, bytes.to_vec()));
-        self.viewer_image = Some((name.to_string(), image.clone()));
-        Some(image)
     }
 
     /// Shuts whichever text dialog is open and forgets what was typed in it.
@@ -1546,8 +1271,22 @@ impl GpuiShell {
         if !self.background_idle() {
             return;
         }
+        if action.writable_only() && self.controller.state.format != Format::Zip {
+            return;
+        }
         let rows = self.controller.visible_rows();
         let row = rows.get(index).cloned();
+        if row.as_ref().is_some_and(|row| row.up) && !action.about_the_place() {
+            return;
+        }
+        if let Some(destination) =
+            action.destination(row.as_ref(), &self.controller.state.current_dir)
+        {
+            if destination != self.controller.state.current_dir {
+                self.controller.go_to(destination);
+                self.route_changed(cx);
+            }
+        }
         match action {
             RowAction::Open => {
                 if let Some(row) = row {
@@ -1567,7 +1306,7 @@ impl GpuiShell {
             // some names, not a thing with bytes.
             RowAction::View => {
                 if let Some(entry) = row.as_ref().and_then(|row| row.entry) {
-                    self.controller.view_entry(entry);
+                    self.show_preview(entry, window, cx);
                 }
             }
             RowAction::TestSelection => {
@@ -1575,8 +1314,8 @@ impl GpuiShell {
                 if let Some(archive) = self.controller.state.archive.clone() {
                     self.controller.dispatch(AppAction::Run(Job::Test {
                         archive,
-                        password: self.controller.state.archive_password.clone(),
                         only: (!names.is_empty()).then(|| names.into_iter().collect()),
+                        password: None,
                     }));
                 }
             }
@@ -1667,6 +1406,12 @@ impl GpuiShell {
     /// Whether the pointer has left the list. What is being carried goes to the
     /// system from here; inside, it is still a move between folders.
     fn left_the_list(&self, at: gpui::Point<gpui::Pixels>) -> bool {
+        if self.controller.state.browser.columns {
+            return f32::from(at.x) < 0.
+                || f32::from(at.x) > self.workspace_width
+                || f32::from(at.y) < 0.
+                || f32::from(at.y) > self.workspace_height;
+        }
         let Some(view) = self.list_view(self.row_count) else {
             return false;
         };
@@ -1879,6 +1624,7 @@ impl GpuiShell {
                 .focus_handle(cx)
                 .is_focused(window)
             || [
+                &self.preview_password,
                 &self.password,
                 &self.output_name,
                 &self.add_password,
@@ -1916,10 +1662,23 @@ impl GpuiShell {
         let idle = self.background_idle();
         // The shortcuts window is the one that answers while an archive is
         // being read, because it is the one that says what to press.
-        if !idle && shortcut != Shortcut::Shortcuts {
+        if !idle
+            && !matches!(
+                shortcut,
+                Shortcut::Shortcuts | Shortcut::Back | Shortcut::Forward | Shortcut::View
+            )
+        {
             return;
         }
         match shortcut {
+            Shortcut::Back => {
+                self.controller.dispatch(AppAction::Back);
+                self.route_changed(cx);
+            }
+            Shortcut::Forward => {
+                self.controller.dispatch(AppAction::Forward);
+                self.route_changed(cx);
+            }
             Shortcut::Open => self.begin_dialog(DialogKind::Open, cx),
             Shortcut::Compress => self
                 .controller
@@ -1940,8 +1699,8 @@ impl GpuiShell {
                 if let Some(archive) = archive {
                     self.controller.dispatch(AppAction::Run(Job::Test {
                         archive,
-                        password: self.controller.state.archive_password.clone(),
                         only: None,
+                        password: None,
                     }));
                 }
             }
@@ -1987,7 +1746,7 @@ impl GpuiShell {
                     .and_then(|index| rows.get(index))
                     .and_then(|row| row.entry)
                 {
-                    Some(entry) => self.controller.view_entry(entry),
+                    Some(entry) => self.show_preview(entry, window, cx),
                     None => return,
                 }
             }
@@ -2073,7 +1832,7 @@ impl GpuiShell {
     }
 
     fn clipboard_focus_is_safe(&self, window: &Window, cx: &mut Context<Self>) -> bool {
-        !self.filter.read(cx).focus_handle(cx).is_focused(window) && self.modal_kind().is_none()
+        !self.typing(window, cx) && self.modal_kind().is_none()
     }
 
     fn dispatch_clipboard(&mut self, cut: bool, window: &Window, cx: &mut Context<Self>) {
@@ -2179,6 +1938,7 @@ impl GpuiShell {
         crumbs
     }
 
+    #[cfg(test)]
     fn visible_crumb_indices(len: usize) -> (Vec<usize>, Vec<usize>) {
         if len <= 4 {
             return ((0..len).collect(), Vec::new());
@@ -2188,121 +1948,6 @@ impl GpuiShell {
         let hidden: Vec<usize> = (1..hidden_end).collect();
         shown.extend(hidden_end..len);
         (shown, hidden)
-    }
-
-    fn shown_columns(&self) -> Vec<SortColumn> {
-        let columns = self.controller.state.settings.columns;
-        std::iter::once(SortColumn::Name)
-            .chain(
-                Columns::ALL
-                    .iter()
-                    .map(|(column, _)| *column)
-                    .filter(move |column| columns.on(*column)),
-            )
-            .collect()
-    }
-
-    /// Where a column's width lives in `Settings::widths`: the name first,
-    /// then the ones that can be turned off, in the order of `Columns::ALL`.
-    /// A column keeps its width while it is off, so turning one back on does
-    /// not lose how it was set.
-    fn column_slot(column: SortColumn) -> usize {
-        Columns::ALL
-            .iter()
-            .position(|(candidate, _)| *candidate == column)
-            .map_or(0, |index| index + 1)
-    }
-
-    /// The widths the kit ended a pull with, kept where the rest of the window
-    /// settings live so they survive the window.
-    fn remember_widths(&mut self, widths: &[gpui::Pixels], cx: &mut Context<Self>) {
-        for (column, width) in self.shown_columns().into_iter().zip(widths.iter()) {
-            let slot = Self::column_slot(column);
-            self.set_column_width(slot, f32::from(*width));
-        }
-        self.controller.state.settings.save();
-        cx.notify();
-    }
-
-    /// Hand the table the frame it is about to draw.
-    ///
-    /// The delegate cannot read the shell while the shell is rendering, so what
-    /// it needs is copied across first.
-    fn sync_table(&mut self, rows: &[super::Row], cx: &mut Context<Self>) {
-        let columns = self.shown_columns();
-        let checked: Vec<bool> = rows
-            .iter()
-            .map(|row| self.controller.is_checked(row))
-            .collect();
-        let muted: Vec<bool> = rows
-            .iter()
-            .map(|row| {
-                row.entry.is_some_and(|entry| {
-                    self.controller
-                        .state
-                        .cut_names
-                        .contains(&self.controller.state.entries[entry].name)
-                })
-            })
-            .collect();
-        // Not while the tree is the one showing the field: one field cannot be
-        // drawn in two panels at once.
-        let renaming = self
-            .controller
-            .state
-            .renaming
-            .as_ref()
-            .filter(|_| !self.renaming_in_tree)
-            .and_then(|(path, _)| rows.iter().position(|row| row.path == *path));
-        let widths = (0..Settings::default_widths().len())
-            .map(|slot| self.column_width(slot))
-            .collect();
-        let cursor = self.controller.state.cursor;
-        let order = self.controller.state.order;
-        let strings = self.controller.s();
-        let idle = self.background_idle();
-        let writable = self.controller.state.format == super::Format::Zip;
-        let root = self.controller.row_root().to_string();
-        let rows = rows.to_vec();
-        self.table.update(cx, |state, cx| {
-            let delegate = state.delegate_mut();
-            // `refresh` rebuilds the table's live column groups. Doing that on
-            // every shell render overwrites a resize drag with the last saved
-            // widths, so only rebuild when the column layout actually changed.
-            let layout_changed = delegate.columns != columns || delegate.widths != widths;
-            delegate.rows = rows;
-            delegate.root = root;
-            delegate.columns = columns;
-            delegate.widths = widths;
-            delegate.checked = checked;
-            delegate.muted = muted;
-            delegate.cursor = cursor;
-            delegate.renaming = renaming;
-            delegate.order = order;
-            delegate.strings = strings;
-            delegate.idle = idle;
-            delegate.writable = writable;
-            if layout_changed {
-                state.refresh(cx);
-            }
-        });
-    }
-
-    fn column_width(&self, slot: usize) -> f32 {
-        self.controller
-            .state
-            .settings
-            .widths
-            .get(slot)
-            .copied()
-            .unwrap_or_else(|| Settings::default_widths()[slot])
-    }
-
-    fn set_column_width(&mut self, slot: usize, width: f32) {
-        if self.controller.state.settings.widths.len() <= slot {
-            self.controller.state.settings.widths = Settings::default_widths();
-        }
-        self.controller.state.settings.widths[slot] = width.max(Settings::least(slot));
     }
 
     fn kind_icon(kind: Kind, cx: &App) -> (IconName, gpui::Hsla) {
@@ -2422,7 +2067,8 @@ impl GpuiShell {
                 value: true,
             });
         }
-        self.controller.state.cursor = Some(index);
+        self.controller
+            .set_pane_cursor(self.controller.state.browser.active, Some(index));
         self.list_scroll
             .scroll_to_item(index, ScrollStrategy::Nearest);
         window.focus(&self.list_focus, cx);
@@ -2449,7 +2095,8 @@ impl GpuiShell {
         }
         let modifiers = event.keystroke.modifiers;
         let key = event.keystroke.key.to_ascii_lowercase();
-        if key == "delete" {
+        if key == "delete" && self.background_idle() && self.controller.state.format == Format::Zip
+        {
             self.dialog_return_focus = Some(self.delete_trigger_focus.clone());
             window.focus(&self.delete_trigger_focus, cx);
             self.controller.dispatch(AppAction::RequestDelete);
@@ -2459,7 +2106,10 @@ impl GpuiShell {
         }
         let rows = self.controller.visible_rows();
         if rows.is_empty() {
-            if key == "backspace" && !self.controller.state.current_dir.is_empty() {
+            if matches!(key.as_str(), "backspace" | "left" | "arrowleft")
+                && !modifiers.alt
+                && !self.controller.state.current_dir.is_empty()
+            {
                 let parent = parent_of(&self.controller.state.current_dir);
                 self.controller.dispatch(AppAction::Navigate(parent));
                 self.route_changed(cx);
@@ -2487,7 +2137,7 @@ impl GpuiShell {
             cx.notify();
             return;
         }
-        if key == "enter" {
+        if matches!(key.as_str(), "enter" | "right" | "arrowright") && !modifiers.alt {
             if let Some(row) = self
                 .controller
                 .state
@@ -2498,14 +2148,16 @@ impl GpuiShell {
                     self.controller
                         .dispatch(AppAction::Navigate(row.path.clone()));
                     self.route_changed(cx);
-                } else if let Some(entry) = row.entry {
-                    self.controller.dispatch(AppAction::OpenFile(entry));
+                } else if key == "enter" {
+                    if let Some(entry) = row.entry {
+                        self.controller.dispatch(AppAction::OpenFile(entry));
+                    }
                 }
             }
             cx.stop_propagation();
             return;
         }
-        if key == "backspace" {
+        if matches!(key.as_str(), "backspace" | "left" | "arrowleft") && !modifiers.alt {
             if !self.controller.state.current_dir.is_empty() {
                 let parent = parent_of(&self.controller.state.current_dir);
                 self.controller.dispatch(AppAction::Navigate(parent));
@@ -2542,7 +2194,8 @@ impl GpuiShell {
                 });
             }
         }
-        self.controller.state.cursor = Some(index);
+        self.controller
+            .set_pane_cursor(self.controller.state.browser.active, Some(index));
         self.list_scroll
             .scroll_to_item(index, ScrollStrategy::Nearest);
         cx.stop_propagation();
@@ -2556,7 +2209,7 @@ impl GpuiShell {
     /// no notion of: many rows marked at once, the band that sweeps them and a
     /// drag that leaves the window.
     fn file_table(&mut self, rows: Vec<super::Row>, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
-        let enabled = self.background_idle();
+        let enabled = !self.background_blocked();
         let strings = self.controller.s();
         self.sync_table(&rows, cx);
         let mut table = div()
@@ -2625,20 +2278,6 @@ impl Render for GpuiShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(&self.controller.state.window_title);
         self.remember_background_focus(window, cx);
-        // Decoding writes to the cache, and the viewer's dialog body may only
-        // read the shell, so the picture has to be decoded here instead. Name
-        // and bytes only: `Viewed` holds the split lines and is not cloned per
-        // frame on purpose.
-        let to_decode = self
-            .controller
-            .state
-            .viewing
-            .as_ref()
-            .filter(|view| view.look == super::Look::Picture && view.picture)
-            .map(|view| (view.name.clone(), view.bytes.clone()));
-        if let Some((name, bytes)) = to_decode {
-            let _ = self.viewer_picture(&name, &bytes);
-        }
         let s = self.controller.s();
         let modal = self.modal_kind();
         let idle = self.background_idle();
@@ -2676,10 +2315,7 @@ impl Render for GpuiShell {
                 input.set_value(output_value.clone(), window, cx);
             }
         });
-        let zip = matches!(
-            self.controller.state.format,
-            super::Format::Zip | super::Format::SevenZ
-        );
+        let zip = self.controller.state.format == super::Format::Zip;
         self.add_password.update(cx, |input, cx| {
             input.set_placeholder(s.password_optional, window, cx);
             input.set_disabled(!(matches!(modal, Some(ModalKind::Add)) && zip), cx);
@@ -2693,736 +2329,13 @@ impl Render for GpuiShell {
                 input.set_value(state_filter.clone(), window, cx);
             });
         }
+        self.sync_workspace(window, cx);
         let has_archive = self.controller.state.archive.is_some();
         let selected = self.selected_count();
         let rows = self.controller.visible_rows();
         let visible = rows.len();
-        // The one place that knows how long the list is. Everything the pointer
-        // gestures need from it reads this instead of building the list again.
         self.row_count = visible;
-        let can_extract = has_archive && idle;
-        let can_extract_selected = can_extract && selected > 0;
-        let password_available = can_extract && self.controller.state.format == super::Format::Zip;
-        let breadcrumbs = self.crumbs();
-        let (shown, hidden) = Self::visible_crumb_indices(breadcrumbs.len());
-
-        let mut toolbar = div()
-            .id("toolbar")
-            .aria_label(s.toolbar_region)
-            .w_full()
-            .flex()
-            .items_center()
-            .gap_2();
-        if !self.background_blocked() {
-            toolbar = toolbar.role(Role::Toolbar);
-        }
-
-        let open = Self::icon_button(
-            cx,
-            "open",
-            IconName::FolderOpen,
-            format!("{} (Ctrl+O)", s.open),
-            idle,
-        )
-        .when(!has_archive, |button| button.primary());
-        toolbar = toolbar.child(open.on_click(cx.listener(|this, _, _, cx| {
-            if this.background_idle() {
-                this.begin_dialog(DialogKind::Open, cx);
-            }
-        })));
-        let compress = Self::icon_button(
-            cx,
-            "compress",
-            IconName::Inbox,
-            format!("{} (Ctrl+N)", s.compress),
-            idle,
-        );
-        toolbar = toolbar.child(compress.on_click(cx.listener(|this, _, _, cx| {
-            if this.background_idle() {
-                this.controller
-                    .dispatch(AppAction::PrepareCompress(Vec::new()));
-                cx.notify();
-            }
-        })));
-        toolbar = toolbar.child(div().px_1().child(Separator::vertical().h(px(16.))));
-
-        let extract_all = Self::icon_button(
-            cx,
-            "extract-all",
-            IconName::PanelBottomOpen,
-            format!("{} (Ctrl+E)", s.extract_all),
-            can_extract,
-        )
-        .when(has_archive, |button| button.primary());
-        toolbar = toolbar.child(extract_all.on_click(cx.listener(|this, _, _, cx| {
-            if !this.background_idle() {
-                return;
-            }
-            this.begin_dialog(
-                DialogKind::Extract {
-                    only_checked: false,
-                },
-                cx,
-            );
-        })));
-        let extract_selected = Self::icon_button(
-            cx,
-            "extract-selected",
-            Icon::empty().path("icons/file-output.svg"),
-            s.extract_selected.to_string(),
-            can_extract_selected,
-        );
-        toolbar = toolbar.child(extract_selected.on_click(cx.listener(|this, _, _, cx| {
-            if !this.background_idle() {
-                return;
-            }
-            this.begin_dialog(DialogKind::Extract { only_checked: true }, cx);
-        })));
-        let password = Self::icon_button(
-            cx,
-            "password",
-            Icon::empty().path("icons/lock.svg"),
-            s.password_action.to_string(),
-            password_available,
-        );
-        toolbar = toolbar.child(password.on_click(cx.listener(|this, _, _, cx| {
-            if this.background_idle() {
-                this.controller.dispatch(AppAction::BeginPasswordChange);
-                cx.notify();
-            }
-        })));
-        toolbar = toolbar.child(div().px_1().child(Separator::vertical().h(px(16.))));
-        let owner = cx.entity().downgrade();
-        let recent = self
-            .controller
-            .state
-            .settings
-            .recent
-            .iter()
-            .take(RECENT_MAX)
-            .cloned()
-            .collect::<Vec<_>>();
-        let writable = has_archive && self.controller.state.format == super::Format::Zip;
-        let can_undo = has_archive && self.controller.state.undo.is_some();
-        let can_copy = self.can_copy_files();
-        let can_paste = self.can_paste_files();
-        let release = self
-            .controller
-            .state
-            .update
-            .as_ref()
-            .map(|release| fill(s.update_ready, &[("version", &release.tag)]));
-        let has_update = release.is_some();
-        let flat_view = self.controller.state.settings.flat;
-        let folders_on = self.controller.state.settings.folders;
-        let visible_columns = Columns::ALL
-            .iter()
-            .map(|(column, _)| (*column, self.controller.state.settings.columns.on(*column)))
-            .collect::<Vec<_>>();
-
-        let copy = Self::icon_button(
-            cx,
-            "copy",
-            IconName::Copy,
-            s.copy_word.to_string(),
-            can_copy,
-        );
-        toolbar = toolbar.child(copy.on_click(cx.listener(|this, _, window, cx| {
-            if this.background_idle() {
-                this.dispatch_clipboard(false, window, cx);
-                cx.notify();
-            }
-        })));
-        let cut = Self::icon_button(
-            cx,
-            "cut",
-            Icon::empty().path("icons/scissors.svg"),
-            s.cut_word.to_string(),
-            can_copy,
-        );
-        toolbar = toolbar.child(cut.on_click(cx.listener(|this, _, window, cx| {
-            if this.background_idle() {
-                this.dispatch_clipboard(true, window, cx);
-                cx.notify();
-            }
-        })));
-        let delete = Self::icon_button(
-            cx,
-            "delete",
-            Icon::empty().path("icons/trash-2.svg"),
-            s.delete_word.to_string(),
-            writable && selected > 0 && idle,
-        );
-        toolbar = toolbar.child(delete.on_click(cx.listener(|this, _, _, cx| {
-            if this.background_idle() {
-                this.dialog_return_focus = Some(this.delete_trigger_focus.clone());
-                this.controller.dispatch(AppAction::RequestDelete);
-                cx.notify();
-            }
-        })));
-        let test = Self::icon_button(
-            cx,
-            "test-selection",
-            IconName::Check,
-            s.test_selection.to_string(),
-            has_archive && idle,
-        );
-        toolbar = toolbar.child(test.on_click(cx.listener(|this, _, _, cx| {
-            if !this.background_idle() {
-                return;
-            }
-            let names = this.controller.selected_names();
-            if let Some(archive) = this.controller.state.archive.clone() {
-                this.controller.dispatch(AppAction::Run(Job::Test {
-                    archive,
-                    password: this.controller.state.archive_password.clone(),
-                    only: (!names.is_empty()).then(|| names.into_iter().collect()),
-                }));
-            }
-            cx.notify();
-        })));
-        toolbar = toolbar.child(div().px_1().child(Separator::vertical().h(px(16.))));
-
-        let settings_owner = owner.clone();
-        let overflow = brand_button("overflow")
-            .icon(IconName::Ellipsis)
-            .accessibility_label(s.more_word)
-            .tooltip(s.more_word)
-            .custom(
-                ButtonCustomVariant::new(cx)
-                    .hover(cx.theme().button_hover)
-                    .active(cx.theme().button_active),
-            )
-            .compact()
-            .disabled(!idle)
-            .dropdown_menu(move |menu, window, popup_cx| {
-                let mut menu = menu;
-                if let Some(label) = release.clone() {
-                    menu = menu
-                        .item(Self::popup_action(
-                            owner.clone(),
-                            label,
-                            OverflowAction::Release,
-                        ))
-                        .separator();
-                }
-                let archive_owner = owner.clone();
-                menu = menu.submenu_with_icon(
-                    Some(Icon::new(IconName::Inbox)),
-                    s.archive_group,
-                    window,
-                    popup_cx,
-                    move |submenu, window, popup_cx| {
-                        let test_owner = archive_owner.clone();
-                        let add_owner = archive_owner.clone();
-                        let add_folders_owner = archive_owner.clone();
-                        let folder_owner = archive_owner.clone();
-                        let undo_owner = archive_owner.clone();
-                        let save_owner = archive_owner.clone();
-                        submenu
-                            .item(
-                                PopupMenuItem::new(s.test_word)
-                                    .disabled(!has_archive)
-                                    .on_click(move |_, _, cx| {
-                                        let _ = test_owner.update(cx, |this, cx| {
-                                            if let Some(archive) =
-                                                this.controller.state.archive.clone()
-                                            {
-                                                this.controller.dispatch(AppAction::Run(
-                                                    Job::Test {
-                                                        archive,
-                                                        password: this
-                                                            .controller
-                                                            .state
-                                                            .archive_password
-                                                            .clone(),
-                                                        only: None,
-                                                    },
-                                                ));
-                                            }
-                                            cx.notify();
-                                        });
-                                    }),
-                            )
-                            .separator()
-                            // Two entries and not one, for the same reason the
-                            // add box has two: the native dialog picks files or
-                            // folders, never both.
-                            .submenu(s.add_to_archive, window, popup_cx, move |inner, _, _| {
-                                inner
-                                    .item(
-                                        Self::popup_action(
-                                            add_owner.clone(),
-                                            s.add_files_word,
-                                            OverflowAction::AddFiles,
-                                        )
-                                        .disabled(!writable),
-                                    )
-                                    .item(
-                                        Self::popup_action(
-                                            add_folders_owner.clone(),
-                                            s.add_folders_word,
-                                            OverflowAction::AddFolders,
-                                        )
-                                        .disabled(!writable),
-                                    )
-                            })
-                            .item(
-                                Self::popup_action(
-                                    folder_owner,
-                                    s.new_folder,
-                                    OverflowAction::NewFolder,
-                                )
-                                .disabled(!writable),
-                            )
-                            .item(
-                                Self::popup_action(undo_owner, s.undo_word, OverflowAction::Undo)
-                                    .disabled(!can_undo),
-                            )
-                            .item(
-                                Self::popup_action(
-                                    save_owner,
-                                    s.save_copy,
-                                    OverflowAction::SaveCopy,
-                                )
-                                .disabled(!has_archive),
-                            )
-                    },
-                );
-
-                let selection_owner = owner.clone();
-                menu = menu.submenu_with_icon(
-                    Some(Icon::new(IconName::Check)),
-                    s.selection_group,
-                    window,
-                    popup_cx,
-                    move |submenu, _, _| {
-                        let select_owner = selection_owner.clone();
-                        let invert_owner = selection_owner.clone();
-                        let clear_owner = selection_owner.clone();
-                        submenu
-                            .item(
-                                PopupMenuItem::new(s.select_all)
-                                    .disabled(!has_archive)
-                                    .on_click(move |_, _, cx| {
-                                        let _ = select_owner.update(cx, |this, cx| {
-                                            this.controller.dispatch(AppAction::SelectAllVisible);
-                                            cx.notify();
-                                        });
-                                    }),
-                            )
-                            .item(
-                                PopupMenuItem::new(s.invert_selection)
-                                    .disabled(!has_archive)
-                                    .on_click(move |_, _, cx| {
-                                        let _ = invert_owner.update(cx, |this, cx| {
-                                            this.controller.dispatch(AppAction::InvertVisible);
-                                            cx.notify();
-                                        });
-                                    }),
-                            )
-                            .item(
-                                PopupMenuItem::new(s.clear_selection)
-                                    .disabled(!has_archive)
-                                    .on_click(move |_, _, cx| {
-                                        let _ = clear_owner.update(cx, |this, cx| {
-                                            this.controller.dispatch(AppAction::ClearSelection);
-                                            cx.notify();
-                                        });
-                                    }),
-                            )
-                    },
-                );
-
-                let clipboard_owner = owner.clone();
-                menu = menu.submenu_with_icon(
-                    Some(Icon::new(IconName::Copy)),
-                    s.clipboard_group,
-                    window,
-                    popup_cx,
-                    move |submenu, _, _| {
-                        let copy_owner = clipboard_owner.clone();
-                        let cut_owner = clipboard_owner.clone();
-                        let paste_owner = clipboard_owner.clone();
-                        submenu
-                            .item(
-                                PopupMenuItem::new(s.copy_word)
-                                    .disabled(!can_copy)
-                                    .on_click(move |_, _, cx| {
-                                        let _ = copy_owner.update(cx, |this, cx| {
-                                            this.controller
-                                                .dispatch(AppAction::Copy { cut: false });
-                                            cx.notify();
-                                        });
-                                    }),
-                            )
-                            .item(PopupMenuItem::new(s.cut_word).disabled(!can_copy).on_click(
-                                move |_, _, cx| {
-                                    let _ = cut_owner.update(cx, |this, cx| {
-                                        this.controller.dispatch(AppAction::Copy { cut: true });
-                                        cx.notify();
-                                    });
-                                },
-                            ))
-                            .item(
-                                PopupMenuItem::new(s.paste_word)
-                                    .disabled(!can_paste)
-                                    .on_click(move |_, _, cx| {
-                                        let _ = paste_owner.update(cx, |this, cx| {
-                                            this.controller.dispatch(AppAction::Paste);
-                                            cx.notify();
-                                        });
-                                    }),
-                            )
-                    },
-                );
-
-                let recent_owner = owner.clone();
-                let recent_menu = recent.clone();
-                menu = menu.submenu(s.recent_group, window, popup_cx, move |submenu, _, _| {
-                    let mut submenu = submenu;
-                    for path in recent_menu.iter() {
-                        let open_owner = recent_owner.clone();
-                        let target = PathBuf::from(path);
-                        let leaf = target
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_string())
-                            .unwrap_or(path.clone());
-                        submenu =
-                            submenu.item(PopupMenuItem::new(leaf).on_click(move |_, _, cx| {
-                                let _ = open_owner.update(cx, |this, cx| {
-                                    this.controller.dispatch(AppAction::Open(target.clone()));
-                                    cx.notify();
-                                });
-                            }));
-                    }
-                    submenu.item(
-                        PopupMenuItem::new(s.clear_history)
-                            .disabled(recent_menu.is_empty())
-                            .on_click({
-                                let history_owner = recent_owner.clone();
-                                move |_, _, cx| {
-                                    let _ = history_owner.update(cx, |this, cx| {
-                                        this.controller.state.settings.recent.clear();
-                                        this.controller.state.settings.save();
-                                        cx.notify();
-                                    });
-                                }
-                            }),
-                    )
-                });
-
-                let view_owner = owner.clone();
-                let columns_menu = visible_columns.clone();
-                menu = menu.submenu(
-                    s.view_group,
-                    window,
-                    popup_cx,
-                    move |submenu, window, popup_cx| {
-                        let flat_owner = view_owner.clone();
-                        let column_owner = view_owner.clone();
-                        let folders_owner = view_owner.clone();
-                        // Esconder el panel de carpetas. El ajuste seguia
-                        // guardandose y leyendose, pero nadie lo miraba al dibujar:
-                        // el panel salia siempre y no habia donde quitarlo.
-                        let mut submenu = submenu.item(
-                            PopupMenuItem::new(s.folder_tree)
-                                .disabled(!has_archive)
-                                .checked(folders_on)
-                                .on_click(move |_, _, cx| {
-                                    let _ = folders_owner.update(cx, |this, cx| {
-                                        let settings = &mut this.controller.state.settings;
-                                        settings.folders = !settings.folders;
-                                        settings.save();
-                                        cx.notify();
-                                    });
-                                }),
-                        );
-                        submenu = submenu.item(
-                            PopupMenuItem::new(s.flat_view)
-                                .disabled(!has_archive)
-                                .checked(flat_view)
-                                .on_click(move |_, _, cx| {
-                                    let _ = flat_owner.update(cx, |this, cx| {
-                                        let settings = &mut this.controller.state.settings;
-                                        settings.flat = !settings.flat;
-                                        if settings.flat && !settings.columns.on(SortColumn::Path) {
-                                            settings.columns.set(SortColumn::Path, true);
-                                        }
-                                        settings.save();
-                                        this.controller.dispatch(AppAction::ClearSelection);
-                                        cx.notify();
-                                    });
-                                }),
-                        );
-                        // Las columnas, en su propio sitio. Estaban sueltas debajo
-                        // de estas dos, y son otra cosa: una dice como se dispone
-                        // la ventana y la otra que datos se ensenan de cada fila.
-                        // Trece entradas seguidas sin separar no son un menu, son
-                        // una lista.
-                        let columns_menu = columns_menu.clone();
-                        submenu.submenu(s.columns_word, window, popup_cx, move |mut cols, _, _| {
-                            for (column, shown) in columns_menu.iter().copied() {
-                                let label = Columns::label(column, s);
-                                let column_owner = column_owner.clone();
-                                cols =
-                                    cols.item(PopupMenuItem::new(label).checked(shown).on_click(
-                                        move |_, _, cx| {
-                                            let _ = column_owner.update(cx, |this, cx| {
-                                                this.controller
-                                                    .dispatch(AppAction::ToggleColumn(column));
-                                                cx.notify();
-                                            });
-                                        },
-                                    ));
-                            }
-                            cols
-                        })
-                    },
-                );
-
-                let app_owner = owner.clone();
-                menu.submenu(
-                    s.application_group,
-                    window,
-                    popup_cx,
-                    move |submenu, _, _| {
-                        let shortcuts_owner = app_owner.clone();
-                        let settings_owner = app_owner.clone();
-                        submenu
-                            .item(PopupMenuItem::new(s.shortcuts_title).on_click(
-                                move |_, _, cx| {
-                                    let _ = shortcuts_owner.update(cx, |this, cx| {
-                                        this.controller.state.show_shortcuts = true;
-                                        cx.notify();
-                                    });
-                                },
-                            ))
-                            .item(PopupMenuItem::new(s.settings).on_click(move |_, _, cx| {
-                                let _ = settings_owner.update(cx, |this, cx| {
-                                    this.controller.state.show_settings = true;
-                                    cx.notify();
-                                });
-                            }))
-                    },
-                )
-            });
-        let settings = brand_button("settings")
-            .icon(IconName::Settings)
-            .accessibility_label(s.settings)
-            .tooltip(s.settings)
-            .custom(
-                ButtonCustomVariant::new(cx)
-                    .hover(cx.theme().button_hover)
-                    .active(cx.theme().button_active),
-            )
-            .compact()
-            .disabled(!idle)
-            .on_click(move |_, _, cx| {
-                let _ = settings_owner.update(cx, |this, cx| {
-                    this.controller.state.show_settings = true;
-                    cx.notify();
-                });
-            });
-        let update_indicator = if has_update {
-            div()
-                .id("update-indicator")
-                .size(px(6.))
-                .flex_none()
-                .rounded_full()
-                .bg(cx.theme().progress_bar)
-        } else {
-            div().id("update-indicator").size_0()
-        };
-        toolbar = toolbar
-            .child(settings)
-            .child(overflow)
-            .child(update_indicator);
-
-        // The filter sits at the far end of the bar, the way a search field
-        // does in every file manager on the desktop, instead of stretching
-        // across whatever room the buttons left over.
-        let filter_input = Input::new(&self.filter)
-            .aria_label(s.find_word)
-            .focus_bordered(false)
-            .cleanable(true)
-            .disabled(!idle);
-        toolbar = toolbar
-            .child(div().flex_1().min_w(px(8.)))
-            .child(div().w(px(220.)).flex_none().child(filter_input));
-
-        let mut nav = div()
-            .id("navigation")
-            .w_full()
-            .relative()
-            .flex()
-            .items_center()
-            .gap_1()
-            .text_xs();
-        let at_root = self.controller.state.current_dir.is_empty();
-        let back = Self::icon_button(
-            cx,
-            "back",
-            IconName::ArrowLeft,
-            s.back.to_string(),
-            idle && self.controller.can_go_back(),
-        );
-        nav = nav.child(back.on_click(cx.listener(|this, _, _, cx| {
-            if this.background_idle() && this.controller.can_go_back() {
-                this.controller.dispatch(AppAction::Back);
-                this.route_changed(cx);
-            }
-        })));
-        let forward = Self::icon_button(
-            cx,
-            "forward",
-            IconName::ArrowRight,
-            s.forward.to_string(),
-            idle && self.controller.can_go_forward(),
-        );
-        nav = nav.child(forward.on_click(cx.listener(|this, _, _, cx| {
-            if this.background_idle() && this.controller.can_go_forward() {
-                this.controller.dispatch(AppAction::Forward);
-                this.route_changed(cx);
-            }
-        })));
-        let up = Self::icon_button(
-            cx,
-            "up",
-            IconName::ArrowUp,
-            s.up.to_string(),
-            idle && !at_root,
-        );
-        nav = nav.child(up.on_click(cx.listener(|this, _, _, cx| {
-            if this.background_idle() && !this.controller.state.current_dir.is_empty() {
-                let parent = parent_of(&this.controller.state.current_dir);
-                this.controller.dispatch(AppAction::Navigate(parent));
-                this.route_changed(cx);
-            }
-        })));
-        // The counts moved to the status bar, where a count belongs; the
-        // breadcrumbs move up against the arrows, which is the only place a
-        // path reads as "where you are" rather than as a right-hand caption.
-        nav = nav.child(div().px_1().child(Separator::vertical().h(px(14.))));
-
-        for (position, index) in shown.iter().enumerate() {
-            if position > 0 {
-                nav = nav.child(div().text_color(cx.theme().muted_foreground).child("/"));
-            }
-            if position == 1 && !hidden.is_empty() {
-                // The folders that did not fit, behind the same kind of menu as
-                // everything else. It carries its own copy of the names: the
-                // menu is built while the shell is still borrowed.
-                let folders: Vec<(String, String)> = hidden
-                    .iter()
-                    .map(|index| breadcrumbs[*index].clone())
-                    .collect();
-                let menu_owner = cx.entity().downgrade();
-                nav = nav.child(
-                    brand_button("crumb-more")
-                        .label("…")
-                        .accessibility_label(s.hidden_folders)
-                        .tooltip(s.hidden_folders)
-                        .ghost()
-                        .compact()
-                        .disabled(!idle)
-                        .dropdown_menu(move |menu, _, _| {
-                            let mut menu = menu;
-                            for (name, path) in &folders {
-                                let owner = menu_owner.clone();
-                                let path = path.clone();
-                                menu = menu.item(PopupMenuItem::new(name.clone()).on_click(
-                                    move |_, _, cx| {
-                                        let _ = owner.update(cx, |this, cx| {
-                                            if !this.background_idle() {
-                                                return;
-                                            }
-                                            this.controller
-                                                .dispatch(AppAction::Navigate(path.clone()));
-                                            this.route_changed(cx);
-                                        });
-                                    },
-                                ));
-                            }
-                            menu
-                        }),
-                );
-                nav = nav.child(div().text_color(cx.theme().muted_foreground).child("/"));
-            }
-            let (name, path) = &breadcrumbs[*index];
-            if *index + 1 == breadcrumbs.len() {
-                nav = nav.child(
-                    div()
-                        .text_color(cx.theme().link)
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child(name.clone()),
-                );
-            } else {
-                let path = path.clone();
-                let crumb = Self::button(
-                    ("crumb", *index),
-                    name,
-                    fill(s.open_folder, &[("name", name)]),
-                    idle,
-                );
-                nav = nav.child(crumb.on_click(cx.listener(move |this, _, _, cx| {
-                    if !this.background_idle() {
-                        return;
-                    }
-                    this.controller.dispatch(AppAction::Navigate(path.clone()));
-                    this.route_changed(cx);
-                })));
-            }
-        }
-
-        let notice_color = if self.controller.state.error {
-            cx.theme().danger
-        } else {
-            cx.theme().muted_foreground
-        };
-        let status = self.status();
-
-        // The window is regions divided by hairlines, not strips floating in
-        // padding: a toolbar bar, a navigation bar, the body, and a status bar
-        // welded to the bottom edge. Padding lives inside each bar, so every
-        // divider runs the full width and the list reaches both edges.
-        let toolbar_bar = div()
-            .id("toolbar-bar")
-            .flex_none()
-            .h(px(44.))
-            .px_3()
-            .flex()
-            .items_center()
-            .bg(cx.theme().title_bar)
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(toolbar);
-        let nav_bar = div()
-            .id("nav-bar")
-            .flex_none()
-            .h(px(36.))
-            .px_3()
-            .flex()
-            .items_center()
-            .bg(cx.theme().background)
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(nav);
-
-        let mut status_view = div()
-            .id("status")
-            .aria_label(s.status_region)
-            .text_xs()
-            .text_color(notice_color)
-            .truncate()
-            .child(status);
-        if !self.background_blocked() {
-            status_view = status_view.role(if self.controller.state.error {
-                Role::Alert
-            } else {
-                Role::Status
-            });
-        }
+        let header = self.header(cx);
 
         // Everything that used to sit in the flow — the list, the empty states,
         // the progress row — now goes inside the content pane beside the
@@ -3475,9 +2388,7 @@ impl Render for GpuiShell {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(title_bar)
-            .when(!solo_el_formulario, |root| {
-                root.child(toolbar_bar).child(nav_bar)
-            });
+            .when(!solo_el_formulario, |root| root.child(header));
 
         // Files from outside arrive as an ordinary GPUI drag carrying
         // `ExternalPaths`, not as a `FileDropEvent`: the window translates
@@ -3658,134 +2569,8 @@ impl Render for GpuiShell {
                     .size_0(),
             );
 
-        if self.controller.state.busy {
-            use std::sync::atomic::Ordering;
-            let total = self.controller.state.total_count;
-            let done = self.controller.state.done_count;
-            let fraction = if total == 0 {
-                0.0
-            } else {
-                done as f64 / total as f64
-            };
-            let progress = match (total, self.controller.state.in_bytes) {
-                (0, _) => format!("{}…", s.working_word),
-                // A download counts bytes, not files, and nobody reads
-                // "2481152 of 4627170".
-                (total, true) => format!("{} / {}", human(done as u64), human(total as u64)),
-                (total, false) => format!("{done} / {total}"),
-            };
-            let held = self.controller.state.hold.load(Ordering::Relaxed);
-            let asked = self.controller.state.stop.load(Ordering::Relaxed);
-            // The clock, and the guess of what is left made from how long the
-            // part already done took. Only once enough of it is done for the
-            // guess to be worth reading: at two per cent it would say an hour
-            // and then a minute. A paused job is not going anywhere.
-            let mut timing = self
-                .controller
-                .state
-                .started
-                .map(|started| {
-                    let gone = started.elapsed().as_secs_f64();
-                    let mut text = format!("{} {}", s.elapsed_word, super::clock(gone));
-                    if !held && fraction > 0.05 {
-                        text.push_str(&format!(
-                            " · {} {}",
-                            s.time_left,
-                            super::clock(gone / fraction - gone)
-                        ));
-                    }
-                    text
-                })
-                .unwrap_or_default();
-            if asked {
-                timing.push_str(&format!(" · {}", s.stopping));
-            } else if held {
-                timing.push_str(&format!(" · {}", s.paused_word));
-            }
-            // Pausing lets go at the end of an entry, not the end of a byte, so
-            // a file that has started still has to finish.
-            // Transport marks rather than words: the strip already ends in a
-            // line of grey text, and two more words at the end of it read as
-            // the rest of the sentence instead of as something to press.
-            let hold_button = Self::icon_button(
-                cx,
-                "pause-job",
-                if held {
-                    IconName::Play
-                } else {
-                    IconName::Pause
-                },
-                if held { s.resume_word } else { s.pause_word }.to_string(),
-                !self.background_blocked() && !asked,
-            )
-            .xsmall()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if !this.background_blocked() {
-                    this.controller.state.hold.store(!held, Ordering::Relaxed);
-                    cx.notify();
-                }
-            }));
-            let cancel = Self::icon_button(
-                cx,
-                "cancel-job",
-                IconName::Close,
-                s.cancel.to_string(),
-                !self.background_blocked() && !asked,
-            )
-            .xsmall()
-            .on_click(cx.listener(|this, _, _, cx| {
-                if !this.background_blocked() {
-                    this.controller.dispatch(AppAction::CancelJob);
-                    cx.notify();
-                }
-            }));
-            // A strip across the top of the content pane rather than another
-            // floating row: work happening to the archive belongs above the
-            // archive, and it must not shove the list down a line when it
-            // appears.
-            // The bar owns the accessible name and the numeric value; the
-            // strip around it is a status region whose text is read as it
-            // changes. Naming both would announce the same thing twice.
-            let mut progress_view = div()
-                .id("progress")
-                .flex_none()
-                .h(px(30.))
-                .px_2()
-                .flex()
-                .items_center()
-                .gap_2()
-                .text_xs()
-                .bg(cx.theme().secondary)
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(progress)
-                .child(
-                    Progress::new("job-progress")
-                        .accessibility_label(s.progress_region)
-                        .value(fraction as f32 * 100.)
-                        .loading(total == 0)
-                        .w(px(96.))
-                        .flex_none(),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .truncate()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(self.controller.state.current_file.clone()),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(timing),
-                )
-                .child(hold_button)
-                .child(cancel);
-            if !self.background_blocked() {
-                progress_view = progress_view.role(Role::Status);
-            }
-            content = content.child(progress_view);
+        if let Some(job) = self.job_panel(cx) {
+            content = content.child(job);
         }
 
         if self.controller.state.busy && self.controller.state.entries.is_empty() {
@@ -3884,6 +2669,8 @@ impl Render for GpuiShell {
                             ),
                     )
             });
+        } else if self.controller.state.browser.columns {
+            content = content.child(self.directory_columns(cx));
         } else if visible == 0 {
             let message = if self.controller.state.error {
                 s.cannot_open
@@ -3935,68 +2722,11 @@ impl Render for GpuiShell {
             content = content.child(self.file_table(rows, cx));
         }
 
-        // Sidebar beside content, and only once there is an archive: an empty
-        // folder pane next to an empty file list is two ways of saying nothing.
-        let mut body = div()
-            .id("archive-body")
-            .flex_1()
-            .min_h(px(1.))
-            .flex()
-            .flex_row();
-        if has_archive && self.controller.state.settings.folders {
-            let sidebar = self.sidebar(cx);
-            let width = self.sidebar_width(cx);
-            body = body.child(
-                h_resizable("archive-split")
-                    .with_state(&self.sidebar_state)
-                    .child(
-                        resizable_panel()
-                            .size(px(width))
-                            .size_range(px(SIDEBAR_LEAST)..px(SIDEBAR_MOST))
-                            .flex_none()
-                            .child(sidebar),
-                    )
-                    .child(resizable_panel().child(content))
-                    // Written when the kit says the pull is over, so dragging
-                    // the divider is not a stream of writes to disk.
-                    .on_resize({
-                        let shell = cx.entity().downgrade();
-                        move |state, _, cx| {
-                            let Some(width) = state.read(cx).sizes().first().copied() else {
-                                return;
-                            };
-                            shell
-                                .update(cx, |shell, cx| {
-                                    shell.remember_sidebar(f32::from(width), cx);
-                                })
-                                .ok();
-                        }
-                    }),
-            );
-        } else {
-            body = body.child(content);
-        }
+        let body = self.workspace(content, cx);
         root = if solo_el_formulario {
-            // Nada detras: el formulario se queda con la ventana entera.
             root.child(div().flex_1())
         } else {
-            root.child(body).child(
-                StatusBar::new()
-                    .left(status_view)
-                    .right(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(format!("{visible} {}", s.visible_of))
-                            .child(Separator::vertical().h(px(10.)))
-                            .child(format!("{selected} {}", s.checked)),
-                    )
-                    .border_t_1()
-                    .border_color(cx.theme().border),
-            )
+            root.child(body).child(self.footer(visible, selected, cx))
         };
 
         let background = root;
@@ -4119,1088 +2849,6 @@ impl Render for Frame {
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
     }
-}
-
-/// The body of a kit dialog.
-///
-/// Free function taking the shell by entity: it runs from the dialog layer in
-/// `Frame`, so it may read the shell, but it must never write it -- a write
-/// here would repaint from inside a paint. The handlers below are fine,
-/// because a click is dispatched between frames.
-/// A setting picked from everything it can be, rather than cycled one press
-/// at a time.
-///
-/// A button that cycles hides every other choice behind the one written on it,
-/// and the only way back to the choice you just passed is round again. The
-/// name of the setting goes to the accessible name, because the label is the
-/// value.
-fn pick<T: Copy + PartialEq + 'static>(
-    id: &'static str,
-    name: &'static str,
-    options: Vec<(T, &'static str)>,
-    current: T,
-    enabled: bool,
-    weak: WeakEntity<GpuiShell>,
-    apply: fn(&mut GpuiShell, T),
-) -> gpui::AnyElement {
-    let label = options
-        .iter()
-        .find(|(candidate, _)| *candidate == current)
-        .map(|(_, label)| *label)
-        .unwrap_or_default();
-    brand_button(id)
-        .label(label)
-        .accessibility_label(name)
-        .dropdown_caret(true)
-        .outline()
-        .disabled(!enabled)
-        .dropdown_menu(move |menu, _, _| {
-            options.iter().fold(menu, |menu, (value, label)| {
-                let (value, weak) = (*value, weak.clone());
-                menu.item(
-                    PopupMenuItem::new(*label)
-                        .checked(value == current)
-                        .on_click(move |_, _, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                apply(this, value);
-                                cx.notify();
-                            });
-                        }),
-                )
-            })
-        })
-        .into_any_element()
-}
-
-/// The three compression settings, shared by the settings dialog and the add
-/// dialog so the two cannot drift apart.
-fn format_pick(
-    id: &'static str,
-    shell: &Entity<GpuiShell>,
-    weak: &WeakEntity<GpuiShell>,
-    cx: &App,
-) -> gpui::AnyElement {
-    let s = shell.read(cx).controller.s();
-    let options = super::Format::WRITABLE
-        .map(|format| (format, format.label()))
-        .to_vec();
-    pick(
-        id,
-        s.format,
-        options,
-        shell.read(cx).controller.state.format,
-        true,
-        weak.clone(),
-        |this, format| this.controller.set_create_format(format),
-    )
-}
-
-fn codec_pick(
-    id: &'static str,
-    shell: &Entity<GpuiShell>,
-    weak: &WeakEntity<GpuiShell>,
-    enabled: bool,
-    cx: &App,
-) -> gpui::AnyElement {
-    let this = shell.read(cx);
-    let options = [
-        super::Codec::Store,
-        super::Codec::Deflate,
-        super::Codec::Zstd,
-    ]
-    .map(|codec| (codec, this.controller.codec_name(codec)))
-    .to_vec();
-    pick(
-        id,
-        this.controller.s().compressor,
-        options,
-        this.controller.state.codec,
-        enabled,
-        weak.clone(),
-        |this, codec| this.controller.state.codec = codec,
-    )
-}
-
-fn level_pick(
-    id: &'static str,
-    shell: &Entity<GpuiShell>,
-    weak: &WeakEntity<GpuiShell>,
-    cx: &App,
-) -> gpui::AnyElement {
-    let this = shell.read(cx);
-    let options = [
-        super::Level::Store,
-        super::Level::Fast,
-        super::Level::Normal,
-        super::Level::Best,
-    ]
-    .map(|level| (level, this.controller.level_name(level)))
-    .to_vec();
-    pick(
-        id,
-        this.controller.s().level,
-        options,
-        this.controller.state.level,
-        true,
-        weak.clone(),
-        |this, level| this.controller.state.level = level,
-    )
-}
-
-fn dialog_dimensions(
-    kind: ModalKind,
-    viewport: gpui::Size<gpui::Pixels>,
-) -> (gpui::Size<gpui::Pixels>, gpui::Pixels) {
-    let preferred_width = match kind {
-        ModalKind::Conflict | ModalKind::Settings => 560.,
-        ModalKind::Shortcuts => 720.,
-        ModalKind::Add => 600.,
-        ModalKind::Viewer => 800.,
-        _ => 448.,
-    };
-    let top = (viewport.height / 10.).min(px(48.));
-    let width = px(preferred_width).min((viewport.width - px(32.)).max(px(1.)));
-    let height = (viewport.height - top - px(16.)).max(px(1.));
-    (size(width, height), top)
-}
-
-fn build_dialog(
-    kind: ModalKind,
-    shell: &Entity<GpuiShell>,
-    dialog: Dialog,
-    window: &mut Window,
-    cx: &mut App,
-) -> Dialog {
-    let s = shell.read(cx).controller.s();
-    let weak = shell.downgrade();
-    let (bounds, top) = dialog_dimensions(kind, window.viewport_size());
-    let dialog = dialog.w(bounds.width).max_h(bounds.height).margin_top(top);
-    // Escape, the backdrop and the close button all leave the controller still
-    // asking the question, and the next frame would reopen the dialog.
-    // Answering for the user keeps the two in step -- but only while the state
-    // is still on this question, because `on_close` also runs right after ok or
-    // cancel already answered it.
-    let dialog = dialog.on_close({
-        let weak = weak.clone();
-        move |_, _, cx| {
-            let _ = weak.update(cx, |this, cx| {
-                if this.modal_kind() == Some(kind) {
-                    this.cancel_modal(kind);
-                    cx.notify();
-                }
-            });
-        }
-    });
-    // Same answer as the close button, for the people who reach for a labelled
-    // button instead of an X.
-    let cancel_button = |id: &'static str, label: &'static str| {
-        let weak = weak.clone();
-        brand_button(id)
-            .label(label)
-            .outline()
-            .on_click(move |_, _, cx| {
-                let _ = weak.update(cx, |this, cx| {
-                    this.cancel_modal(kind);
-                    cx.notify();
-                });
-            })
-    };
-    match kind {
-        ModalKind::Delete => {
-            let names = shell
-                .read(cx)
-                .controller
-                .state
-                .confirm_delete
-                .clone()
-                .unwrap_or_default();
-            let confirm = weak.clone();
-            dialog
-                .title(heading(s.delete_word))
-                .child(
-                    DialogDescription::new()
-                        .child(fill(s.confirm_delete, &[("n", &names.len().to_string())])),
-                )
-                // `button_props` alone draws nothing: the kit only renders
-                // action buttons when a footer asks for them. `DialogClose`
-                // and `DialogAction` are what route a press back into
-                // `on_close` and `on_ok`.
-                .footer(
-                    DialogFooter::new()
-                        .child(
-                            DialogClose::new()
-                                .child(brand_button("delete-cancel").label(s.cancel).outline()),
-                        )
-                        .child(
-                            DialogAction::new().child(
-                                brand_button("delete-confirm").label(s.delete_word).danger(),
-                            ),
-                        ),
-                )
-                .on_ok(move |_, _, cx| {
-                    let _ = confirm.update(cx, |this, cx| {
-                        this.controller.dispatch(AppAction::ConfirmDelete(true));
-                        cx.notify();
-                    });
-                    true
-                })
-        }
-        ModalKind::Conflict => {
-            let path = shell
-                .read(cx)
-                .controller
-                .state
-                .conflict
-                .clone()
-                .unwrap_or_default();
-            // Every choice closes the dialog the same way: it answers, the
-            // controller drops the question and the next reconcile takes the
-            // dialog down. Nothing here has to close it by hand.
-            let choice = |id: &'static str, label: &'static str, answer: Answer| {
-                let weak = weak.clone();
-                brand_button(id).label(label).on_click(move |_, _, cx| {
-                    let _ = weak.update(cx, |this, cx| {
-                        this.answer_conflict(answer);
-                        cx.notify();
-                    });
-                })
-            };
-            let enter = weak.clone();
-            dialog
-                .title(heading(s.conflict_title))
-                .child(DialogDescription::new().child(format!("{} {path}", s.already_there)))
-                .footer(
-                    DialogFooter::new()
-                        .flex_wrap()
-                        .child(choice("conflict-replace", s.yes, Answer::Replace).primary())
-                        .child(choice(
-                            "conflict-replace-all",
-                            s.yes_all,
-                            Answer::ReplaceAll,
-                        ))
-                        .child(choice("conflict-skip", s.no, Answer::Skip))
-                        .child(choice("conflict-skip-all", s.no_all, Answer::SkipAll))
-                        .child(choice("conflict-keep-both", s.rename, Answer::Rename))
-                        .child(choice(
-                            "conflict-keep-both-all",
-                            s.rename_all,
-                            Answer::RenameAll,
-                        ))
-                        .child(choice("conflict-cancel", s.cancel, Answer::Cancel).outline()),
-                )
-                // Enter keeps answering what it answered before the migration.
-                .on_ok(move |_, _, cx| {
-                    let _ = enter.update(cx, |this, cx| {
-                        this.answer_conflict(Answer::Replace);
-                        cx.notify();
-                    });
-                    true
-                })
-        }
-        ModalKind::Drop => {
-            let paths = shell
-                .read(cx)
-                .controller
-                .state
-                .confirm_drop
-                .clone()
-                .unwrap_or_default();
-            let names = paths
-                .iter()
-                .take(8)
-                .filter_map(|path| path.file_name())
-                .map(|name| name.to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let choice = |id: &'static str, label: &'static str, choice: DropChoice| {
-                let weak = weak.clone();
-                brand_button(id).label(label).on_click(move |_, _, cx| {
-                    let _ = weak.update(cx, |this, cx| {
-                        this.controller.dispatch(AppAction::AnswerDrop(choice));
-                        cx.notify();
-                    });
-                })
-            };
-            let enter = weak.clone();
-            dialog
-                .title(heading(s.drop_title))
-                .child(DialogDescription::new().child(format!("{} {names}", s.dropped_word)))
-                .footer(
-                    DialogFooter::new()
-                        .child(choice("drop-open", s.open_word, DropChoice::Open).primary())
-                        .child(choice("drop-add", s.add_to_archive, DropChoice::Add))
-                        .child(choice("drop-cancel", s.cancel, DropChoice::Cancel).outline()),
-                )
-                .on_ok(move |_, _, cx| {
-                    let _ = enter.update(cx, |this, cx| {
-                        this.controller
-                            .dispatch(AppAction::AnswerDrop(DropChoice::Open));
-                        cx.notify();
-                    });
-                    true
-                })
-        }
-        ModalKind::Shortcuts => {
-            // Keystrokes, not printed key names: the kit spells each one the
-            // way the platform does, so the window stops claiming Supr on a
-            // keyboard whose key says Delete.
-            let left: [(&[&str], &str); 16] = [
-                (&["ctrl-o"], s.open),
-                (&["ctrl-n"], s.compress),
-                (&["ctrl-e"], s.extract_all),
-                (&["alt-w"], s.extract_here),
-                (&["f3"], s.view_word),
-                (&["ctrl-t"], s.test_word),
-                (&["f5"], s.refresh_word),
-                (&["ctrl-f"], s.find_word),
-                (&["ctrl-z"], s.undo_word),
-                (&["ctrl-a"], s.select_all),
-                (&["ctrl-i"], s.invert_selection),
-                (&["escape"], s.clear_selection),
-                (&["space"], s.toggle_word),
-                (&["+", "-"], s.select_group),
-                (&["f2"], s.rename_word),
-                (&["delete"], s.delete_word),
-            ];
-            let right: [(&[&str], &str); 11] = [
-                (&["f1"], s.shortcuts_title),
-                (&["ctrl-c"], s.copy_word),
-                (&["ctrl-x"], s.cut_word),
-                (&["ctrl-v"], s.paste_word),
-                (&["ctrl-shift-c"], s.copy_names),
-                (&["enter"], s.open_word),
-                (&["backspace"], s.up),
-                (&["up", "down"], s.move_word),
-                (&["home", "end"], s.move_word),
-                (&["pageup", "pagedown"], s.move_word),
-                (&["tab"], s.jump_word),
-            ];
-            let column = |rows: &[(&[&str], &str)]| {
-                rows.iter()
-                    .fold(div().flex().flex_col().gap_1(), |column, (keys, what)| {
-                        column.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_3()
-                                .text_sm()
-                                .child(
-                                    div()
-                                        .w(px(130.))
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .gap_1()
-                                        .children(keys.iter().filter_map(|key| {
-                                            gpui::Keystroke::parse(key).ok().map(Kbd::new)
-                                        })),
-                                )
-                                .child(what.to_string()),
-                        )
-                    })
-            };
-            // No close button of its own: the kit's own close, escape and
-            // backdrop are the way out of every dialog now.
-            dialog.title(heading(s.shortcuts_title)).child(
-                div()
-                    .flex()
-                    .gap_8()
-                    .child(column(&left))
-                    .child(column(&right)),
-            )
-        }
-        ModalKind::Password => {
-            // Three questions wear this one window: the password to open an
-            // archive with, the one it already has, and the one it is about to
-            // get. Only the last of them is a password being chosen.
-            let setting = matches!(
-                shell.read(cx).controller.state.waiting_on_password,
-                Some(Pending::NewPassword(_))
-            );
-            let opening = matches!(
-                shell.read(cx).controller.state.waiting_on_password,
-                Some(Pending::Extract(_) | Pending::OpenArchive | Pending::Read(_))
-            );
-            // Only worth offering where there is a password to take off.
-            let removable = setting
-                && shell
-                    .read(cx)
-                    .controller
-                    .state
-                    .entries
-                    .iter()
-                    .any(|entry| entry.encrypted);
-            let field = shell.read(cx).password.clone();
-            let submit = weak.clone();
-            let remove = weak.clone();
-            let box_ = div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(Input::new(&field).mask_toggle());
-            let mut footer = DialogFooter::new().child(cancel_button("password-cancel", s.cancel));
-            if removable {
-                footer = footer.child(
-                    brand_button("password-remove")
-                        .label(s.remove_password)
-                        .on_click(move |_, _, cx| {
-                            let _ = remove.update(cx, |this, cx| {
-                                this.controller
-                                    .dispatch(AppAction::SubmitPassword(String::new()));
-                                cx.notify();
-                            });
-                        }),
-                );
-            }
-            dialog
-                .title(heading(if opening {
-                    s.password_needed
-                } else {
-                    s.set_password
-                }))
-                .child(DialogDescription::new().child(if setting {
-                    s.new_password
-                } else if shell.read(cx).controller.state.password_wrong {
-                    if shell.read(cx).controller.state.notice == s.password_or_corrupt {
-                        s.password_or_corrupt
-                    } else {
-                        s.password_wrong
-                    }
-                } else {
-                    s.password_hint
-                }))
-                .child(box_)
-                .footer(
-                    footer.child(
-                        DialogAction::new().child(
-                            // Three questions reach this box, and the button
-                            // has to say which one it is answering. "Start"
-                            // answered none of them: nothing starts, the
-                            // archive opens -- and when the password being
-                            // asked for is the one the archive already has,
-                            // pressing this only brings up the second half of
-                            // the question.
-                            brand_button("password-submit")
-                                .label(if setting {
-                                    s.set_password
-                                } else if opening {
-                                    s.open_word
-                                } else {
-                                    s.continue_word
-                                })
-                                .primary(),
-                        ),
-                    ),
-                )
-                .on_ok(move |_, _, cx| {
-                    let mut close = true;
-                    let _ = submit.update(cx, |this, cx| {
-                        let password = this.password.read(cx).value().to_string();
-                        this.controller
-                            .dispatch(AppAction::SubmitPassword(password));
-                        // The current password is the first of two questions,
-                        // and an empty box is no answer at all: closing on
-                        // either leaves the window waiting on a window that is
-                        // no longer there.
-                        close = this.controller.state.waiting_on_password.is_none();
-                        cx.notify();
-                    });
-                    close
-                })
-        }
-        ModalKind::Add => {
-            let is_zip = shell.read(cx).controller.state.format == super::Format::Zip;
-            let is_sevenz = shell.read(cx).controller.state.format == super::Format::SevenZ;
-            let count = shell.read(cx).controller.state.pending_inputs.len();
-            let output_name = shell.read(cx).output_name.clone();
-            let add_password = shell.read(cx).add_password.clone();
-            let labelled = |label: &'static str, control: gpui::AnyElement| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .child(label)
-                    .child(control)
-            };
-            let start = weak.clone();
-            let mut body = div()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(s.output_name)
-                        .child(Input::new(&output_name)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .child(labelled(
-                            s.format,
-                            format_pick("add-format", shell, &weak, cx),
-                        ))
-                        .child(labelled(
-                            s.compressor,
-                            if is_sevenz {
-                                div().child("LZMA2").into_any_element()
-                            } else {
-                                codec_pick("add-codec", shell, &weak, is_zip, cx)
-                            },
-                        ))
-                        .child(labelled(s.level, level_pick("add-level", shell, &weak, cx))),
-                );
-            if is_zip || is_sevenz {
-                body = body.child(Input::new(&add_password).mask_toggle());
-            }
-            if is_sevenz {
-                let toggle = weak.clone();
-                body = body.child(
-                    Switch::new("add-hide-names")
-                        .label(s.hide_names)
-                        .checked(shell.read(cx).controller.state.hide_names)
-                        .on_click(move |_, _, cx| {
-                            let _ = toggle.update(cx, |this, cx| {
-                                this.controller.state.hide_names =
-                                    !this.controller.state.hide_names;
-                                cx.notify();
-                            });
-                        }),
-                );
-            }
-            // One button with two entries under it, because Windows has two
-            // dialogs: one picks files, the other picks folders, and neither
-            // picks both. Each pick adds to the list instead of replacing it,
-            // so a mixed selection is built up in as many passes as it takes --
-            // or in one, by dropping it on the list below.
-            let pick_files = weak.clone();
-            let pick_folders = weak.clone();
-            body = body.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .child(
-                        brand_button("add-pick")
-                            .label(s.add_word)
-                            .icon(IconName::ChevronDown)
-                            .dropdown_menu(move |menu, _, _| {
-                                let files = pick_files.clone();
-                                let folders = pick_folders.clone();
-                                menu.item(PopupMenuItem::new(s.add_files_word).on_click(
-                                    move |_, _, cx| {
-                                        let _ = files.update(cx, |this, cx| {
-                                            this.begin_dialog(
-                                                DialogKind::PickInputs { folders: false },
-                                                cx,
-                                            );
-                                        });
-                                    },
-                                ))
-                                .item(
-                                    PopupMenuItem::new(s.add_folders_word).on_click(
-                                        move |_, _, cx| {
-                                            let _ = folders.update(cx, |this, cx| {
-                                                this.begin_dialog(
-                                                    DialogKind::PickInputs { folders: true },
-                                                    cx,
-                                                );
-                                            });
-                                        },
-                                    ),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(format!("{count} {}", s.items_word)),
-                            )
-                            .child({
-                                let empty = weak.clone();
-                                brand_button("add-clear")
-                                    .label(s.remove_all)
-                                    .ghost()
-                                    .disabled(count == 0)
-                                    .on_click(move |_, _, cx| {
-                                        let _ = empty.update(cx, |this, cx| {
-                                            this.controller.state.pending_inputs.clear();
-                                            cx.notify();
-                                        });
-                                    })
-                            }),
-                    ),
-            );
-            body = body.child(pending_list(shell, &weak, s, cx));
-            dialog
-                .title(heading(s.add_to_archive))
-                .child(DialogDescription::new().child(s.defaults_title))
-                .child(body)
-                .footer(
-                    DialogFooter::new()
-                        .child(cancel_button("add-cancel", s.cancel))
-                        .child(
-                            DialogAction::new().child(
-                                brand_button("add-start")
-                                    .label(s.start)
-                                    .primary()
-                                    .disabled(count == 0),
-                            ),
-                        ),
-                )
-                .on_ok(move |_, _, cx| {
-                    let _ = start.update(cx, |this, cx| this.start_add(cx));
-                    true
-                })
-        }
-        ModalKind::Viewer => {
-            // Field by field: `Viewed` is deliberately not `Clone`, because it
-            // carries the split lines of the whole file.
-            let Some((name, look, has_picture, bytes, lines)) = shell
-                .read(cx)
-                .controller
-                .state
-                .viewing
-                .as_ref()
-                .map(|view| {
-                    (
-                        view.name.clone(),
-                        view.look,
-                        view.picture,
-                        view.bytes.clone(),
-                        view.lines.clone(),
-                    )
-                })
-            else {
-                return dialog;
-            };
-            let scroll = shell.read(cx).viewer_scroll.clone();
-            let muted = cx.theme().muted_foreground;
-            let mut tabs = div().flex().items_center().gap_2();
-            for (index, (candidate, label)) in [
-                (super::Look::Text, s.as_text),
-                (super::Look::Hex, s.as_hex),
-                (super::Look::Picture, s.as_picture),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                // Only where there is a picture to show. A tab that says
-                // "picture" over a text file is a tab that lies.
-                if candidate == super::Look::Picture && !has_picture {
-                    continue;
-                }
-                let weak = weak.clone();
-                tabs = tabs.child(
-                    brand_button(("viewer-tab", index))
-                        .label(label)
-                        .selected(look == candidate)
-                        .on_click(move |_, _, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                if let Some(view) = &mut this.controller.state.viewing {
-                                    view.look = candidate;
-                                }
-                                cx.notify();
-                            });
-                        }),
-                );
-            }
-            tabs = tabs.child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(human(bytes.len() as u64)),
-            );
-            let content = match look {
-                super::Look::Picture => {
-                    let image = shell
-                        .read(cx)
-                        .viewer_image
-                        .as_ref()
-                        .filter(|(cached, _)| cached == &name)
-                        .map(|(_, image)| image.clone());
-                    div()
-                        .id("viewer-picture")
-                        .flex_1()
-                        .min_h(px(1.))
-                        .overflow_scroll()
-                        .children(image.map(gpui::img))
-                        .into_any_element()
-                }
-                super::Look::Text => {
-                    let total = lines.len();
-                    uniform_list(
-                        "viewer-text",
-                        total,
-                        move |range: Range<usize>, _window, _cx| {
-                            range
-                                .map(|index| {
-                                    div()
-                                        .font_family("monospace")
-                                        .text_xs()
-                                        .child(lines[index].clone())
-                                })
-                                .collect::<Vec<_>>()
-                        },
-                    )
-                    .track_scroll(&scroll)
-                    .size_full()
-                    .into_any_element()
-                }
-                super::Look::Hex => {
-                    let total = bytes.len().div_ceil(16);
-                    uniform_list(
-                        "viewer-hex",
-                        total,
-                        move |range: Range<usize>, _window, _cx| {
-                            range
-                                .map(|row| {
-                                    let at = row * 16;
-                                    let end = (at + 16).min(bytes.len());
-                                    div()
-                                        .font_family("monospace")
-                                        .text_xs()
-                                        .child(super::hex_line(at, &bytes[at..end]))
-                                })
-                                .collect::<Vec<_>>()
-                        },
-                    )
-                    .track_scroll(&scroll)
-                    .size_full()
-                    .into_any_element()
-                }
-            };
-            dialog
-                .title(heading(name))
-                .child(DialogDescription::new().child(s.view_word))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .h(px(460.))
-                        .child(tabs)
-                        .child(Separator::horizontal())
-                        .child(
-                            // The bar hangs off the list's own scroll handle, so
-                            // a file of a million lines says how far down it is
-                            // instead of only answering the wheel.
-                            div()
-                                .id("viewer-content")
-                                .relative()
-                                .flex_1()
-                                .min_h(px(1.))
-                                .overflow_hidden()
-                                .child(content)
-                                .vertical_scrollbar(&scroll),
-                        ),
-                )
-        }
-        ModalKind::Settings => {
-            let lang = shell.read(cx).controller.state.settings.lang;
-            let theme = shell.read(cx).controller.state.settings.theme;
-            let is_zip = shell.read(cx).controller.state.format == super::Format::Zip;
-            let page = shell.read(cx).controller.state.settings.page;
-            let pages = arca_zip::pages::Page::ALL
-                .iter()
-                .map(|(page, _, label)| (*page, *label))
-                .collect::<Vec<_>>();
-            let subfolder_on = shell.read(cx).controller.state.into_subfolder;
-            let updates_on = shell.read(cx).controller.state.settings.updates;
-            let muted = cx.theme().muted_foreground;
-            // Radios rather than a row of buttons where one looks pressed:
-            // these are one-of-three choices, and the kit's radio says so to
-            // the keyboard and to the screen reader without being told.
-            let langs = [None, Some(super::Lang::En), Some(super::Lang::Es)];
-            let language = {
-                let weak = weak.clone();
-                RadioGroup::horizontal("settings-language")
-                    .selected_index(langs.iter().position(|candidate| *candidate == lang))
-                    .children(vec![
-                        s.theme_system,
-                        super::Lang::En.label(),
-                        super::Lang::Es.label(),
-                    ])
-                    .on_click(move |index, window, cx| {
-                        let control = match index {
-                            0 => SettingsControl::LangSystem,
-                            1 => SettingsControl::LangEn,
-                            _ => SettingsControl::LangEs,
-                        };
-                        let _ = weak.update(cx, |this, cx| {
-                            this.settings_activate(control, window, cx);
-                            cx.notify();
-                        });
-                    })
-            };
-            let themes = [
-                super::ThemePreference::System,
-                super::ThemePreference::Light,
-                super::ThemePreference::Dark,
-            ];
-            let appearance = {
-                let weak = weak.clone();
-                RadioGroup::horizontal("settings-theme")
-                    .selected_index(themes.iter().position(|candidate| *candidate == theme))
-                    .children(vec![s.theme_system, s.theme_light, s.theme_dark])
-                    .on_click(move |index, window, cx| {
-                        let control = match index {
-                            0 => SettingsControl::ThemeSystem,
-                            1 => SettingsControl::ThemeLight,
-                            _ => SettingsControl::ThemeDark,
-                        };
-                        let _ = weak.update(cx, |this, cx| {
-                            this.settings_activate(control, window, cx);
-                            cx.notify();
-                        });
-                    })
-            };
-            let row = |label: &'static str, control: gpui::AnyElement| {
-                div()
-                    .flex()
-                    .items_center()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(div().w(px(110.)).flex_none().child(label))
-                    .child(control)
-            };
-            let updates = {
-                let weak = weak.clone();
-                Switch::new("settings-updates")
-                    .label(s.check_updates)
-                    .checked(updates_on)
-                    .on_click(move |_, window, cx| {
-                        let _ = weak.update(cx, |this, cx| {
-                            this.settings_activate(SettingsControl::Updates, window, cx);
-                            cx.notify();
-                        });
-                    })
-            };
-            let subfolder = {
-                let weak = weak.clone();
-                Switch::new("settings-subfolder")
-                    .label(s.into_subfolder)
-                    .checked(subfolder_on)
-                    .on_click(move |_, window, cx| {
-                        let _ = weak.update(cx, |this, cx| {
-                            this.settings_activate(SettingsControl::Subfolder, window, cx);
-                            cx.notify();
-                        });
-                    })
-            };
-            dialog
-                .title(heading(s.settings))
-                .child(DialogDescription::new().child(s.defaults_title))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .child(row(s.language, language.into_any_element()))
-                        .child(row(s.theme, appearance.into_any_element()))
-                        .child(row(
-                            s.name_encoding,
-                            pick(
-                                "settings-page",
-                                s.name_encoding,
-                                pages,
-                                page,
-                                true,
-                                weak.clone(),
-                                |this, page| this.controller.reread_names(page),
-                            ),
-                        ))
-                        .child(Separator::horizontal())
-                        .child(div().text_sm().text_color(muted).child(s.defaults_title))
-                        .child(row(
-                            s.format,
-                            format_pick("settings-format", shell, &weak, cx),
-                        ))
-                        .child(row(
-                            s.compressor,
-                            codec_pick("settings-codec", shell, &weak, is_zip, cx),
-                        ))
-                        .child(row(s.level, level_pick("settings-level", shell, &weak, cx)))
-                        .child(updates)
-                        .child(subfolder)
-                        .child(Separator::horizontal())
-                        // Que version es esta. El numero se compila dentro del
-                        // binario, asi que es el del programa abierto y no el
-                        // de lo que haya instalado en otro sitio: con dos
-                        // copias en el disco las ventanas son identicas y no
-                        // habia forma de distinguirlas desde dentro. Al lado,
-                        // cuando la hay, la que ha salido.
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .text_sm()
-                                .text_color(muted)
-                                .child(brand_mark(28.))
-                                .child(heading(format!("Arca {}", env!("CARGO_PKG_VERSION"))))
-                                .children(
-                                    shell
-                                        .read(cx)
-                                        .controller
-                                        .state
-                                        .update
-                                        .as_ref()
-                                        .map(|r| format!("· {}", r.tag)),
-                                ),
-                        ),
-                )
-        }
-        ModalKind::NewFolder | ModalKind::Mask => {
-            let (title, hint, confirm) = match kind {
-                ModalKind::NewFolder => (s.new_folder, s.folder_name, s.new_folder),
-                _ => {
-                    let adding = shell
-                        .read(cx)
-                        .controller
-                        .state
-                        .picking_group
-                        .unwrap_or(true);
-                    (
-                        if adding {
-                            s.select_group
-                        } else {
-                            s.deselect_group
-                        },
-                        s.mask_hint,
-                        s.start,
-                    )
-                }
-            };
-            let field = shell.read(cx).name_input.clone();
-            let ok = weak.clone();
-            dialog
-                .title(heading(title))
-                .child(DialogDescription::new().child(hint))
-                .child(Input::new(&field))
-                .footer(
-                    DialogFooter::new()
-                        .child(cancel_button("name-cancel", s.cancel))
-                        .child(
-                            DialogAction::new()
-                                .child(brand_button("name-ok").label(confirm).primary()),
-                        ),
-                )
-                .on_ok(move |_, _, cx| {
-                    let _ = ok.update(cx, |this, cx| this.confirm_name(kind, cx));
-                    true
-                })
-        }
-    }
-}
-
-/// What is about to be compressed, one row each, with a cross to take a row
-/// back out.
-///
-/// The list is the answer to the question the count alone cannot answer: a
-/// selection built out of several passes through the native dialog is only
-/// trustworthy if it can be read back before the work starts. It is also where
-/// a mixed pile of files and folders can be dropped in one go, which is the
-/// one gesture Windows has that its file dialog does not.
-fn pending_list(
-    shell: &Entity<GpuiShell>,
-    weak: &WeakEntity<GpuiShell>,
-    s: &'static Strings,
-    cx: &mut App,
-) -> Stateful<gpui::Div> {
-    let inputs = shell.read(cx).controller.state.pending_inputs.clone();
-    let dropped = weak.clone();
-    let mut list = div()
-        .id("add-inputs")
-        .flex()
-        .flex_col()
-        .gap_px()
-        .p_1()
-        .min_h(px(96.))
-        .max_h(px(200.))
-        .overflow_scroll()
-        .rounded(cx.theme().radius)
-        .border_1()
-        .border_color(cx.theme().border)
-        // The modal is painted above the shell, so the drop has to be taken
-        // here as well: the window behind it never sees the pointer.
-        .drag_over::<ExternalPaths>(|style, _, _, cx| {
-            style
-                .bg(cx.theme().drop_target)
-                .border_color(cx.theme().drag_border)
-        })
-        .on_drop(move |paths: &ExternalPaths, window, cx| {
-            let paths = paths.paths().to_vec();
-            let _ = dropped.update(cx, |this, cx| this.drop_external(paths, window, cx));
-        });
-    if inputs.is_empty() {
-        return list.child(
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(cx.theme().muted_foreground)
-                .child(s.drop_inputs_here),
-        );
-    }
-    for (index, path) in inputs.iter().enumerate() {
-        // ponytail: one stat per row per frame, to pick the icon. Fine for a
-        // list a hand builds; carry the kind in `pending_inputs` if it ever
-        // holds more than a screenful.
-        let folder = path.is_dir();
-        let drop_it = weak.clone();
-        list = list.child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_1()
-                .rounded(cx.theme().radius)
-                .hover(|style| style.bg(cx.theme().accent))
-                .child(
-                    Icon::new(if folder {
-                        IconName::Folder
-                    } else {
-                        IconName::File
-                    })
-                    .size_4()
-                    .text_color(cx.theme().muted_foreground),
-                )
-                .child(div().flex_1().truncate().child(path.display().to_string()))
-                .child(
-                    brand_button(("add-drop-input", index))
-                        .icon(IconName::Close)
-                        .accessibility_label(s.remove_input.to_string())
-                        .tooltip(s.remove_input)
-                        .ghost()
-                        .compact()
-                        .on_click(move |_, _, cx| {
-                            let _ = drop_it.update(cx, |this, cx| {
-                                // By index and not by value: the same path
-                                // cannot be in the list twice, but reading the
-                                // list back to find it would be one more place
-                                // for the two to disagree.
-                                if index < this.controller.state.pending_inputs.len() {
-                                    this.controller.state.pending_inputs.remove(index);
-                                }
-                                cx.notify();
-                            });
-                        }),
-                ),
-        );
-    }
-    list
 }
 
 /// The overflow entries that write to the archive, as a value rather than a
@@ -5341,429 +2989,6 @@ impl Render for DragPreview {
     }
 }
 
-/// What the kit's table needs to draw a frame of the archive.
-///
-/// It keeps its own copy rather than reading the shell, because the table is
-/// drawn from inside the shell's own render and reading the shell there would
-/// borrow it while it is already borrowed. The copy is refreshed once a frame,
-/// just before the table is handed out.
-struct FileTable {
-    shell: WeakEntity<GpuiShell>,
-    rows: Vec<super::Row>,
-    /// The folder the rows are read from, so a path is shown from here down.
-    root: String,
-    columns: Vec<SortColumn>,
-    widths: Vec<f32>,
-    checked: Vec<bool>,
-    /// Rows waiting to be moved by the clipboard, drawn in the muted ink.
-    muted: Vec<bool>,
-    cursor: Option<usize>,
-    renaming: Option<usize>,
-    rename_input: Entity<InputState>,
-    order: (SortColumn, bool),
-    strings: &'static Strings,
-    idle: bool,
-    writable: bool,
-}
-
-impl FileTable {
-    fn row_is_checked(&self, index: usize) -> bool {
-        self.checked.get(index).copied().unwrap_or(false)
-    }
-}
-
-impl TableDelegate for FileTable {
-    fn columns_count(&self, _: &App) -> usize {
-        self.columns.len()
-    }
-
-    fn rows_count(&self, _: &App) -> usize {
-        self.rows.len()
-    }
-
-    fn column(&self, col_ix: usize, _: &App) -> Column {
-        let column = self.columns[col_ix];
-        let slot = GpuiShell::column_slot(column);
-        let mut definition = Column::new(
-            gpui::SharedString::from(format!("{}", column as usize)),
-            Columns::label(column, self.strings),
-        )
-        .sortable()
-        .resizable(true)
-        .min_width(px(Settings::least(slot)));
-        // The name runs to the edge of the window: it is the column anybody
-        // widens the window for, and a fixed one would leave a gutter.
-        definition = if column == SortColumn::Name {
-            definition.width(px(self.widths.get(slot).copied().unwrap_or(240.)))
-        } else {
-            definition.width(px(self.widths.get(slot).copied().unwrap_or(96.)))
-        };
-        if self.order.0 == column {
-            definition = if self.order.1 {
-                definition.ascending()
-            } else {
-                definition.descending()
-            };
-        }
-        definition
-    }
-
-    fn perform_sort(
-        &mut self,
-        col_ix: usize,
-        _: ColumnSort,
-        _: &mut Window,
-        cx: &mut Context<TableState<Self>>,
-    ) {
-        let Some(column) = self.columns.get(col_ix).copied() else {
-            return;
-        };
-        let _ = self.shell.update(cx, |shell, cx| {
-            if shell.background_idle() {
-                shell.controller.dispatch(AppAction::Sort(column));
-                cx.notify();
-            }
-        });
-    }
-
-    /// The header cell, named the way a header that sorts has to be named: the
-    /// kit draws the arrow, but only the shell knows to say which way it points.
-    ///
-    /// The whole cell sorts, not just the kit's little arrow: pressing the name
-    /// of a column is how a file list has sorted since before any of this.
-    fn render_th(
-        &mut self,
-        col_ix: usize,
-        _: &mut Window,
-        cx: &mut Context<TableState<Self>>,
-    ) -> impl IntoElement {
-        let Some(column) = self.columns.get(col_ix).copied() else {
-            return div().id("header-cell").into_any_element();
-        };
-        let s = self.strings;
-        let label = Columns::label(column, s);
-        let shell = self.shell.clone();
-        let role = Role::ColumnHeader;
-        let accessible = if self.order.0 == column {
-            let direction = if self.order.1 {
-                s.ascending
-            } else {
-                s.descending
-            };
-            format!("{} {label} ({direction})", s.sort_by)
-        } else {
-            format!("{} {label}", s.sort_by)
-        };
-        div()
-            .id(("header-cell", col_ix))
-            .role(role)
-            .aria_column_index(col_ix + 1)
-            .aria_keyshortcuts("Enter")
-            .size_full()
-            .flex()
-            .items_center()
-            .cursor_pointer()
-            .aria_label(accessible)
-            .on_click(cx.listener(move |table, _, window, cx| {
-                table
-                    .delegate_mut()
-                    .perform_sort(col_ix, ColumnSort::Default, window, cx);
-            }))
-            .child(label)
-            // Que columnas se ven, pulsando con el derecho sobre cualquier
-            // cabecera. Es donde lo tienen el Explorador, WinRAR y NanaZip, y
-            // donde se mira primero; sin esto las once columnas no tenian mas
-            // sitio que el menu de la barra, y por eso estaban alli mezcladas
-            // con la disposicion de la ventana.
-            //
-            // Lo marcado se lee al abrirlo, no al dibujar la cabecera: el menu
-            // se construye cuando se pide y tiene que decir lo que hay ahora.
-            .context_menu(move |menu, _, cx| {
-                let Some(shell) = shell.upgrade() else {
-                    return menu;
-                };
-                let on = shell.read(cx).controller.state.settings.columns;
-                let mut menu = menu;
-                for (which, _) in Columns::ALL {
-                    let owner = shell.downgrade();
-                    menu = menu.item(
-                        PopupMenuItem::new(Columns::label(which, s))
-                            .checked(on.on(which))
-                            .on_click(move |_, _, cx| {
-                                let _ = owner.update(cx, |this, cx| {
-                                    this.controller.dispatch(AppAction::ToggleColumn(which));
-                                    cx.notify();
-                                });
-                            }),
-                    );
-                }
-                menu
-            })
-            .into_any_element()
-    }
-
-    fn render_td(
-        &mut self,
-        row_ix: usize,
-        col_ix: usize,
-        _: &mut Window,
-        cx: &mut Context<TableState<Self>>,
-    ) -> impl IntoElement {
-        let cell = || div().id(("file-cell", row_ix * 16 + col_ix));
-        let Some(row) = self.rows.get(row_ix) else {
-            return cell();
-        };
-        let Some(column) = self.columns.get(col_ix).copied() else {
-            return cell();
-        };
-        let muted = self.muted.get(row_ix).copied().unwrap_or(false);
-        let ink = if muted {
-            cx.theme().muted_foreground
-        } else {
-            cx.theme().foreground
-        };
-        if column != SortColumn::Name {
-            return cell()
-                .role(Role::Cell)
-                .aria_column_index(col_ix + 1)
-                .text_sm()
-                .text_color(ink)
-                .child(column_text(row, column, self.strings, &self.root));
-        }
-        let (icon, color) = GpuiShell::kind_icon(row.kind, cx);
-        let icon = div()
-            .w(px(18.))
-            .flex_none()
-            .child(Icon::new(icon).size(px(16.)).text_color(color));
-        // Keep the editor in the name column instead of turning the whole row
-        // into a form. Its width follows the current name, like Explorer.
-        if self.renaming == Some(row_ix) {
-            let width = (row.label.chars().count() as f32 * 8.0 + 20.0).clamp(96.0, 280.0);
-            return cell()
-                .role(Role::Cell)
-                .aria_column_index(1)
-                .flex()
-                .items_center()
-                .gap_2()
-                .text_sm()
-                .text_color(ink)
-                .child(icon)
-                .child(
-                    div()
-                        .w(px(width))
-                        .h(px(24.))
-                        .flex_none()
-                        .items_center()
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .bg(cx.theme().background)
-                        .px_1()
-                        .child(Input::new(&self.rename_input).small().appearance(false)),
-                );
-        }
-        cell()
-            .role(Role::Cell)
-            .aria_column_index(1)
-            .flex()
-            .items_center()
-            .gap_2()
-            .text_sm()
-            .text_color(ink)
-            .child(icon)
-            .child(div().flex_1().truncate().child(row.label.clone()))
-    }
-
-    fn render_tr(
-        &mut self,
-        row_ix: usize,
-        _: &mut Window,
-        cx: &mut Context<TableState<Self>>,
-    ) -> Stateful<gpui::Div> {
-        let checked = self.row_is_checked(row_ix);
-        // The banding is drawn here rather than by the kit, which stripes the
-        // whole pane: rows that do not exist should not be drawn as rows.
-        let mut item = div().id(("file-row", row_ix)).bg(if checked {
-            cx.theme().table_active
-        } else if row_ix % 2 == 1 {
-            cx.theme().table_even
-        } else {
-            cx.theme().table
-        });
-        if self.cursor == Some(row_ix) {
-            item = item.border_1().border_color(cx.theme().table_active_border);
-        }
-        let Some(row) = self.rows.get(row_ix).cloned() else {
-            return item;
-        };
-        // Whether the row is marked is half of what this list is about, so it
-        // is said out loud rather than left to the colour of the background.
-        let s = self.strings;
-        let mut description = format!("{} {}", s.col_name, row.label);
-        for column in self.columns.iter().copied().skip(1) {
-            let label = Columns::label(column, s);
-            description.push_str(&format!(
-                "; {label} {}",
-                column_text(&row, column, s, &self.root)
-            ));
-        }
-        description.push_str("; ");
-        description.push_str(if checked { s.checked } else { s.not_checked });
-        item = item
-            .aria_label(description)
-            .role(Role::Row)
-            // The header is row one, so the rows below it start at two.
-            .aria_row_index(row_ix + 2);
-        if self.idle {
-            item = item.focusable();
-            if self.cursor == Some(row_ix) {
-                item = item.aria_active_descendant();
-            }
-        }
-        // One row at a time is the kit's idea of a click; control, shift and a
-        // plain click each mean something different to a file list, and that
-        // stays the shell's to decide.
-        if self.idle {
-            let shell = self.shell.clone();
-            item = item.on_click(move |event: &ClickEvent, window, cx| {
-                let _ = shell.update(cx, |shell, cx| {
-                    shell.select_row(row_ix, event, window, cx);
-                });
-            });
-        }
-        // A folder takes what is dropped on it and the entries move there,
-        // which is a rewrite of the archive and not a copy out of it. Dropping
-        // a folder into itself is not a move, so it is refused.
-        if row.is_dir && self.idle {
-            let target = row.path.clone();
-            let shell = self.shell.clone();
-            item = item
-                .drag_over::<DraggedRows>(|style, _, _, cx| {
-                    style
-                        .bg(cx.theme().drop_target)
-                        .border_color(cx.theme().drag_border)
-                })
-                .on_drop(move |_: &DraggedRows, _, cx| {
-                    let _ = shell.update(cx, |shell, cx| {
-                        let carried = shell.controller.selected_roots();
-                        let into_itself = carried.iter().any(|carried| {
-                            carried.trim_end_matches('/') == target.trim_end_matches('/')
-                        });
-                        if !carried.is_empty() && !into_itself {
-                            shell.controller.move_into(&carried, &target);
-                        }
-                        cx.notify();
-                    });
-                });
-        }
-        // GPUI owns the threshold and the gesture's lifetime. Where the drag is
-        // going is not decided here: a folder of this archive takes it as a
-        // move, and leaving the list hands it to arca-drag's lazy IDataObject,
-        // so no archive bytes are extracted merely to begin a drag.
-        if self.idle {
-            let shell = self.shell.clone();
-            let dragged = row.clone();
-            item = item.on_drag(DraggedRows, move |_, offset, _, app| {
-                let mut preview = DragPreview {
-                    label: String::new(),
-                    extra: 0,
-                    offset,
-                };
-                let _ = shell.update(app, |shell, _| {
-                    // A band was started in this row's dead space; the pull
-                    // belongs to it, not to the row.
-                    if shell.band.is_some() {
-                        return;
-                    }
-                    // Pulling a row that was not picked carries that row on
-                    // its own, the way pressing and releasing it would have
-                    // picked it. Without this the only way to drag a file out
-                    // would be to select it first.
-                    if !shell.controller.is_checked(&dragged) {
-                        shell.controller.state.checked.fill(false);
-                        shell.controller.set_checked(&dragged, true);
-                    }
-                    shell.carrying = true;
-                    preview.label = dragged.label.clone();
-                    preview.extra = shell.controller.selected_roots().len().saturating_sub(1);
-                });
-                app.new(|_| preview)
-            });
-        }
-        item
-    }
-
-    fn context_menu(
-        &mut self,
-        row_ix: usize,
-        menu: PopupMenu,
-        _: &mut Window,
-        _: &mut Context<TableState<Self>>,
-    ) -> PopupMenu {
-        let is_file = self.rows.get(row_ix).is_some_and(|row| row.entry.is_some());
-        // The shell marks a press that landed past the last row with an index
-        // no row has, which is how the menu of the folder gets asked for.
-        let empty_space = self.rows.get(row_ix).is_none();
-        let writable = self.writable;
-        let strings = self.strings;
-        let shell = self.shell.clone();
-        let mut menu = menu;
-        let mut drawn = false;
-        let offered = if empty_space {
-            RowAction::EMPTY_SPACE.to_vec()
-        } else {
-            RowAction::ALL.to_vec()
-        };
-        for action in offered.into_iter().filter(|action| {
-            action.offered()
-                && (*action != RowAction::NewFolder || (empty_space && writable))
-                && (*action != RowAction::Rename || writable)
-                && (*action != RowAction::View || is_file)
-        }) {
-            // Never as the first thing in the menu: a rule with nothing above
-            // it is a line, not a grouping.
-            if action.starts_group() && drawn {
-                menu = menu.item(PopupMenuItem::separator());
-            }
-            drawn = true;
-            let (label, keys) = action.label(strings);
-            let icon = row_action_icon(action);
-            let shell = shell.clone();
-            let item = PopupMenuItem::element(move |_, cx| {
-                // Two children rather than one string with a tab in it:
-                // GPUI lays out text and a tab is nothing at all there.
-                let mut row = div().flex().w_full().gap_4().items_center();
-                row = row.child(div().flex_1().truncate().child(label));
-                if !keys.is_empty() {
-                    row = row.child(
-                        div()
-                            .flex_none()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(keys),
-                    );
-                }
-                row
-            });
-            let item = match icon {
-                Some(icon) => item.icon(icon),
-                None => item,
-            };
-            menu = menu.item(item.on_click(move |_, window, cx| {
-                let _ = shell.update(cx, |shell, cx| {
-                    shell.row_action(action, row_ix, window, cx);
-                });
-            }));
-        }
-        menu
-    }
-
-    fn cell_text(&self, row_ix: usize, col_ix: usize, _: &App) -> String {
-        match (self.rows.get(row_ix), self.columns.get(col_ix).copied()) {
-            (Some(row), Some(column)) => column_text(row, column, self.strings, &self.root),
-            _ => String::new(),
-        }
-    }
-}
-
 /// What a key press means to the window, as opposed to the list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Shortcut {
@@ -5780,6 +3005,8 @@ enum Shortcut {
     Undo,
     Rename,
     View,
+    Back,
+    Forward,
     /// A mask that picks names, or one that drops them.
     PickGroup(bool),
 }
@@ -5806,12 +3033,17 @@ fn shortcut_for(
             "e" => Some(Shortcut::ExtractAll),
             "t" => Some(Shortcut::Test),
             "i" => Some(Shortcut::Invert),
-            "z" => Some(Shortcut::Undo),
+            "z" if !typing => Some(Shortcut::Undo),
             _ => None,
         };
     }
     if alt {
-        return (key == "w").then_some(Shortcut::ExtractHere);
+        return match key {
+            "w" => Some(Shortcut::ExtractHere),
+            "left" | "arrowleft" if !typing => Some(Shortcut::Back),
+            "right" | "arrowright" if !typing => Some(Shortcut::Forward),
+            _ => None,
+        };
     }
     if typing {
         return None;
@@ -5981,7 +3213,6 @@ mod tests {
             for kind in [
                 ModalKind::Add,
                 ModalKind::Settings,
-                ModalKind::Viewer,
                 ModalKind::Shortcuts,
                 ModalKind::Conflict,
                 ModalKind::Password,
@@ -6116,6 +3347,28 @@ mod tests {
     }
 
     #[test]
+    fn read_only_archives_never_offer_mutation_actions() {
+        for action in [
+            RowAction::Rename,
+            RowAction::Delete,
+            RowAction::Cut,
+            RowAction::Paste,
+            RowAction::NewFolder,
+        ] {
+            assert!(action.writable_only());
+        }
+        for action in [
+            RowAction::Open,
+            RowAction::View,
+            RowAction::Copy,
+            RowAction::ExtractSelection,
+            RowAction::TestSelection,
+        ] {
+            assert!(!action.writable_only());
+        }
+    }
+
+    #[test]
     fn the_row_menu_only_offers_the_clipboard_where_there_is_one() {
         // A menu entry that can never do anything is worse than no entry, so
         // copy, cut and paste are left out rather than greyed out.
@@ -6239,6 +3492,50 @@ mod tests {
             shortcut_for(false, false, false, "f3", false),
             Some(Shortcut::View)
         );
+    }
+
+    #[test]
+    fn history_shortcuts_yield_to_text_editing() {
+        assert_eq!(shortcut_for(true, false, false, "z", true), None);
+        for (key, action) in [("left", Shortcut::Back), ("right", Shortcut::Forward)] {
+            assert_eq!(shortcut_for(false, false, true, key, false), Some(action));
+            assert_eq!(shortcut_for(false, false, true, key, true), None);
+            assert_eq!(shortcut_for(false, false, false, key, false), None);
+        }
+    }
+
+    #[test]
+    fn context_destinations_name_the_clicked_folder_or_containing_directory() {
+        let mut row = crate::up_row("parent/child/");
+        for action in [RowAction::Paste, RowAction::NewFolder] {
+            assert_eq!(
+                action.destination(Some(&row), "parent/child/"),
+                Some("parent/".into())
+            );
+            row.up = false;
+            row.path = "parent/child/".into();
+            assert_eq!(
+                action.destination(Some(&row), "parent/"),
+                Some(row.path.clone())
+            );
+            row.is_dir = false;
+            assert_eq!(
+                action.destination(Some(&row), "parent/"),
+                Some("parent/".into())
+            );
+            assert_eq!(action.destination(None, ""), Some(String::new()));
+            for lang in [super::super::Lang::En, super::super::Lang::Es] {
+                let (label, _) = action.label(super::super::strings(lang));
+                assert_eq!(
+                    action.destination_label(label, None, ""),
+                    format!("{label}: /")
+                );
+            }
+            row = crate::up_row("parent/child/");
+        }
+        for action in [RowAction::Delete, RowAction::Rename, RowAction::Copy] {
+            assert!(action.destination(Some(&row), "parent/child/").is_none());
+        }
     }
 
     #[test]
