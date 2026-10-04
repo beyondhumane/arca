@@ -279,3 +279,155 @@ fn two_real_extractions_finish_with_their_own_results() {
         .exists());
     assert!(room.path("second/second-src/c.txt").exists());
 }
+
+#[test]
+fn extractions_into_the_same_folder_take_turns() {
+    let mut app = AppController::new(Settings::default());
+    let (a, release_a, started_a) = gate();
+    let (b, release_b, started_b) = gate();
+    let (c, release_c, started_c) = gate();
+    let into = |work, archive: &str, folder: &str| {
+        Task::new("Extract", "x", work)
+            .reading([PathBuf::from(archive)])
+            .filling([PathBuf::from(folder)])
+    };
+    let first = app.enqueue(into(a, "/tmp/q/one.zip", "/tmp/q"));
+    let nested = app.enqueue(into(b, "/tmp/q/two.zip", "/tmp/q/two"));
+    let apart = app.enqueue(into(c, "/tmp/q/one.zip", "/tmp/q-apart"));
+    started_a.recv().unwrap();
+    started_c.recv().unwrap();
+    assert_eq!(status(&app, first), TaskStatus::Running);
+    assert_eq!(status(&app, nested), TaskStatus::Queued);
+    assert_eq!(status(&app, apart), TaskStatus::Running);
+    release_a.send(()).unwrap();
+    settle_until(&mut app, |app| status(app, first) == TaskStatus::Done);
+    assert_eq!(status(&app, nested), TaskStatus::Running);
+    started_b.recv().unwrap();
+    release_b.send(()).unwrap();
+    release_c.send(()).unwrap();
+    settle(&mut app);
+}
+
+#[test]
+fn an_extraction_fills_the_folder_it_extracts_into() {
+    let archive = PathBuf::from("/tmp/dl/pack.zip");
+    let job = |dest| Job::Extract {
+        archives: vec![archive.clone()],
+        dest,
+        password: None,
+    };
+    let (reads, writes, beside) = touched_by(&job(Destination::Beside));
+    assert_eq!(reads, vec![archive.clone()]);
+    assert!(writes.is_empty());
+    assert_eq!(beside, vec![PathBuf::from("/tmp/dl")]);
+    let (_, _, sub) = touched_by(&job(Destination::Subfolder));
+    assert_eq!(sub, vec![PathBuf::from("/tmp/dl/pack")]);
+}
+
+#[test]
+fn only_the_copy_that_staged_a_cut_can_arm_it() {
+    let mut app = AppController::new(Settings::default());
+    let ready: fn() -> Work = || {
+        Box::new(|tx, _, _, _| {
+            let _ = tx.send(Message::CutReady);
+            let _ = tx.send(Message::Done(String::new()));
+        })
+    };
+    let cut = Cut {
+        archive: PathBuf::from("/tmp/cut.zip"),
+        paths: vec![PathBuf::from("/tmp/clip/a.txt")],
+        names: vec!["a.txt".into()],
+    };
+    let (older, release, started) = gate();
+    let older = app.enqueue(Task::new("Cut", "old", older));
+    started.recv().unwrap();
+    app.state.cut_armed = Some((older + 100, cut));
+    let stray = app.enqueue(Task::new("Cut", "stray", ready()));
+    release.send(()).unwrap();
+    settle(&mut app);
+    assert_eq!(status(&app, stray), TaskStatus::Done);
+    assert!(app.state.cut_pending.is_none());
+    assert!(app.state.cut_armed.is_some());
+
+    let (_, cut) = app.state.cut_armed.take().unwrap();
+    let mine = app.enqueue(Task::new("Cut", "mine", ready()));
+    app.state.cut_armed = Some((mine, cut));
+    settle(&mut app);
+    assert!(app.state.cut_armed.is_none());
+    assert_eq!(
+        app.state.cut_pending.as_ref().map(|c| c.names.clone()),
+        Some(vec!["a.txt".to_string()])
+    );
+}
+
+#[test]
+fn a_rewrite_that_failed_behind_keeps_the_reread_of_the_one_before() {
+    let room = Room::new();
+    let archive = room.archive(None, false);
+    let mut app = AppController::new(Settings::default());
+    app.open_with_password(archive.clone(), None);
+    settle(&mut app);
+    assert!(!app.state.entries.is_empty());
+    app.state.entries.clear();
+
+    let (a, release_a, started_a) = gate();
+    let mut first = Task::new("Rename", "x", a).writing([archive.clone()]);
+    first.reread_after = Some((archive.clone(), None, String::new()));
+    let first = app.enqueue(first);
+    let (b, release_b, started_b) = gate();
+    let second = app.enqueue(Task::new("Delete", "x", b).writing([archive.clone()]));
+    started_a.recv().unwrap();
+    release_a.send(()).unwrap();
+    settle_until(&mut app, |app| status(app, first) == TaskStatus::Done);
+    started_b.recv().unwrap();
+    assert!(
+        app.state.reread_queued.is_some(),
+        "kept while the archive is busy"
+    );
+    assert!(app.state.entries.is_empty());
+    app.cancel_task(second);
+    release_b.send(()).unwrap();
+    settle(&mut app);
+    assert_eq!(status(&app, second), TaskStatus::Stopped);
+    assert!(app.state.reread_queued.is_none());
+    assert!(
+        !app.state.entries.is_empty(),
+        "the first rewrite was reread"
+    );
+}
+
+#[test]
+fn a_finished_rewrite_does_not_pull_the_window_back() {
+    let mut app = AppController::new(Settings::default());
+    let there = PathBuf::from("/tmp/there.zip");
+    let here = PathBuf::from("/tmp/here.zip");
+    app.state.archive = Some(there.clone());
+    let (a, release, started) = gate();
+    let mut task = Task::new("Rename", "there", a).writing([there.clone()]);
+    task.reread_after = Some((there, None, String::new()));
+    let id = app.enqueue(task);
+    started.recv().unwrap();
+    app.state.archive = Some(here.clone());
+    release.send(()).unwrap();
+    settle(&mut app);
+    assert_eq!(status(&app, id), TaskStatus::Done);
+    assert!(app.state.reread_queued.is_none());
+    assert_eq!(app.state.archive, Some(here));
+    assert!(!app.state.busy);
+}
+
+#[test]
+fn a_worker_that_dies_without_a_word_fails_its_row() {
+    let mut app = AppController::new(Settings::default());
+    let archive = PathBuf::from("/tmp/dies.zip");
+    let dies: Work = Box::new(|_, _, _, _| panic!("worker fell over"));
+    let id = app.enqueue(Task::new("Delete", "dies", dies).writing([archive.clone()]));
+    let (b, release, started) = gate();
+    let next = app.enqueue(Task::new("Add", "dies", b).writing([archive]));
+    settle_until(&mut app, |app| status(app, id) == TaskStatus::Failed);
+    assert_eq!(app.task(id).unwrap().result, app.s().task_lost);
+    started.recv().unwrap();
+    assert_eq!(status(&app, next), TaskStatus::Running);
+    release.send(()).unwrap();
+    settle(&mut app);
+}

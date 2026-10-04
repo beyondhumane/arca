@@ -10,6 +10,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
+/// What to reopen, the password it carries and the folder to come back to.
+pub(crate) type Reread = (PathBuf, Option<String>, String);
+
 pub(crate) struct AppState {
     pub(crate) browser: super::BrowserState,
     pub(crate) preview: super::PreviewState,
@@ -69,6 +72,9 @@ pub(crate) struct AppState {
     // The folder to restore after rereading a rewritten archive. It is consumed
     // by the next listing, so opening an archive normally still starts at root.
     pub(crate) reread_dir: Option<String>,
+    // A reread a finished rewrite is owed, waiting for the archive to be free,
+    // with the archive the window showed when that rewrite was asked for.
+    pub(crate) reread_queued: Option<(Option<PathBuf>, Reread)>,
     // Where the window has been, so the mouse back and forward buttons have
     // somewhere to go. `here` indexes into it; going somewhere new throws away
     // whatever was ahead, the way a browser does.
@@ -132,7 +138,8 @@ pub(crate) struct AppState {
     pub(crate) cut_names: HashSet<String>,
     // Made ready before the extraction runs and armed only when it says the
     // clipboard took it, which is what `Message::CutReady` reports.
-    pub(crate) cut_armed: Option<Cut>,
+    // Tagged with the task preparing it, so only that task can arm it.
+    pub(crate) cut_armed: Option<(super::TaskId, Cut)>,
     pub(crate) cut_pending: Option<Cut>,
     pub(crate) show_shortcuts: bool,
     // Set for work that says nothing while it runs. Copying to the clipboard is

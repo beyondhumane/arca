@@ -304,6 +304,7 @@ impl AppController {
         let pw = self.state.archive_password.clone();
         self.state.close_when_done = false;
         let source = archive.clone();
+        let dest_folder = dest.clone();
         let mut task = Task::new(
             s.extracting,
             archive_stem(&archive),
@@ -324,6 +325,7 @@ impl AppController {
             }),
         )
         .reading([source])
+        .filling([dest_folder])
         .total(total);
         task.stop_leaves_files = true;
         self.enqueue(task);
@@ -583,6 +585,7 @@ impl AppController {
                 hide_names: false,
                 archive_password: None,
                 reread_dir: None,
+                reread_queued: None,
                 history: vec![String::new()],
                 here: 0,
                 cursor: None,
@@ -1275,13 +1278,14 @@ impl AppController {
             .filter_map(|r| arca_core::safe_name(r).ok())
             .map(|r| dir.join(r))
             .collect();
-        if cut && detect(&archive) == Some(Format::Zip) {
-            self.state.cut_armed = Some(Cut {
-                archive: archive.clone(),
-                paths: landed.clone(),
-                names,
-            });
-        }
+        let armed = (cut && detect(&archive) == Some(Format::Zip)).then(|| Cut {
+            archive: archive.clone(),
+            paths: landed.clone(),
+            names,
+        });
+        // One clipboard at a time: a later copy deletes the folder of the one
+        // before it and takes the clipboard over, so it runs after it.
+        let clipboard = temp.join("Arca").join("clipboard");
 
         let wanted = self.state.checked.clone();
         let total = wanted.iter().filter(|b| **b).count();
@@ -1322,11 +1326,13 @@ impl AppController {
             }),
         )
         .reading([source])
+        .writing([clipboard])
         .total(total);
         // The one job that runs without saying so: it is over before a bar
         // has finished appearing.
         task.quiet = true;
-        self.enqueue(task);
+        let id = self.enqueue(task);
+        self.state.cut_armed = armed.map(|cut| (id, cut));
     }
 
     // Whether the cut waiting on a paste has had it.
@@ -2001,7 +2007,7 @@ impl AppController {
             _ => None,
         };
 
-        let (reads, writes) = touched_by(&job);
+        let (reads, writes, outputs) = touched_by(&job);
         let mut task = Task::new(
             verb,
             subject_of(&job),
@@ -2054,7 +2060,8 @@ impl AppController {
             }),
         )
         .reading(reads)
-        .writing(writes);
+        .writing(writes)
+        .filling(outputs);
         task.in_bytes = in_bytes;
         task.stop_leaves_files = stop_leaves_files;
         task.reread_after = reread_after;
@@ -2080,6 +2087,36 @@ impl AppController {
     }
 }
 
+/// The files a job reads, the ones it rewrites and the folders it fills,
+/// which is what decides whether two jobs can run at the same time.
+fn touched_by(job: &Job) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+    match job {
+        Job::Extract { archives, dest, .. } => {
+            let folders = archives
+                .iter()
+                .map(|a| {
+                    let base = a.parent().map(PathBuf::from).unwrap_or_default();
+                    match dest {
+                        Destination::Beside => base,
+                        Destination::Subfolder => base.join(archive_stem(a)),
+                    }
+                })
+                .collect();
+            (archives.clone(), Vec::new(), folders)
+        }
+        Job::Test { archive, .. } => (vec![archive.clone()], Vec::new(), Vec::new()),
+        Job::Password { archive, .. }
+        | Job::Delete { archive, .. }
+        | Job::Rename { archive, .. }
+        | Job::Move { archive, .. }
+        | Job::NewFolder { archive, .. }
+        | Job::Add { archive, .. } => (Vec::new(), vec![archive.clone()], Vec::new()),
+        Job::CopyTo { archive, dest } => (vec![archive.clone()], vec![dest.clone()], Vec::new()),
+        Job::Compress { out, inputs, .. } => (inputs.clone(), vec![out.clone()], Vec::new()),
+        Job::Update { .. } => (Vec::new(), Vec::new(), Vec::new()),
+    }
+}
+
 /// Where to look again once `job` has finished, the password the archive
 /// carries by then, and the folder to restore after rereading it.
 ///
@@ -2091,24 +2128,6 @@ impl AppController {
 /// is an archive and the window that asked for it has nothing else to show.
 /// Opening it answers "where did it go", which is the question a window left
 /// sitting on its own success is asking.
-/// The files a job reads and the ones it rewrites, which is what decides
-/// whether two jobs can run at the same time.
-fn touched_by(job: &Job) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    match job {
-        Job::Extract { archives, .. } => (archives.clone(), Vec::new()),
-        Job::Test { archive, .. } => (vec![archive.clone()], Vec::new()),
-        Job::Password { archive, .. }
-        | Job::Delete { archive, .. }
-        | Job::Rename { archive, .. }
-        | Job::Move { archive, .. }
-        | Job::NewFolder { archive, .. }
-        | Job::Add { archive, .. } => (Vec::new(), vec![archive.clone()]),
-        Job::CopyTo { archive, dest } => (vec![archive.clone()], vec![dest.clone()]),
-        Job::Compress { out, inputs, .. } => (inputs.clone(), vec![out.clone()]),
-        Job::Update { .. } => (Vec::new(), Vec::new()),
-    }
-}
-
 fn reread_target(job: &Job, current_dir: &str) -> Option<(PathBuf, Option<String>, String)> {
     match job {
         Job::Password { archive, new, .. } => {

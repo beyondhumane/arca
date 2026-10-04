@@ -10,7 +10,7 @@ use super::{AppController, Message};
 use crate::archive_ops::Answer;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -47,6 +47,12 @@ pub(crate) struct Task {
     pub(crate) conflict: Option<String>,
     pub(crate) reads: Vec<PathBuf>,
     pub(crate) writes: Vec<PathBuf>,
+    // Folders a task fills with files of its own choosing, such as an
+    // extraction's destination. Two of them overlapping may write the same file.
+    pub(crate) outputs: Vec<PathBuf>,
+    // The archive the window showed when the task was asked for. A result is
+    // only opened over the window if it still shows that.
+    pub(crate) origin: Option<PathBuf>,
     pub(crate) stop_leaves_files: bool,
     pub(crate) reread_after: Option<(PathBuf, Option<String>, String)>,
     pub(crate) close_when_done: bool,
@@ -75,6 +81,8 @@ impl Task {
             conflict: None,
             reads: Vec::new(),
             writes: Vec::new(),
+            outputs: Vec::new(),
+            origin: None,
             stop_leaves_files: false,
             reread_after: None,
             close_when_done: false,
@@ -90,6 +98,11 @@ impl Task {
 
     pub(crate) fn writing(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
         self.writes.extend(paths);
+        self
+    }
+
+    pub(crate) fn filling(mut self, folders: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.outputs.extend(folders);
         self
     }
 
@@ -134,7 +147,12 @@ impl Task {
     }
 
     fn collides(&self, other: &Task) -> bool {
-        self.writes.iter().any(|w| other.touches(w)) || other.writes.iter().any(|w| self.touches(w))
+        self.writes.iter().any(|w| other.touches(w))
+            || other.writes.iter().any(|w| self.touches(w))
+            || self
+                .outputs
+                .iter()
+                .any(|a| other.outputs.iter().any(|b| nested(a, b)))
     }
 
     fn start(&mut self) {
@@ -153,11 +171,8 @@ impl Task {
     }
 }
 
-fn same_file(a: &Path, b: &Path) -> bool {
-    if a == b {
-        return true;
-    }
-    let real = |p: &Path| match std::fs::canonicalize(p) {
+fn real(p: &Path) -> PathBuf {
+    match std::fs::canonicalize(p) {
         Ok(real) => real,
         Err(_) => match (p.parent(), p.file_name()) {
             (Some(parent), Some(name)) => std::fs::canonicalize(parent)
@@ -165,14 +180,23 @@ fn same_file(a: &Path, b: &Path) -> bool {
                 .unwrap_or_else(|_| p.to_path_buf()),
             _ => p.to_path_buf(),
         },
-    };
-    real(a) == real(b)
+    }
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b || real(a) == real(b)
+}
+
+fn nested(a: &Path, b: &Path) -> bool {
+    let (a, b) = (real(a), real(b));
+    a.starts_with(&b) || b.starts_with(&a)
 }
 
 impl AppController {
     pub(crate) fn enqueue(&mut self, mut task: Task) -> TaskId {
         self.state.next_task += 1;
         task.id = self.state.next_task;
+        task.origin = self.state.archive.clone();
         let id = task.id;
         self.state.tasks.push(task);
         self.schedule();
@@ -303,18 +327,26 @@ impl AppController {
     /// was opened for one task has nothing left to do.
     pub(crate) fn poll_tasks(&mut self) -> bool {
         let mut close_window = false;
-        let mut rereads = Vec::new();
-        let mut cut_ready = false;
+        let mut cut_ready = Vec::new();
         let mut installing = false;
         let mut settled = false;
         let words = self.s();
         for i in 0..self.state.tasks.len() {
-            let messages: Vec<Message> = self.state.tasks[i]
-                .channel
-                .as_ref()
-                .map(|rx| rx.try_iter().collect())
-                .unwrap_or_default();
-            if messages.is_empty() {
+            let mut messages = Vec::new();
+            let mut gone = false;
+            if let Some(rx) = &self.state.tasks[i].channel {
+                loop {
+                    match rx.try_recv() {
+                        Ok(m) => messages.push(m),
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => {
+                            gone = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if messages.is_empty() && !gone {
                 continue;
             }
             for m in messages {
@@ -331,7 +363,7 @@ impl AppController {
                             task.reread_after = Some((path, password, String::new()));
                         }
                     }
-                    Message::CutReady => cut_ready = true,
+                    Message::CutReady => cut_ready.push(task.id),
                     Message::Done(text) => {
                         task.status = TaskStatus::Done;
                         task.result = text.clone();
@@ -385,13 +417,26 @@ impl AppController {
                 }
             }
             let task = &mut self.state.tasks[i];
+            // A worker that let go of its channel without a word has panicked.
+            // Left Running, its row would spin forever and hold every file it
+            // touches.
+            if gone && task.active() {
+                task.status = TaskStatus::Failed;
+                task.result = words.task_lost.to_string();
+                task.reread_after = None;
+                self.state.notice = task.result.clone();
+                self.state.error = true;
+                settled = true;
+            }
             if task.finished() && task.channel.is_some() {
                 task.channel = None;
                 task.replies = None;
                 task.finished = Some(Instant::now());
                 if task.status == TaskStatus::Done {
                     if let Some(reread) = task.reread_after.take() {
-                        rereads.push(reread);
+                        if task.origin == self.state.archive {
+                            self.state.reread_queued = Some((task.origin.clone(), reread));
+                        }
                     }
                     if task.close_when_done {
                         close_window = true;
@@ -399,8 +444,10 @@ impl AppController {
                 }
             }
         }
-        if cut_ready {
-            self.state.cut_pending = self.state.cut_armed.take();
+        if let Some((armed_by, _)) = &self.state.cut_armed {
+            if cut_ready.contains(armed_by) {
+                self.state.cut_pending = self.state.cut_armed.take().map(|(_, cut)| cut);
+            }
         }
         if settled {
             self.schedule();
@@ -411,13 +458,29 @@ impl AppController {
                 self.state.view = super::View::Browse;
             }
         }
-        for (path, pw, dir) in rereads {
-            let notice = std::mem::take(&mut self.state.notice);
-            self.open_with_password(path, pw);
-            self.state.reread_dir = Some(dir);
-            self.state.notice = notice;
-            self.state.view = super::View::Browse;
-        }
+        self.reread_when_free();
         installing || close_window
+    }
+
+    /// Rereads the archive a finished rewrite left behind, once nothing else
+    /// is rewriting it and only if the window still shows it. Kept until then:
+    /// a rewrite queued behind may fail and leave nothing newer to show.
+    fn reread_when_free(&mut self) {
+        if let Some((origin, _)) = &self.state.reread_queued {
+            if *origin != self.state.archive {
+                self.state.reread_queued = None;
+            }
+        }
+        if self.blocked() {
+            return;
+        }
+        let Some((_, (path, pw, dir))) = self.state.reread_queued.take() else {
+            return;
+        };
+        let notice = std::mem::take(&mut self.state.notice);
+        self.open_with_password(path, pw);
+        self.state.reread_dir = Some(dir);
+        self.state.notice = notice;
+        self.state.view = super::View::Browse;
     }
 }
