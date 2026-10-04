@@ -122,6 +122,16 @@ fn discover(
     else {
         return Ok((vec![path.to_owned()], None));
     };
+    let selected_index = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| naming.index(n));
+    if selected_index.is_some_and(|index| index == 0 || index > MAX_VOLUMES) {
+        return Err(Error::Limit(format!(
+            "RAR volume '{}' exceeds the {MAX_VOLUMES}-volume limit or has index zero",
+            path.display()
+        )));
+    }
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -140,10 +150,7 @@ fn discover(
             continue;
         };
         if index == 0 || index > MAX_VOLUMES {
-            return Err(Error::Limit(format!(
-                "RAR volume '{}' exceeds the {MAX_VOLUMES}-volume limit or has index zero",
-                entry.path().display()
-            )));
+            continue;
         }
         if let Some(previous) = candidates.insert(index, entry.path()) {
             return Err(invalid(
@@ -158,10 +165,6 @@ fn discover(
     // The selected path must exist, even if a differently cased alias exists.
     fs::symlink_metadata(path).map_err(|e| reader::at_path(e.into(), path))?;
     let mut paths = Vec::new();
-    let selected_index = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .and_then(|n| naming.index(n));
     for index in 1..=candidates.keys().next_back().copied().unwrap_or(1) {
         let expected = parent.join(naming.name(index));
         let candidate = candidates
@@ -211,7 +214,7 @@ fn properties(archive: &Archive) -> Result<Properties> {
     })
 }
 
-fn next_volume(archive: &Archive) -> Result<bool> {
+fn next_volume(archive: &Archive) -> Result<Option<bool>> {
     let split = archive
         .members()
         .last()
@@ -224,7 +227,7 @@ fn next_volume(archive: &Archive) -> Result<bool> {
                         "split member has no next-volume end flag".into(),
                     ));
                 }
-                Ok(end.has_next_volume())
+                Ok(Some(end.has_next_volume()))
             }
             _ => Err(Error::Format(
                 "RAR5 end header is missing (truncated archive)".into(),
@@ -237,12 +240,12 @@ fn next_volume(archive: &Archive) -> Result<bool> {
                         "split member has no next-volume end flag".into(),
                     ));
                 }
-                Ok(end.flags & 1 != 0)
+                Ok(Some(end.flags & 1 != 0))
             }
-            // Old RAR generations have no end header; only split flags signal continuation.
-            _ => Ok(split),
+            // Without END, unsplit boundaries do not prove that a legacy set is complete.
+            _ => Ok(split.then_some(true)),
         },
-        Archive::Rar13(_) => Ok(split),
+        Archive::Rar13(_) => Ok(split.then_some(true)),
         _ => Err(Error::Unsupported("unknown RAR family".into())),
     }
 }
@@ -350,7 +353,7 @@ impl Volumes {
             || selected
                 .members()
                 .any(|m| m.meta.is_split_before || m.meta.is_split_after)
-            || next_volume(&selected).map_err(|e| reader::at_path(e, path))?;
+            || next_volume(&selected).map_err(|e| reader::at_path(e, path))? == Some(true);
         let (paths, next) = if needs_volumes {
             discover(path, progress, token)?
         } else {
@@ -409,13 +412,19 @@ impl Volumes {
                 _ => {}
             }
             let has_next = next_volume(&archive).map_err(|e| reader::at_path(e, path))?;
-            if has_next && index + 1 == paths.len() {
+            if has_next == Some(true) && index + 1 == paths.len() {
+                if paths.len() == MAX_VOLUMES {
+                    return Err(Error::Limit(format!(
+                        "RAR volume '{}' exceeds the {MAX_VOLUMES}-volume limit",
+                        next.as_deref().unwrap_or(path).display()
+                    )));
+                }
                 return Err(invalid(
                     next.as_deref().unwrap_or(path),
                     &format!("missing volume required after '{}'", path.display()),
                 ));
             }
-            if !has_next && index + 1 < paths.len() {
+            if has_next == Some(false) && index + 1 < paths.len() {
                 return Err(invalid(
                     &paths[index + 1],
                     &format!("unexpected volume after final volume '{}'", path.display()),

@@ -66,11 +66,17 @@ ausentes, duplicados, desordenados o incoherentes producen un error con la ruta
 afectada. Deben ser archivos normales, no enlaces ni puntos de reanálisis de
 Windows. Un archivo independiente cuyo nombre parezca multivolumen sigue siendo
 independiente si sus cabeceras no declaran un conjunto.
+Se ignoran los archivos numerados no seleccionados fuera del rango admitido;
+un volumen seleccionado fuera de rango o una parte 257 necesaria siguen fallando.
 
 RAR no tiene un identificador universal de conjunto. Se comprueban los números,
 indicadores y metadatos de miembros divididos disponibles. Volúmenes ajenos con
 miembros no divididos y metadatos idénticos no siempre se pueden distinguir;
 los formatos antiguos tampoco ofrecen siempre números de volumen fiables.
+Los conjuntos históricos sin cabecera final pueden continuar después de un
+miembro no dividido. Si falta su último volumen en uno de esos límites, los
+metadatos disponibles no permiten detectar la ausencia. Si el primer volumen
+tiene cabecera final, los siguientes también deben tenerla.
 
 ## Seguridad y límites
 
@@ -91,6 +97,12 @@ Son límites del decodificador, no un aislamiento estricto de memoria o tiempo
 de CPU. Algunos filtros necesitan más memoria de la permitida y se rechazan.
 La cancelación se comprueba al buscar, analizar y decodificar, y entre los pasos
 de publicación.
+
+Las vistas previas multivolumen limitan a 64 MiB el contenido seleccionado en
+memoria; los miembros descartados usan los límites normales de salida. El
+backend sigue decodificando y verificando todo el conjunto, por lo que la
+corrupción en otro volumen puede impedir la vista previa. En archivos
+independientes, la vista previa termina tras el miembro seleccionado.
 
 La extracción decodifica primero en almacenamiento temporal privado y verifica
 la integridad. Una contraseña incorrecta, corrupción o fallo de decodificación

@@ -1,10 +1,12 @@
 use super::{Conflict, Progress, RarArchive};
 use arca_core::{Entry, Error, Method, Result};
 use rars::{ArchiveMemberDetail, ArchiveReadOptions, ReadCancellation};
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -257,13 +259,63 @@ pub(super) fn read_entry(
         return Err(Error::Limit("RAR preview exceeds 64 MiB".into()));
     }
     let token = ReadCancellation::new();
-    rars::read_volume_member_at_with_options(
+    if let [single] = archive.inner.archives.as_slice() {
+        return single
+            .read_member_at_with_options(
+                index,
+                options(password, &token).with_max_member_output_bytes(PREVIEW_LIMIT),
+            )
+            .map_err(|e| archive.inner.error(e))?
+            .ok_or_else(|| Error::Unsupported("RAR entry has no file contents".into()));
+    }
+    if entry.is_dir {
+        return Err(Error::Unsupported("RAR entry has no file contents".into()));
+    }
+    let buffer = Rc::new(RefCell::new(PreviewData::default()));
+    let mut current = 0;
+    let result = rars::extract_volumes_to_with_options(
         &archive.inner.archives,
-        index,
-        options(password, &token).with_max_member_output_bytes(PREVIEW_LIMIT),
-    )
-    .map_err(|e| archive.inner.error(e))?
-    .ok_or_else(|| Error::Unsupported("RAR entry has no file contents".into()))
+        options(password, &token),
+        |_| {
+            let selected = current == index;
+            current += 1;
+            if selected {
+                Ok(Box::new(PreviewWriter(Rc::clone(&buffer))) as Box<dyn io::Write>)
+            } else {
+                Ok(Box::new(io::sink()) as Box<dyn io::Write>)
+            }
+        },
+    );
+    let mut buffer = buffer.borrow_mut();
+    if buffer.exceeded {
+        return Err(Error::Limit("RAR preview exceeds 64 MiB".into()));
+    }
+    result.map_err(|e| archive.inner.error(e))?;
+    Ok(std::mem::take(&mut buffer.bytes))
+}
+
+#[derive(Default)]
+struct PreviewData {
+    bytes: Vec<u8>,
+    exceeded: bool,
+}
+
+struct PreviewWriter(Rc<RefCell<PreviewData>>);
+
+impl io::Write for PreviewWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let mut buffer = self.0.borrow_mut();
+        if bytes.len() as u64 > PREVIEW_LIMIT - buffer.bytes.len() as u64 {
+            buffer.exceeded = true;
+            return Err(io::Error::other("RAR preview exceeds 64 MiB"));
+        }
+        buffer.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn reject_links(path: &Path) -> Result<()> {
@@ -428,6 +480,21 @@ pub(super) fn extract(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_writer_caps_actual_output_before_appending() {
+        use std::io::Write;
+        let buffer = Rc::new(RefCell::new(PreviewData {
+            bytes: vec![0; PREVIEW_LIMIT as usize - 1],
+            exceeded: false,
+        }));
+        let mut writer = PreviewWriter(Rc::clone(&buffer));
+        assert_eq!(writer.write(b"x").unwrap(), 1);
+        assert_eq!(writer.write(b"").unwrap(), 0);
+        assert!(writer.write(b"y").is_err());
+        assert_eq!(buffer.borrow().bytes.len(), PREVIEW_LIMIT as usize);
+        assert!(buffer.borrow().exceeded);
+    }
 
     #[test]
     fn cancellation_reaches_long_running_backend_work_and_preserves_its_kind() {

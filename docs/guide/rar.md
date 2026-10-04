@@ -65,10 +65,16 @@ duplicate, out-of-order and inconsistent volumes are rejected with the affected
 path. Selected volumes and discovered siblings must be regular files, not links
 or Windows reparse points. Standalone archives with volume-like filenames are
 still treated as standalone files when their headers do not declare a set.
+Unselected numbered siblings outside the supported range are ignored; an
+out-of-range selected volume or a required 257th volume still fails.
 
 RAR has no universal set identifier. The adapter checks available volume numbers,
 flags and split-member metadata; unrelated unsplit volumes with identical metadata
 cannot always be distinguished, and older formats lack reliable volume ordinals.
+Historical sets without end headers may continue after an unsplit member. If
+such a set loses its final volume at an unsplit boundary, the available metadata
+cannot prove that anything is missing. Sets whose first volume has an end header
+must have end headers on subsequent volumes too.
 Integrity verification checks the checksums/authenticators provided by the format.
 
 ## Safety and limits
@@ -93,6 +99,11 @@ limits, not a hard process-RSS or CPU-time sandbox. Some
 filtered archives need more buffered decoding than permitted and are rejected.
 The GUI's cancellation flag is checked while parsing and decoding as well as
 between publication steps.
+
+Multivolume previews cap the selected buffer at 64 MiB while discarded members
+use the normal output limits. The backend still decodes and verifies the whole
+set, so corruption in another volume can prevent a preview. Standalone previews
+stop after the selected member instead of verifying later entries.
 
 Extraction first decodes into private temporary storage and verifies integrity.
 Wrong passwords, corruption and decode failures leave the destination untouched.

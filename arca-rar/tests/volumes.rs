@@ -400,7 +400,9 @@ fn header(body: &[u8]) -> Vec<u8> {
 
 fn synthetic_volume(number: u8, next: bool, count: usize, size: u64) -> Vec<u8> {
     let mut data = b"Rar!\x1a\x07\x01\x00".to_vec();
-    data.extend(header(&[1, 0, 3, number]));
+    let mut main = vec![1, 0, 3];
+    main.extend(vint(u64::from(number)));
+    data.extend(header(&main));
     for index in 0..count {
         let name = format!("file-{number}-{index}");
         let mut body = vec![2, 2, 0, 0];
@@ -411,6 +413,178 @@ fn synthetic_volume(number: u8, next: bool, count: usize, size: u64) -> Vec<u8> 
     }
     data.extend(header(&[5, 4, u8::from(next)]));
     data
+}
+
+#[test]
+fn unrelated_out_of_range_siblings_do_not_block_a_complete_set() {
+    let dir = tempfile::tempdir().unwrap();
+    copy_set(dir.path(), &NAMES);
+    for name in [
+        "volume.part0.rar",
+        "volume.part999.rar",
+        "volume.part999999999999999999999.rar",
+    ] {
+        fs::write(dir.path().join(name), b"unrelated").unwrap();
+    }
+    for name in NAMES {
+        let archive = RarArchive::open(&dir.path().join(name), None).unwrap();
+        archive.test(None, &|_, _, _| true).unwrap();
+    }
+    fs::remove_file(dir.path().join(NAMES[2])).unwrap();
+    failure_leaves_destination_untouched(&dir.path().join(NAMES[0]), NAMES[2]);
+}
+
+#[test]
+fn selected_or_required_out_of_range_volumes_still_fail() {
+    for name in [
+        "set.part0.rar",
+        "set.part257.rar",
+        "set.part999999999999999999999.rar",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(name);
+        fs::write(&path, synthetic_volume(0, false, 0, 0)).unwrap();
+        assert!(matches!(
+            RarArchive::open(&path, None),
+            Err(Error::Limit(_))
+        ));
+    }
+    let dir = tempfile::tempdir().unwrap();
+    for index in 0..256 {
+        fs::write(
+            dir.path().join(format!("set.part{}.rar", index + 1)),
+            synthetic_volume(index as u8, true, 0, 0),
+        )
+        .unwrap();
+    }
+    let error = RarArchive::open(&dir.path().join("set.part1.rar"), None)
+        .err()
+        .unwrap();
+    assert!(matches!(error, Error::Limit(_)), "{error}");
+    assert!(error.to_string().contains("set.part257.rar"), "{error}");
+}
+
+fn legacy_header(kind: u8, flags: u16, body: &[u8]) -> Vec<u8> {
+    let mut head = vec![kind];
+    head.extend(flags.to_le_bytes());
+    head.extend(((body.len() + 7) as u16).to_le_bytes());
+    head.extend(body);
+    let mut result = (arca_core::crc32(&head) as u16).to_le_bytes().to_vec();
+    result.extend(head);
+    result
+}
+
+fn legacy_without_end(name: &str, split_after: bool) -> Vec<u8> {
+    let mut data = b"Rar!\x1a\x07\x00".to_vec();
+    data.extend(legacy_header(0x73, 1, &[0; 6]));
+    let bytes = b"legacy";
+    let mut body = (bytes.len() as u32).to_le_bytes().to_vec();
+    body.extend((bytes.len() as u32).to_le_bytes());
+    body.push(3);
+    body.extend(arca_core::crc32(bytes).to_le_bytes());
+    body.extend([0; 4]);
+    body.extend([20, 0x30]);
+    body.extend((name.len() as u16).to_le_bytes());
+    body.extend(0o100644u32.to_le_bytes());
+    body.extend(name.bytes());
+    data.extend(legacy_header(
+        0x74,
+        0x8000 | if split_after { 2 } else { 0 },
+        &body,
+    ));
+    data.extend(bytes);
+    data
+}
+
+#[test]
+fn end_less_legacy_sets_continue_at_unsplit_boundaries() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("set.rar"),
+        legacy_without_end("first.txt", false),
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("set.r00"),
+        legacy_without_end("second.txt", false),
+    )
+    .unwrap();
+    for name in ["set.rar", "set.r00"] {
+        let archive = RarArchive::open(&dir.path().join(name), None).unwrap();
+        assert_eq!(archive.entries().len(), 2);
+        archive.test(None, &|_, _, _| true).unwrap();
+        assert_eq!(archive.read_entry(1, None).unwrap(), b"legacy");
+        let out = tempfile::tempdir().unwrap();
+        archive
+            .extract(out.path(), &[], None, &|_, _, _| true, &|_| {
+                Conflict::Overwrite
+            })
+            .unwrap();
+        assert_eq!(fs::read(out.path().join("first.txt")).unwrap(), b"legacy");
+        assert_eq!(fs::read(out.path().join("second.txt")).unwrap(), b"legacy");
+    }
+    fs::write(
+        dir.path().join("set.r00"),
+        legacy_without_end("second.txt", true),
+    )
+    .unwrap();
+    failure_leaves_destination_untouched(&dir.path().join("set.rar"), "set.r01");
+    fs::write(dir.path().join("set.r00"), b"truncated").unwrap();
+    failure_leaves_destination_untouched(&dir.path().join("set.rar"), "set.r00");
+}
+
+fn stored_member(name: &str, bytes: &[u8]) -> Vec<u8> {
+    let mut body = vec![2, 2];
+    body.extend(vint(bytes.len() as u64));
+    body.push(4);
+    body.extend(vint(bytes.len() as u64));
+    body.push(0);
+    body.extend(arca_core::crc32(bytes).to_le_bytes());
+    body.extend([0, 1, name.len() as u8]);
+    body.extend(name.bytes());
+    let mut result = header(&body);
+    result.extend(bytes);
+    result
+}
+
+#[test]
+fn preview_cap_applies_to_selected_output_not_unrelated_members() {
+    let big = stored_member("big.bin", &vec![0; 65 * 1024 * 1024]);
+    for volumes in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("set.part1.rar");
+        let mut data = b"Rar!\x1a\x07\x01\x00".to_vec();
+        data.extend(header(if volumes { &[1, 0, 3, 0] } else { &[1, 0, 0] }));
+        data.extend(stored_member("tiny.txt", b"ok"));
+        if volumes {
+            data.extend(header(&[5, 4, 1]));
+            fs::write(&first, &data).unwrap();
+            data = b"Rar!\x1a\x07\x01\x00".to_vec();
+            data.extend(header(&[1, 0, 3, 1]));
+        }
+        data.extend(&big);
+        data.extend(header(&[5, 4, 0]));
+        let last = if volumes {
+            dir.path().join("set.part2.rar")
+        } else {
+            first.clone()
+        };
+        fs::write(&last, &data).unwrap();
+        let archive = RarArchive::open(&first, None).unwrap();
+        archive.test(None, &|_, _, _| true).unwrap();
+        assert_eq!(archive.read_entry(0, None).unwrap(), b"ok");
+        assert!(matches!(archive.read_entry(1, None), Err(Error::Limit(_))));
+        let at = data.len() - header(&[5, 4, 0]).len() - 1;
+        data[at] ^= 1;
+        fs::write(&last, &data).unwrap();
+        let archive = RarArchive::open(&first, None).unwrap();
+        assert!(archive.test(None, &|_, _, _| true).is_err());
+        if volumes {
+            assert!(archive.read_entry(0, None).is_err());
+        } else {
+            assert_eq!(archive.read_entry(0, None).unwrap(), b"ok");
+        }
+    }
 }
 
 #[test]
