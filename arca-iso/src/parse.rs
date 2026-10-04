@@ -185,8 +185,10 @@ fn strip_version(name: &str) -> &str {
 
 fn joliet_name(ident: &[u8]) -> String {
     let units = ident
-        .chunks_exact(2)
-        .map(|c| u16::from_be_bytes([c[0], c[1]]));
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&c| u16::from_be_bytes(c));
     char::decode_utf16(units)
         .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
         .collect()
