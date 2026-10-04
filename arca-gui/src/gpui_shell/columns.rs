@@ -102,7 +102,7 @@ impl GpuiShell {
             .iter()
             .map(|surface| surface.width)
             .sum::<f32>()
-            + 280.;
+            + 48.;
         for pane in 0..self.controller.state.browser.panes.len() {
             let content = self.directory_pane(pane, cx);
             panels.push(
@@ -115,7 +115,7 @@ impl GpuiShell {
         }
         panels.push(
             resizable_panel()
-                .size(px(280.))
+                .size(px(48.))
                 .size_range(px(0.)..px(10000.))
                 .child(div().size_full()),
         );

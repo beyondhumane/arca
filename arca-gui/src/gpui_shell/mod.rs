@@ -36,7 +36,6 @@ use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_component::progress::Progress;
 use gpui_component::radio::RadioGroup;
 use gpui_component::scroll::ScrollableElement as _;
-use gpui_component::separator::Separator;
 use gpui_component::switch::Switch;
 use gpui_component::table::{Column, ColumnSort, DataTable, TableDelegate, TableEvent, TableState};
 use gpui_component::tree::{tree, TreeItem, TreeState};
@@ -171,6 +170,7 @@ struct GpuiShell {
     /// already says which is which.
     settings_focus: Vec<FocusHandle>,
     settings_section: SettingsSection,
+    settings_search: Entity<InputState>,
     /// Which row the right button was pressed on, and where the pointer was,
     /// so the menu opens under it instead of in a fixed corner.
     /// The band being drawn, while it is being drawn.
@@ -420,7 +420,9 @@ impl SettingsControl {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsSection {
     General,
+    Archives,
     Appearance,
+    Views,
     Keybindings,
     Updates,
     About,
@@ -463,6 +465,17 @@ impl GpuiShell {
                 .placeholder(strings.find_word)
                 .context_menu(false)
         });
+        let settings_search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(strings.settings_search)
+                .context_menu(false)
+        });
+        cx.subscribe_in(&settings_search, window, |_, _, event, _, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        })
+        .detach();
         cx.subscribe_in(&filter, window, |shell, state, event, _, cx| {
             if matches!(event, InputEvent::Change) {
                 let value = state.read(cx).value().to_string();
@@ -701,6 +714,7 @@ impl GpuiShell {
             dialog_cancel_focus: cx.focus_handle().tab_stop(true),
             add_start_focus: cx.focus_handle().tab_stop(true),
             settings_section: SettingsSection::General,
+            settings_search,
             settings_focus: SettingsControl::ALL
                 .iter()
                 .map(|_| cx.focus_handle().tab_stop(true))
@@ -2473,21 +2487,6 @@ impl Render for GpuiShell {
         // can be pressed on purpose: the bar owns the drag, and a control
         // inside it would move the window when the hand wobbled on the way to
         // pressing it.
-        let title_bar = TitleBar::new().child(
-            div()
-                .id("window-title")
-                .role(Role::Heading)
-                .flex()
-                .items_center()
-                .gap_2()
-                .min_w_0()
-                .h_full()
-                .text_xs()
-                .text_color(cx.theme().foreground)
-                .child(brand_mark(22.))
-                .child(heading(self.controller.state.window_title.clone()).truncate()),
-        );
-
         // Abierta desde el menu del Explorador para anadir, la ventana existe
         // para el formulario y nada mas: no hay archivo que navegar detras.
         // Dibujar la barra de herramientas, la lista vacia y el pie solo
@@ -2495,6 +2494,24 @@ impl Render for GpuiShell {
         // del formulario.
         let solo_el_formulario =
             self.controller.state.one_shot && matches!(modal, Some(ModalKind::Add));
+        let title_bar = if solo_el_formulario {
+            TitleBar::new().child(
+                div()
+                    .id("window-title")
+                    .role(Role::Heading)
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .h_full()
+                    .text_xs()
+                    .text_color(cx.theme().foreground)
+                    .child(brand_mark(22.))
+                    .child(heading(self.controller.state.window_title.clone()).truncate()),
+            )
+        } else {
+            TitleBar::new().h(px(40.)).child(header)
+        };
         let mut root = div()
             .id("arca-gpui-background")
             .on_action(cx.listener(Self::focus_filter))
@@ -2503,8 +2520,7 @@ impl Render for GpuiShell {
             .flex_col()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(title_bar)
-            .when(!solo_el_formulario, |root| root.child(header));
+            .child(title_bar);
 
         // Files from outside arrive as an ordinary GPUI drag carrying
         // `ExternalPaths`, not as a `FileDropEvent`: the window translates
@@ -3291,6 +3307,7 @@ pub(crate) fn run() {
                         // estiraba la pequena hasta el ancho de la grande y el
                         // formulario quedaba flotando sobre una Arca vacia.
                         window_min_size: Some(size(px(floor.0), px(floor.1))),
+                        window_decorations: Some(gpui::WindowDecorations::Client),
                         ..TitleBar::window_options()
                     },
                     |window, cx| {
@@ -3351,7 +3368,7 @@ mod tests {
         );
         assert_eq!(
             dialog_dimensions(ModalKind::Settings, viewport).0.width,
-            px(720.)
+            px(860.)
         );
     }
 

@@ -36,7 +36,13 @@ pub(super) fn cycle_sidebar(settings: &mut Settings) {
 }
 
 pub(super) fn breadcrumb_indices(count: usize, width: f32) -> (Vec<usize>, Vec<usize>) {
-    let capacity = if width < 1100. { 2 } else { 4 };
+    let capacity = if width < 900. {
+        3
+    } else if width < 1300. {
+        5
+    } else {
+        7
+    };
     if count <= capacity {
         return ((0..count).collect(), Vec::new());
     }
@@ -54,7 +60,8 @@ impl GpuiShell {
         self.workspace_width = width;
         self.workspace_height = f32::from(window.viewport_size().height);
         let mut layout = decide(self.workspace_width, &self.controller.state.settings);
-        layout.preview &= self.controller.state.archive.is_some() || self.controller.on_disk();
+        layout.preview &= (self.controller.state.archive.is_some() || self.controller.on_disk())
+            && self.cursor_on_file();
         if resized || self.effective_layout != Some(layout) {
             if !layout.preview {
                 self.controller.cancel_preview();
@@ -166,6 +173,15 @@ impl GpuiShell {
         body
     }
 
+    fn cursor_on_file(&self) -> bool {
+        self.controller.state.cursor.is_some_and(|cursor| {
+            self.controller
+                .visible_rows()
+                .get(cursor)
+                .is_some_and(|row| !row.is_dir && !row.up && row.entry.is_some())
+        })
+    }
+
     pub(super) fn footer(
         &self,
         visible: usize,
@@ -173,10 +189,19 @@ impl GpuiShell {
         cx: &mut Context<Self>,
     ) -> Stateful<gpui::Div> {
         let s = self.controller.s();
-        let directory = if self.controller.state.current_dir.is_empty() {
-            self.controller.root_label()
+        let muted = cx.theme().muted_foreground;
+        let hints: [(&str, &str); 6] = [
+            ("Enter", s.open_word),
+            ("Ctrl+F", s.find_word),
+            ("F2", s.rename_word),
+            ("Ctrl+C / X", s.copy_word),
+            ("Ctrl+V", s.paste_word),
+            ("Del", s.delete_word),
+        ];
+        let shown = if self.workspace_width < 1000. {
+            0
         } else {
-            &self.controller.state.current_dir
+            hints.len()
         };
         div()
             .id("workspace-status")
@@ -187,18 +212,33 @@ impl GpuiShell {
             .flex_none()
             .flex()
             .items_center()
-            .gap_3()
-            .px_2()
+            .gap_4()
+            .px_3()
             .text_xs()
+            .text_color(muted)
+            .bg(cx.theme().status_bar)
             .border_t_1()
             .border_color(cx.theme().border)
-            .child(div().flex_1().truncate().child(format!(
-                "{directory} | {visible} {} {} | {selected} {}",
+            .children(hints.into_iter().take(shown).map(|(key, what)| {
+                div()
+                    .flex_none()
+                    .flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(cx.theme().foreground)
+                            .child(key),
+                    )
+                    .child(what)
+            }))
+            .child(div().flex_1().min_w_0().truncate().child(self.status()))
+            .child(div().flex_none().child(format!(
+                "{visible} {} {} \u{b7} {selected} {}",
                 s.visible_of,
                 self.controller.folder_total(),
                 s.checked
             )))
-            .child(div().truncate().child(self.status()))
             .when(!self.shown_tasks().is_empty(), |footer| {
                 let count = self.shown_tasks().len();
                 footer.child(
@@ -214,23 +254,6 @@ impl GpuiShell {
                     })),
                 )
             })
-            .child(
-                Self::button(
-                    "preview-toggle",
-                    s.view_word,
-                    s.view_word.into(),
-                    !self.background_blocked(),
-                )
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.controller.state.settings.preview_visible =
-                        !this.controller.state.settings.preview_visible;
-                    this.controller.state.settings.save();
-                    if !this.controller.state.settings.preview_visible {
-                        this.close_preview(window, cx);
-                    }
-                    cx.notify();
-                })),
-            )
             .child(
                 Self::button(
                     "footer-help",
@@ -310,10 +333,10 @@ mod tests {
     }
     #[test]
     fn breadcrumbs_keep_root_and_destination_with_accessible_middle() {
-        assert_eq!(breadcrumb_indices(6, 800.), (vec![0, 5], vec![1, 2, 3, 4]));
+        assert_eq!(breadcrumb_indices(6, 800.), (vec![0, 4, 5], vec![1, 2, 3]));
         assert_eq!(breadcrumb_indices(2, 800.), (vec![0, 1], vec![]));
-        let (shown, hidden) = breadcrumb_indices(8, 1920.);
-        assert_eq!(shown, vec![0, 5, 6, 7]);
-        assert_eq!(hidden, vec![1, 2, 3, 4]);
+        let (shown, hidden) = breadcrumb_indices(10, 1920.);
+        assert_eq!(shown, vec![0, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(hidden, vec![1, 2, 3]);
     }
 }

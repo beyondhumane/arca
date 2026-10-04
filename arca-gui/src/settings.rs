@@ -104,7 +104,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             lang: None,
-            theme: ThemePreference::System,
+            theme: ThemePreference::Dark,
             columns: Columns::default(),
             browser_view: BrowserView::default(),
             sidebar_collapsed: false,

@@ -120,7 +120,8 @@ pub(super) fn dialog_dimensions(
 ) -> (gpui::Size<gpui::Pixels>, gpui::Pixels) {
     let preferred_width = match kind {
         ModalKind::Conflict => 560.,
-        ModalKind::Settings | ModalKind::Shortcuts => 720.,
+        ModalKind::Settings => 860.,
+        ModalKind::Shortcuts => 720.,
         ModalKind::Add => 600.,
         _ => 448.,
     };
@@ -666,8 +667,55 @@ pub(super) fn build_dialog(
                     .items_center()
                     .flex_wrap()
                     .gap_2()
-                    .child(div().w(px(110.)).flex_none().child(label))
+                    .py_1()
+                    .child(
+                        div()
+                            .w(px(160.))
+                            .flex_none()
+                            .child(label.trim_end_matches(':')),
+                    )
                     .child(control)
+            };
+            let toggle = |id: &'static str,
+                          label: &'static str,
+                          on: bool,
+                          apply: fn(&mut crate::settings::Settings)| {
+                let weak = weak.clone();
+                Switch::new(id)
+                    .label(label)
+                    .checked(on)
+                    .on_click(move |_, _, cx| {
+                        let _ = weak.update(cx, |this, cx| {
+                            apply(&mut this.controller.state.settings);
+                            this.controller.state.settings.save();
+                            cx.notify();
+                        });
+                    })
+            };
+            let (browser_view, preview_on, folders_on, rail_on) = {
+                let settings = &shell.read(cx).controller.state.settings;
+                (
+                    settings.browser_view,
+                    settings.preview_visible,
+                    settings.folders,
+                    settings.sidebar_collapsed,
+                )
+            };
+            let views = [true, false];
+            let default_view = {
+                let weak = weak.clone();
+                RadioGroup::horizontal("settings-view")
+                    .selected_index(Some(usize::from(
+                        browser_view != crate::settings::BrowserView::Columns,
+                    )))
+                    .children(vec![s.column_view, s.details_view])
+                    .on_click(move |index, _, cx| {
+                        let columns = views[*index];
+                        let _ = weak.update(cx, |this, cx| {
+                            this.switch_view(columns, false, cx);
+                            cx.notify();
+                        });
+                    })
             };
             let updates = {
                 let weak = weak.clone();
@@ -708,34 +756,117 @@ pub(super) fn build_dialog(
                     })
             };
             let section = shell.read(cx).settings_section;
-            let sections = [
-                (SettingsSection::General, s.settings_general),
-                (SettingsSection::Appearance, s.settings_appearance),
-                (SettingsSection::Keybindings, s.shortcuts_title),
-                (SettingsSection::Updates, s.settings_updates),
-                (SettingsSection::About, s.settings_about),
+            let sections: [(SettingsSection, &'static str, Vec<&'static str>); 7] = [
+                (
+                    SettingsSection::General,
+                    s.settings_general,
+                    vec![s.language, s.name_encoding, s.show_hidden],
+                ),
+                (
+                    SettingsSection::Archives,
+                    s.settings_archives,
+                    vec![s.format, s.compressor, s.level, s.into_subfolder],
+                ),
+                (
+                    SettingsSection::Appearance,
+                    s.settings_appearance,
+                    vec![s.theme],
+                ),
+                (
+                    SettingsSection::Views,
+                    s.settings_views,
+                    vec![
+                        s.default_view,
+                        s.show_preview_panel,
+                        s.show_folder_tree,
+                        s.icon_sidebar,
+                    ],
+                ),
+                (SettingsSection::Keybindings, s.shortcuts_title, vec![]),
+                (
+                    SettingsSection::Updates,
+                    s.settings_updates,
+                    vec![s.check_updates],
+                ),
+                (SettingsSection::About, s.settings_about, vec![]),
             ];
+            let query = shell
+                .read(cx)
+                .settings_search
+                .read(cx)
+                .value()
+                .trim()
+                .to_lowercase();
+            let matching = sections
+                .into_iter()
+                .filter(|(_, label, words)| {
+                    query.is_empty()
+                        || std::iter::once(label)
+                            .chain(words.iter())
+                            .any(|word| word.to_lowercase().contains(&query))
+                })
+                .map(|(section, label, _)| (section, label))
+                .collect::<Vec<_>>();
+            let section = if matching.iter().any(|(candidate, _)| *candidate == section) {
+                Some(section)
+            } else {
+                matching.first().map(|(candidate, _)| *candidate)
+            };
             let mut nav = div()
                 .flex()
                 .flex_col()
-                .gap_1()
-                .w(px(150.))
+                .gap(px(2.))
+                .w(px(200.))
                 .flex_none()
                 .pr_3()
                 .border_r_1()
-                .border_color(cx.theme().border);
-            for (index, (candidate, label)) in sections.into_iter().enumerate() {
-                let weak = weak.clone();
+                .border_color(cx.theme().border)
+                .child(
+                    div().pb_2().child(
+                        Input::new(&shell.read(cx).settings_search)
+                            .small()
+                            .cleanable(true)
+                            .prefix(Icon::new(IconName::Search).small())
+                            .aria_label(s.settings_search),
+                    ),
+                );
+            if matching.is_empty() {
                 nav = nav.child(
-                    GpuiShell::button(("settings-section", index), label, label.to_string(), true)
-                        .w_full()
-                        .selected(candidate == section)
-                        .on_click(move |_, _, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                this.settings_section = candidate;
-                                cx.notify();
-                            });
-                        }),
+                    div()
+                        .px_2()
+                        .text_sm()
+                        .text_color(muted)
+                        .child(s.settings_no_match),
+                );
+            }
+            for (index, (candidate, label)) in matching.into_iter().enumerate() {
+                let weak = weak.clone();
+                let icon = match candidate {
+                    SettingsSection::General => IconName::Settings,
+                    SettingsSection::Archives => IconName::Inbox,
+                    SettingsSection::Appearance => IconName::Eye,
+                    SettingsSection::Views => IconName::PanelRight,
+                    SettingsSection::Keybindings => IconName::Asterisk,
+                    SettingsSection::Updates => IconName::ArrowDown,
+                    SettingsSection::About => IconName::Info,
+                };
+                nav = nav.child(
+                    super::sidebar::place_row(
+                        ("settings-section", index),
+                        Icon::new(icon),
+                        label,
+                        label.to_string(),
+                        Some(candidate) == section,
+                        false,
+                        true,
+                        cx,
+                    )
+                    .on_click(move |_, _, cx| {
+                        let _ = weak.update(cx, |this, cx| {
+                            this.settings_section = candidate;
+                            cx.notify();
+                        });
+                    }),
                 );
             }
             let version = format!("Arca {}", env!("CARGO_PKG_VERSION"));
@@ -746,11 +877,21 @@ pub(super) fn build_dialog(
                 .update
                 .as_ref()
                 .map(|r| format!("· {}", r.tag));
+            let title = |label: &'static str| {
+                div()
+                    .pb_2()
+                    .mb_1()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(heading(label).text_lg())
+            };
             let body = match section {
-                SettingsSection::General => div()
+                None => div().into_any_element(),
+                Some(SettingsSection::General) => div()
                     .flex()
                     .flex_col()
                     .gap_3()
+                    .child(title(s.settings_general))
                     .child(row(s.language, language.into_any_element()))
                     .child(row(
                         s.name_encoding,
@@ -765,7 +906,12 @@ pub(super) fn build_dialog(
                         ),
                     ))
                     .child(hidden)
-                    .child(Separator::horizontal())
+                    .into_any_element(),
+                Some(SettingsSection::Archives) => div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(title(s.settings_archives))
                     .child(div().text_sm().text_color(muted).child(s.defaults_title))
                     .child(row(
                         s.format,
@@ -791,17 +937,50 @@ pub(super) fn build_dialog(
                     )
                     .child(subfolder)
                     .into_any_element(),
-                SettingsSection::Appearance => div()
+                Some(SettingsSection::Appearance) => div()
                     .flex()
                     .flex_col()
                     .gap_3()
+                    .child(title(s.settings_appearance))
                     .child(row(s.theme, appearance.into_any_element()))
                     .into_any_element(),
-                SettingsSection::Keybindings => shortcuts_table(s).into_any_element(),
-                SettingsSection::Updates => div()
+                Some(SettingsSection::Views) => div()
                     .flex()
                     .flex_col()
                     .gap_3()
+                    .child(title(s.settings_views))
+                    .child(row(s.default_view, default_view.into_any_element()))
+                    .child(toggle(
+                        "settings-preview",
+                        s.show_preview_panel,
+                        preview_on,
+                        |settings| settings.preview_visible = !settings.preview_visible,
+                    ))
+                    .child(toggle(
+                        "settings-folders",
+                        s.show_folder_tree,
+                        folders_on,
+                        |settings| settings.folders = !settings.folders,
+                    ))
+                    .child(toggle(
+                        "settings-rail",
+                        s.icon_sidebar,
+                        rail_on,
+                        |settings| settings.sidebar_collapsed = !settings.sidebar_collapsed,
+                    ))
+                    .into_any_element(),
+                Some(SettingsSection::Keybindings) => div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(title(s.shortcuts_title))
+                    .child(shortcuts_table(s))
+                    .into_any_element(),
+                Some(SettingsSection::Updates) => div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(title(s.settings_updates))
                     .child(updates)
                     .child(
                         div()
@@ -814,7 +993,7 @@ pub(super) fn build_dialog(
                             .children(newer.clone()),
                     )
                     .into_any_element(),
-                SettingsSection::About => div()
+                Some(SettingsSection::About) => div()
                     .flex()
                     .flex_col()
                     .gap_3()
@@ -834,7 +1013,7 @@ pub(super) fn build_dialog(
                 div()
                     .flex()
                     .gap_4()
-                    .min_h(px(320.))
+                    .min_h(px(440.))
                     .child(nav)
                     .child(div().flex_1().min_w_0().child(body)),
             )

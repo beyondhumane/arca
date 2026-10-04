@@ -384,18 +384,15 @@ impl GpuiShell {
             .id("navigation")
             .role(Role::Toolbar)
             .aria_label(s.toolbar_region)
-            .h(px(44.))
-            .w_full()
-            .flex_none()
+            .h_full()
+            .flex_1()
+            .min_w_0()
             .flex()
             .items_center()
             .gap_1()
-            .px_2()
-            .text_xs()
-            .bg(cx.theme().title_bar)
-            .border_b_1()
-            .border_color(cx.theme().border);
-        nav = nav.child(
+            .pr_2()
+            .text_xs();
+        nav = nav.child(brand_mark(18.)).child(div().w(px(6.))).child(
             Self::icon_button(
                 cx,
                 "sidebar-toggle",
@@ -472,7 +469,7 @@ impl GpuiShell {
             .gap_1();
         for (position, index) in shown.into_iter().enumerate() {
             if position > 0 {
-                path = path.child(div().child("/"));
+                path = path.child(div().text_color(cx.theme().muted_foreground).child("/"));
             }
             if position == 1 && !hidden.is_empty() {
                 let omitted: Vec<_> = hidden.iter().map(|i| crumbs[*i].clone()).collect();
@@ -511,7 +508,9 @@ impl GpuiShell {
                 )
                 .max_w(px(if index == 0 { 150. } else { 120. }))
                 .overflow_hidden()
-                .when(index == 0, |button| button.icon(IconName::Inbox))
+                .when(index + 1 == crumbs.len(), |button| {
+                    button.text_color(cx.theme().link)
+                })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.controller.go_to(target.clone());
                     this.route_changed(cx);
@@ -581,39 +580,81 @@ impl GpuiShell {
             }),
         );
         nav = nav.child(
+            Self::icon_button(cx, "open", IconName::FolderOpen, s.open.into(), idle)
+                .on_click(cx.listener(|this, _, _, cx| this.begin_dialog(DialogKind::Open, cx))),
+        );
+        nav = nav.child(
+            Self::icon_button(cx, "compress", IconName::Plus, s.compress.into(), idle).on_click(
+                cx.listener(|this, _, _, cx| {
+                    let inputs = this.controller.selected_disk_paths();
+                    this.controller.dispatch(AppAction::PrepareCompress(inputs));
+                    cx.notify();
+                }),
+            ),
+        );
+        if has_archive {
+            nav = nav.child(
+                Self::icon_button(
+                    cx,
+                    "extract-all",
+                    IconName::PanelBottomOpen,
+                    s.extract_all.into(),
+                    idle,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.begin_dialog(
+                        DialogKind::Extract {
+                            only_checked: false,
+                        },
+                        cx,
+                    );
+                })),
+            );
+            nav = nav.child(
+                Self::icon_button(cx, "test", IconName::Check, s.test_word.into(), idle).on_click(
+                    cx.listener(|this, _, _, cx| {
+                        if let Some(archive) = this.controller.state.archive.clone() {
+                            this.controller.dispatch(AppAction::Run(Job::Test {
+                                archive,
+                                only: None,
+                                password: this.controller.state.archive_password.clone(),
+                            }));
+                            cx.notify();
+                        }
+                    }),
+                ),
+            );
+        }
+        nav = nav.child(
             Self::icon_button(
                 cx,
-                "extract-all",
-                IconName::PanelBottomOpen,
-                s.extract_all.into(),
-                idle && has_archive,
+                "preview-toggle",
+                IconName::PanelRight,
+                s.view_word.into(),
+                browsing,
             )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.begin_dialog(
-                    DialogKind::Extract {
-                        only_checked: false,
-                    },
-                    cx,
-                );
+            .selected(self.controller.state.settings.preview_visible)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.controller.state.settings.preview_visible =
+                    !this.controller.state.settings.preview_visible;
+                this.controller.state.settings.save();
+                if !this.controller.state.settings.preview_visible {
+                    this.close_preview(window, cx);
+                }
+                cx.notify();
             })),
         );
         nav = nav.child(
             Self::icon_button(
                 cx,
-                "test",
-                IconName::Check,
-                s.test_word.into(),
-                idle && has_archive,
+                "settings",
+                IconName::Settings,
+                s.settings.into(),
+                browsing,
             )
             .on_click(cx.listener(|this, _, _, cx| {
-                if let Some(archive) = this.controller.state.archive.clone() {
-                    this.controller.dispatch(AppAction::Run(Job::Test {
-                        archive,
-                        only: None,
-                        password: this.controller.state.archive_password.clone(),
-                    }));
-                    cx.notify();
-                }
+                this.controller.state.show_settings = true;
+                cx.notify();
             })),
         );
         nav.child(overflow)
