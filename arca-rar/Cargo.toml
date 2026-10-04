@@ -13,7 +13,7 @@ rar = ["dep:rars", "dep:tempfile"]
 
 [dependencies]
 arca-core.workspace = true
-rars = { version = "=0.10.0", default-features = false, features = ["encryption"], optional = true }
+rars = { version = "=0.10.0", default-features = false, features = ["encryption", "write"], optional = true }
 tempfile = { version = "3", optional = true }
 
 [dev-dependencies]

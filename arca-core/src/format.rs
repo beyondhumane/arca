@@ -34,7 +34,16 @@ pub enum Container {
 }
 
 impl Format {
+    /// Formats whose existing archives Arca can rewrite: add, remove, rename
+    /// and password changes. RAR is not one of them.
     pub const WRITABLE: [Self; 4] = [Self::Zip, Self::Tar, Self::TarGz, Self::SevenZ];
+
+    /// Formats a new archive can be created in. A superset of [`WRITABLE`]:
+    /// RAR can be created from scratch but never modified afterwards, and
+    /// CBR stays a reading format even though it shares the RAR container.
+    /// Like the rest of this type it describes the format, not the build;
+    /// clients that compile without the `rar` feature filter RAR themselves.
+    pub const CREATABLE: [Self; 5] = [Self::Zip, Self::Tar, Self::TarGz, Self::SevenZ, Self::Rar];
 
     /// Every recognized name suffix, longest first where one ends another.
     pub const SUFFIXES: [(&'static str, Self); 18] = [
@@ -60,6 +69,10 @@ impl Format {
 
     pub fn can_write(self) -> bool {
         Self::WRITABLE.contains(&self)
+    }
+
+    pub fn can_create(self) -> bool {
+        Self::CREATABLE.contains(&self)
     }
 
     pub fn container(self) -> Container {
@@ -112,10 +125,17 @@ impl Format {
         }
     }
 
-    /// The error for any attempt to create or modify an archive in this format.
+    /// The error for any attempt to modify an archive in this format, or to
+    /// create one when the format cannot be created either.
     pub fn read_only(self) -> Error {
         let label = self.label();
-        Error::Unsupported(if self.container() == Container::Rar {
+        Error::Unsupported(if self == Self::Rar {
+            format!(
+                "{label} archives can be created but not modified in Arca; \
+                 adding, removing, renaming or re-encrypting entries of an existing \
+                 {label} archive is disabled"
+            )
+        } else if self.container() == Container::Rar {
             format!("{label} is read-only; creating or modifying {label} archives is disabled")
         } else {
             format!(
@@ -165,11 +185,30 @@ mod tests {
         assert_eq!(Format::SevenZ.label(), "7z");
         assert_eq!(Format::SevenZ.container(), Container::SevenZ);
         assert!(Format::SevenZ.can_write());
+        assert!(Format::SevenZ.can_create());
         assert!(!Format::WRITABLE.contains(&Format::Rar));
     }
 
     #[test]
-    fn rar_is_readable_but_never_a_creation_format() {
+    fn creatable_formats_extend_the_writable_ones_with_rar_only() {
+        assert!(Format::WRITABLE.iter().all(|format| format.can_create()));
+        assert!(Format::Rar.can_create());
+        assert!(!Format::Rar.can_write());
+        assert!(!Format::Cbr.can_create());
+        let extra: Vec<_> = Format::CREATABLE
+            .iter()
+            .filter(|format| !Format::WRITABLE.contains(format))
+            .collect();
+        assert_eq!(extra, [&Format::Rar]);
+        let message = Format::Rar.read_only().to_string();
+        assert!(message.contains("can be created"));
+        assert!(message.contains("not modified"));
+        let message = Format::Cbr.read_only().to_string();
+        assert!(message.contains("creating or modifying CBR"));
+    }
+
+    #[test]
+    fn rar_is_readable_but_never_a_mutation_format() {
         for name in [
             "archive.RAR",
             "archive.part1.rar",
