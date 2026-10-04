@@ -37,6 +37,9 @@ pub(crate) struct AppState {
     pub(crate) pending_inputs: Vec<PathBuf>,
     pub(crate) output_name: String,
     pub(crate) close_when_done: bool,
+    // Whether stopping the running job leaves files behind. A rewrite swaps
+    // nothing until it is whole; an extraction keeps what it finished.
+    pub(crate) stop_leaves_files: bool,
     // Whether this window was opened to do one job handed to it on the command
     // line, in which case finishing that job is the end of it. A window driven
     // by hand stays open: closing it under the user looks like a crash.

@@ -66,7 +66,7 @@ Extraer. El portapapeles de ficheros depende de la plataforma.
 
 ## Operaciones y teclado
 
-Progreso, pausa, cancelación, finalización y errores se mantienen visibles sin bloquear la exploración cuando la operación permite navegar. No se inicia una segunda modificación mientras otra está en curso. Las operaciones puntuales del Explorador conservan su comportamiento al terminar.
+Progreso, pausa, cancelación, finalización y errores se mantienen visibles sin bloquear la exploración cuando la operación permite navegar. Pausar y cancelar también actúan dentro de una sola entrada grande: una extracción cancelada borra el fichero que estaba escribiendo y conserva los que ya había terminado. No se inicia una segunda modificación mientras otra está en curso. Las operaciones puntuales del Explorador conservan su comportamiento al terminar.
 
 El pie muestra directorio activo, cantidades visibles y seleccionadas, estado y ayuda **F1**. Tabulador llega a navegación, barra lateral, explorador, controles de vista previa y pie. Los campos conservan sus teclas de edición; los diálogos devuelven el foco al cerrarse. Los controles exponen etiquetas AccessKit e indicadores de foco y selección.
 

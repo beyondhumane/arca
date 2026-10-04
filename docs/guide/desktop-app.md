@@ -66,7 +66,7 @@ platform-dependent.
 
 ## Jobs and keyboard access
 
-Progress, pause, cancel, completion and errors remain visible without a browsing modal when the operation permits navigation. Mutation commands cannot start another job while one is running. Explorer one-shot operations retain their existing completion behavior.
+Progress, pause, cancel, completion and errors remain visible without a browsing modal when the operation permits navigation. Pause and cancel also act inside a single large entry: a cancelled extraction removes the file it was writing and keeps the ones it had finished. Mutation commands cannot start another job while one is running. Explorer one-shot operations retain their existing completion behavior.
 
 The footer reports the active directory, visible/selected counts and job status, with **F1** help. Tab reaches navigation, sidebar, browser, preview controls and footer. Text fields keep their editing keys; closing dialogs restores focus. Controls expose AccessKit labels and focus/selection indicators.
 

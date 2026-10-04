@@ -287,6 +287,7 @@ impl AppController {
         let pw = self.state.archive_password.clone();
         self.state.close_when_done = false;
         self.show_job(s.extracting, archive_stem(&archive), true);
+        self.state.stop_leaves_files = true;
         let (reply_tx, reply_rx) = channel::<Answer>();
         self.state.replies = Some(reply_tx);
         let (stop, hold) = self.fresh_flags();
@@ -519,6 +520,7 @@ impl AppController {
                 pending_inputs: Vec::new(),
                 output_name: String::new(),
                 close_when_done: false,
+                stop_leaves_files: false,
                 one_shot: false,
                 title: String::new(),
                 window_title: "Arca".to_string(),
@@ -1432,7 +1434,9 @@ impl AppController {
                     // archive and there is nothing to report in red: the
                     // rewrite gave up before it swapped anything.
                     let quit = text == arca_core::Error::Cancelled.to_string();
-                    self.state.notice = if quit {
+                    self.state.notice = if quit && self.state.stop_leaves_files {
+                        self.s().stopped_partial.to_string()
+                    } else if quit {
                         self.s().stopped.to_string()
                     } else {
                         text
@@ -1889,6 +1893,7 @@ impl AppController {
             }
         }
         let s: &'static Strings = self.s();
+        self.state.stop_leaves_files = matches!(job, Job::Extract { .. } | Job::CopyTo { .. });
         let verb = match &job {
             Job::Extract { .. } => s.extracting.to_string(),
             Job::Test { .. } => s.testing.to_string(),
