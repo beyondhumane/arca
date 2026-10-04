@@ -106,3 +106,32 @@ enable `arca-rar/rar`. `--no-default-features` still excludes the backend, while
   cross-platform compilation do not replace interaction checks.
 - [ ] Resolve or explicitly document RAR4 encrypted-header bad-password ambiguity
   and validate representative workloads against the published resource limits.
+
+## Creation increment (2026-10-04)
+
+Decided and implemented after the read-only activation above, superseding the
+"no writing" scope statement there for new archives only:
+
+- `arca_rar::create_rar` writes **new single-volume, non-solid, unencrypted
+  RAR5 archives** at Store/Fast/Normal/Best (`rars` levels 0/1/3/5) through the
+  public `rars::rar50` streaming API with `FilterPolicy::None`, so the managed
+  writer-memory ledger holds for every member including empty ones.
+- `rars` now compiles with `encryption` and `write`; `recovery` and `parallel`
+  stay off and `check-features.py` asserts exactly that set. Enabling `write`
+  added no dependency the reader branch did not already carry, so
+  `RAR-NOTICES.txt` is unchanged.
+- `Format::CREATABLE` lists RAR; `Format::WRITABLE` does not. Existing RAR and
+  CBR archives stay read-only everywhere, CBR is never created, and every
+  unsupported creation option (password, hidden names, solid, volumes,
+  recovery, data filters, non-RAR codecs, parallel threads) is refused before
+  any output exists instead of being ignored.
+- Nothing is ever replaced: the archive is staged beside the output, verified
+  with the reader, and published with `persist_noclobber`.
+- Validation: unit and integration tests in `arca-rar`, `arca-cli` and
+  `arca-gui`, plus the seeded CLI harness `arca-rar/tests/create-stress.py`
+  (bounded smoke in CI against official UnRAR 7.12 and 7-Zip 24.09; `--stress`
+  for the larger campaign). Results and gaps: [RAR_CREATE_VALIDATION.md](../../arca-rar/RAR_CREATE_VALIDATION.md).
+- Still out of scope: modifying existing archives, repair/recovery, encrypted,
+  solid or multivolume output, RAR4 output, CBR creation, OS associations, and
+  cooperative Ctrl+C cancellation in the CLI (a kill mid-write leaves the staged
+  part file; this matches the existing ZIP/7z CLI behaviour and is a follow-up).

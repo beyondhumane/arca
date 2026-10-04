@@ -7,7 +7,7 @@
 
 ### Pack faster. Unpack safer.
 
-A cross-platform archiver in Rust. ZIP, 7z, TAR and read-only RAR, parallel Zstandard, AES-256, and safe-Rust archive parsers.
+A cross-platform archiver in Rust. ZIP, 7z, TAR and RAR, parallel Zstandard, AES-256, and safe-Rust archive parsers.
 
 [![CI](https://github.com/beyondhumane/arca/actions/workflows/ci.yml/badge.svg)](https://github.com/beyondhumane/arca/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/beyondhumane/arca?color=0066FF)](https://github.com/beyondhumane/arca/releases/latest) [![License](https://img.shields.io/badge/license-Apache--2.0-FF8A3D)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.95%2B-0E1628)](Cargo.toml)
 
@@ -23,8 +23,8 @@ A cross-platform archiver in Rust. ZIP, 7z, TAR and read-only RAR, parallel Zsta
 
 | Feature | Details |
 |---|---|
-| **Formats** | ZIP with Zip64 (store, Deflate, Zstandard), [7z](docs/guide/creating-archives.md#7z) (Store/LZMA2, solid reading), ustar TAR, `.tar.gz` |
-| **Read-only formats** | [RAR/CBR, including multivolume](docs/guide/rar.md), enabled by default; never creates or modifies RAR |
+| **Formats** | ZIP with Zip64 (store, Deflate, Zstandard), [7z](docs/guide/creating-archives.md#7z) (Store/LZMA2, solid reading), [RAR5 creation](docs/guide/rar.md#creating-rar5-archives) (single volume, four levels), ustar TAR, `.tar.gz` |
+| **Read-only formats** | [Existing RAR/CBR, including multivolume](docs/guide/rar.md), enabled by default; never modified, CBR never created |
 | **Read-only** | [ZIP containers](docs/guide/zip-containers.md): `.apk` `.aar` `.jar` `.war` `.ear` `.epub` `.cbz` `.xpi` `.whl` `.nupkg` `.ipa`; [ISO 9660 images](docs/guide/iso.md) with Rock Ridge and Joliet names |
 | **Speed** | Multi-threaded compression, parallel `.zip` extraction, sub-millisecond start |
 | **Safety** | `#![forbid(unsafe_code)]` parsers, bounded header reads, Zip Slip defence |

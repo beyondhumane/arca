@@ -1,14 +1,16 @@
 ---
-description: Read RAR/CBR archives, including multivolume sets, passwords and verified extraction.
+description: Read RAR/CBR archives, including multivolume sets, passwords and verified extraction, and create new single-volume RAR5 archives.
 group: Reference
 order: 20
-keywords: rar cbr read-only encryption solid archive multivolume part1 r00
+keywords: rar cbr read-only create rar5 encryption solid archive multivolume part1 r00
 ---
 
-# RAR reader
+# RAR
 
-RAR is a **read-only** format enabled by default in the CLI and desktop window.
-Normal builds and the packages built from them include it:
+Arca reads every RAR family and **creates new single-volume RAR5 archives**.
+Existing RAR and CBR archives are never modified. RAR support is enabled by
+default in the CLI and desktop window; normal builds and the packages built
+from them include it:
 
 ```sh
 cargo build --release
@@ -17,13 +19,13 @@ cargo build --release -p arca-cli
 ```
 
 The `arca-rar` adapter pins `rars` to 0.10.0, disables its default features and
-enables only `encryption`. Its writer is not compiled. No installed `unrar`,
-RAR/WinRAR or 7-Zip executable is used at runtime. For a build without RAR, use
+enables only `encryption` and `write`; `recovery` and `parallel` stay off. No
+installed `unrar`, RAR/WinRAR or 7-Zip executable is used at runtime. For a build without RAR, use
 `--no-default-features --features codecs-native`; omit `codecs-native` to also
 exclude the native ZIP/7z codecs. A pure-Rust build with RAR uses
 `--no-default-features --features rar`. This is a build option, not a UI toggle.
 
-## Using it
+## Reading
 
 ```sh
 arca list archive.rar
@@ -41,17 +43,59 @@ dialog on shared machines. The GUI prompts before listing encrypted headers,
 retries identifiable incorrect passwords, and keeps the password for the open archive.
 RAR4 encrypted headers can report an incorrect password as a format error;
 reopen with the correct password rather than assuming the archive is damaged.
-The title identifies RAR as read-only. No operating-system
-file associations are added by this feature.
+The title identifies an open RAR as read-only. No operating-system file
+associations are added by this feature.
 
 Listing, testing, previews and extraction are supported. Solid streams are
 decoded sequentially. A selected extraction still verifies every file,
 including solid predecessors, before publishing the selection. GUI testing
 verifies the whole RAR even if only some entries are selected.
 
-RAR never appears in the creation formats. Creating RAR/CBR or changing a RAR
-password is rejected. Add, remove, rename, move and new-folder jobs cannot
-modify it. Copying an existing archive as a file is not a RAR rewrite.
+Changing a RAR password is rejected. Add, remove, rename, move and new-folder
+jobs cannot modify an existing RAR or CBR. Copying an existing archive as a
+file is not a RAR rewrite.
+
+## Creating RAR5 archives
+
+```sh
+arca create backup.rar documents/ notes.txt
+arca create photos.rar photos/ -l best
+arca create plain.rar big.iso -c store      # same as -l store
+```
+
+The output is a new, single-volume, non-solid, unencrypted RAR5 archive that
+official UnRAR and 7-Zip open. `-l store|fast|normal|best` selects the RAR
+compression strength; `-c` accepts only `auto` or `store`. The desktop **Create**
+dialog offers RAR next to ZIP and 7z with the same levels. Empty files and
+empty directories are stored; modification times are preserved; directories
+are walked in sorted order, so the same input always produces the same bytes.
+
+What creation refuses, before any input is read or any file is written:
+
+- A password or **Hide file names**: RAR output is never encrypted. Use ZIP or
+  7z for that.
+- `-c deflate|zstd|lzma2`, `-j` above 1 (RAR creation is sequential), a `.cbr`
+  output name or any other suffix than `.rar`.
+- An output path that already exists, even as a dangling link. Arca creates
+  new RAR archives only and never replaces a file, including one that appears
+  while the archive is being written. The output's parent directory must exist.
+- Inputs that are symbolic links, reparse points or special files (they are
+  not followed), inputs that alias the output or its directory, and names that
+  are invalid, duplicated or differ only in case.
+- More than 100,000 members, member names over 4096 bytes, a file over 4 GiB
+  or more than 16 GiB in total.
+
+The writer stages a `.arca-*.rar.part` file beside the output, reopens it with
+Arca's own reader to list and fully decode every member, then publishes it
+without overwriting. Any failure or cancellation in the desktop leaves nothing
+at the output path. The CLI has no cooperative cancellation: killing `arca`
+mid-write never produces an output file, but the staged part file can remain
+and has to be deleted by hand.
+
+Not supported in this increment, and refused rather than approximated: solid
+archives, multivolume output, encryption, recovery records, RAR data filters,
+RAR4 output, CBR creation, and adding to, removing from, renaming inside or
+repairing an existing archive.
 
 ## Multivolume sets
 
@@ -81,7 +125,7 @@ Integrity verification checks the checksums/authenticators provided by the forma
 
 ## Safety and limits
 
-Each operation uses these fixed ceilings:
+Each reading operation uses these fixed ceilings:
 
 | Resource | Limit |
 |---|---:|
@@ -96,8 +140,11 @@ Each operation uses these fixed ceilings:
 | Total decoded output, including unselected files | 16 GiB |
 | In-memory preview | 64 MiB |
 
-Header and output budgets apply across the complete set. These are decoder
-limits, not a hard process-RSS or CPU-time sandbox. Some
+Header and output budgets apply across the complete set. Creation has its own
+ceilings (members, name bytes, 4 GiB per file, 16 GiB total, 64 MiB of headers
+and a 256 MiB managed writer-memory ledger, see
+[`arca_rar::create_limits`](https://github.com/beyondhumane/arca/blob/main/arca-rar/src/lib.rs)).
+These are decoder and writer limits, not a hard process-RSS or CPU-time sandbox. Some
 filtered archives need more buffered decoding than permitted and are rejected.
 The GUI's cancellation flag is checked while parsing and decoding as well as
 between publication steps.
@@ -128,11 +175,15 @@ Integrity guarantees depend on the checksums/authenticators the archive carries.
 
 ## Deliberate exclusions and dependency notes
 
-- No recovery/repair, RAR writing, OS associations or claim of exhaustive RAR
-  compatibility. Unsupported methods/metadata return errors.
+- No recovery/repair, modification of existing archives, OS associations or
+  claim of exhaustive RAR compatibility. Unsupported methods/metadata return
+  errors. Creation is limited to the single-volume RAR5 profile above.
 - Independent fixtures, multivolume regressions, official UnRAR comparisons and
-  bounded mutation fuzzing extend coverage. They do not establish exhaustive
-  compatibility. See the [validation record](https://github.com/beyondhumane/arca/tree/main/docs/plans)
+  bounded mutation fuzzing extend reader coverage; the seeded creation harness
+  compares archives Arca writes against official UnRAR and 7-Zip. They do not
+  establish exhaustive compatibility. See the
+  [reader validation record](https://github.com/beyondhumane/arca/blob/main/arca-rar/RAR_VALIDATION.md)
+  and the [creation validation record](https://github.com/beyondhumane/arca/blob/main/arca-rar/RAR_CREATE_VALIDATION.md)
   for reproducible checks and uncovered cases.
 - The [provenance review](https://github.com/beyondhumane/arca/blob/main/docs/plans/rars-0.10.0-distribution.md)
   records upstream's Apache-2.0 declaration and unresolved source/research
@@ -140,14 +191,19 @@ Integrity guarantees depend on the checksums/authenticators the archive carries.
   preventing distribution. These observations are not a claim of legal
   clearance or a reason to label the reader experimental. Published license
   texts and notices for the adapter's dependencies accompany the packages.
+  Enabling the writer added no dependency that the reader branch did not
+  already carry, so the notice bundle is unchanged.
 
-Run the feature audit and tests with:
+Run the feature audit, tests and the bounded creation harness with:
 
 ```sh
 python3 arca-rar/tests/check-features.py
 cargo test --workspace
 cargo test --workspace --no-default-features --features codecs-native
 cargo clippy --workspace --all-targets -- -D warnings
+cargo build --release -p arca-cli
+python3 arca-rar/tests/create-stress.py            # bounded smoke, skips absent tools
+UNRAR=/path/to/unrar SEVENZIP=/path/to/7zz python3 arca-rar/tests/create-stress.py --stress --require-tools
 ```
 
 See the [decision record](https://github.com/beyondhumane/arca/blob/main/docs/todos/rar-format.md) and

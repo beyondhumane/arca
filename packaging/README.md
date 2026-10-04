@@ -1,6 +1,6 @@
 # Package managers
 
-Normal CLI and GUI builds include read-only RAR/CBR support. `RAR-NOTICES.txt`
+Normal CLI and GUI builds include RAR/CBR reading and single-volume RAR5 creation. `RAR-NOTICES.txt`
 contains the published license/notice texts for the adapter's dependency branch,
 including shared dependencies and the union of the five release targets. It is
 included in portable archives, installers and package-manager installations.

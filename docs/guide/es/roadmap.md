@@ -18,8 +18,10 @@ Store/LZMA2, contraseñas y nombres ocultos en CLI y escritorio. Consulta el
 
 La [lectura RAR/CBR](rar.md) está activa por defecto, incluidos conjuntos
 multivolumen modernos y antiguos, contraseñas, vistas previas y extracción
-verificada. RAR sigue siendo de solo lectura, sin creación, modificación,
-reparación ni recuperación.
+verificada. Se pueden crear nuevos archivos RAR5 de un solo volumen con cuatro
+niveles. Los RAR/CBR existentes siguen siendo de solo lectura: no se admite
+modificación, reparación ni recuperación, ni salida cifrada, sólida o
+multivolumen, ni creación de CBR.
 
 ## Todavía no
 

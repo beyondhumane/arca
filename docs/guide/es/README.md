@@ -18,6 +18,6 @@ Documentación de usuario. El sitio web renderiza estos archivos bajo `/es/docs/
 14. [Benchmarks](benchmarks.md)
 15. [Hoja de ruta](roadmap.md)
 16. [Contribuir y licencia](contributing.md)
-17. [Lector RAR](rar.md)
+17. [RAR](rar.md)
 18. [Contenedores ZIP](zip-containers.md)
 19. [Imágenes ISO](iso.md)

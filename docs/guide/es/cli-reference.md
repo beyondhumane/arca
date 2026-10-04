@@ -7,9 +7,10 @@ keywords: cli línea de comandos opciones flags referencia ayuda estado de salid
 
 # Referencia de la CLI
 
-ZIP, 7z, TAR y la [lectura RAR/CBR](rar.md) están activos por defecto.
-RAR permite `list`, `test` y `extract`, con `-p` para datos o
-cabeceras cifradas. Crear o modificar RAR siempre se rechaza.
+ZIP, 7z, TAR y [RAR](rar.md) están activos por defecto. RAR permite `list`,
+`test` y `extract`, con `-p` para datos o cabeceras cifradas, y `create` para
+nuevos archivos RAR5 de un solo volumen. Modificar un RAR o CBR existente, y
+crear CBR, siempre se rechaza.
 
 ```text
 Fast, safe archiver
@@ -29,7 +30,7 @@ Options:
   -V, --version  Print version
 ```
 
-`list`, `extract` y `test` también leen los [contenedores ZIP](zip-containers.md) (.apk, .jar, .epub, .cbz y el resto), las [imágenes ISO 9660](iso.md) y, en compilaciones con el [lector de RAR](rar.md), .rar y .cbr. Son de solo lectura: `create` y `password` los rechazan.
+`list`, `extract` y `test` también leen los [contenedores ZIP](zip-containers.md) (.apk, .jar, .epub, .cbz y el resto), las [imágenes ISO 9660](iso.md) y, en compilaciones con [RAR](rar.md), .rar y .cbr. Son de solo lectura: `password` los rechaza y `create` los rechaza todos salvo los archivos `.rar` nuevos.
 
 ## create · c
 
@@ -37,12 +38,12 @@ Crea un archivo. El formato se toma de la extensión del archivo de salida.
 
 | Argumento / opción | Por defecto | Descripción |
 | --- | --- | --- |
-| `<OUT>` | obligatorio | Archivo de salida: .zip, .7z, .tar, .tar.gz (o .tgz). |
+| `<OUT>` | obligatorio | Archivo de salida: .zip, .7z, .rar, .tar, .tar.gz (o .tgz). |
 | `<INPUTS>...` | obligatorio | Archivos o directorios a incluir. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
-| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto usa Deflate en .zip y LZMA2 en .7z. |
-| `-j, --threads <N>` | 0 | Hilos ZIP; 0 usa todos los núcleos. La creación 7z es secuencial. |
-| `-p, --password <PASSWORD>` | ninguna | Cifra con AES-256. Otras herramientas la pedirán para abrir el archivo. |
+| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto usa Deflate en .zip, LZMA2 en .7z y el compresor RAR en .rar (solo auto o store). |
+| `-j, --threads <N>` | 0 | Hilos ZIP; 0 usa todos los núcleos. La creación 7z y RAR es secuencial; .rar rechaza N mayor que 1. |
+| `-p, --password <PASSWORD>` | ninguna | Cifra con AES-256 (.zip, .7z). Otras herramientas la pedirán para abrir el archivo. Se rechaza en .rar. |
 | `--hide-names` | desactivado | Solo 7z: cifra cabeceras; exige una contraseña no vacía. |
 
 ## list · l
