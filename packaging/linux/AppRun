@@ -1,0 +1,8 @@
+#!/bin/sh
+# Opens the window. The command line ships inside too: `--cli` runs it instead.
+HERE=$(dirname "$(readlink -f "$0")")
+if [ "${1:-}" = "--cli" ]; then
+  shift
+  exec "$HERE/usr/bin/arca" "$@"
+fi
+exec "$HERE/usr/bin/arca-gui" "$@"

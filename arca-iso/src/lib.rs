@@ -159,7 +159,7 @@ impl IsoArchive {
 }
 
 pub fn read_only() -> Error {
-    Error::Unsupported("ISO is read-only; creating or modifying ISO images is disabled".into())
+    arca_core::Format::Iso.read_only()
 }
 
 fn copy(

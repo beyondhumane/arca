@@ -88,7 +88,7 @@ impl RarArchive {
 }
 
 pub fn read_only() -> Error {
-    Error::Unsupported("RAR is read-only; creating or modifying RAR archives is disabled".into())
+    arca_core::Format::Rar.read_only()
 }
 
 #[cfg(not(feature = "rar"))]
