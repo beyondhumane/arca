@@ -26,8 +26,9 @@ const FAQS_EN: { q: string; a: ReactNode }[] = [
     a: (
       <>
         ZIP (including Zip64) with Store, Deflate (via zlib-rs) and Zstandard; ustar TAR with checksum verification;
-        and <Code>.tar.gz</Code> / <Code>.tgz</Code>. 7z supports Store/LZMA2 creation, solid reading, passwords
-        and hidden names. Standalone xz, solid 7z creation and 7z mutation remain unsupported.
+        <Code>.tar.gz</Code> / <Code>.tgz</Code>; <Code>.tar.xz</Code> / <Code>.txz</Code>; and standalone{' '}
+        <Code>.xz</Code> for a single file. 7z supports Store/LZMA2 creation, solid reading, passwords and hidden
+        names. Solid 7z creation and 7z mutation remain unsupported.
       </>
     ),
   },
@@ -107,8 +108,9 @@ const FAQS_ES: typeof FAQS_EN = [
     a: (
       <>
         ZIP (con Zip64) con Store, Deflate (sobre zlib-rs) y Zstandard; TAR ustar con verificación de la suma de control;
-        y <Code>.tar.gz</Code> / <Code>.tgz</Code>. 7z admite creación Store/LZMA2, lectura sólida, contraseñas y
-        nombres ocultos. xz independiente, crear 7z sólidos y modificar 7z siguen sin estar disponibles.
+        <Code>.tar.gz</Code> / <Code>.tgz</Code>; <Code>.tar.xz</Code> / <Code>.txz</Code>; y <Code>.xz</Code>{' '}
+        suelto para un único fichero. 7z admite creación Store/LZMA2, lectura sólida, contraseñas y nombres ocultos.
+        Crear 7z sólidos y modificar 7z siguen sin estar disponibles.
       </>
     ),
   },

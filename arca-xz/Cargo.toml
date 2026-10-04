@@ -1,0 +1,19 @@
+[package]
+name = "arca-xz"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Flujos XZ y deteccion de TAR.XZ en safe Rust"
+
+[dependencies]
+arca-core.workspace = true
+arca-tar.workspace = true
+crc32fast.workspace = true
+# El mismo lzma-rust2 que ya trae sevenz-rust2. Sin `optimization`, que es la
+# unica feature con codigo unsafe: asi el crate entero queda en safe Rust.
+lzma-rust2 = { version = "=0.21.0", default-features = false, features = ["std", "encoder", "xz"] }
+
+[lints.rust]
+unsafe_code = "forbid"

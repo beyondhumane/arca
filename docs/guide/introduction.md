@@ -7,7 +7,7 @@ keywords: overview what why status about
 
 # Introduction
 
-Arca is a cross-platform archiver written in Rust. It creates and extracts ZIP, 7z and TAR archives, compresses with Deflate or Zstandard across every core of your machine, and encrypts with AES-256. It runs as a single command-line binary, a native desktop window, or the Windows Explorer context menu.
+Arca is a cross-platform archiver written in Rust. It creates and extracts ZIP, 7z and TAR archives, plus XZ streams, compresses with Deflate or Zstandard across every core of your machine, and encrypts with AES-256. It runs as a single command-line binary, a native desktop window, or the Windows Explorer context menu.
 
 ## Why another archiver?
 
@@ -17,7 +17,7 @@ It is also fast. On the machine it was measured on, Arca with Zstandard compress
 
 ## At a glance
 
-- **Formats:** ZIP with Zip64 (Store/Deflate/Zstandard), 7z (Store/LZMA2 creation and solid reading), ustar TAR, and `.tar.gz`. [ISO 9660 images](iso.md) are read, never written.
+- **Formats:** ZIP with Zip64 (Store/Deflate/Zstandard), 7z (Store/LZMA2 creation and solid reading), ustar TAR, `.tar.gz`, `.tar.xz` and standalone `.xz`. [ISO 9660 images](iso.md) are read, never written.
 - **Speed:** multi-threaded compression, parallel extraction of `.zip`, and a sub-millisecond cold start.
 - **Safety:** unsafe-free parsers, bounded header reads and a Zip Slip defence on every entry name.
 - **Encryption:** ZIP WinZip AE-2; 7z AES-256 with optional encrypted headers. See [integrity limits](encryption.md).

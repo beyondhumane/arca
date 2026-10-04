@@ -65,6 +65,14 @@ per pass, rather than reopening it for each member. Preview, open-file, Copy and
 Extract use the same validated read path. See [Encryption](encryption.md) and
 [resource limits](architecture.md#7z-boundaries).
 
+## XZ and TAR.XZ
+
+The create dialog offers TAR.XZ and XZ with LZMA2 at the usual levels. XZ takes
+exactly one file; with a folder or several files the dialog asks for TAR.XZ
+instead. A standalone `.xz` opens as a list with one entry named after the
+archive without `.xz`. Test, preview, Copy and Extract read the stream to the end
+and check it, and a stopped or failed creation leaves no half-written archive.
+
 ## Format limits
 
 Adding, deleting, renaming and changing passwords in an existing archive remain

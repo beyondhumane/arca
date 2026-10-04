@@ -54,6 +54,18 @@ fn text_field(field: &[u8]) -> String {
     String::from_utf8_lossy(&field[..end]).into_owned()
 }
 
+/// Whether a 512-byte block is a TAR header with a valid checksum.
+pub fn is_header(block: &[u8]) -> bool {
+    let Ok(header) = <&[u8; BLOCK]>::try_from(block) else {
+        return false;
+    };
+    if header.iter().all(|&b| b == 0) {
+        return false;
+    }
+    octal(&header[148..156], "checksum")
+        .is_ok_and(|declared| declared == u64::from(checksum(header)))
+}
+
 pub struct TarEntry {
     pub entry: Entry,
     pub data: u64,
@@ -72,6 +84,11 @@ impl<R: Read> TarReader<R> {
             pos: 0,
             finished: false,
         }
+    }
+
+    /// The source, positioned after the last block the reader consumed.
+    pub fn into_inner(self) -> R {
+        self.source
     }
 
     pub fn next_entry(&mut self) -> Result<Option<TarEntry>> {
@@ -170,6 +187,64 @@ impl<R: Read> TarReader<R> {
     pub fn skip_data(&mut self, e: &TarEntry) -> Result<()> {
         self.copy_data(e, &mut io::sink()).map(|_| ())
     }
+
+    /// Hands `f` the entry's data, which fails instead of ending early when
+    /// the archive is cut short. Whatever `f` leaves unread is skipped.
+    pub fn with_data<T>(
+        &mut self,
+        e: &TarEntry,
+        f: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<T> {
+        let padding = (BLOCK - (e.data as usize % BLOCK)) % BLOCK;
+        let mut data = Exact {
+            source: &mut self.source,
+            left: e.data,
+            padding,
+        };
+        let out = f(&mut data)?;
+        io::copy(&mut data, &mut io::sink())?;
+        self.pos += e.data + padding as u64;
+        Ok(out)
+    }
+}
+
+// The padding is read before the end of the data is reported, so a reader
+// that commits on end of data never commits an entry whose padding is cut.
+struct Exact<'a, R: Read> {
+    source: &'a mut R,
+    left: u64,
+    padding: usize,
+}
+
+impl<R: Read> Read for Exact<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if self.left == 0 {
+            if self.padding > 0 {
+                let mut discard = [0u8; BLOCK];
+                self.source
+                    .read_exact(&mut discard[..self.padding])
+                    .map_err(|_| truncated())?;
+                self.padding = 0;
+            }
+            return Ok(0);
+        }
+        let max = buf
+            .len()
+            .min(usize::try_from(self.left).unwrap_or(usize::MAX));
+        let n = self.source.read(&mut buf[..max])?;
+        if n == 0 {
+            return Err(truncated());
+        }
+        self.left -= n as u64;
+        Ok(n)
+    }
+}
+
+fn truncated() -> io::Error {
+    io::Error::new(io::ErrorKind::UnexpectedEof, "the TAR entry is truncated")
 }
 
 pub struct TarWriter<W: Write> {
@@ -283,6 +358,62 @@ mod tests {
         buf[10] ^= 0xFF;
         let mut r = TarReader::new(&buf[..]);
         assert!(r.next_entry().is_err());
+    }
+
+    #[test]
+    fn header_detection_needs_a_valid_checksum() {
+        let mut w = TarWriter::new(Vec::new());
+        w.add("a.txt", 1, 0, 0o644, &b"a"[..]).unwrap();
+        let tar = w.finish().unwrap();
+        assert!(is_header(&tar[..BLOCK]));
+        assert!(!is_header(&tar[..BLOCK - 1]));
+        assert!(!is_header(&[0u8; BLOCK]));
+        let mut bad = tar[..BLOCK].to_vec();
+        bad[0] ^= 1;
+        assert!(!is_header(&bad));
+    }
+
+    #[test]
+    fn with_data_reads_exactly_and_reports_truncation() {
+        let mut w = TarWriter::new(Vec::new());
+        w.add("a.txt", 5, 0, 0o644, &b"hello"[..]).unwrap();
+        w.add("b.txt", 3, 0, 0o644, &b"abc"[..]).unwrap();
+        let tar = w.finish().unwrap();
+
+        let mut r = TarReader::new(&tar[..]);
+        let a = r.next_entry().unwrap().unwrap();
+        let first = r
+            .with_data(&a, |d| {
+                let mut two = [0u8; 2];
+                d.read_exact(&mut two)?;
+                Ok(two)
+            })
+            .unwrap();
+        assert_eq!(&first, b"he");
+        let b = r.next_entry().unwrap().unwrap();
+        let mut out = Vec::new();
+        r.with_data(&b, |d| Ok(io::copy(d, &mut out)?)).unwrap();
+        assert_eq!(out, b"abc");
+        assert!(r.next_entry().unwrap().is_none());
+
+        let mut r = TarReader::new(&tar[..BLOCK + 2]);
+        let a = r.next_entry().unwrap().unwrap();
+        let mut out = Vec::new();
+        let error = r.with_data(&a, |d| Ok(io::copy(d, &mut out)?)).unwrap_err();
+        assert!(error.to_string().contains("truncated"), "{error}");
+
+        let mut r = TarReader::new(&tar[..BLOCK + 10]);
+        let a = r.next_entry().unwrap().unwrap();
+        let mut committed = false;
+        let error = r
+            .with_data(&a, |d| {
+                io::copy(d, &mut io::sink())?;
+                committed = true;
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(!committed);
+        assert!(error.to_string().contains("truncated"), "{error}");
     }
 
     #[test]

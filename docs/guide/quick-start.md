@@ -61,8 +61,10 @@ Four commands cover almost everything. Each one prints a single summary line whe
 | `.zip` | ZIP, with Zip64 when needed |
 | `.tar` | ustar TAR |
 | `.tar.gz` · `.tgz` | TAR inside a gzip stream |
+| `.tar.xz` · `.txz` | TAR inside an XZ stream |
+| `.xz` | One file in an XZ stream, with no container |
 
-Any other extension is refused with an error that lists the supported ones.
+Any other extension is refused with an error that lists the supported ones. When reading, an XZ stream is recognised by its signature, and whether it holds a TAR is decided by its contents, not by the name.
 
 ## Getting help
 
