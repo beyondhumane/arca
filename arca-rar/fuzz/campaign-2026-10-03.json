@@ -1,0 +1,78 @@
+{
+  "seed": 140014,
+  "requested_mutations": 2000,
+  "wall_budget_seconds": 300,
+  "elapsed_seconds": 55.319,
+  "counts": {
+    "opened": 838,
+    "verified": 423,
+    "extracted": 353,
+    "executions": 2010,
+    "rejected": 1019
+  },
+  "input_stream_sha256": "70abcbec242c88fde6469a57390e23c0a31917e4e4d4ecd615150a604154f316",
+  "failures": [],
+  "baseline": {
+    "content.case": [
+      "opened",
+      "verified",
+      "extracted"
+    ],
+    "header-split.case": [
+      "opened",
+      "verified",
+      "extracted"
+    ],
+    "headers.case": [
+      "opened",
+      "verified",
+      "extracted"
+    ],
+    "legacy-headers.case": [
+      "opened",
+      "verified",
+      "extracted"
+    ],
+    "legacy-split.case": [
+      "opened",
+      "verified",
+      "extracted"
+    ],
+    "legacy.case": [
+      "opened",
+      "verified",
+      "extracted"
+    ],
+    "solid-split.case": [
+      "opened",
+      "verified",
+      "extracted"
+    ],
+    "solid.case": [
+      "opened",
+      "verified",
+      "extracted"
+    ],
+    "split.case": [
+      "opened",
+      "verified",
+      "extracted"
+    ],
+    "stored.case": [
+      "opened",
+      "verified",
+      "extracted"
+    ]
+  },
+  "per_case": {
+    "wall_seconds": 3,
+    "cpu_seconds": 2,
+    "address_space_mib": 1024,
+    "file_size_mib": 2,
+    "adapter_phase_cancel_ms": 250,
+    "input_kib": 128,
+    "volumes": 4,
+    "entries": 128,
+    "declared_output_kib": 256
+  }
+}

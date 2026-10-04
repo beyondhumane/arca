@@ -1,0 +1,74 @@
+{
+  "license": "Apache-2.0",
+  "seeds": {
+    "stored.case": {
+      "sources": [
+        "stored.rar"
+      ],
+      "sha256": "6db055933a64e9b1b2c580da3a55abe55dd16cbfc2e6385889eeaf57f90c6c51"
+    },
+    "solid.case": {
+      "sources": [
+        "solid.rar"
+      ],
+      "sha256": "45499e6eaa620001cb4f133d1a8e929d5bfc34e8137708ab9e4b054064d2e052"
+    },
+    "content.case": {
+      "sources": [
+        "encrypted.rar"
+      ],
+      "sha256": "a1d185b48272886703ce0e4fae0d5fcb61911aa7c3aa349f67cdf716fec34641"
+    },
+    "headers.case": {
+      "sources": [
+        "headers.rar"
+      ],
+      "sha256": "05b8cb2865f7ac5f224c6dccb0bee863f49b97678ecbdff3ddd8e6cfb92774af"
+    },
+    "split.case": {
+      "sources": [
+        "volume.part1.rar",
+        "volume.part2.rar",
+        "volume.part3.rar",
+        "volume.part4.rar"
+      ],
+      "sha256": "67ec64243a67541a2452619ead78c604474252ff98d307d7f1d2660a738376e4"
+    },
+    "legacy.case": {
+      "sources": [
+        "matrix/rar4-solid/set.rar"
+      ],
+      "sha256": "8ae3ece92f48658e0a5148f3abf90c4a90b6464055920e4d818caa772053a8be"
+    },
+    "legacy-headers.case": {
+      "sources": [
+        "matrix/rar4-headers/set.rar"
+      ],
+      "sha256": "96409cb0bbabe495e8826c9d9b601e2d90306a51e74fa3f47ec6f6ef281d4058"
+    },
+    "legacy-split.case": {
+      "sources": [
+        "matrix/rar4-legacy-content/set.rar",
+        "matrix/rar4-legacy-content/set.r00",
+        "matrix/rar4-legacy-content/set.r01"
+      ],
+      "sha256": "977935eee8d0f852d718479da87dd3ea3e7ddec70024fdfca2790541dbb35a4d"
+    },
+    "solid-split.case": {
+      "sources": [
+        "matrix/rar5-solid-split/set.part1.rar",
+        "matrix/rar5-solid-split/set.part2.rar",
+        "matrix/rar5-solid-split/set.part3.rar"
+      ],
+      "sha256": "52304dc4a1025ca6316265af51696645bdd3846c4ce74a4e980f5a5c13a7efe4"
+    },
+    "header-split.case": {
+      "sources": [
+        "matrix/rar5-headers-split/set.part1.rar",
+        "matrix/rar5-headers-split/set.part2.rar",
+        "matrix/rar5-headers-split/set.part3.rar"
+      ],
+      "sha256": "8395c2f3da7c1007e7a6527815bccaec1dbbfd84bdb64b6fa689101fbfa61428"
+    }
+  }
+}
