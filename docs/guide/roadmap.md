@@ -2,7 +2,7 @@
 description: What isn’t there yet, and why some of it matters.
 group: Reference
 order: 15
-keywords: roadmap future 7z lzma xz solid symlinks planned
+keywords: roadmap future 7z lzma xz solid symlinks udf planned
 ---
 
 # Roadmap
@@ -27,6 +27,7 @@ extracted in CLI and desktop. See
 Stable activation, provenance review and multi-volume support remain follow-up
 work. RAR creation and mutation are not supported.
 
+- **UDF:** ISO images are read through ISO 9660, so files stored only in UDF (such as `install.wim` on Windows media) are not listed yet.
 - **Symbolic links:** skipped for ZIP/TAR creation, rejected for 7z.
 - **GNU tar long names.**
 - **Solid 7z creation:** existing solid archives can be read, but new ones use independent blocks.

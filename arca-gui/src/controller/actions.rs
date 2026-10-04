@@ -8,10 +8,13 @@ use arca_core::Entry;
 use std::path::{Path, PathBuf};
 
 pub(crate) enum Message {
-    Listing(PathBuf, arca_core::Result<Vec<Entry>>, Option<String>),
+    Listing(
+        PathBuf,
+        arca_core::Result<(Vec<Entry>, Vec<String>)>,
+        Option<String>,
+    ),
     AccessChecked(Pending, Option<String>, arca_core::Result<()>),
     Created(PathBuf, Option<String>),
-    Viewed(Viewed),
     // The installer is down and checked. It ends in a file to run rather than
     // in a text to read, which is why it is not a `Done`.
     Downloaded(PathBuf),

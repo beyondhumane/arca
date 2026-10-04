@@ -64,7 +64,7 @@ fn tar_xz_lists_previews_tests_and_extracts() {
     let archive = room.path("bundle.txz");
     make(&archive, &[source], Format::TarXz).unwrap();
     assert!(leftovers(&room.0).is_empty());
-    let entries = list_entries(&archive, None, GO).unwrap();
+    let (entries, _) = list_entries(&archive, None, GO).unwrap();
     let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, ["source/a.txt", "source/inner/b.bin"]);
     let mut preview = Vec::new();
@@ -103,7 +103,7 @@ fn standalone_xz_is_one_entry_named_after_the_archive() {
     let archive = room.path("b.bin.xz");
     let (from, _) = make(&archive, std::slice::from_ref(&input), Format::Xz).unwrap();
     assert_eq!(from, 300_000);
-    let entries = list_entries(&archive, None, GO).unwrap();
+    let (entries, _) = list_entries(&archive, None, GO).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "b.bin");
     assert_eq!(entries[0].size, 300_000);

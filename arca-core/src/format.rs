@@ -22,6 +22,7 @@ pub enum Format {
     Whl,
     Nupkg,
     Ipa,
+    Iso,
 }
 
 /// The reader that opens a format. ZIP-based containers such as APK or EPUB
@@ -36,6 +37,7 @@ pub enum Container {
     /// A single compressed stream. Its one entry is named after the file.
     Xz,
     Rar,
+    Iso,
 }
 
 impl Format {
@@ -49,7 +51,7 @@ impl Format {
     ];
 
     /// Every recognized name suffix, longest first where one ends another.
-    pub const SUFFIXES: [(&'static str, Self); 21] = [
+    pub const SUFFIXES: [(&'static str, Self); 22] = [
         ("zip", Self::Zip),
         ("7z", Self::SevenZ),
         ("tar.gz", Self::TarGz),
@@ -71,6 +73,7 @@ impl Format {
         ("whl", Self::Whl),
         ("nupkg", Self::Nupkg),
         ("ipa", Self::Ipa),
+        ("iso", Self::Iso),
     ];
 
     pub fn can_write(self) -> bool {
@@ -85,6 +88,7 @@ impl Format {
             Self::TarXz => Container::TarXz,
             Self::Xz => Container::Xz,
             Self::Rar | Self::Cbr => Container::Rar,
+            Self::Iso => Container::Iso,
             Self::Zip
             | Self::Apk
             | Self::Aar
@@ -128,19 +132,24 @@ impl Format {
             Self::Whl => "WHL",
             Self::Nupkg => "NUPKG",
             Self::Ipa => "IPA",
+            Self::Iso => "ISO",
         }
     }
 
     /// The error for any attempt to create or modify an archive in this format.
     pub fn read_only(self) -> Error {
         let label = self.label();
-        Error::Unsupported(if self.container() == Container::Rar {
-            format!("{label} is read-only; creating or modifying {label} archives is disabled")
-        } else {
-            format!(
+        Error::Unsupported(match self.container() {
+            Container::Rar => {
+                format!("{label} is read-only; creating or modifying {label} archives is disabled")
+            }
+            Container::Iso => {
+                format!("{label} is read-only; creating or modifying {label} images is disabled")
+            }
+            _ => format!(
                 "{label} is read-only in Arca; rewriting it could break its signature or layout, \
                  so creating or modifying {label} files is disabled"
-            )
+            ),
         })
     }
 
@@ -187,6 +196,20 @@ mod tests {
         }
         assert!(Format::WRITABLE.iter().all(|format| format.can_write()));
         assert_eq!(Format::detect(Path::new("x.tgz")), Some(Format::TarGz));
+    }
+
+    #[test]
+    fn iso_is_readable_but_never_a_creation_format() {
+        for name in ["image.iso", "DISC.ISO", "ubuntu-24.04-desktop-amd64.iso"] {
+            assert_eq!(Format::detect(Path::new(name)), Some(Format::Iso));
+        }
+        assert_eq!(Format::Iso.container(), Container::Iso);
+        assert_eq!(Format::Iso.extension(), "iso");
+        assert!(!Format::Iso.can_write());
+        assert!(Format::Iso
+            .read_only()
+            .to_string()
+            .contains("ISO is read-only"));
     }
 
     #[test]

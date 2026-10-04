@@ -2,7 +2,7 @@
 description: Lo que todavía no está, y por qué importa parte de ello.
 group: Referencia
 order: 15
-keywords: hoja de ruta futuro 7z lzma xz sólido enlaces simbólicos planificado roadmap future 7z lzma xz solid symlinks planned
+keywords: hoja de ruta futuro 7z lzma xz sólido enlaces simbólicos udf planificado roadmap future 7z lzma xz solid symlinks planned
 ---
 
 # Hoja de ruta
@@ -27,6 +27,7 @@ La [lectura RAR/CBR](../rar.md) es experimental y se activa con `--features rar`
 La activación estable, la revisión de procedencia y los archivos multivolumen
 siguen pendientes. No se admite crear ni modificar RAR.
 
+- **UDF:** las imágenes ISO se leen por ISO 9660, así que los ficheros que solo están en UDF (como `install.wim` en los medios de Windows) todavía no aparecen.
 - **Enlaces simbólicos:** se omiten al crear ZIP/TAR y se rechazan en 7z.
 - **Nombres largos de GNU tar.**
 - **Crear 7z sólidos:** se leen los existentes, pero se crean bloques independientes.

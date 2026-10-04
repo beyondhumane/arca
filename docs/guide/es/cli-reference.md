@@ -29,7 +29,7 @@ Options:
   -V, --version  Print version
 ```
 
-`list`, `extract` y `test` también leen los [contenedores ZIP](zip-containers.md) (.apk, .jar, .epub, .cbz y el resto) y, en compilaciones con el [lector de RAR](rar.md), .rar y .cbr. Son de solo lectura: `create` y `password` los rechazan.
+`list`, `extract` y `test` también leen los [contenedores ZIP](zip-containers.md) (.apk, .jar, .epub, .cbz y el resto), las [imágenes ISO 9660](iso.md) y, en compilaciones con el [lector de RAR](rar.md), .rar y .cbr. Son de solo lectura: `create` y `password` los rechazan.
 
 ## create · c
 

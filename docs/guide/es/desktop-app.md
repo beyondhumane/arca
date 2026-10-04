@@ -5,33 +5,41 @@ order: 8
 keywords: interfaz gráfica ventana arca-gui escritorio aplicación accesibilidad gui window arca-gui desktop app gpui accessibility nvda narrator
 ---
 
-# La ventana de escritorio
+# El espacio de trabajo de escritorio
 
-La ventana `arca-gui` abre los archivos comprimidos como si fueran carpetas. Se renderiza por GPU con GPUI y está diseñada para poder manejarse por completo desde el teclado.
+`arca-gui` permite explorar archivos comprimidos en una ventana nativa GPUI. La barra de título conserva la marca y los controles de ventana de Arca; una sola banda de navegación reúne historial, ruta, vistas, filtro, extracción, comprobación y el menú **Más**.
 
-## Exploración
+## Navegación y distribución
 
-- Haz doble clic en una carpeta para entrar en ella.
-- Haz doble clic en un archivo para sacar esa entrada a una carpeta temporal y pasársela a lo que tu sistema use para abrirlo.
-- Toda la fila responde al ratón, no solo el nombre, y el cursor cambia para indicarlo.
+**Abrir** y **Crear** están en la barra lateral, junto a los archivos recientes y el árbol de carpetas del archivo actual. El botón lateral alterna entre panel ampliado, columna de iconos y oculto. Arrastra el divisor para ajustar su ancho. **Más > Vista** también permite ocultarlo.
 
-## Navegación
+La vista predeterminada **Columnas** mantiene un directorio en cada panel vertical. Haz clic en una carpeta para abrir su panel hijo; los antecesores permanecen a la izquierda. Elegir otra carpeta sustituye solo los descendientes. Cada panel conserva su propio cursor, selección, desplazamiento, filtro y orden. Haz clic o lleva el foco al panel antes de operar sobre él. Arrastra los divisores para ajustar el ancho y desplázate horizontalmente para volver a los antecesores. La navegación deja a la vista el panel activo.
 
-Los botones de atrás y adelante del ratón se mueven por donde has estado, y también lo hacen <kbd>Alt+←</kbd> y <kbd>Alt+→</kbd>. Las tres flechas de la barra de herramientas hacen lo mismo, además de subir un nivel.
+La ruta permite ir a la raíz del archivo o a una carpeta superior. Un menú contiene los segmentos intermedios cuando no caben. El árbol y la ruta siguen al panel activo. Los botones de atrás/adelante y **Alt+Izquierda/Derecha** comparten el historial.
 
-## Iconos nativos de archivo
+**Detalles** conserva la tabla de metadatos ordenable. Haz clic derecho en su cabecera para elegir las columnas. **Más > Vista > Vista plana** pasa a Detalles y muestra las entradas sin jerarquía. Cambiar de vista mantiene la ubicación y la selección que siga siendo válida.
 
-Cada fila lleva el icono que tu escritorio muestra para ese tipo de archivo, así que un listado se parece al del gestor de archivos de al lado. En Windows es una única llamada al shell, pedida por nombre sin abrir nada, porque las entradas no existen en disco. En el resto de sistemas, la ventana dibuja sus propios iconos.
+Se recuerdan las preferencias y los anchos. Al estrechar la ventana, la barra lateral se reduce temporalmente a iconos y la vista previa se suspende antes de apretar el explorador. Al ampliarla se recuperan los paneles preferidos.
 
-## Selección
+## Selección y operaciones
 
-- Clic para una entrada, Ctrl+clic para añadir o quitar una, Shift+clic para todo lo que hay en medio.
-- Pulsa sobre la lista y arrastra para un rectángulo que selecciona todo lo que toca.
-- Desde el teclado: <kbd>Space</kbd> marca una fila, <kbd>Shift+↓</kbd> marca una serie, y <kbd>Ctrl+A</kbd> marca todo, o lo desmarca si ya está todo marcado.
+- Haz clic en un archivo para seleccionarlo; Ctrl+clic alterna su selección y Mayús+clic selecciona un intervalo. Usa estos modificadores para seleccionar carpetas sin abrirlas en Columnas.
+- **Espacio** alterna la fila del cursor; **Ctrl+A** selecciona las filas visibles. Las operaciones de selección solo afectan al panel activo. La fila de carpeta superior de Detalles nunca es un destino de esas operaciones.
+- Haz clic derecho en una fila para extraer, previsualizar, renombrar, eliminar y ver otras acciones aplicables. El espacio vacío del panel ofrece acciones sobre ese directorio.
+- Arrastra entradas a una carpeta o panel de directorio para moverlas dentro de un ZIP modificable. Suelta archivos externos sobre un directorio para añadirlos. El destino se resalta durante el arrastre.
+- El diálogo de nueva carpeta y los menús de pegado indican el destino. Las modificaciones ZIP se ejecutan de una en una; RAR sigue siendo de solo lectura.
+- Copiar, cortar, pegar archivos y arrastrarlos fuera conservan la integración existente con Windows. **Ctrl+Mayús+C** copia los nombres como texto.
+- **Más** reúne selección, cambios de contraseña, verificación, deshacer, ajustes y ayuda de atajos.
 
-## Columnas y menús contextuales
+Hacer doble clic en un archivo, o pulsar **Intro** sobre él, lo extrae explícitamente a una ubicación temporal y lo abre con la aplicación del sistema. La vista previa no hace esto.
 
-Haz clic derecho en una fila para ver qué se puede hacer con ella. Haz clic derecho en la cabecera para activar o desactivar columnas (tamaño, comprimido, método, ahorrado, modificado y CRC32), y tu elección se recuerda entre ejecuciones. El nombre siempre se queda, así que la lista nunca muestra tamaños sin nombres.
+## Vista previa integrada
+
+El panel derecho sigue al cursor del archivo activo. **F3** activa la vista previa; el botón de cierre la oculta y devuelve el foco. El pie permite mostrarla de nuevo. Arrastra su divisor para cambiar el ancho recordado.
+
+El panel muestra nombre, tamaño, fecha y tipo, e indica expresamente los metadatos no disponibles. El texto usa una lista monoespaciada con números de línea; las vistas hexadecimal y de imágenes compatibles comparten el panel. Las imágenes se ajustan a él.
+
+Los estados de carga, vacío, contraseña necesaria, contraseña incorrecta, formato no compatible, tamaño excesivo y error aparecen en el propio panel. La lectura, preparación de texto y decodificación de imágenes se ejecutan en segundo plano con límites, independientemente de las operaciones de modificación. Cambiar la navegación o selección invalida los resultados anteriores. Las contraseñas y el contenido no se guardan en los ajustes.
 
 ## Contraseñas
 
@@ -58,13 +66,17 @@ el archivo sin `.xz`. Probar, la vista previa, Copiar y Extraer leen el flujo
 hasta el final y lo comprueban, y una creación detenida o fallida no deja un
 archivo a medias.
 
-## Lo que falta a propósito
+## Límites por formato
 
 Añadir, borrar, renombrar y cambiar contraseñas en archivos existentes sigue
 siendo exclusivo de ZIP. Arrastrar ficheros virtuales fuera de un 7z está
 desactivado para no descodificar repetidamente bloques sólidos: usa Copiar o
 Extraer. El portapapeles de ficheros depende de la plataforma.
 
-## Accesibilidad
+## Operaciones y teclado
 
-La ventana se declara a través de AccessKit, para que Narrator y NVDA puedan leerla. Cada acción tiene una vía por teclado; consulta [Atajos de teclado](keyboard-shortcuts.md).
+Progreso, pausa, cancelación, finalización y errores se mantienen visibles sin bloquear la exploración cuando la operación permite navegar. Pausar y cancelar también actúan dentro de una sola entrada grande: una extracción cancelada borra el fichero que estaba escribiendo y conserva los que ya había terminado. No se inicia una segunda modificación mientras otra está en curso. Las operaciones puntuales del Explorador conservan su comportamiento al terminar.
+
+El pie muestra directorio activo, cantidades visibles y seleccionadas, estado y ayuda **F1**. Tabulador llega a navegación, barra lateral, explorador, controles de vista previa y pie. Los campos conservan sus teclas de edición; los diálogos devuelven el foco al cerrarse. Los controles exponen etiquetas AccessKit e indicadores de foco y selección.
+
+Consulta [Atajos de teclado](keyboard-shortcuts.md).

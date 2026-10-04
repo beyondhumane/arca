@@ -410,7 +410,7 @@ fn create(
         Container::SevenZ => unreachable!(),
         // Nothing to report while it runs -- the summary is printed at the end
         // -- so the answer to "carry on?" is always yes.
-        Container::Rar => return Err(format_kind.read_only()),
+        Container::Rar | Container::Iso => return Err(format_kind.read_only()),
         Container::Zip => arca_zip::create_zip(out, &files, threads, password, &|_, _, _| true)?,
         Container::Tar | Container::TarGz => {
             let f = BufWriter::with_capacity(BUF, File::create(out)?);
@@ -508,6 +508,21 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
         }
         Container::Rar => {
             let a = arca_rar::RarArchive::open(archive, password)?;
+            for e in a.entries() {
+                writeln!(
+                    out,
+                    "{:>12}  {:>7}  {:>5.1}%  {}",
+                    e.size,
+                    e.method.name(),
+                    e.ratio() * 100.0,
+                    e.name
+                )?;
+                n += 1;
+                bytes += e.size;
+            }
+        }
+        Container::Iso => {
+            let a = open_iso(archive)?;
             for e in a.entries() {
                 writeln!(
                     out,
@@ -631,7 +646,7 @@ fn extract(
     if format_kind == Format::SevenZ {
         return sevenz::extract(archive, dest, policy, password);
     }
-    if format_kind.container() != Container::Rar {
+    if !matches!(format_kind.container(), Container::Rar | Container::Iso) {
         fs::create_dir_all(dest)?;
     }
     let t0 = Instant::now();
@@ -647,6 +662,20 @@ fn extract(
                 OnConflict::Overwrite => arca_rar::Conflict::Overwrite,
                 OnConflict::Skip => arca_rar::Conflict::Skip,
                 OnConflict::Rename => arca_rar::Conflict::Rename,
+            })?;
+            println!(
+                "{} written in {:.3} s",
+                human(bytes),
+                t0.elapsed().as_secs_f64()
+            );
+            return Ok(());
+        }
+        Container::Iso => {
+            let a = open_iso(archive)?;
+            let bytes = a.extract(dest, &[], &|_, _, _| true, &|_| match policy {
+                OnConflict::Overwrite => arca_iso::Conflict::Overwrite,
+                OnConflict::Skip => arca_iso::Conflict::Skip,
+                OnConflict::Rename => arca_iso::Conflict::Rename,
             })?;
             println!(
                 "{} written in {:.3} s",
@@ -817,6 +846,16 @@ fn change_password(
     Ok(())
 }
 
+// What the listing leaves out goes to stderr so `arca l` output stays a
+// clean list for scripts.
+fn open_iso(archive: &Path) -> Result<arca_iso::IsoArchive> {
+    let a = arca_iso::IsoArchive::open(archive)?;
+    for notice in a.notices() {
+        eprintln!("note: {notice}");
+    }
+    Ok(a)
+}
+
 fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
     let format_kind = detect_archive(archive)?;
     let t0 = Instant::now();
@@ -832,6 +871,11 @@ fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
         Container::Rar => {
             let a = arca_rar::RarArchive::open(archive, password)?;
             a.test(password, &|_, _, _| true)?;
+            n = a.entries().iter().filter(|e| !e.is_dir).count() as u64;
+        }
+        Container::Iso => {
+            let a = open_iso(archive)?;
+            a.test(&[], &|_, _, _| true)?;
             n = a.entries().iter().filter(|e| !e.is_dir).count() as u64;
         }
         Container::Zip => {

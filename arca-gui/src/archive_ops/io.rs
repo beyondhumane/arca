@@ -14,6 +14,77 @@ use std::sync::mpsc::Sender;
 
 pub(crate) const BUF: usize = 256 * 1024;
 
+// Bytes of one entry between two looks at "carry on?". Progress is otherwise
+// only reported between entries, so one huge file would be written to the end
+// whatever the answer was.
+const STEP: u64 = 4 << 20;
+
+struct Watched<'a, W: Write> {
+    inner: W,
+    notify: &'a (dyn Fn(usize, usize, &str) -> bool + Sync),
+    progress: (usize, usize, &'a str),
+    since: u64,
+    cancelled: bool,
+}
+
+impl<W: Write> Write for Watched<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.since >= STEP {
+            self.since = 0;
+            let (done, total, name) = self.progress;
+            if !(self.notify)(done, total, name) {
+                self.cancelled = true;
+                // Not `Interrupted`: `io::copy` and `write_all` retry that one.
+                return Err(std::io::Error::other("cancelled"));
+            }
+        }
+        let n = self.inner.write(buf)?;
+        self.since += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+// Writes one entry to `path` while keeping `notify` in the loop, so a pause
+// holds and a stop lands inside the file rather than after it. A stop, like
+// any other failure, takes the half-written file away with it.
+fn unpack(
+    path: &Path,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+    progress: (usize, usize, &str),
+    fill: impl FnOnce(&mut dyn Write) -> arca_core::Result<u64>,
+) -> arca_core::Result<u64> {
+    let mut out = Watched {
+        inner: BufWriter::with_capacity(BUF, File::create(path)?),
+        notify,
+        progress,
+        since: 0,
+        cancelled: false,
+    };
+    let result = fill(&mut out);
+    let Watched {
+        mut inner,
+        cancelled,
+        ..
+    } = out;
+    let result = if cancelled {
+        Err(arca_core::Error::Cancelled)
+    } else {
+        result.and_then(|n| {
+            inner.flush()?;
+            Ok(n)
+        })
+    };
+    if result.is_err() {
+        drop(inner);
+        let _ = fs::remove_file(path);
+    }
+    result
+}
+
 pub(crate) fn open_source(archive: &Path, format: Format) -> arca_core::Result<Box<dyn Read>> {
     if format == Format::TarXz {
         return Ok(Box::new(arca_xz::open(archive)?));
@@ -27,7 +98,7 @@ pub(crate) fn open_source(archive: &Path, format: Format) -> arca_core::Result<B
 
 /// Passes the bytes through and asks `notify` every few megabytes whether to
 /// carry on, so one large stream can still be stopped halfway.
-struct Watched<'a, R> {
+struct Paced<'a, R> {
     inner: R,
     name: &'a str,
     notify: &'a (dyn Fn(usize, usize, &str) -> bool + Sync),
@@ -35,7 +106,7 @@ struct Watched<'a, R> {
     stopped: bool,
 }
 
-impl<'a, R: Read> Watched<'a, R> {
+impl<'a, R: Read> Paced<'a, R> {
     fn new(
         inner: R,
         name: &'a str,
@@ -58,7 +129,7 @@ impl<'a, R: Read> Watched<'a, R> {
     }
 }
 
-impl<R: Read> Read for Watched<'_, R> {
+impl<R: Read> Read for Paced<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.since >= 4 << 20 {
             self.since = 0;
@@ -100,7 +171,7 @@ pub(crate) fn list_entries(
     archive: &Path,
     password: Option<&str>,
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
-) -> arca_core::Result<Vec<Entry>> {
+) -> arca_core::Result<(Vec<Entry>, Vec<String>)> {
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported(format!(
             "unrecognized extension in '{}'",
@@ -110,15 +181,23 @@ pub(crate) fn list_entries(
     match format.container() {
         Container::Rar => {
             let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
-            Ok(a.entries().to_vec())
+            Ok((a.entries().to_vec(), Vec::new()))
         }
-        Container::Zip => Ok(ZipArchive::open(File::open(archive)?)?.entries().to_vec()),
-        Container::SevenZ => Ok(
+        Container::Iso => {
+            let a = arca_iso::IsoArchive::open_with_progress(archive, notify)?;
+            Ok((a.entries().to_vec(), a.notices().to_vec()))
+        }
+        Container::Zip => Ok((
+            ZipArchive::open(File::open(archive)?)?.entries().to_vec(),
+            Vec::new(),
+        )),
+        Container::SevenZ => Ok((
             arca_7z::SevenZArchive::open(File::open(archive)?, password)?
                 .entries()
                 .to_vec(),
-        ),
-        Container::Xz => Ok(vec![arca_xz::entry(archive)?]),
+            Vec::new(),
+        )),
+        Container::Xz => Ok((vec![arca_xz::entry(archive)?], Vec::new())),
         Container::Tar | Container::TarGz | Container::TarXz => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let mut v = Vec::new();
@@ -126,7 +205,7 @@ pub(crate) fn list_entries(
                 v.push(e.entry.clone());
                 r.skip_data(&e)?;
             }
-            Ok(v)
+            Ok((v, Vec::new()))
         }
     }
 }
@@ -208,6 +287,7 @@ pub(crate) fn step_aside(archive: &Path) -> std::io::Result<()> {
 // The same walk as `extract_one` without the file at the end of it: a viewer
 // that wrote to the temporary folder on the way would have extracted the thing
 // it was only supposed to show.
+#[cfg(test)]
 pub(crate) fn read_entry(
     archive: &Path,
     index: usize,
@@ -229,6 +309,9 @@ pub(crate) fn read_entry(
             let a = arca_rar::RarArchive::open(archive, password)?;
             *out = a.read_entry(index, password)?;
         }
+        Container::Iso => {
+            *out = arca_iso::IsoArchive::open(archive)?.read_entry(index)?;
+        }
         Container::Zip => {
             let mut a = ZipArchive::open(File::open(archive)?)?;
             a.extract_to_with(index, out, password)?;
@@ -240,7 +323,7 @@ pub(crate) fn read_entry(
                 ));
             }
             let name = arca_xz::output_name(archive);
-            let mut source = Watched::new(arca_xz::open(archive)?, &name, notify);
+            let mut source = Paced::new(arca_xz::open(archive)?, &name, notify);
             out.clear();
             let result = std::io::copy(&mut source, out).map_err(Into::into);
             source.check(result)?;
@@ -291,6 +374,22 @@ pub(crate) fn extract_one(
         })?;
         return Ok(room.join(arca_core::safe_name(&entry.name)?));
     }
+    if detect(archive) == Some(Format::Iso) {
+        let a = arca_iso::IsoArchive::open(archive)?;
+        let index = usize::try_from(entry.offset)
+            .map_err(|_| arca_core::Error::Format("invalid ISO entry index".into()))?;
+        if a.entries().get(index).is_none_or(|e| e.name != entry.name) {
+            return Err(arca_core::Error::Format(
+                "ISO entry changed since listing".into(),
+            ));
+        }
+        let mut wanted = vec![false; a.entries().len()];
+        wanted[index] = true;
+        a.extract(&room, &wanted, &|_, _, _| true, &|_| {
+            arca_iso::Conflict::Overwrite
+        })?;
+        return Ok(room.join(arca_core::safe_name(&entry.name)?));
+    }
     let path = room.join(arca_core::safe_name(&entry.name)?);
     if detect(archive) == Some(Format::SevenZ) {
         let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
@@ -312,7 +411,7 @@ pub(crate) fn extract_one(
         return Ok(path);
     }
     if detect(archive) == Some(Format::Xz) {
-        let mut source = Watched::new(arca_xz::open(archive)?, &entry.name, notify);
+        let mut source = Paced::new(arca_xz::open(archive)?, &entry.name, notify);
         let result = arca_core::extraction::Destination::new(&room).write_entry(
             &entry.name,
             false,
@@ -329,13 +428,14 @@ pub(crate) fn extract_one(
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported("unknown format".into()));
     };
-    let mut out = BufWriter::with_capacity(BUF, File::create(&path)?);
     match format.container() {
         Container::SevenZ | Container::Xz => unreachable!(),
-        Container::Rar => return Err(format.read_only()),
+        Container::Rar | Container::Iso => return Err(format.read_only()),
         Container::Zip => {
             let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
-            arca_zip::extract_entry_with(&mut source, entry, &mut out, password)?;
+            unpack(&path, notify, (0, 1, &entry.name), |out| {
+                arca_zip::extract_entry_with(&mut source, entry, out, password)
+            })?;
         }
         Container::Tar | Container::TarGz | Container::TarXz => {
             // A tar has no index, so the only way to one entry is through all
@@ -344,7 +444,9 @@ pub(crate) fn extract_one(
             let mut found = false;
             while let Some(e) = r.next_entry()? {
                 if e.entry.name == entry.name && !e.entry.is_dir {
-                    r.copy_data(&e, &mut out)?;
+                    unpack(&path, notify, (0, 1, &entry.name), |mut out| {
+                        r.copy_data(&e, &mut out)
+                    })?;
                     found = true;
                     break;
                 }
@@ -358,7 +460,6 @@ pub(crate) fn extract_one(
             }
         }
     }
-    out.flush()?;
     Ok(path)
 }
 
@@ -578,6 +679,15 @@ pub(crate) fn extract(
             Answer::Cancel => arca_rar::Conflict::Cancel,
         });
     }
+    if format == Format::Iso {
+        let a = arca_iso::IsoArchive::open_with_progress(archive, notify)?;
+        return a.extract(dest, wanted, notify, &|path| match ask(path) {
+            Answer::Replace | Answer::ReplaceAll => arca_iso::Conflict::Overwrite,
+            Answer::Skip | Answer::SkipAll => arca_iso::Conflict::Skip,
+            Answer::Rename | Answer::RenameAll => arca_iso::Conflict::Rename,
+            Answer::Cancel => arca_iso::Conflict::Cancel,
+        });
+    }
     if format != Format::SevenZ {
         fs::create_dir_all(dest)?;
     }
@@ -600,7 +710,7 @@ pub(crate) fn extract(
                 &mut |p| notify(p.entries_done, p.entries_total, p.name),
             )?;
         }
-        Container::Rar => return Err(format.read_only()),
+        Container::Rar | Container::Iso => return Err(format.read_only()),
         Container::Zip => {
             let a = ZipArchive::open(File::open(archive)?)?;
             let mut jobs: Vec<(Entry, PathBuf)> = Vec::new();
@@ -620,9 +730,10 @@ pub(crate) fn extract(
                 .par_iter()
                 .map(|(e, path)| {
                     let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
-                    let mut f = BufWriter::with_capacity(BUF, File::create(path)?);
-                    let w = arca_zip::extract_entry_with(&mut source, e, &mut f, password)?;
-                    f.flush()?;
+                    let at = (done.load(Ordering::Relaxed), total, e.name.as_str());
+                    let w = unpack(path, notify, at, |out| {
+                        arca_zip::extract_entry_with(&mut source, e, out, password)
+                    })?;
                     if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &e.name) {
                         return Err(arca_core::Error::Cancelled);
                     }
@@ -635,7 +746,7 @@ pub(crate) fn extract(
         Container::Xz => {
             if wanted.first().copied().unwrap_or(true) {
                 let name = arca_xz::output_name(archive);
-                let mut source = Watched::new(arca_xz::open(archive)?, &name, notify);
+                let mut source = Paced::new(arca_xz::open(archive)?, &name, notify);
                 let mut destination = arca_core::extraction::Destination::new(dest);
                 let result = write_entry(&mut destination, &name, false, &mut source, ask);
                 bytes = source.check(result)?;
@@ -647,7 +758,6 @@ pub(crate) fn extract(
         // never leaves a short file under the real name.
         Container::Tar | Container::TarGz | Container::TarXz => {
             let mut r = TarReader::new(open_source(archive, format)?);
-            let mut destination = arca_core::extraction::Destination::new(dest);
             let total = wanted.len();
             let mut i = 0usize;
             while let Some(e) = r.next_entry()? {
@@ -659,9 +769,15 @@ pub(crate) fn extract(
                     i += 1;
                     continue;
                 }
-                bytes += r.with_data(&e, |data| {
-                    write_entry(&mut destination, &e.entry.name, e.entry.is_dir, data, ask)
-                })?;
+                match dest_path(dest, &e.entry.name, e.entry.is_dir, ask, &mut claimed)? {
+                    Some(path) => {
+                        let at = (i, total, e.entry.name.as_str());
+                        bytes += unpack(&path, notify, at, |out| {
+                            r.with_data(&e, |data| Ok(std::io::copy(data, out)?))
+                        })?;
+                    }
+                    None => r.skip_data(&e)?,
+                }
                 i += 1;
             }
             arca_xz::drain(&mut r.into_inner())?;
@@ -715,6 +831,14 @@ pub(crate) fn test_archive(
             a.test(password, notify)?;
             good = a.entries().iter().filter(|e| !e.is_dir).count();
         }
+        Container::Iso => {
+            let a = arca_iso::IsoArchive::open_with_progress(archive, notify)?;
+            let wanted: Vec<bool> = match only {
+                Some(set) => a.entries().iter().map(|e| set.contains(&e.name)).collect(),
+                None => Vec::new(),
+            };
+            good = a.test(&wanted, notify)?;
+        }
         Container::Zip => {
             let mut a = ZipArchive::open(File::open(archive)?)?;
             let total = a.len();
@@ -736,7 +860,7 @@ pub(crate) fn test_archive(
         Container::Xz => {
             let name = arca_xz::output_name(archive);
             if only.is_none_or(|set| set.contains(&name)) {
-                let mut source = Watched::new(arca_xz::open(archive)?, &name, notify);
+                let mut source = Paced::new(arca_xz::open(archive)?, &name, notify);
                 let result = arca_xz::drain(&mut source);
                 match source.check(result) {
                     Ok(_) => good = 1,
@@ -838,6 +962,9 @@ pub(crate) fn compress(
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     encryption: (Option<&str>, bool),
 ) -> arca_core::Result<(u64, u64)> {
+    if format == Format::Iso || detect(out) == Some(Format::Iso) {
+        return Err(arca_iso::read_only());
+    }
     let (password, hide_names) = encryption;
     if !format.can_write() {
         return Err(format.read_only());
@@ -888,7 +1015,7 @@ pub(crate) fn compress(
                 &mut |p| notify(p.entries_done, p.entries_total, p.name),
             )?;
         }
-        Container::Rar => return Err(format.read_only()),
+        Container::Rar | Container::Iso => return Err(format.read_only()),
         // Cada entrada de un zip se comprime por su cuenta, asi que esto entrega
         // la lista entera y deja que corra en todos los nucleos. Es la misma
         // llamada que hace la linea de ordenes: hay una, no dos.
@@ -946,7 +1073,7 @@ pub(crate) fn compress(
                     return Err(arca_core::Error::Cancelled);
                 }
                 let meta = fs::metadata(path)?;
-                let mut f = Watched::new(
+                let mut f = Paced::new(
                     BufReader::with_capacity(BUF, File::open(path)?),
                     name,
                     notify,
@@ -964,7 +1091,7 @@ pub(crate) fn compress(
         Container::Xz => staged(out, |f| {
             let (path, name) = &files[0];
             let mut e = arca_xz::encoder(f, level, 0)?;
-            let mut f = Watched::new(
+            let mut f = Paced::new(
                 BufReader::with_capacity(BUF, File::open(path)?),
                 name,
                 notify,
@@ -984,4 +1111,76 @@ pub(crate) fn compress(
 pub(crate) enum Destination {
     Beside,
     Subfolder,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn room(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("arca-io-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn one_big_zip(dir: &Path) -> PathBuf {
+        let path = dir.join("big.zip");
+        let mut zip = arca_zip::ZipWriter::new(File::create(&path).unwrap());
+        zip.add(
+            "big.bin",
+            std::io::repeat(7).take(3 * STEP),
+            Codec::Deflate,
+            Level::Normal,
+            None,
+        )
+        .unwrap();
+        zip.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn stopping_inside_one_big_entry_removes_the_half_written_file() {
+        let dir = room("stop");
+        let archive = one_big_zip(&dir);
+        let dest = dir.join("out");
+        let looks = AtomicUsize::new(0);
+        let result = extract(
+            &archive,
+            &dest,
+            &[],
+            &|_, _, _| looks.fetch_add(1, Ordering::Relaxed) < 1,
+            &|_| Answer::Replace,
+            None,
+        );
+        assert!(
+            matches!(result, Err(arca_core::Error::Cancelled)),
+            "{result:?}"
+        );
+        assert!(!dest.join("big.bin").exists());
+        assert!(
+            looks.load(Ordering::Relaxed) >= 2,
+            "one entry has to be asked about more than once"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_big_entry_comes_out_whole_when_nobody_stops_it() {
+        let dir = room("whole");
+        let archive = one_big_zip(&dir);
+        let dest = dir.join("out");
+        let written = extract(
+            &archive,
+            &dest,
+            &[],
+            &|_, _, _| true,
+            &|_| Answer::Replace,
+            None,
+        )
+        .unwrap();
+        assert_eq!(written, 3 * STEP);
+        assert_eq!(fs::metadata(dest.join("big.bin")).unwrap().len(), 3 * STEP);
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

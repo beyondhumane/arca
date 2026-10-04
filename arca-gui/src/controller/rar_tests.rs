@@ -316,7 +316,7 @@ fn rar_open_file_obeys_the_worker_cancellation_callback() {
     let room = crate::test_support::Room::new();
     let archive = room.path("cancel-open.rar");
     fs::copy(fixture("plain.rar"), &archive).unwrap();
-    let entries = list_entries(&archive, None, &|_, _, _| true).unwrap();
+    let entries = list_entries(&archive, None, &|_, _, _| true).unwrap().0;
     let entry = entries.iter().find(|e| !e.is_dir).unwrap();
     assert!(matches!(
         extract_one(&archive, entry, None, &|_, _, _| false),

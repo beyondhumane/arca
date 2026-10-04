@@ -355,6 +355,59 @@ if [ "${ARCA_TEST_RAR:-0}" = 1 ]; then
     ko "RAR volume set accepted" || ok "RAR volume set explicitly rejected"
   echo
 fi
+echo "ISO) genisoimage / xorriso images -> Arca, compared with bsdtar and 7z (read-only)"
+if command -v genisoimage >/dev/null && command -v xorriso >/dev/null && command -v bsdtar >/dev/null; then
+  rm -rf iso; mkdir -p iso/src/deep/1/2/3/4/5/6/7/8/9
+  cp -r src/a src/text.txt src/binary.bin iso/src/
+  printf 'ñandú\n' > "iso/src/año con espacios.txt"
+  printf 'bottom\n' > iso/src/deep/1/2/3/4/5/6/7/8/9/leaf.txt
+  ISO_REF=$(cd iso/src && find . -type f | sort | xargs -d '\n' sha256sum | sha256sum | cut -d' ' -f1)
+  genisoimage -quiet -o iso/plain.iso iso/src 2>/dev/null
+  genisoimage -quiet -J -joliet-long -o iso/joliet.iso iso/src 2>/dev/null
+  genisoimage -quiet -R -o iso/rr-moved.iso iso/src 2>/dev/null
+  xorriso -as mkisofs -quiet -R -J -o iso/xorriso.iso iso/src 2>/dev/null
+  for f in plain joliet rr-moved xorriso; do
+    rm -rf iso/arca iso/bsdtar iso/7z; mkdir iso/bsdtar
+    "$ARCA" test iso/$f.iso >/dev/null 2>&1 && ok "arca test accepts $f.iso" || ko "arca test rejects $f.iso"
+    "$ARCA" extract iso/$f.iso -o iso/arca >/dev/null 2>&1 || ko "arca extract $f.iso"
+    bsdtar -xf iso/$f.iso -C iso/bsdtar 2>/dev/null
+    rm -rf iso/bsdtar/rr_moved
+    diff -r iso/arca iso/bsdtar >/dev/null && ok "Arca and bsdtar extract identical $f.iso trees" || ko "Arca and bsdtar differ on $f.iso"
+    # p7zip 16.02 ignores Rock Ridge relocation (CL/RE) and decodes NM names
+    # as Latin-1, so it is only a reference for the other images.
+    if command -v 7z >/dev/null && [ $f != rr-moved ]; then
+      7z x -o"iso/7z" iso/$f.iso >/dev/null 2>&1
+      rm -rf iso/7z/rr_moved iso/7z/'[BOOT]'
+      diff -r iso/arca iso/7z >/dev/null && ok "Arca and 7z extract identical $f.iso trees" || ko "Arca and 7z differ on $f.iso"
+    fi
+    # Without Rock Ridge, genisoimage drops directories deeper than 8 levels.
+    case $f in
+      plain|joliet) ;;
+      *) H=$(cd iso/arca && find . -type f | sort | xargs -d '\n' sha256sum | sha256sum | cut -d' ' -f1)
+         [ "$H" = "$ISO_REF" ] && ok "$f.iso returns the source bytes and names" || ko "$f.iso differs from the source";;
+    esac
+  done
+  ln -s text.txt iso/src/link
+  xorriso -as mkisofs -quiet -R -o iso/link.iso iso/src 2>/dev/null
+  "$ARCA" list iso/link.iso 2>&1 >/dev/null | grep -q "skipped 1 symbolic" && ok "Rock Ridge symlink skipped with a note" || ko "Rock Ridge symlink note missing"
+  "$ARCA" create iso/new.iso src >/dev/null 2>&1 && ko "created an ISO" || ok "ISO creation refused"
+  [ ! -e iso/new.iso ] && ok "refused ISO creation wrote nothing" || ko "refused ISO creation left a file"
+  head -c 100000 iso/joliet.iso > iso/cut.iso
+  "$ARCA" test iso/cut.iso >/dev/null 2>&1 && ko "truncated ISO accepted" || ok "truncated ISO rejected"
+  if [ "${ARCA_TEST_ISO_BIG:-0}" = 1 ]; then
+    rm -rf iso/big; mkdir -p iso/big/src
+    truncate -s 4700000000 iso/big/src/huge.bin
+    printf 'end-marker' | dd of=iso/big/src/huge.bin bs=1 seek=4699999990 conv=notrunc 2>/dev/null
+    xorriso -as mkisofs -quiet -R -iso-level 3 -o iso/big/big.iso iso/big/src 2>/dev/null
+    "$ARCA" extract iso/big/big.iso -o iso/big/out >/dev/null 2>&1 &&
+      cmp -s iso/big/out/huge.bin iso/big/src/huge.bin &&
+      ok "4.7 GB multi-extent file extracts byte for byte" || ko "multi-extent file"
+    rm -rf iso/big
+  fi
+else
+  echo "  skipped: needs genisoimage, xorriso and bsdtar"
+fi
+echo
 echo "-------------------------------------------"
 echo "  $OK passed, $KO failed"
 [ $KO -eq 0 ] || exit 1
