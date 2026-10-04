@@ -165,6 +165,20 @@ fn zip_containers_cannot_be_created_or_rewritten() {
         assert!(!result.status.success(), "{extension}");
         assert!(stderr(&result).contains("read-only"), "{}", stderr(&result));
         assert_eq!(std::fs::read(&out).unwrap(), bytes, "{extension}");
+
+        let zip = dir.path().join("sample.zip");
+        let exported = dir.path().join(format!("exported.{extension}"));
+        let result = run(&[
+            "password".as_ref(),
+            zip.as_os_str(),
+            "--new".as_ref(),
+            "secret".as_ref(),
+            "--out".as_ref(),
+            exported.as_os_str(),
+        ]);
+        assert!(!result.status.success(), "{extension}");
+        assert!(stderr(&result).contains("read-only"), "{}", stderr(&result));
+        assert!(!exported.exists(), "{extension}");
     }
 }
 

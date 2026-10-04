@@ -612,6 +612,16 @@ fn change_password(
             "only ZIP passwords can be changed".into(),
         ));
     }
+    if let Some(out_format) = out.and_then(Format::detect) {
+        if !out_format.can_write() {
+            return Err(out_format.read_only());
+        }
+        if out_format != Format::Zip {
+            return Err(Error::Unsupported(
+                "a password rewrite writes a ZIP, so --out needs a .zip name".into(),
+            ));
+        }
+    }
     let entries = ZipArchive::open(File::open(archive)?)?.entries().to_vec();
     let was_encrypted = entries.iter().any(|e| e.encrypted);
     if !was_encrypted && new.is_none() {
