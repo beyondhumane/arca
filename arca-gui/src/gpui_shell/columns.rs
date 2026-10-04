@@ -334,7 +334,7 @@ impl GpuiShell {
                     }),
                 )
                 .track_scroll(&scroll)
-                .flex_1()
+                .h(px(count as f32 * 28.))
                 .min_h_0()
                 .w_full(),
             );
@@ -342,7 +342,13 @@ impl GpuiShell {
         let menu_owner = owner.clone();
         let writable = self.controller.state.format == Format::Zip;
         let idle = self.background_idle();
-        panel
+        // The empty-space menu lives on the filler below the rows, not on the
+        // whole pane: the menu element only checks hover, so a row and the pane
+        // around it would otherwise both open theirs on the same right click.
+        let filler = div()
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .context_menu(move |menu, _, _| {
                 let mut menu = menu;
                 for action in RowAction::EMPTY_SPACE {
@@ -364,8 +370,8 @@ impl GpuiShell {
                     );
                 }
                 menu
-            })
-            .into_any_element()
+            });
+        panel.child(filler).into_any_element()
     }
 
     fn directory_row(
