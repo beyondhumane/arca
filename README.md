@@ -24,6 +24,7 @@ A cross-platform archiver in Rust. ZIP and TAR, Zstandard on every core, AES-256
 | Feature | Details |
 |---|---|
 | **Formats** | ZIP with Zip64 (store, Deflate, Zstandard), ustar TAR, `.tar.gz` |
+| **Read-only** | [ISO 9660 images](docs/guide/iso.md) with Rock Ridge and Joliet names; never creates or modifies ISO |
 | **Experimental** | [RAR/CBR reading](docs/guide/rar.md), opt-in with `--features rar`; never creates or modifies RAR |
 | **Speed** | Multi-threaded compression, parallel `.zip` extraction, sub-millisecond start |
 | **Safety** | `#![forbid(unsafe_code)]` parsers, bounded header reads, Zip Slip defence |

@@ -40,7 +40,7 @@ jobs:
       - name: Reference tools
         run: >-
           sudo apt-get update && sudo apt-get install -y zip unzip p7zip-full
-          zstd
+          zstd genisoimage xorriso libarchive-tools
       - name: Window dependencies
         run: >-
           sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev

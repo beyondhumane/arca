@@ -2,7 +2,7 @@
 description: What isn’t there yet, and why some of it matters.
 group: Reference
 order: 15
-keywords: roadmap future 7z lzma xz solid symlinks planned
+keywords: roadmap future 7z lzma xz solid symlinks udf planned
 ---
 
 # Roadmap
@@ -13,6 +13,7 @@ What Arca doesn’t do yet and, where it matters, why.
 
 - **The 7z format.**
 - **xz / LZMA2.**
+- **UDF:** ISO images are read through ISO 9660, so files stored only in UDF (such as `install.wim` on Windows media) are not listed yet.
 - **Symbolic links:** skipped when creating today.
 - **GNU tar long names.**
 - **Solid archives:** compressing every file as one stream, which is where the largest ratio gain comes from.

@@ -2,7 +2,7 @@
 description: Lo que todavía no está, y por qué importa parte de ello.
 group: Referencia
 order: 15
-keywords: hoja de ruta futuro 7z lzma xz sólido enlaces simbólicos planificado roadmap future 7z lzma xz solid symlinks planned
+keywords: hoja de ruta futuro 7z lzma xz sólido enlaces simbólicos udf planificado roadmap future 7z lzma xz solid symlinks planned
 ---
 
 # Hoja de ruta
@@ -13,6 +13,7 @@ Lo que Arca todavía no hace y, donde importa, por qué.
 
 - **El formato 7z.**
 - **xz / LZMA2.**
+- **UDF:** las imágenes ISO se leen por ISO 9660, así que los ficheros que solo están en UDF (como `install.wim` en los medios de Windows) todavía no aparecen.
 - **Enlaces simbólicos:** hoy se omiten al crear.
 - **Nombres largos de GNU tar.**
 - **Archivos sólidos:** comprimir cada archivo como un solo flujo, que es de donde sale la mayor ganancia de ratio.
