@@ -172,15 +172,12 @@ impl Task {
 }
 
 fn real(p: &Path) -> PathBuf {
-    match std::fs::canonicalize(p) {
-        Ok(real) => real,
-        Err(_) => match (p.parent(), p.file_name()) {
-            (Some(parent), Some(name)) => std::fs::canonicalize(parent)
-                .map(|parent| parent.join(name))
-                .unwrap_or_else(|_| p.to_path_buf()),
-            _ => p.to_path_buf(),
-        },
-    }
+    p.ancestors()
+        .find_map(|base| {
+            let real = std::fs::canonicalize(base).ok()?;
+            Some(real.join(p.strip_prefix(base).ok()?))
+        })
+        .unwrap_or_else(|| p.to_path_buf())
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
