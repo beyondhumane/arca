@@ -55,6 +55,13 @@ jobs:
       - run: python3 arca-rar/tests/check-features.py
       - run: cargo clippy --workspace --all-targets --features rar -- -D warnings
       - run: cargo test --workspace --features rar
+      - name: Bounded RAR mutation campaign
+        run: |
+          cargo fmt --manifest-path arca-rar/fuzz/Cargo.toml -- --check
+          cargo clippy --locked --manifest-path arca-rar/fuzz/Cargo.toml --all-targets -- -D warnings
+          cargo build --locked --manifest-path arca-rar/fuzz/Cargo.toml
+          python3 arca-rar/fuzz/run.py --runs 2000 --seed 140014 --seconds 300 --output "$RUNNER_TEMP/rar-fuzz"
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["counts"]["executions"] == 2010 and len(r["baseline"]) == 10 and not r["failures"], "incomplete fuzz campaign"' "$RUNNER_TEMP/rar-fuzz/report.json"
 
       # Interoperability exercises the CLI; there is no reason to build GPUI
       # just to obtain arca for this check.
