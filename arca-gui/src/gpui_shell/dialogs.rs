@@ -144,11 +144,15 @@ pub(super) fn build_dialog(
     // asking the question, and the next frame would reopen the dialog.
     // Answering for the user keeps the two in step -- but only while the state
     // is still on this question, because `on_close` also runs right after ok or
-    // cancel already answered it.
+    // cancel already answered it. Either way the kit has already dropped the
+    // dialog, so forget it here too: if the state asks the same question again
+    // (a wrong password) `sync_dialog` must open a new one instead of seeing
+    // nothing to do.
     let dialog = dialog.on_close({
         let weak = weak.clone();
         move |_, _, cx| {
             let _ = weak.update(cx, |this, cx| {
+                this.open_modal = None;
                 if this.modal_kind() == Some(kind) {
                     this.cancel_modal(kind);
                     cx.notify();
