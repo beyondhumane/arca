@@ -2037,11 +2037,16 @@ impl AppController {
             let created = if let Job::Compress {
                 out,
                 password,
-                format: Format::SevenZ | Format::Rar,
+                format: format @ (Format::SevenZ | Format::Rar),
                 ..
             } = &mut job
             {
-                match creation_output(out, &ask) {
+                let output = if *format == Format::Rar {
+                    new_only_output(out)
+                } else {
+                    creation_output(out, &ask)
+                };
+                match output {
                     Ok(path) => *out = path,
                     Err(error) => {
                         let _ = tx.send(Message::Failed(error.to_string()));
