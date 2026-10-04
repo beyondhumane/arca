@@ -26,7 +26,7 @@ fn group_label(label: &'static str, cx: &App) -> gpui::Div {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn place_row(
+pub(super) fn place_row(
     id: impl Into<ElementId>,
     icon: Icon,
     label: impl Into<gpui::SharedString>,

@@ -36,7 +36,6 @@ use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_component::progress::Progress;
 use gpui_component::radio::RadioGroup;
 use gpui_component::scroll::ScrollableElement as _;
-use gpui_component::separator::Separator;
 use gpui_component::switch::Switch;
 use gpui_component::table::{Column, ColumnSort, DataTable, TableDelegate, TableEvent, TableState};
 use gpui_component::tree::{tree, TreeItem, TreeState};
@@ -171,6 +170,7 @@ struct GpuiShell {
     /// already says which is which.
     settings_focus: Vec<FocusHandle>,
     settings_section: SettingsSection,
+    settings_search: Entity<InputState>,
     /// Which row the right button was pressed on, and where the pointer was,
     /// so the menu opens under it instead of in a fixed corner.
     /// The band being drawn, while it is being drawn.
@@ -420,7 +420,9 @@ impl SettingsControl {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsSection {
     General,
+    Archives,
     Appearance,
+    Views,
     Keybindings,
     Updates,
     About,
@@ -463,6 +465,17 @@ impl GpuiShell {
                 .placeholder(strings.find_word)
                 .context_menu(false)
         });
+        let settings_search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(strings.settings_search)
+                .context_menu(false)
+        });
+        cx.subscribe_in(&settings_search, window, |_, _, event, _, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        })
+        .detach();
         cx.subscribe_in(&filter, window, |shell, state, event, _, cx| {
             if matches!(event, InputEvent::Change) {
                 let value = state.read(cx).value().to_string();
@@ -701,6 +714,7 @@ impl GpuiShell {
             dialog_cancel_focus: cx.focus_handle().tab_stop(true),
             add_start_focus: cx.focus_handle().tab_stop(true),
             settings_section: SettingsSection::General,
+            settings_search,
             settings_focus: SettingsControl::ALL
                 .iter()
                 .map(|_| cx.focus_handle().tab_stop(true))
@@ -3339,7 +3353,7 @@ mod tests {
         );
         assert_eq!(
             dialog_dimensions(ModalKind::Settings, viewport).0.width,
-            px(720.)
+            px(860.)
         );
     }
 
