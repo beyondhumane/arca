@@ -263,6 +263,7 @@ name = "arca-cli"
 version = "0.7.2"
 dependencies = [
  "arca-core",
+ "arca-iso",
  "arca-rar",
  "arca-tar",
  "arca-zip",
@@ -295,6 +296,7 @@ dependencies = [
  "arca-core",
  "arca-drag",
  "arca-icons",
+ "arca-iso",
  "arca-net",
  "arca-rar",
  "arca-tar",
@@ -318,6 +320,15 @@ name = "arca-icons"
 version = "0.7.2"
 dependencies = [
  "windows 0.58.0",
+]
+
+[[package]]
+name = "arca-iso"
+version = "0.7.2"
+dependencies = [
+ "arca-core",
+ "rayon",
+ "tempfile",
 ]
 
 [[package]]
