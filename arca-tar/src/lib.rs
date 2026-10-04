@@ -195,31 +195,40 @@ impl<R: Read> TarReader<R> {
         e: &TarEntry,
         f: impl FnOnce(&mut dyn Read) -> Result<T>,
     ) -> Result<T> {
+        let padding = (BLOCK - (e.data as usize % BLOCK)) % BLOCK;
         let mut data = Exact {
             source: &mut self.source,
             left: e.data,
+            padding,
         };
         let out = f(&mut data)?;
         io::copy(&mut data, &mut io::sink())?;
-        self.pos += e.data;
-        let padding = (BLOCK - (e.data as usize % BLOCK)) % BLOCK;
-        if padding > 0 {
-            let mut discard = vec![0u8; padding];
-            self.source.read_exact(&mut discard)?;
-            self.pos += padding as u64;
-        }
+        self.pos += e.data + padding as u64;
         Ok(out)
     }
 }
 
+// The padding is read before the end of the data is reported, so a reader
+// that commits on end of data never commits an entry whose padding is cut.
 struct Exact<'a, R: Read> {
     source: &'a mut R,
     left: u64,
+    padding: usize,
 }
 
 impl<R: Read> Read for Exact<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.left == 0 || buf.is_empty() {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if self.left == 0 {
+            if self.padding > 0 {
+                let mut discard = [0u8; BLOCK];
+                self.source
+                    .read_exact(&mut discard[..self.padding])
+                    .map_err(|_| truncated())?;
+                self.padding = 0;
+            }
             return Ok(0);
         }
         let max = buf
@@ -227,14 +236,15 @@ impl<R: Read> Read for Exact<'_, R> {
             .min(usize::try_from(self.left).unwrap_or(usize::MAX));
         let n = self.source.read(&mut buf[..max])?;
         if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "the TAR entry is truncated",
-            ));
+            return Err(truncated());
         }
         self.left -= n as u64;
         Ok(n)
     }
+}
+
+fn truncated() -> io::Error {
+    io::Error::new(io::ErrorKind::UnexpectedEof, "the TAR entry is truncated")
 }
 
 pub struct TarWriter<W: Write> {
@@ -390,6 +400,19 @@ mod tests {
         let a = r.next_entry().unwrap().unwrap();
         let mut out = Vec::new();
         let error = r.with_data(&a, |d| Ok(io::copy(d, &mut out)?)).unwrap_err();
+        assert!(error.to_string().contains("truncated"), "{error}");
+
+        let mut r = TarReader::new(&tar[..BLOCK + 10]);
+        let a = r.next_entry().unwrap().unwrap();
+        let mut committed = false;
+        let error = r
+            .with_data(&a, |d| {
+                io::copy(d, &mut io::sink())?;
+                committed = true;
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(!committed);
         assert!(error.to_string().contains("truncated"), "{error}");
     }
 

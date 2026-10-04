@@ -211,3 +211,47 @@ fn damaged_xz_reports_errors_and_publishes_nothing() {
         assert!(test_archive(&cut, None, None, GO).map_or(true, |(_, bad)| !bad.is_empty()));
     }
 }
+
+#[test]
+fn a_stop_during_a_small_xz_job_publishes_nothing() {
+    let room = Room::new();
+    let source = sample(&room);
+    let stop: &(dyn Fn(usize, usize, &str) -> bool + Sync) = &|_, _, _| false;
+    let small = source.join("a.txt");
+    let out = room.path("a.txt.xz");
+    let result = compress(
+        &out,
+        std::slice::from_ref(&small),
+        Format::Xz,
+        Codec::Deflate,
+        Level::Fast,
+        stop,
+        (None, false),
+    );
+    assert!(matches!(result, Err(Error::Cancelled)));
+    assert!(!out.exists());
+    let tarxz = room.path("tiny.tar.xz");
+    let result = compress(
+        &tarxz,
+        std::slice::from_ref(&small),
+        Format::TarXz,
+        Codec::Deflate,
+        Level::Fast,
+        &|i, _, _| i == 0,
+        (None, false),
+    );
+    assert!(matches!(result, Err(Error::Cancelled)));
+    assert!(!tarxz.exists());
+    make(&out, &[small], Format::Xz).unwrap();
+    let dest = room.path("out");
+    assert!(matches!(
+        extract(&out, &dest, &[], stop, &replace, None),
+        Err(Error::Cancelled)
+    ));
+    assert!(!dest.join("a.txt").exists());
+    assert!(matches!(
+        test_archive(&out, None, None, stop),
+        Err(Error::Cancelled)
+    ));
+    assert!(leftovers(&room.0).is_empty());
+}

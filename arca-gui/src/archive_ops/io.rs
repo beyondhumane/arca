@@ -68,6 +68,10 @@ impl<R: Read> Read for Watched<'_, R> {
             }
         }
         let n = self.inner.read(buf)?;
+        if n == 0 && !buf.is_empty() && !(self.notify)(0, 1, self.name) {
+            self.stopped = true;
+            return Err(std::io::Error::other("cancelled"));
+        }
         self.since += n as u64;
         Ok(n)
     }
@@ -950,6 +954,9 @@ pub(crate) fn compress(
                 let result = w.add(name, meta.len(), mtime_of(&meta), 0o644, &mut f);
                 f.check(result)?;
                 source_bytes += meta.len();
+            }
+            if !notify(total, total, "") {
+                return Err(arca_core::Error::Cancelled);
             }
             w.finish()?.finish()?.flush()?;
             Ok(())
