@@ -45,6 +45,9 @@ fn single_entries_preview_and_extract_by_index() {
     assert_eq!(fs::read(path).unwrap(), b"hello from arca\n");
     let (good, bad) = test_archive(&archive, None, None, &|_, _, _| true).unwrap();
     assert_eq!((good, bad.len()), (5, 0));
+    let only: HashSet<String> = ["readme.txt".to_string()].into();
+    let (good, bad) = test_archive(&archive, Some(&only), None, &|_, _, _| true).unwrap();
+    assert_eq!((good, bad.len()), (1, 0));
 }
 
 #[test]

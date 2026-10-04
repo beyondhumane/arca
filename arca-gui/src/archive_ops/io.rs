@@ -512,8 +512,11 @@ pub(crate) fn test_archive(
         }
         Format::Iso => {
             let a = arca_iso::IsoArchive::open_with_progress(archive, notify)?;
-            a.test(notify)?;
-            good = a.entries().iter().filter(|e| !e.is_dir).count();
+            let wanted: Vec<bool> = match only {
+                Some(set) => a.entries().iter().map(|e| set.contains(&e.name)).collect(),
+                None => Vec::new(),
+            };
+            good = a.test(&wanted, notify)?;
         }
         Format::Zip => {
             let mut a = ZipArchive::open(File::open(archive)?)?;

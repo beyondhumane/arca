@@ -204,6 +204,13 @@ fn check_component(name: &str) -> Result<()> {
     Ok(())
 }
 
+// A directory's records follow its extended attribute record, if any.
+fn data_start(r: &Record<'_>) -> Result<u32> {
+    r.extent
+        .checked_add(u32::from(r.xattr))
+        .ok_or_else(|| Error::Format("directory extent overflows".into()))
+}
+
 // The same rules the RAR reader applies, so an image cannot name something a
 // Windows destination would resolve to a device or a different file.
 fn check_path(path: &str) -> Result<()> {
@@ -313,11 +320,11 @@ pub(crate) fn parse<R: Read + Seek>(source: &mut R, progress: &dyn Fn() -> bool)
 
     let primary_root = record(&primary[156..190])?;
     let mut names = Names::Plain;
-    let mut root = (primary_root.extent, primary_root.size);
+    let mut root = (data_start(&primary_root)?, primary_root.size);
     let first = read_at(
         source,
         len,
-        u64::from(primary_root.extent) * SECTOR,
+        u64::from(root.0) * SECTOR,
         SECTOR,
         "root directory",
     )?;
@@ -330,7 +337,7 @@ pub(crate) fn parse<R: Read + Seek>(source: &mut R, progress: &dyn Fn() -> bool)
         names = Names::RockRidge { skip };
     } else if let Some(j) = &joliet {
         let r = record(&j[156..190])?;
-        root = (r.extent, r.size);
+        root = (data_start(&r)?, r.size);
         names = Names::Joliet;
     }
 
@@ -511,7 +518,7 @@ impl<R: Read + Seek> Walker<'_, R> {
             if is_dir {
                 let (extent, size) = match rr.child {
                     Some(child) => (child, self.relocated_size(child)?),
-                    None => (r.extent, r.size),
+                    None => (data_start(&r)?, r.size),
                 };
                 let before = self.entries.len();
                 self.directory(extent, size, &path, depth + 1)?;

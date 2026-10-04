@@ -60,19 +60,27 @@ impl IsoArchive {
 
     /// ISO 9660 stores no checksums, so this proves every byte of every file
     /// can be read from the image, not that the bytes are the original ones.
-    pub fn test(&self, progress: &Progress<'_>) -> Result<()> {
+    /// Reads every selected file (all of them when `wanted` is empty) and
+    /// returns how many were read.
+    pub fn test(&self, wanted: &[bool], progress: &Progress<'_>) -> Result<usize> {
         let mut source = File::open(&self.path)?;
         let total = self.entries.len();
+        let mut tested = 0;
         for (i, entry) in self.entries.iter().enumerate() {
             if !progress(i, total, &entry.name) {
                 return Err(Error::Cancelled);
             }
+            let selected = wanted.is_empty() || wanted.get(i).copied().unwrap_or(false);
+            if entry.is_dir || !selected {
+                continue;
+            }
+            tested += 1;
             copy(&mut source, &self.extents[i], &mut io::sink(), &|| {
                 progress(i, total, &entry.name)
             })?;
         }
         let _ = progress(total, total, "");
-        Ok(())
+        Ok(tested)
     }
 
     pub fn read_entry(&self, index: usize) -> Result<Vec<u8>> {
@@ -168,6 +176,7 @@ impl IsoArchive {
                 )?;
                 writer.flush()?;
                 drop(writer);
+                reject_links(target, &dest)?;
                 if *overwrite {
                     output.persist(target)
                 } else {

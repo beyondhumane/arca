@@ -189,7 +189,7 @@ fn files_split_into_several_extents_are_one_entry() {
         .extract(&out, &[], &|_, _, _| true, &|_| Conflict::Cancel)
         .unwrap();
     assert_eq!(fs::read(out.join("BIG.BIN")).unwrap(), expected);
-    archive.test(&|_, _, _| true).unwrap();
+    archive.test(&[], &|_, _, _| true).unwrap();
 }
 
 #[test]
@@ -219,6 +219,26 @@ fn a_directory_pointing_back_at_an_ancestor_is_a_loop() {
         .put(19, &directory(19, 18, &[], &[dir(18, b"B")]))
         .bytes();
     assert!(error(&data).contains("loop"));
+}
+
+#[test]
+fn directory_records_start_after_the_extended_attributes() {
+    let mut a = dir(19, b"A");
+    a[1] = 1;
+    let data = Image::new(false, &[a])
+        .put(20, &directory(20, 18, &[], &[file(21, 3, b"F;1")]))
+        .put(21, b"abc")
+        .bytes();
+    assert_eq!(names(&data), ["A", "A/F"]);
+}
+
+#[test]
+fn only_the_selected_files_are_tested() {
+    let a = IsoArchive::open(&fixture("joliet.iso")).unwrap();
+    let wanted: Vec<bool> = a.entries().iter().map(|e| e.name == "readme.txt").collect();
+    assert_eq!(a.test(&wanted, &|_, _, _| true).unwrap(), 1);
+    let files = a.entries().iter().filter(|e| !e.is_dir).count();
+    assert_eq!(a.test(&[], &|_, _, _| true).unwrap(), files);
 }
 
 #[test]
@@ -487,7 +507,10 @@ fn stopping_cancels() {
         a.extract(out.path(), &[], &|_, _, _| false, &|_| Conflict::Cancel),
         Err(Error::Cancelled)
     ));
-    assert!(matches!(a.test(&|_, _, _| false), Err(Error::Cancelled)));
+    assert!(matches!(
+        a.test(&[], &|_, _, _| false),
+        Err(Error::Cancelled)
+    ));
     assert!(matches!(
         IsoArchive::open_with_progress(&fixture("rockridge.iso"), &|_, _, _| false),
         Err(Error::Cancelled)

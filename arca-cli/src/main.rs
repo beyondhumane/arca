@@ -708,7 +708,7 @@ fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
         }
         Format::Iso => {
             let a = open_iso(archive)?;
-            a.test(&|_, _, _| true)?;
+            a.test(&[], &|_, _, _| true)?;
             n = a.entries().iter().filter(|e| !e.is_dir).count() as u64;
         }
         Format::Zip => {
