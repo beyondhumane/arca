@@ -2,8 +2,8 @@
 
 Status: experimental implementation behind an opt-in Cargo feature.
 Tracks [#3](https://github.com/beyondhumane/arca/issues/3) and
-[#14](https://github.com/beyondhumane/arca/issues/14); multivolume assembly
-and stable activation remain follow-up work. **Distribution remains blocked**
+[#14](https://github.com/beyondhumane/arca/issues/14). Multivolume assembly is
+implemented; stable activation remains follow-up work. **Distribution remains blocked**
 by the investigated provenance/notice questions below, independently of
 technical acceptance testing.
 
@@ -66,7 +66,10 @@ No upstream contact was made during this audit.
 - Private staging and complete verification before publishing selected files.
 - Optional CRC32 metadata and a RAR method label, without inventing ZIP method codes.
 - Read-only mutation guards, no default file associations.
-- Explicit rejection of volume sets, links/special files and ambiguous/unsafe paths.
+- Same-directory modern and legacy volume discovery from any selected part,
+  split-stream assembly, available ordering/identity checks and per-set budgets.
+- Deterministic missing/duplicate/inconsistent volume errors; rejection of input
+  links/reparse points, special files and ambiguous/unsafe extraction paths.
 
 The [RAR guide](../guide/rar.md) documents exact limits, publication semantics,
 commands and remaining exclusions. The [fixture record](../../arca-rar/tests/fixtures/README.md)
@@ -75,14 +78,31 @@ RAR/UnRAR reference executables are local test tools, not redistributed with
 Arca or required by its runtime.
 CI tests both feature states and checks the opt-in reader on all three platforms.
 
-## Before stable activation
+## Stable-release checklist
 
-- Resolve the evidence-based [distribution gate](../plans/rars-0.10.0-distribution.md#evidence-needed-to-lift-the-hold)
+- [ ] Resolve the evidence-based [distribution gate](../plans/rars-0.10.0-distribution.md#evidence-needed-to-lift-the-hold)
   and verify required notices in the actual release artifacts. The initial
   provenance audit is complete; the unresolved questions are not legal clearance.
-- Expand external corpora across RAR generations, compression modes, Unicode
-  names, encrypted headers and filtered streams.
-- Sustained malformed-input fuzzing with memory/time supervision.
-- Native GUI interaction testing, including cancellation and password retries.
-- Design explicit volume discovery/missing-volume errors before adding multivolume.
-- Revisit resource defaults with representative workloads, not anecdotal benchmarks.
+- [ ] On the release candidate, pass workspace formatting, Clippy, feature-on/off
+  tests, release builds and the feature audit. Confirm only `rars/encryption`
+  is compiled for CLI and GUI on Linux, Windows and macOS.
+- [ ] Pass the checked-in interoperability matrix against official UnRAR and
+  record producer/tool versions, fixture checksums, metadata and output hashes.
+  Explicitly accept or resolve uncovered generations, filters and dictionary sizes.
+- [ ] Run the checked-in fuzz campaign with recorded seed, execution count,
+  elapsed time and memory/time bounds. Triage every panic, timeout and invariant
+  violation; add minimized regressions. Agree and record a sustained campaign
+  budget before promotion: the initial bounded run is not exhaustive evidence.
+- [ ] Verify missing/corrupt later volumes, unsafe paths, cancellation and staging
+  disk-full failures leave the destination untouched; publication failures may
+  leave earlier verified files. Run platform-specific reparse and disk-full tests
+  with their required host permissions rather than counting ignored tests as passed.
+- [ ] Record native GUI interaction checks on Linux, Windows and macOS: opening
+  later volumes, full/selected extraction, previews, password retries, cancellation,
+  missing-volume messages and unavailable mutation actions. Controller tests and
+  cross-platform compilation do not replace interaction checks.
+- [ ] Resolve or explicitly document RAR4 encrypted-header bad-password ambiguity
+  and validate representative workloads against the published resource limits.
+- [ ] Only after these gates, enable RAR in normal CLI/GUI builds, update English
+  and Spanish UI/docs, retain the feature-off build, and verify notices in every
+  archive/installer. Do not add writing, recovery or OS associations as part of promotion.

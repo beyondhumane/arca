@@ -24,7 +24,7 @@ A cross-platform archiver in Rust. ZIP and TAR, Zstandard on every core, AES-256
 | Feature | Details |
 |---|---|
 | **Formats** | ZIP with Zip64 (store, Deflate, Zstandard), ustar TAR, `.tar.gz` |
-| **Experimental** | [RAR/CBR reading](docs/guide/rar.md), opt-in with `--features rar`; never creates or modifies RAR |
+| **Experimental** | [RAR/CBR reading, including multivolume](docs/guide/rar.md), opt-in with `--features rar`; never creates or modifies RAR |
 | **Speed** | Multi-threaded compression, parallel `.zip` extraction, sub-millisecond start |
 | **Safety** | `#![forbid(unsafe_code)]` parsers, bounded header reads, Zip Slip defence |
 | **Encryption** | AES-256 (WinZip AE-2), opens in 7-Zip, WinRAR and NanaZip |

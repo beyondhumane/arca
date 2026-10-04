@@ -135,7 +135,7 @@ jobs:
       - name: Experimental RAR reader
         run: |
           cargo test -p arca-rar -p arca-cli --features rar --locked
-          cargo check -p arca-gui --features rar --locked
+          cargo build --release -p arca-cli -p arca-gui --features rar --locked
 
       - name: Shell extension
         if: matrix.os == 'windows-latest'

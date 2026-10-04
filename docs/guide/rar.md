@@ -1,8 +1,8 @@
 ---
-description: Build the optional read-only RAR/CBR reader, with passwords, staged extraction and explicit resource limits.
+description: Build the optional read-only RAR/CBR reader, including multivolume sets, passwords and verified extraction.
 group: Reference
 order: 20
-keywords: rar cbr read-only experimental encryption solid archive
+keywords: rar cbr read-only experimental encryption solid archive multivolume part1 r00
 ---
 
 # Experimental RAR reader
@@ -29,12 +29,16 @@ arca list private.rar -p 'password'     # also works with encrypted headers
 arca test archive.rar -p 'password'
 arca extract archive.rar -o extracted/ -p 'password'
 arca extract comic.cbr -o comic/
+arca list backup.part03.rar             # resolves the complete set
+arca extract backup.r01 -o backup/      # legacy .rar/.r00/.r01 naming
 ```
 
 Omit `-p` for an unencrypted archive. Command-line passwords can be visible in
 shell history and process listings, as with ZIP; prefer the desktop password
 dialog on shared machines. The GUI prompts before listing encrypted headers,
-retries incorrect passwords, and keeps the password for the open archive.
+retries identifiable incorrect passwords, and keeps the password for the open archive.
+RAR4 encrypted headers can report an incorrect password as a format error;
+reopen with the correct password rather than assuming the archive is damaged.
 The title identifies RAR as experimental and read-only. No operating-system
 file associations are added by this feature.
 
@@ -47,12 +51,34 @@ RAR never appears in the creation formats. Creating RAR/CBR or changing a RAR
 password is rejected. Add, remove, rename, move and new-folder jobs cannot
 modify it. Copying an existing archive as a file is not a RAR rewrite.
 
+## Multivolume sets
+
+Keep every volume in the same directory. Modern `name.part1.rar` or
+`name.part01.rar` sets and legacy `name.rar`, `name.r00`, `name.r01` sets can
+be opened from any part. The adapter resolves the first volume and lists,
+previews, tests and extracts the complete set, including split, solid and
+encrypted streams. In the desktop file picker, use **All files (including RAR
+volumes)** to select a legacy later volume. Passwords apply to the complete set.
+
+Discovery does not search other directories or download missing parts. Missing,
+duplicate, out-of-order and inconsistent volumes are rejected with the affected
+path. Selected volumes and discovered siblings must be regular files, not links
+or Windows reparse points. Standalone archives with volume-like filenames are
+still treated as standalone files when their headers do not declare a set.
+
+RAR has no universal set identifier. The adapter checks available volume numbers,
+flags and split-member metadata; unrelated unsplit volumes with identical metadata
+cannot always be distinguished, and older formats lack reliable volume ordinals.
+Integrity verification checks the checksums/authenticators provided by the format.
+
 ## Safety and limits
 
 Each operation uses these fixed ceilings:
 
 | Resource | Limit |
 |---|---:|
+| Volumes per set | 256 |
+| Directory entries inspected during volume discovery | 100,000 |
 | Headers | 100,000 |
 | Header bytes | 64 MiB |
 | RAR5 dictionary | 256 MiB |
@@ -62,7 +88,8 @@ Each operation uses these fixed ceilings:
 | Total decoded output, including unselected files | 16 GiB |
 | In-memory preview | 64 MiB |
 
-These are decoder limits, not a hard process-RSS or CPU-time sandbox. Some
+Header and output budgets apply across the complete set. These are decoder
+limits, not a hard process-RSS or CPU-time sandbox. Some
 filtered archives need more buffered decoding than permitted and are rejected.
 The GUI's cancellation flag is checked while parsing and decoding as well as
 between publication steps.
@@ -88,17 +115,16 @@ Integrity guarantees depend on the checksums/authenticators the archive carries.
 
 ## Deliberate exclusions and stability gate
 
-- **Multi-volume sets** (`.part1.rar`, split members and old-numbered sets) are
-  not assembled. The adapter rejects volume flags rather than guessing sibling
-  paths or publishing a partial set. Open a complete single-volume archive.
 - No recovery/repair, RAR writing, OS associations or claim of exhaustive RAR
   compatibility. Unsupported methods/metadata return errors.
-- The current corpus covers independent RAR5 stored/compressed/solid/encrypted
-  files plus a legacy Unpack29 solid fixture. Broader external corpora and
-  sustained fuzzing remain necessary before stable activation.
-- `rars` declares Apache-2.0, but the upstream code/research provenance and
-  relevant RARLAB license restrictions still need review before distribution.
-  Safe Rust and a disabled writer do not settle provenance or resource risks.
+- Independent fixtures, multivolume regressions, official UnRAR comparisons and
+  bounded mutation fuzzing extend coverage. They do not establish exhaustive
+  compatibility. See the [validation record](https://github.com/beyondhumane/arca/tree/main/docs/plans)
+  for reproducible checks and uncovered cases.
+- The [provenance review](https://github.com/beyondhumane/arca/blob/main/docs/plans/rars-0.10.0-distribution.md)
+  found unresolved source/research and notice questions. Stable distribution
+  remains blocked. Apache-2.0 metadata, safe Rust and a disabled writer do not
+  resolve those questions; the opt-in feature is not distribution clearance.
 
 Run the feature audit and tests with:
 
