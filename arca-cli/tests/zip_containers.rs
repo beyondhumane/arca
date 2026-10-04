@@ -148,8 +148,10 @@ fn zip_containers_cannot_be_created_or_rewritten() {
     let dir = tempfile::tempdir().unwrap();
     let bytes = sample(dir.path());
     let source = dir.path().join("input/page.txt");
-    for extension in extension_variants() {
-        let out = dir.path().join(format!("new.{extension}"));
+    // Upper and lower case variants get distinct names: on a case-insensitive
+    // filesystem new.apk and new.APK are the same file.
+    for (i, extension) in extension_variants().into_iter().enumerate() {
+        let out = dir.path().join(format!("new{i}.{extension}"));
         let result = run(&["create".as_ref(), out.as_os_str(), source.as_os_str()]);
         assert!(!result.status.success(), "{extension}");
         assert!(stderr(&result).contains("read-only"), "{}", stderr(&result));
@@ -167,7 +169,7 @@ fn zip_containers_cannot_be_created_or_rewritten() {
         assert_eq!(std::fs::read(&out).unwrap(), bytes, "{extension}");
 
         let zip = dir.path().join("sample.zip");
-        let exported = dir.path().join(format!("exported.{extension}"));
+        let exported = dir.path().join(format!("exported{i}.{extension}"));
         let result = run(&[
             "password".as_ref(),
             zip.as_os_str(),
