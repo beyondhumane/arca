@@ -92,8 +92,10 @@ miembro y después lo publica sin sobrescribir nada. Cualquier fallo o la
 cancelación no deja nada en la ruta de destino. En la CLI, Ctrl+C (SIGINT) o
 SIGTERM durante una creación RAR se atiende de forma cooperativa: el recorrido o
 el escritor se detienen en su siguiente comprobación, informan `cancelled` con
-estado de salida distinto de cero y el fichero preparado se elimina. SIGKILL y
-un corte de corriente no están cubiertos.
+estado de salida distinto de cero y el fichero preparado se elimina. En Unix se
+conserva el tratamiento heredado de SIGHUP para respetar `nohup`. Un SIGHUP no
+ignorado, SIGKILL o un corte de corriente pueden dejar temporales
+`.arca-*.rar.part` y `.rars-spool-*`, que no son archivos publicados.
 
 No se admite en este incremento, y se rechaza en lugar de aproximarse: archivos
 sólidos, salida multivolumen, cifrado, registros de recuperación, filtros de

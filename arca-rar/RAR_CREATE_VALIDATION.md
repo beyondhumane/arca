@@ -111,8 +111,9 @@ interruption case in the harness table above, corrected below.
   tests; only the entry ceiling was reached with real files (stress run).
 - Disk-full was checked on a Linux tmpfs only; quota exhaustion, Windows
   locks/antivirus, power loss and concurrent writers were not tested.
-- SIGINT/SIGTERM are cancelled cooperatively (see interrupt above); SIGKILL and
-  power loss can still leave the staged `.arca-*.rar.part` file behind.
+- SIGINT/SIGTERM are cancelled cooperatively (see interrupt above); an unhandled
+  SIGHUP, SIGKILL or power loss can leave `.arca-*.rar.part` and `.rars-spool-*`
+  temporary files. SIGHUP handling is deliberately unchanged for `nohup`.
 - The harness does not fuzz the writer's input beyond seeded trees, and the
   corruption check mutates Arca's own output; it is not a coverage-guided
   campaign.

@@ -91,7 +91,9 @@ without overwriting. Any failure or cancellation leaves nothing at the output
 path. In the CLI, Ctrl+C (SIGINT) or SIGTERM during a RAR creation is handled
 cooperatively: the walk or the writer stops at its next check, reports
 `cancelled` with a nonzero exit status and the staged part file is removed.
-SIGKILL and power loss are not covered.
+On Unix, inherited SIGHUP handling is preserved so `nohup` still works.
+An unhandled SIGHUP, SIGKILL or power loss can leave `.arca-*.rar.part` and
+`.rars-spool-*` temporary files; these are not published archives.
 
 Not supported in this increment, and refused rather than approximated: solid
 archives, multivolume output, encryption, recovery records, RAR data filters,
