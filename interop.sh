@@ -187,6 +187,8 @@ if [ "${ARCA_TEST_RAR:-0}" = 1 ]; then
       python3 -c 'from pathlib import Path; p=Path("rar-out"); assert (p/"first.txt").read_bytes()==b"Arca RAR fixture alpha\n"*64; assert (p/"folder/second.txt").read_bytes()==b"Arca RAR fixture beta\n"*64' &&
       ok "RAR complete set resolved from volume $part" || ko "RAR volume $part resolution"
   done
+  ARCA="$ARCA" python3 "$ROOT/arca-rar/tests/compare-matrix.py" &&
+    ok "RAR independent generation/volume/dictionary matrix" || ko "RAR independent matrix"
   echo
 fi
 echo "-------------------------------------------"
