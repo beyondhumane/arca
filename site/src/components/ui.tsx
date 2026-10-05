@@ -298,7 +298,7 @@ export function SpotlightCard({ className, children, ...rest }: HTMLAttributes<H
 /*  Brand                                                              */
 /* ------------------------------------------------------------------ */
 export function LogoMark({ className }: { className?: string }) {
-  return <img src={mark} alt="" aria-hidden="true" className={className} />;
+  return <img src={mark} alt="" width="38" height="24" aria-hidden="true" className={className} />;
 }
 
 export function Logo({ className, suffix }: { className?: string; suffix?: ReactNode }) {
