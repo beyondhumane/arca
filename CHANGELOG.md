@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/beyondhumane/arca/compare/v0.8.1...v0.8.2) (2026-10-05)
+
+
+### Maintenance
+
+* release 0.8.2 ([#47](https://github.com/beyondhumane/arca/issues/47)) ([f568097](https://github.com/beyondhumane/arca/commit/f568097f26ee4b40ebd682730158201206500e81))
+
 ## [0.8.1](https://github.com/beyondhumane/arca/compare/v0.8.0...v0.8.1) (2026-10-04)
 
 
