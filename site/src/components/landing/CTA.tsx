@@ -67,7 +67,7 @@ export function CTA() {
               </div>
             </div>
 
-            <div className="relative mx-auto mt-14 grid max-w-5xl gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="relative mx-auto mt-14 grid max-w-5xl grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {ORDER.map((p) => {
                 const d = DOWNLOADS[p];
                 const Icon = PLATFORM_ICONS[p];
@@ -78,7 +78,7 @@ export function CTA() {
                     href={d.url}
                     aria-label={t.download(d.file)}
                     className={cn(
-                      'group relative flex items-center gap-4 rounded-2xl border p-4 text-left transition-all duration-300 hover:-translate-y-1',
+                      'group relative flex items-center gap-3 rounded-2xl border p-4 text-left transition-all duration-300 hover:-translate-y-1',
                       isRec
                         ? 'border-brand-400/40 bg-brand-500/[0.08] shadow-[0_20px_50px_-24px_rgba(47,107,255,0.7)]'
                         : 'border-white/[0.08] bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.05]',
@@ -94,7 +94,8 @@ export function CTA() {
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium text-white">{d.label}</span>
-                      <span className="block truncate text-xs text-slate-500">{[t.details[p], d.size].filter(Boolean).join(' · ')}</span>
+                      <span className="block text-xs text-slate-500">{t.details[p]}</span>
+                      {d.size && <span className="block text-xs tabular-nums text-slate-500">{d.size}</span>}
                     </span>
                     <Download className="size-4 shrink-0 text-slate-500 transition-all duration-300 group-hover:translate-y-0.5 group-hover:text-brand-300" />
                   </a>
