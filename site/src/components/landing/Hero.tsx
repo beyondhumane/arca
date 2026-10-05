@@ -263,7 +263,7 @@ function RatioCard({ className }: { className?: string }) {
             </span>
           </div>
           <div className="mt-3 flex items-center gap-4">
-            <svg viewBox="0 0 64 64" className="size-16 -rotate-90">
+            <svg viewBox="0 0 64 64" width="64" height="64" className="size-16 -rotate-90">
               <defs>
                 <linearGradient id="hero-ratio-grad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
                   <stop stopColor="#8CC4FF" />
