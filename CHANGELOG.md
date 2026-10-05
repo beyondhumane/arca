@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.3](https://github.com/beyondhumane/arca/compare/v0.8.2...v0.8.3) (2026-10-05)
+
+
+### Bug fixes
+
+* **site:** give inline SVG icons and the logo image an intrinsic size ([#49](https://github.com/beyondhumane/arca/issues/49)) ([3627457](https://github.com/beyondhumane/arca/commit/36274574b71128ad02b3aea87f7daa6809608329))
+* **site:** keep download cards aligned on mobile ([#51](https://github.com/beyondhumane/arca/issues/51)) ([a0e2282](https://github.com/beyondhumane/arca/commit/a0e22820d30b8f150f73aaaadc1a0c318ce79f21))
+
 ## [0.8.2](https://github.com/beyondhumane/arca/compare/v0.8.1...v0.8.2) (2026-10-05)
 
 
