@@ -444,3 +444,46 @@ fn an_update_check_that_ends_without_an_answer_stops_being_waited_for() {
     assert!(app.state.update_rx.is_none());
     assert!(app.state.update.is_none());
 }
+
+#[test]
+fn an_edit_can_still_be_undone_after_the_archive_is_read_again() {
+    let room = Room::new();
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("a.txt"), b"first contents").unwrap();
+    fs::write(source.join("b.txt"), b"second contents").unwrap();
+    let archive = room.path("edit.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::Normal,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.open_with_password(archive.clone(), None);
+    settle(&mut app);
+    let before = app.state.entries.len();
+    let name = app
+        .state
+        .entries
+        .iter()
+        .find(|entry| entry.name.ends_with("a.txt"))
+        .unwrap()
+        .name
+        .clone();
+    app.run_job(Job::Delete {
+        archive: archive.clone(),
+        names: vec![name],
+        password: None,
+    });
+    settle(&mut app);
+    assert_eq!(app.state.entries.len(), before - 1);
+    assert!(app.state.undo.is_some());
+    app.undo_last();
+    settle(&mut app);
+    assert_eq!(app.state.entries.len(), before);
+}
