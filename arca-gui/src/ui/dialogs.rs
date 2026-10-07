@@ -262,29 +262,33 @@ impl Shell {
         heading(ui, s.conflict_title);
         ui.label(format!("{} {path}", s.already_there));
         let mut answer = None;
-        Self::footer_buttons(ui, |ui| {
-            for (label, choice, primary) in [
+        let rows = [
+            vec![
+                (s.rename, Answer::Rename, false),
+                (s.no, Answer::Skip, false),
+                (s.yes, Answer::Replace, true),
+            ],
+            vec![
                 (s.cancel, Answer::Cancel, false),
                 (s.rename_all, Answer::RenameAll, false),
-                (s.rename, Answer::Rename, false),
                 (s.no_all, Answer::SkipAll, false),
-                (s.no, Answer::Skip, false),
                 (s.yes_all, Answer::ReplaceAll, false),
-                (s.yes, Answer::Replace, true),
-            ]
-            .into_iter()
-            .rev()
-            {
-                let clicked = if primary {
-                    primary_button(ui, label, true).clicked()
-                } else {
-                    secondary_button(ui, label, true).clicked()
-                };
-                if clicked {
-                    answer = Some(choice);
+            ],
+        ];
+        for row in rows {
+            Self::footer_buttons(ui, |ui| {
+                for (label, choice, primary) in row.into_iter().rev() {
+                    let clicked = if primary {
+                        primary_button(ui, label, true).clicked()
+                    } else {
+                        secondary_button(ui, label, true).clicked()
+                    };
+                    if clicked {
+                        answer = Some(choice);
+                    }
                 }
-            }
-        });
+            });
+        }
         if let Some(answer) = answer {
             self.answer_conflict(answer);
         }
