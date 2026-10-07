@@ -250,7 +250,13 @@ impl Shell {
             response.request_focus();
             self.focus_filter = false;
         }
-        if response.changed() {
+        let cleared = response.lost_focus()
+            && ui.input(|i| i.key_pressed(egui::Key::Escape))
+            && !self.filter_value.is_empty();
+        if cleared {
+            self.filter_value.clear();
+        }
+        if response.changed() || cleared {
             self.controller
                 .dispatch(AppAction::SetFilter(self.filter_value.clone()));
         }
