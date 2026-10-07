@@ -248,7 +248,7 @@ pub struct Strings {
     pub toggle_word: &'static str,
     pub jump_word: &'static str,
     pub move_word: &'static str,
-    // Names the GPUI surface reads out to a screen reader. Every landmark
+    // Names AccessKit reads out to a screen reader. Every landmark
     // carries the active language, so English labels never leak into a Spanish
     // window.
     pub toolbar_region: &'static str,

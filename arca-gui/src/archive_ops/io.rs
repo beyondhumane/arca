@@ -497,7 +497,7 @@ pub(crate) fn launch_with_system(path: &Path) -> arca_core::Result<()> {
 }
 
 // A button with a picture on it, and a word next to the picture when the button
-// is one of the ones worth naming. GPUI Kit supplies the button surface;
+// is one of the ones worth naming. egui supplies the button surface;
 // icons and labels remain separate so each can be styled independently.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Answer {

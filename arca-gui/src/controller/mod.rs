@@ -2,7 +2,9 @@
 
 mod actions;
 mod disk;
-pub(crate) use disk::{disk_dir, disk_path, DiskState, Origin, Place, PlaceKind};
+#[cfg(test)]
+use disk::disk_dir;
+pub(crate) use disk::{disk_path, DiskState, Origin, PlaceKind};
 pub(crate) use jobs::{Task, TaskId, TaskStatus};
 #[cfg(test)]
 mod container_tests;
@@ -23,7 +25,7 @@ mod state;
 #[cfg(test)]
 mod xz_tests;
 pub(crate) use actions::*;
-pub(crate) use panes::{BrowserState, DirectoryPane};
+pub(crate) use panes::BrowserState;
 pub(crate) use preview::{PreviewState, PreviewStatus};
 pub(crate) use state::AppState;
 
