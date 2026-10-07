@@ -6,8 +6,7 @@
   outputs =
     { self, nixpkgs }:
     let
-      # GPUI on macOS compiles its Metal shaders with Xcode, which the Nix
-      # sandbox does not have, so the flake is Linux only.
+      # The package is only built and tested on Linux.
       systems = [
         "x86_64-linux"
         "aarch64-linux"

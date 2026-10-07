@@ -48,7 +48,7 @@ jobs:
           libxcursor-dev libxinerama-dev libfontconfig1-dev
 
       # The GUI test binary is linked once, on Linux. Platform jobs validate
-      # their release builds without linking this large GPUI test binary again.
+      # their release builds without linking the GUI test binary again.
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
@@ -64,8 +64,8 @@ jobs:
           python3 arca-rar/fuzz/run.py --runs 2000 --seed 140014 --seconds 300 --output "$RUNNER_TEMP/rar-fuzz"
           python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["counts"]["executions"] == 2010 and len(r["baseline"]) == 10 and not r["failures"], "incomplete fuzz campaign"' "$RUNNER_TEMP/rar-fuzz/report.json"
 
-      # Interoperability exercises the CLI; there is no reason to build GPUI
-      # just to obtain arca for this check.
+      # Interoperability exercises the CLI; there is no reason to build the
+      # window just to obtain arca for this check.
       - name: Build CLI without default features
         run: cargo build --no-default-features -p arca-cli
       - name: Build CLI with the default codecs
