@@ -383,3 +383,22 @@ fn a_searched_row_says_where_it_is_below_the_folder_searched() {
         "Game/_CommonRedist/DirectX"
     );
 }
+
+#[test]
+fn arrow_keys_move_the_cursor_by_the_names_egui_gives_them() {
+    let name = |key: egui::Key| key.name().to_ascii_lowercase();
+    assert_eq!(
+        cursor_step(&name(egui::Key::ArrowDown), Some(0), 5),
+        Some(1)
+    );
+    assert_eq!(cursor_step(&name(egui::Key::ArrowUp), Some(3), 5), Some(2));
+    assert_eq!(
+        cursor_step(&name(egui::Key::ArrowDown), Some(5), 5),
+        Some(5)
+    );
+    assert_eq!(cursor_step(&name(egui::Key::ArrowUp), None, 5), Some(0));
+    assert_eq!(cursor_step(&name(egui::Key::PageDown), Some(0), 5), Some(5));
+    assert_eq!(cursor_step(&name(egui::Key::End), Some(0), 5), Some(5));
+    assert_eq!(cursor_step(&name(egui::Key::Home), Some(4), 5), Some(0));
+    assert_eq!(cursor_step(&name(egui::Key::A), Some(4), 5), None);
+}

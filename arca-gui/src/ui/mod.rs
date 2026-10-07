@@ -958,17 +958,9 @@ impl Shell {
         }
         let last = rows.len() - 1;
         let current = self.controller.state.cursor;
-        let page = 12;
-        let next = match key {
-            "arrowdown" => Some(current.map_or(0, |index| (index + 1).min(last))),
-            "arrowup" => Some(current.map_or(0, |index| index.saturating_sub(1))),
-            "pagedown" => Some(current.map_or(0, |index| (index + page).min(last))),
-            "pageup" => Some(current.map_or(0, |index| index.saturating_sub(page))),
-            "home" => Some(0),
-            "end" => Some(last),
-            _ => None,
+        let Some(index) = cursor_step(key, current, last) else {
+            return;
         };
-        let Some(index) = next else { return };
         if modifiers.shift {
             let from = current.unwrap_or(index);
             let (lo, hi) = if from <= index {
@@ -1103,5 +1095,18 @@ pub(crate) fn run() {
     if let Err(error) = result {
         eprintln!("arca-gui: {error}");
         std::process::exit(1);
+    }
+}
+
+pub(crate) fn cursor_step(key: &str, current: Option<usize>, last: usize) -> Option<usize> {
+    let page = 12;
+    match key {
+        "down" | "arrowdown" => Some(current.map_or(0, |index| (index + 1).min(last))),
+        "up" | "arrowup" => Some(current.map_or(0, |index| index.saturating_sub(1))),
+        "pagedown" => Some(current.map_or(0, |index| (index + page).min(last))),
+        "pageup" => Some(current.map_or(0, |index| index.saturating_sub(page))),
+        "home" => Some(0),
+        "end" => Some(last),
+        _ => None,
     }
 }
