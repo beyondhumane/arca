@@ -1,22 +1,19 @@
 use crate::{
-    assets::Assets,
+    assets,
     cli::{self, Options},
     engine::{self, Choices, Event, Job, Mode},
     i18n::Lang,
-    theme::{self, color, FOG, INK},
-    ui::{self, StepState},
+    screens::{Action, RELEASES},
+    theme::{self, color, FOG},
+    ui::{self, Glyph, StepState},
 };
-use gpui::{
-    div, img, point, prelude::*, px, size, App, Bounds, Context, FocusHandle, KeyDownEvent,
-    ObjectFit, Render, TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowOptions,
-};
-use gpui_platform::application;
+use eframe::egui::{self, pos2, vec2, Key, Rect, Sense, ViewportCommand};
 use std::{
     io::Write as _,
     path::PathBuf,
     sync::mpsc::{channel, Receiver, Sender, TryRecvError},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub const WIDTH: f32 = 720.;
@@ -28,7 +25,6 @@ const BACKGROUNDS: [&str; 3] = [
     "instalador-fondo-progreso.svg",
     "instalador-fondo-listo.svg",
 ];
-const PRELOADED: [&str; 3] = ["logo-horizontal.svg", "mark-sm.svg", "mark-lg.svg"];
 
 const TICK: Duration = Duration::from_millis(16);
 const CATCH_UP_PER_TICK: f32 = 0.9;
@@ -154,7 +150,6 @@ fn run_silent(options: &Options) -> i32 {
 }
 
 pub struct Setup {
-    pub(crate) focus: Option<FocusHandle>,
     pub(crate) screen: Screen,
     pub(crate) lang: Lang,
     pub(crate) mode: Mode,
@@ -168,6 +163,7 @@ pub struct Setup {
     finished: bool,
     hold: u32,
     events: Option<Receiver<Event>>,
+    clock: Option<Instant>,
 }
 
 impl Setup {
@@ -184,7 +180,6 @@ impl Setup {
             _ => 0.,
         };
         Setup {
-            focus: None,
             screen,
             lang,
             mode: job.mode,
@@ -203,6 +198,7 @@ impl Setup {
             finished: false,
             hold: 0,
             events: None,
+            clock: None,
         }
     }
 
@@ -216,7 +212,7 @@ impl Setup {
         }
     }
 
-    pub(crate) fn begin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn begin(&mut self) {
         self.screen = Screen::Installing;
         self.percent = 0.;
         self.target = 0.;
@@ -225,25 +221,9 @@ impl Setup {
         self.error = None;
         let (tx, rx) = channel();
         self.events = Some(rx);
+        self.clock = Some(Instant::now());
         let (job, preview) = (self.job(), self.preview);
         thread::spawn(move || work(job, preview, tx));
-        cx.notify();
-        let view = cx.weak_entity();
-        window
-            .spawn(cx, async move |async_cx| loop {
-                async_cx.background_executor().timer(TICK).await;
-                let running = view
-                    .update_in(async_cx, |setup, _window, cx| {
-                        let running = setup.tick();
-                        cx.notify();
-                        running
-                    })
-                    .unwrap_or(false);
-                if !running {
-                    break;
-                }
-            })
-            .detach();
     }
 
     fn fail(&mut self, message: String) -> bool {
@@ -295,29 +275,62 @@ impl Setup {
         true
     }
 
-    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        match key_action(self.screen, event.keystroke.key.as_str()) {
-            KeyAction::Begin => self.begin(window, cx),
-            KeyAction::Back => {
-                self.screen = Screen::Welcome;
-                cx.notify();
+    fn advance(&mut self, now: Instant) {
+        let Some(mut clock) = self.clock else {
+            self.clock = Some(now);
+            return;
+        };
+        while clock + TICK <= now {
+            clock += TICK;
+            if !self.tick() {
+                self.clock = None;
+                return;
             }
-            KeyAction::Close => window.remove_window(),
-            KeyAction::Ignore => {}
         }
+        self.clock = Some(clock);
     }
 
-    pub(crate) fn toggle(&mut self, which: fn(&mut Choices) -> &mut bool, cx: &mut Context<Self>) {
+    pub(crate) fn toggle(&mut self, which: fn(&mut Choices) -> &mut bool) {
         let value = which(&mut self.choices);
         *value = !*value;
-        cx.notify();
     }
 
-    pub(crate) fn finish(&mut self, window: &mut Window) {
+    fn finish(&mut self, ctx: &egui::Context) {
         if !self.preview && self.mode == Mode::Install {
             engine::launch_app(&self.dir);
         }
-        window.remove_window();
+        ctx.send_viewport_cmd(ViewportCommand::Close);
+    }
+
+    fn act(&mut self, action: Action, ctx: &egui::Context) {
+        match action {
+            Action::Begin => self.begin(),
+            Action::Customize => self.screen = Screen::Options,
+            Action::Back => self.screen = Screen::Welcome,
+            Action::Close => ctx.send_viewport_cmd(ViewportCommand::Close),
+            Action::Finish => self.finish(ctx),
+            Action::Releases => ctx.open_url(egui::OpenUrl::new_tab(RELEASES)),
+            Action::Toggle(which) => self.toggle(which),
+        }
+    }
+
+    fn on_key(&mut self, ctx: &egui::Context) {
+        let key = ctx.input(|input| {
+            if input.key_pressed(Key::Enter) {
+                "enter"
+            } else if input.key_pressed(Key::Escape) {
+                "escape"
+            } else {
+                ""
+            }
+        });
+        match key_action(self.screen, key) {
+            KeyAction::Begin => self.begin(),
+            KeyAction::Back => self.screen = Screen::Welcome,
+            KeyAction::Close if self.screen == Screen::Done => self.finish(ctx),
+            KeyAction::Close => ctx.send_viewport_cmd(ViewportCommand::Close),
+            KeyAction::Ignore => {}
+        }
     }
 
     fn background(&self) -> &'static str {
@@ -328,92 +341,60 @@ impl Setup {
         }
     }
 
-    fn backdrop(&self) -> impl IntoElement {
-        let current = self.background();
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .children(BACKGROUNDS.map(|path| {
-                img(path)
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .w(px(WIDTH))
-                    .h(px(HEIGHT))
-                    .object_fit(ObjectFit::Cover)
-                    .opacity(if path == current { 1. } else { 0. })
-            }))
-            .children(PRELOADED.map(|path| img(path).absolute().w(px(1.)).h(px(1.)).opacity(0.)))
-    }
-
-    fn header(&self) -> impl IntoElement {
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h(px(HEADER))
-            .flex()
-            .flex_row()
-            .items_center()
-            .child(ui::drag_area("drag"))
-            .when(!cfg!(target_os = "macos"), |bar| {
-                bar.child(ui::window_control(
-                    "minimize",
-                    "icons/minus.svg",
-                    WindowControlArea::Min,
-                    false,
-                ))
-                .child(ui::window_control(
-                    "close",
-                    "icons/x.svg",
-                    WindowControlArea::Close,
-                    true,
-                ))
-            })
+    fn header(&self, ui: &mut egui::Ui, area: Rect) -> Option<Action> {
+        let bar = Rect::from_min_size(area.min, vec2(area.width(), HEADER));
+        let controls = if cfg!(target_os = "macos") { 0. } else { 92. };
+        let drag = Rect::from_min_max(bar.min, pos2(bar.right() - controls, bar.bottom()));
+        if ui
+            .interact(drag, ui.id().with("drag"), Sense::drag())
+            .drag_started()
+        {
+            ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+        }
+        if cfg!(target_os = "macos") {
+            return None;
+        }
+        let close = Rect::from_min_max(pos2(bar.right() - 46., bar.top()), bar.max);
+        let minimize = close.translate(vec2(-46., 0.));
+        if ui::window_control(ui, minimize, Glyph::Minus, false, "Minimize").clicked() {
+            ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true));
+        }
+        ui::window_control(ui, close, Glyph::Close, true, "Close")
+            .clicked()
+            .then_some(Action::Close)
     }
 }
 
-impl Render for Setup {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let strings = self.lang.strings();
-        window.set_window_title(if self.mode == Mode::Uninstall {
-            strings.uninstall_window_title
-        } else {
-            strings.window_title
-        });
-        let focus = match &self.focus {
-            Some(focus) => focus.clone(),
-            None => {
-                let focus = cx.focus_handle();
-                window.focus(&focus, cx);
-                self.focus = Some(focus.clone());
-                focus
+impl eframe::App for Setup {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        if self.events.is_some() {
+            self.advance(Instant::now());
+            if self.events.is_some() {
+                ctx.request_repaint_after(TICK);
             }
+        }
+        self.on_key(&ctx);
+        let area = ui.max_rect();
+        ui.painter().rect_filled(area, 0, color(FOG));
+        assets::image(self.background())
+            .fit_to_exact_size(area.size())
+            .paint_at(ui, area);
+        let action = match self.screen {
+            Screen::Welcome => self.welcome(ui, area),
+            Screen::Options => self.options(ui, area),
+            Screen::Installing => {
+                self.installing(ui, area);
+                None
+            }
+            Screen::Done => self.done(ui, area),
+            Screen::Failed => self.failed(ui, area),
         };
-        let content = match self.screen {
-            Screen::Welcome => self.welcome(cx),
-            Screen::Options => self.options(cx),
-            Screen::Installing => self.installing(),
-            Screen::Done => self.done(cx),
-            Screen::Failed => self.failed(cx),
-        };
-        div()
-            .id("setup")
-            .track_focus(&focus)
-            .on_key_down(cx.listener(Self::on_key))
-            .relative()
-            .size_full()
-            .overflow_hidden()
-            .bg(color(FOG))
-            .font_family(theme::text_font())
-            .text_color(color(INK))
-            .text_size(px(14.))
-            .child(self.backdrop())
-            .child(div().absolute().top_0().left_0().size_full().child(content))
-            .child(self.header())
+        let chrome = self.header(ui, area);
+        if let Some(action) = action.or(chrome) {
+            self.act(action, &ctx);
+            ctx.request_repaint();
+        }
     }
 }
 
@@ -434,34 +415,49 @@ pub fn run() {
     if options.silent && !options.preview {
         std::process::exit(run_silent(&options));
     }
-    application().with_assets(Assets).run(move |cx: &mut App| {
-        theme::resolve_fonts(cx);
-        cx.on_window_closed(|cx, _| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        })
-        .detach();
-        let lang = options.lang.unwrap_or_else(Lang::from_system);
-        let bounds = Bounds::centered(None, size(px(WIDTH), px(HEIGHT)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(WIDTH), px(HEIGHT))),
-                is_resizable: false,
-                app_owns_titlebar_drag: true,
-                titlebar: Some(TitlebarOptions {
-                    title: None,
-                    appears_transparent: true,
-                    traffic_light_position: Some(point(px(9.), px(9.))),
-                }),
-                ..Default::default()
-            },
-            |_, cx| cx.new(|_| Setup::new(&options, lang)),
-        )
-        .expect("open the setup window");
-        cx.activate(true);
-    });
+    let lang = options.lang.unwrap_or_else(Lang::from_system);
+    let strings = lang.strings();
+    let title = if options.mode == Mode::Uninstall {
+        strings.uninstall_window_title
+    } else {
+        strings.window_title
+    };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title(title)
+        .with_app_id("arca-setup")
+        .with_inner_size([WIDTH, HEIGHT])
+        .with_min_inner_size([WIDTH, HEIGHT])
+        .with_resizable(false)
+        .with_maximize_button(false);
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(assets::ICON) {
+        viewport = viewport.with_icon(icon);
+    }
+    viewport = if cfg!(target_os = "macos") {
+        viewport
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false)
+    } else {
+        viewport.with_decorations(false)
+    };
+    let native = eframe::NativeOptions {
+        viewport,
+        renderer: eframe::Renderer::Glow,
+        centered: true,
+        ..Default::default()
+    };
+    let result = eframe::run_native(
+        title,
+        native,
+        Box::new(move |creation| {
+            theme::install(&creation.egui_ctx);
+            egui_extras::install_image_loaders(&creation.egui_ctx);
+            Ok(Box::new(Setup::new(&options, lang)))
+        }),
+    );
+    if let Err(error) = result {
+        log_failure(&format!("could not open the setup window: {error}"));
+    }
 }
 
 #[cfg(test)]

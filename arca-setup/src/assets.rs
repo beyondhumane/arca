@@ -1,10 +1,9 @@
-use gpui::{AssetSource, Result, SharedString};
-use std::borrow::Cow;
+use eframe::egui;
 
 macro_rules! bundle {
     ($($path:literal),+ $(,)?) => {
+        #[cfg(test)]
         const PATHS: &[&str] = &[$($path),+];
-
         fn bytes(path: &str) -> Option<&'static [u8]> {
             match path {
                 $($path => Some(include_bytes!(concat!("../assets/", $path)).as_slice()),)+
@@ -21,13 +20,6 @@ bundle!(
     "logo-horizontal.svg",
     "mark-sm.svg",
     "mark-lg.svg",
-    "icons/arrow-right.svg",
-    "icons/check.svg",
-    "icons/chevron-left.svg",
-    "icons/folder.svg",
-    "icons/loader.svg",
-    "icons/minus.svg",
-    "icons/x.svg",
 );
 
 pub const FONT_FILES: [&[u8]; 2] = [
@@ -35,20 +27,10 @@ pub const FONT_FILES: [&[u8]; 2] = [
     include_bytes!("../assets/fonts/Inter-Regular.otf").as_slice(),
 ];
 
-pub struct Assets;
+pub const ICON: &[u8] = include_bytes!("../../brand/arca-monolito-256.png");
 
-impl AssetSource for Assets {
-    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        Ok(bytes(path).map(Cow::Borrowed))
-    }
-
-    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        Ok(PATHS
-            .iter()
-            .filter(|asset| asset.starts_with(path))
-            .map(|asset| SharedString::from(*asset))
-            .collect())
-    }
+pub fn image(path: &'static str) -> egui::Image<'static> {
+    egui::Image::from_bytes(format!("bytes://{path}"), bytes(path).unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -56,15 +38,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_bundled_asset_is_an_svg() {
+    fn every_bundled_picture_is_an_svg_with_content() {
         for path in PATHS {
-            let data = Assets.load(path).unwrap().unwrap();
-            assert!(data.starts_with(b"<svg"), "not an SVG: {path}");
+            let data = bytes(path).expect("bundled");
+            assert!(String::from_utf8_lossy(data).contains("<svg"), "{path}");
         }
+        assert!(bytes("missing.svg").is_none());
     }
 
     #[test]
-    fn a_missing_asset_is_none() {
-        assert!(Assets.load("nope.svg").unwrap().is_none());
+    fn the_window_icon_is_a_png() {
+        assert!(ICON.starts_with(b"\x89PNG"));
     }
 }
