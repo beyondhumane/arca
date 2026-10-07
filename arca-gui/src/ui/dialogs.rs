@@ -150,10 +150,16 @@ impl Shell {
                 .inner_margin(18),
         );
         let tallest = dialog_max_height(ctx.content_rect().height());
+        let measured = egui::Id::new(("arca-modal-content", kind as u8));
+        let wanted = ctx
+            .data(|data| data.get_temp::<f32>(measured))
+            .unwrap_or(0.0)
+            .min(tallest);
         let response = modal.show(ctx, |ui| {
             ui.set_width(width);
-            egui::ScrollArea::vertical()
+            let shown = egui::ScrollArea::vertical()
                 .max_height(tallest)
+                .min_scrolled_height(wanted.max(64.0))
                 .auto_shrink([false, true])
                 .show(ui, |ui| match kind {
                     ModalKind::Password => self.password_dialog(ui),
@@ -170,6 +176,8 @@ impl Shell {
                     }
                     ModalKind::NewFolder | ModalKind::Mask => self.name_dialog(ui, kind),
                 });
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(measured, shown.content_size.y));
         });
         if response.should_close() && self.modal_kind() == Some(kind) {
             self.cancel_modal(kind);
