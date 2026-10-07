@@ -52,8 +52,16 @@ impl Shell {
             });
         });
         ui.separator();
-        egui::ScrollArea::vertical()
-            .max_height(if docked { f32::INFINITY } else { 320.0 })
+        let tallest = if docked { f32::INFINITY } else { 320.0 };
+        let measured = ui.id().with("jobs-content");
+        let wanted = ui
+            .ctx()
+            .data(|data| data.get_temp::<f32>(measured))
+            .unwrap_or(0.0)
+            .min(tallest);
+        let shown = egui::ScrollArea::vertical()
+            .max_height(tallest)
+            .min_scrolled_height(if docked { 64.0 } else { wanted.max(64.0) })
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 for task in self.shown_tasks() {
@@ -63,6 +71,8 @@ impl Shell {
                     ui.add_space(6.0);
                 }
             });
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(measured, shown.content_size.y));
         for action in actions {
             self.controller.dispatch(action);
         }
