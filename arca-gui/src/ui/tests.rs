@@ -402,3 +402,12 @@ fn arrow_keys_move_the_cursor_by_the_names_egui_gives_them() {
     assert_eq!(cursor_step(&name(egui::Key::Home), Some(4), 5), Some(0));
     assert_eq!(cursor_step(&name(egui::Key::A), Some(4), 5), None);
 }
+
+#[test]
+fn settings_search_finds_a_section_by_the_settings_inside_it() {
+    use super::dialogs::section_words;
+    let s = crate::i18n::strings(crate::i18n::Lang::En);
+    assert!(section_words(SettingsSection::Appearance, s)
+        .iter()
+        .any(|word| word.to_lowercase().contains("theme")));
+}

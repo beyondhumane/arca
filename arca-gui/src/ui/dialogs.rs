@@ -100,6 +100,7 @@ fn shortcuts_table(ui: &mut egui::Ui, s: &'static Strings) {
         for (column, rows) in columns.iter_mut().zip(shortcut_rows(s)) {
             egui::Grid::new(ui_id(column, "keys"))
                 .num_columns(2)
+                .min_col_width(120.0)
                 .spacing([12.0, 6.0])
                 .show(column, |ui| {
                     for (keys, what) in rows {
@@ -114,6 +115,22 @@ fn shortcuts_table(ui: &mut egui::Ui, s: &'static Strings) {
                 });
         }
     });
+}
+
+pub(crate) fn section_words(section: SettingsSection, s: &'static Strings) -> Vec<&'static str> {
+    match section {
+        SettingsSection::General => vec![s.language, s.name_encoding, s.show_hidden],
+        SettingsSection::Archives => vec![s.defaults_title, s.into_subfolder],
+        SettingsSection::Appearance => vec![s.theme],
+        SettingsSection::Views => vec![
+            s.default_view,
+            s.show_preview_panel,
+            s.show_folder_tree,
+            s.icon_sidebar,
+        ],
+        SettingsSection::Updates => vec![s.check_updates],
+        SettingsSection::Keybindings | SettingsSection::About => Vec::new(),
+    }
 }
 
 fn ui_id(ui: &egui::Ui, salt: &str) -> egui::Id {
@@ -577,7 +594,12 @@ impl Shell {
         let query = self.settings_query.trim().to_lowercase();
         let matching: Vec<_> = sections
             .iter()
-            .filter(|(_, label, _)| query.is_empty() || label.to_lowercase().contains(&query))
+            .filter(|(section, label, _)| {
+                query.is_empty()
+                    || std::iter::once(*label)
+                        .chain(section_words(*section, s))
+                        .any(|word| word.to_lowercase().contains(&query))
+            })
             .copied()
             .collect();
         if let Some((first, _, _)) = matching.first() {
