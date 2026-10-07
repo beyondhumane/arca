@@ -516,9 +516,9 @@ impl Shell {
                 area = area.vertical_scroll_offset(scroll_target(offset, height, cursor));
             }
         }
+        ui.spacing_mut().item_spacing.y = 0.0;
         let shown = area.show_rows(ui, ROW_HEIGHT, rows.len(), |ui, range| {
             self.autoscroll(ui);
-            ui.spacing_mut().item_spacing.y = 0.0;
             for index in range {
                 let row = &rows[index];
                 let (rect, response) = ui.allocate_exact_size(
