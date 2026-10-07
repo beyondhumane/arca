@@ -186,7 +186,12 @@ impl Shell {
 
     fn footer_buttons(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         ui.add_space(12.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add);
+        let height = ui.spacing().interact_size.y + 8.0;
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), height),
+            egui::Layout::right_to_left(egui::Align::Center),
+            add,
+        );
     }
 
     fn password_dialog(&mut self, ui: &mut egui::Ui) {
