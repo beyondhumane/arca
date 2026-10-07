@@ -1,5 +1,7 @@
 # Migration plan for `arca-gui` to GPUI Kit
 
+Status: **superseded.** `arca-gui` and `arca-setup` went back to egui; see `migration-to-egui.md` for why and for the measurements.
+
 ## Summary
 
 Migrate only Arca's interface (not `arca-core`, `arca-zip`, `arca-tar`, the CLI or the formats) to GPUI Kit, keeping the current behaviour and making the transition in phases. The GPUI dependency is pinned by `Cargo.lock` to avoid accidental API changes.

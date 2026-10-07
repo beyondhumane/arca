@@ -2,12 +2,12 @@
 description: Browse archives like folders in a fast, keyboard-friendly native window.
 group: Desktop
 order: 8
-keywords: gui window arca-gui desktop app gpui accessibility nvda narrator
+keywords: gui window arca-gui desktop app egui accessibility nvda narrator
 ---
 
 # The desktop workspace
 
-`arca-gui` browses the disk and archives in a native GPUI window. The title bar keeps the Arca branding and window controls; one navigation band contains history, breadcrumbs, view selection, filtering, extraction, testing and the **More** menu.
+`arca-gui` browses the disk and archives in a native egui window. The title bar keeps the Arca branding and window controls; one navigation band contains history, breadcrumbs, view selection, filtering, extraction, testing and the **More** menu.
 
 ## Browsing the disk
 

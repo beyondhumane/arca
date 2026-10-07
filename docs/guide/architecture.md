@@ -64,7 +64,7 @@ match ZipArchive::open(file) {
 | `sevenz-rust2` 0.23.0 / `lzma-rust2` 0.21.0 | Apache-2.0 7z/AES and LZMA; vendored parser hardening, LZMA unsafe optimization disabled |
 | `rayon` | The thread pool behind parallel compression and extraction |
 | `clap` | Command-line parsing |
-| GPUI | The GPU-accelerated UI framework behind the window |
+| `eframe` / `egui` | The immediate-mode UI framework behind the window, drawn with OpenGL through Glow |
 
 ## 7z boundaries
 
@@ -91,10 +91,7 @@ cargo tree -p arca-gui --no-default-features -e normal
 cargo tree -p arca-7z -e features -i lzma-rust2
 ```
 
-The first two must omit native `zstd-sys` and `bzip2-sys`. The GUI still includes
-`libbz2-rs-sys` through GPUI HTTP decompression; despite its name, it is a Rust
-implementation with no C build script, not the optional 7z Bzip2 decoder.
-LZMA features must be `std`/`encoder`, never `optimization`. Rust 1.95 and edition 2021 remain
+The first two must omit native `zstd-sys` and `bzip2-sys`. LZMA features must be `std`/`encoder`, never `optimization`. Rust 1.95 and edition 2021 remain
 the workspace baseline; dependency editions are per crate. See the
 [accepted design](https://github.com/beyondhumane/arca/blob/main/docs/plans/7z-format.md)
 and [patch inventory](https://github.com/beyondhumane/arca/blob/main/arca-7z/vendor/PATCHES.md).
@@ -116,4 +113,4 @@ panic = "abort"
 strip = true
 ```
 
-Dependencies are optimised even in debug builds: GPUI’s layout engine, text shaper and rasteriser redo their work every frame, and at `opt-level = 0` that shows up as stutter while dragging. Arca’s own code builds at level 1, which keeps the debugger useful.
+Dependencies are optimised even in debug builds: egui lays out, shapes and tessellates the whole window every frame it paints, and at `opt-level = 0` that shows up as stutter while dragging. Arca’s own code builds at level 1, which keeps the debugger useful.
