@@ -2,12 +2,12 @@
 description: Navega por archivos comprimidos como si fueran carpetas, en una ventana nativa rápida y pensada para el teclado.
 group: Escritorio
 order: 8
-keywords: interfaz gráfica ventana arca-gui escritorio aplicación accesibilidad gui window arca-gui desktop app gpui accessibility nvda narrator
+keywords: interfaz gráfica ventana arca-gui escritorio aplicación accesibilidad gui window arca-gui desktop app egui accessibility nvda narrator
 ---
 
 # El espacio de trabajo de escritorio
 
-`arca-gui` permite explorar el disco y los archivos comprimidos en una ventana nativa GPUI. La barra de título conserva la marca y los controles de ventana de Arca; una sola banda de navegación reúne historial, ruta, vistas, filtro, extracción, comprobación y el menú **Más**.
+`arca-gui` permite explorar el disco y los archivos comprimidos en una ventana nativa egui. La barra de título conserva la marca y los controles de ventana de Arca; una sola banda de navegación reúne historial, ruta, vistas, filtro, extracción, comprobación y el menú **Más**.
 
 ## Explorar el disco
 

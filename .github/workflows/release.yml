@@ -115,11 +115,10 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Lo que la ventana necesita para construirse en Linux. Las mismas que
-      # instala el CI, y tienen que seguir siendo las mismas: aqui no habia
-      # ninguna porque con egui bastaba lo que el runner ya trae, y al pasar la
-      # ventana a GPUI el CI se actualizo y esto no. Resultado: la 0.7.0
-      # compilo en Windows y en macOS, fallo en Linux, y no se publico nada.
+      # Lo que la ventana (egui sobre OpenGL, X11 y Wayland) necesita para
+      # construirse en Linux. Las mismas que instala el CI, y tienen que seguir
+      # siendo las mismas: la 0.7.0 compilo en Windows y en macOS, fallo en
+      # Linux porque aqui faltaban, y no se publico nada.
       - name: Window dependencies
         if: runner.os == 'Linux'
         run: >-

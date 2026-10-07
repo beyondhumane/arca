@@ -475,9 +475,11 @@ impl AppController {
             return;
         };
         let notice = std::mem::take(&mut self.state.notice);
+        let undo = self.state.undo.take();
         self.open_with_password(path, pw);
         self.state.reread_dir = Some(dir);
         self.state.notice = notice;
+        self.state.undo = undo;
         self.state.view = super::View::Browse;
     }
 }

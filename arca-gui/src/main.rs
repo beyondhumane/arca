@@ -4,16 +4,15 @@ mod archive_ops;
 mod assets;
 mod clipboard;
 mod controller;
-mod gpui_shell;
-mod gpui_theme;
 mod i18n;
 mod model;
 mod settings;
 #[cfg(test)]
 mod test_support;
 mod tree;
+mod ui;
 
-// Keep the GPUI view focused on presentation while exposing the application
+// Keep the egui view focused on presentation while exposing the application
 // contract at the crate boundary. These are crate-private, not public API.
 pub(crate) use archive_ops::*;
 pub(crate) use controller::*;
@@ -21,7 +20,7 @@ pub(crate) use model::*;
 pub(crate) use settings::*;
 
 use arca_core::{Codec, Level};
-use i18n::{strings, Lang, Strings};
+use i18n::{Lang, Strings};
 use tree::{parent_of, Row};
 // How wide a column starts out and the least it can be pulled down to. The
 // name gets the room because it is the thing being read; the rest hold a
@@ -38,7 +37,7 @@ const SIDEBAR_LEAST: f32 = 160.0;
 const SIDEBAR_MOST: f32 = 520.0;
 
 fn main() {
-    gpui_shell::run();
+    ui::run();
 }
 
 #[cfg(test)]

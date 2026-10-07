@@ -39,16 +39,17 @@ image = { version = "0.25", default-features = false, features = [
 ] }
 sys-locale = "0.3"
 
-# GPUI comes from the GPUI Kit release train (`gpui-pre*`), not from a zed git
-# rev. gpui-component is built against `gpui-pre ^0.3`, and a git pin here would
-# put two copies of gpui in the graph, which does not link. Renaming the
-# packages back to `gpui` / `gpui_platform` keeps every `use gpui::...` intact.
-gpui = { package = "gpui-pre", version = "0.3", default-features = false }
-gpui-component = { version = "0.6" }
-# The icon set gpui-component's `IconName` resolves against. It is already in
-# the tree as a gpui-component dependency; naming it here is what lets
-# `application()` be handed the asset source.
-gpui-kit-assets = { version = "0.6" }
+# The window, the widgets and the accessibility tree. Glow is the smaller of
+# eframe's two GPU back ends and the one that starts fastest on old drivers.
+eframe = { version = "0.36", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
+egui-phosphor = { version = "0.14", default-features = false, features = ["regular"] }
 # SHA-256 para comprobar lo que se baja antes de ejecutarlo. RustCrypto, safe
 # Rust puro, la misma familia que el sha1 del cifrado de arca-zip.
 sha2 = "0.10"
@@ -59,20 +60,6 @@ sha2 = "0.10"
 # work, and writing it by hand would mean unsafe in a crate that forbids it.
 [target."cfg(windows)".dependencies]
 clipboard-win = "5"
-
-[target."cfg(windows)".dependencies.gpui_platform]
-package = "gpui-pre-platform"
-version = "0.3"
-
-[target.'cfg(target_os = "linux")'.dependencies.gpui_platform]
-package = "gpui-pre-platform"
-version = "0.3"
-features = ["wayland", "x11"]
-
-[target.'cfg(target_os = "macos")'.dependencies.gpui_platform]
-package = "gpui-pre-platform"
-version = "0.3"
-features = ["font-kit"]
 
 [target."cfg(windows)".build-dependencies]
 winresource = "0.1"

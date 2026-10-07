@@ -176,7 +176,7 @@ pub(crate) enum Look {
 /// quietly extracted it.
 pub(crate) struct Viewed {
     pub(crate) name: String,
-    // Shared rather than owned outright: the picture view hands these to GPUI
+    // Shared rather than owned outright: the picture view hands these to egui
     // on every frame, and a file of thirty megabytes copied sixty times a
     // second is two gigabytes a second of nothing.
     pub(crate) bytes: std::sync::Arc<[u8]>,

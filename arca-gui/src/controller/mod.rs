@@ -2,7 +2,9 @@
 
 mod actions;
 mod disk;
-pub(crate) use disk::{disk_dir, disk_path, DiskState, Origin, Place, PlaceKind};
+#[cfg(test)]
+use disk::disk_dir;
+pub(crate) use disk::{disk_path, DiskState, Origin, PlaceKind};
 pub(crate) use jobs::{Task, TaskId, TaskStatus};
 #[cfg(test)]
 mod container_tests;
@@ -23,7 +25,7 @@ mod state;
 #[cfg(test)]
 mod xz_tests;
 pub(crate) use actions::*;
-pub(crate) use panes::{BrowserState, DirectoryPane};
+pub(crate) use panes::BrowserState;
 pub(crate) use preview::{PreviewState, PreviewStatus};
 pub(crate) use state::AppState;
 
@@ -1426,9 +1428,13 @@ impl AppController {
         // The answer about a newer version, if it ever came. Its own channel,
         // because it is not a job and must not make the window look busy.
         if let Some(rx) = &self.state.update_rx {
-            if let Ok(release) = rx.try_recv() {
-                self.state.update = Some(release);
-                self.state.update_rx = None;
+            match rx.try_recv() {
+                Ok(release) => {
+                    self.state.update = Some(release);
+                    self.state.update_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.state.update_rx = None,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }
         let mut close = false;
