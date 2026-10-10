@@ -19,7 +19,7 @@ gpui = { package = "gpui-pre", version = "0.3", default-features = false }
 sys-locale = "0.3"
 
 [target."cfg(windows)".dependencies]
-winreg = "0.55"
+winreg = "0.56"
 arca-notify = { path = "../arca-notify" }
 
 [target."cfg(windows)".dependencies.gpui_platform]

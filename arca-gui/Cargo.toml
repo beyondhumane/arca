@@ -24,7 +24,7 @@ rayon.workspace = true
 tempfile = "3"
 
 # Dialogos de fichero nativos. Es lo unico que toca la plataforma.
-rfd = "0.15"
+rfd = "0.17"
 flate2.workspace = true
 
 # Solo los formatos que alguien mete en un zip y espera poder mirar. Sin las
@@ -51,7 +51,7 @@ gpui-component = { version = "0.6" }
 gpui-kit-assets = { version = "0.6" }
 # SHA-256 para comprobar lo que se baja antes de ejecutarlo. RustCrypto, safe
 # Rust puro, la misma familia que el sha1 del cifrado de arca-zip.
-sha2 = "0.10"
+sha2 = "0.11"
 
 # CF_HDROP on the system clipboard, so Ctrl+C here pastes files in the
 # Explorer. A thin wrapper over the four clipboard calls Win32 has; taking the
