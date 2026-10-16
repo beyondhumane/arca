@@ -27,7 +27,7 @@ mod xz_tests;
 pub(crate) use actions::*;
 pub(crate) use panes::BrowserState;
 pub(crate) use preview::{PreviewState, PreviewStatus};
-pub(crate) use state::AppState;
+pub(crate) use state::{AppState, UpdateCheck};
 
 use crate::archive_ops::*;
 use crate::model::*;
@@ -620,6 +620,7 @@ impl AppController {
                 undo: None,
                 update: None,
                 update_rx: None,
+                update_check: UpdateCheck::Idle,
                 asked_about_updates: false,
                 subject: String::new(),
                 overlay: false,
@@ -912,23 +913,36 @@ impl AppController {
         if self.state.asked_about_updates || !self.state.settings.updates {
             return;
         }
+        self.check_for_updates();
+    }
+
+    // The same question, asked now because somebody pressed the button.
+    pub(crate) fn check_for_updates(&mut self) {
+        if self.state.update_rx.is_some() {
+            return;
+        }
         self.state.asked_about_updates = true;
-        let (tx, rx) = channel::<Release>();
+        self.state.update_check = UpdateCheck::Checking;
+        let (tx, rx) = channel::<Result<Option<Release>, ()>>();
         self.state.update_rx = Some(rx);
-        let running = env!("CARGO_PKG_VERSION").to_string();
+        let api = match self.state.settings.channel {
+            crate::settings::Channel::Stable => RELEASES_API,
+            crate::settings::Channel::Preview => RELEASES_PREVIEW_API,
+        };
+        let running = VERSION.to_string();
         std::thread::spawn(move || {
             // GitHub turns away anything that does not name itself, and naming
             // the program and its version is what a user agent is for. Nothing
             // else is sent: no machine, no user, no archive.
             let agent = format!("Arca/{running}");
-            let Some(reply) = arca_net::get(RELEASES_API, &agent) else {
+            let Some(reply) = arca_net::get(api, &agent) else {
+                let _ = tx.send(Err(()));
                 return;
             };
-            if let Some(release) = release_of(&reply) {
-                if newer(&running, &release.tag) {
-                    let _ = tx.send(release);
-                }
-            }
+            let answer = release_of(&reply)
+                .ok_or(())
+                .map(|release| newer(&running, &release.tag).then_some(release));
+            let _ = tx.send(answer);
         });
     }
 
@@ -952,6 +966,24 @@ impl AppController {
                 let _ = launch_with_system(Path::new(RELEASES_PAGE));
             }
         }
+    }
+
+    pub(crate) fn open_release_page(&self) {
+        let url = match &self.state.update {
+            Some(release)
+                if release
+                    .tag
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) =>
+            {
+                format!(
+                    "https://github.com/beyondhumane/arca/releases/tag/{}",
+                    release.tag
+                )
+            }
+            _ => RELEASES_PAGE.to_string(),
+        };
+        let _ = launch_with_system(Path::new(&url));
     }
 
     // Moves what was being carried into `target`, which is a folder's path or
@@ -1433,11 +1465,19 @@ impl AppController {
         // because it is not a job and must not make the window look busy.
         if let Some(rx) = &self.state.update_rx {
             match rx.try_recv() {
-                Ok(release) => {
-                    self.state.update = Some(release);
+                Ok(Ok(found)) => {
+                    self.state.update_check = if found.is_some() {
+                        UpdateCheck::Found
+                    } else {
+                        UpdateCheck::Current
+                    };
+                    self.state.update = found;
                     self.state.update_rx = None;
                 }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.state.update_rx = None,
+                Ok(Err(())) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.state.update_check = UpdateCheck::Failed;
+                    self.state.update_rx = None;
+                }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }

@@ -215,7 +215,7 @@ pub(crate) fn download_update(
 ) -> std::result::Result<PathBuf, String> {
     use sha2::{Digest, Sha256};
 
-    let agent = format!("Arca/{}", env!("CARGO_PKG_VERSION"));
+    let agent = format!("Arca/{}", crate::controller::VERSION);
     let name = installer
         .rsplit('/')
         .next()

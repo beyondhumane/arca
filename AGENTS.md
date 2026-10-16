@@ -95,3 +95,5 @@ Pull request titles should follow the same format. The description should state 
 - Keep `README.md` focused on user-facing usage, supported formats, interoperability, and reproducible checks.
 - Keep brand rules in `brand/BRAND.md`.
 - Releases come from release-please: merge its release pull request once CI is green. Do not tag or edit `CHANGELOG.md` and the version by hand.
+- There are exactly two update channels, Stable and Preview; do not add others. Stable is the GitHub release marked latest, made by release-please. Preview is a prerelease made by running the Release workflow by hand with `preview` ticked: it is tagged `vX.Y.(Z+1)-preview.<run>`, the GUI is built with `ARCA_VERSION` set to that name, and it never reaches the package managers.
+- The GUI asks about updates once at startup when `updates = yes` in `gui.conf`, and whenever Settings > Updates > Check now is pressed. `channel = stable|preview` picks which release it asks for: `releases/latest` or the newest of `releases`.

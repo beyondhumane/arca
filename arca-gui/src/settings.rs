@@ -22,6 +22,13 @@ pub(crate) enum BrowserView {
     Details,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Channel {
+    #[default]
+    Stable,
+    Preview,
+}
+
 fn bounded_width(width: f32, least: f32, most: f32) -> Option<f32> {
     width.is_finite().then(|| width.clamp(least, most))
 }
@@ -50,6 +57,7 @@ pub(crate) struct Settings {
     pub(crate) directory_width: f32,
     // Whether to ask, once at startup, if there is a newer Arca.
     pub(crate) updates: bool,
+    pub(crate) channel: Channel,
     // Every file in the archive at once, instead of one folder at a time.
     pub(crate) flat: bool,
     // El panel de carpetas del archivo, a la izquierda.
@@ -112,6 +120,7 @@ impl Default for Settings {
             preview_width: PREVIEW_WIDE,
             directory_width: DIRECTORY_WIDE,
             updates: true,
+            channel: Channel::Stable,
             flat: false,
             folders: true,
             page: arca_zip::pages::Page::default(),
@@ -180,6 +189,13 @@ impl Settings {
                 ("flat", v) => s.flat = v == "yes",
                 ("folders", v) => s.folders = v == "yes",
                 ("updates", v) => s.updates = v != "no",
+                ("channel", v) => {
+                    s.channel = if v == "preview" {
+                        Channel::Preview
+                    } else {
+                        Channel::Stable
+                    }
+                }
                 ("page", v) => {
                     if let Some(p) = arca_zip::pages::Page::from_code(v) {
                         s.page = p;
@@ -319,6 +335,10 @@ impl Settings {
         out.push_str(&format!("preview_width = {preview_width:.1}\n"));
         out.push_str(&format!("directory_width = {directory_width:.1}\n"));
         out.push_str(&format!("updates = {}\n", yes(self.updates)));
+        out.push_str(match self.channel {
+            Channel::Stable => "channel = stable\n",
+            Channel::Preview => "channel = preview\n",
+        });
         out.push_str(&format!("page = {}\n", self.page.code()));
         out.push_str(&format!("columns = {}\n", columns.join(",")));
         out.push_str(&format!("widths = {}\n", widths.join(",")));
@@ -363,6 +383,18 @@ mod tests {
         assert_eq!(s.preview_width, 440.0);
         assert_eq!(s.directory_width, 280.0);
         assert_eq!(s.text(), Settings::default().text());
+    }
+
+    #[test]
+    fn the_update_channel_is_kept_and_defaults_to_stable() {
+        assert_eq!(Settings::parse("").channel, Channel::Stable);
+        let s = Settings::parse("channel = preview\n");
+        assert_eq!(s.channel, Channel::Preview);
+        assert!(s.text().contains("channel = preview\n"));
+        assert_eq!(
+            Settings::parse("channel = nightly\n").channel,
+            Channel::Stable
+        );
     }
 
     #[test]

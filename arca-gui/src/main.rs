@@ -79,6 +79,20 @@ mod tests {
         assert!(newer("0.5.1", "v0.5.2"), "a leading v is forgiven");
         assert!(!newer("0.6.0", "0.5.9"), "older is not newer");
         assert!(!newer("0.6.0", "0.6.0"), "the same is not newer");
+        assert!(
+            newer("0.8.2", "0.8.3-preview.4"),
+            "a preview of the next one"
+        );
+        assert!(
+            newer("0.8.3-preview.4", "0.8.3-preview.12"),
+            "previews go by number"
+        );
+        assert!(
+            newer("0.8.3-preview.12", "0.8.3"),
+            "the release follows its previews"
+        );
+        assert!(!newer("0.8.3-preview.12", "0.8.3-preview.4"));
+        assert!(!newer("0.8.3", "0.8.3-preview.20"));
         assert!(!newer("0.10.0", "0.9.0"), "and the other way round too");
         // Missing parts are zero, so these are the same version.
         assert!(!newer("0.6", "0.6.0"));

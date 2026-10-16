@@ -326,6 +326,15 @@ pub(crate) fn subject_of(job: &Job) -> String {
 /// itself is sent instead.
 pub(crate) const RELEASES_API: &str =
     "https://api.github.com/repos/beyondhumane/arca/releases/latest";
+/// The version this copy says it is. A preview build is told its own name,
+/// with the preview number, by the release workflow.
+pub(crate) const VERSION: &str = match option_env!("ARCA_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
+pub(crate) const RELEASES_PREVIEW_API: &str =
+    "https://api.github.com/repos/beyondhumane/arca/releases?per_page=1";
 pub(crate) const RELEASES_PAGE: &str = "https://github.com/beyondhumane/arca/releases/latest";
 
 /// As much installer as is ever going to arrive. A reply longer than this is
@@ -442,14 +451,14 @@ pub(crate) fn tag_of(reply: &str) -> Option<String> {
 /// anything that is not a version at all answers no: silence is the right
 /// behaviour for an announcement nobody can read.
 pub(crate) fn newer(running: &str, latest: &str) -> bool {
-    pub(crate) fn parts(v: &str) -> Option<(Vec<u32>, bool)> {
+    pub(crate) fn parts(v: &str) -> Option<(Vec<u32>, Option<&str>)> {
         let v = v.trim().trim_start_matches(['v', 'V']);
         if v.is_empty() {
             return None;
         }
         let (numbers, tail) = match v.find(['-', '+']) {
-            Some(cut) => (&v[..cut], true),
-            None => (v, false),
+            Some(cut) => (&v[..cut], Some(&v[cut + 1..])),
+            None => (v, None),
         };
         let mut out = Vec::new();
         for piece in numbers.split('.') {
@@ -471,8 +480,20 @@ pub(crate) fn newer(running: &str, latest: &str) -> bool {
             return b > a;
         }
     }
-    // The same numbers: the one without a suffix is the finished one.
-    mine_tail && !theirs_tail
+    // The same numbers: the one without a suffix is the finished one, and two
+    // previews of it go by the number at the end of each.
+    match (mine_tail, theirs_tail) {
+        (Some(_), None) => true,
+        (Some(a), Some(b)) => {
+            let rank = |t: &str| {
+                t.split(['.', '-'])
+                    .map(|p| p.parse::<u32>().map_err(|_| p.to_string()))
+                    .collect::<Vec<_>>()
+            };
+            rank(b) > rank(a)
+        }
+        _ => false,
+    }
 }
 
 /// A name in the one spelling the window works in.

@@ -98,7 +98,8 @@ pub(crate) struct AppState {
     // rather than a job, because something nobody asked for must not make the
     // window look busy.
     pub(crate) update: Option<Release>,
-    pub(crate) update_rx: Option<std::sync::mpsc::Receiver<Release>>,
+    pub(crate) update_rx: Option<std::sync::mpsc::Receiver<Result<Option<Release>, ()>>>,
+    pub(crate) update_check: UpdateCheck,
     pub(crate) asked_about_updates: bool,
     // What the job is being done to, beside the verb in the title.
     pub(crate) subject: String,
@@ -146,4 +147,14 @@ pub(crate) struct AppState {
     // the only such job: it is over before a bar has finished appearing, and a
     // bar that flashes past says less than nothing.
     pub(crate) quiet: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum UpdateCheck {
+    #[default]
+    Idle,
+    Checking,
+    Current,
+    Found,
+    Failed,
 }

@@ -439,7 +439,7 @@ fn an_update_check_that_ends_without_an_answer_stops_being_waited_for() {
     app.state.update_rx = Some(rx);
     app.receive();
     assert!(app.state.update_rx.is_some());
-    drop::<Sender<Release>>(tx);
+    drop::<Sender<Result<Option<Release>, ()>>>(tx);
     app.receive();
     assert!(app.state.update_rx.is_none());
     assert!(app.state.update.is_none());

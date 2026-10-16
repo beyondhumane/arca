@@ -128,7 +128,13 @@ pub(crate) fn section_words(section: SettingsSection, s: &'static Strings) -> Ve
             s.show_folder_tree,
             s.icon_sidebar,
         ],
-        SettingsSection::Updates => vec![s.check_updates],
+        SettingsSection::Updates => vec![
+            s.check_updates,
+            s.update_status,
+            s.check_now,
+            s.channel_title,
+            s.channel_preview,
+        ],
         SettingsSection::Keybindings | SettingsSection::About => Vec::new(),
     }
 }
@@ -756,25 +762,7 @@ impl Shell {
             }
             SettingsSection::Views => self.settings_views(ui),
             SettingsSection::Keybindings => shortcuts_table(ui, s),
-            SettingsSection::Updates => {
-                let mut version = format!("Arca {}", env!("CARGO_PKG_VERSION"));
-                if let Some(release) = &self.controller.state.update {
-                    version.push_str(&format!(" \u{b7} {}", release.tag));
-                }
-                let description = format!("{} {version}", s.updates_hint);
-                let mut on = self.controller.state.settings.updates;
-                card(ui, s.check_updates, Some(&description), true, |ui| {
-                    if switch(ui, &mut on, s.check_updates).changed() {
-                        self.settings_activate(SettingsControl::Updates);
-                    }
-                });
-                if let Some(release) = &self.controller.state.update {
-                    let label = fill(s.update_ready, &[("version", &release.tag)]);
-                    if primary_button(ui, &label, true).clicked() {
-                        self.controller.start_update();
-                    }
-                }
-            }
+            SettingsSection::Updates => self.settings_updates(ui),
             SettingsSection::About => {
                 egui::Frame::new()
                     .fill(theme::alpha(p.background, 0.55))
@@ -794,7 +782,7 @@ impl Shell {
                             ui.add_space(8.0);
                             ui.vertical(|ui| {
                                 ui.label(
-                                    RichText::new(format!("Arca {}", env!("CARGO_PKG_VERSION")))
+                                    RichText::new(format!("Arca {}", crate::controller::VERSION))
                                         .font(theme::display(18.0)),
                                 );
                                 ui.label(RichText::new(s.about_blurb).color(hex(p.muted)));
@@ -920,6 +908,94 @@ impl Shell {
             let (control, _, on) = shown[index];
             if !on {
                 self.settings_activate(control);
+            }
+        }
+    }
+
+    fn settings_updates(&mut self, ui: &mut egui::Ui) {
+        use crate::controller::UpdateCheck;
+        use crate::settings::Channel;
+        let s = self.controller.s();
+        let state = &self.controller.state;
+        let found = state.update.clone();
+        let status = match (state.update_check, &found) {
+            (UpdateCheck::Checking, _) => s.checking.to_string(),
+            (UpdateCheck::Failed, _) => s.check_failed.to_string(),
+            (_, Some(release)) => fill(s.update_ready, &[("version", &release.tag)]),
+            (UpdateCheck::Current, None) => s.up_to_date.to_string(),
+            _ => s.updates_hint.to_string(),
+        };
+        let description = format!("Arca {} \u{b7} {status}", crate::controller::VERSION);
+        let busy = state.update_check == UpdateCheck::Checking;
+        section_title(ui, s.status_section);
+        let mut check = false;
+        let mut install = false;
+        card(ui, s.update_status, Some(&description), true, |ui| {
+            if found.is_some() {
+                let label = fill(
+                    s.update_ready,
+                    &[("version", found.as_ref().map_or("", |r| &r.tag))],
+                );
+                install = primary_button(ui, &label, true).clicked();
+            } else {
+                let label = if busy { s.checking } else { s.check_now };
+                check = secondary_button(ui, label, !busy).clicked();
+            }
+        });
+        if check {
+            self.controller.check_for_updates();
+        }
+        if install {
+            self.controller.start_update();
+        }
+        ui.add_space(12.0);
+        section_title(ui, s.preferences_section);
+        let mut on = self.controller.state.settings.updates;
+        let mut toggled = false;
+        card(ui, s.check_updates, Some(s.updates_hint), true, |ui| {
+            toggled = switch(ui, &mut on, s.check_updates).changed();
+        });
+        if toggled {
+            self.settings_activate(SettingsControl::Updates);
+        }
+        let preview = self.controller.state.settings.channel == Channel::Preview;
+        let hint = if preview {
+            s.channel_preview_hint
+        } else {
+            s.channel_stable_hint
+        };
+        let mut pick = None;
+        card(ui, s.channel_title, Some(hint), true, |ui| {
+            pick = segmented(
+                ui,
+                &[(s.channel_stable, !preview), (s.channel_preview, preview)],
+            );
+        });
+        let channel = match pick {
+            Some(0) if preview => Some(Channel::Stable),
+            Some(1) if !preview => Some(Channel::Preview),
+            _ => None,
+        };
+        if let Some(channel) = channel {
+            let controller = &mut self.controller;
+            controller.state.settings.channel = channel;
+            controller.state.settings.save();
+            controller.state.update = None;
+            controller.state.update_check = UpdateCheck::Idle;
+            if controller.state.settings.updates {
+                controller.check_for_updates();
+            }
+        }
+        if let Some(release) = &found {
+            ui.add_space(12.0);
+            section_title(ui, s.notes_section);
+            let title = fill(s.whats_new, &[("version", &release.tag)]);
+            let mut open = false;
+            card(ui, &title, None, true, |ui| {
+                open = secondary_button(ui, s.open_notes, true).clicked();
+            });
+            if open {
+                self.controller.open_release_page();
             }
         }
     }

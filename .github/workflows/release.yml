@@ -4,11 +4,17 @@ name: Release
 # its CHANGELOG.md entry, worked out from the Conventional Commits on main.
 # Merging it tags the commit and creates the release, and the jobs below then
 # build and attach the files. By hand, the build runs as a rehearsal and
-# publishes nothing.
+# publishes nothing, unless `preview` is ticked: then it publishes a
+# prerelease for the Preview update channel.
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      preview:
+        description: Publish a preview release from this commit
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -49,6 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      label: ${{ steps.version.outputs.label }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -56,13 +63,23 @@ jobs:
       - id: version
         env:
           TAG: ${{ needs.release-please.outputs.tag }}
+          PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.preview }}
         run: |
           VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           if [ -n "$TAG" ]; then
             echo "tag=${TAG#v}  Cargo.toml=$VERSION"
             test "${TAG#v}" = "$VERSION"
           fi
+          # A preview is named after the next patch and the run, so a copy of
+          # it takes later previews and the next release as newer.
+          LABEL=$VERSION
+          if [ "$PREVIEW" = "true" ]; then
+            IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
+            VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+            LABEL="$VERSION-preview.$GITHUB_RUN_NUMBER"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT"
 
   binaries:
     name: ${{ matrix.name }}
@@ -71,6 +88,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      ARCA_VERSION: ${{ needs.version.outputs.label }}
     strategy:
       fail-fast: false
       matrix:
@@ -323,6 +341,43 @@ jobs:
       # but a dispatch does: the site picks up the new version and sizes.
       - name: Update the site
         run: gh workflow run pages.yml -R "$GITHUB_REPOSITORY" --ref main
+
+  # The Preview channel: a prerelease, which GitHub's "latest" skips, so the
+  # Stable channel never offers it and no package manager is told about it.
+  preview:
+    name: Publish the preview
+    needs: [version, binaries]
+    if: >-
+      !cancelled() && needs.binaries.result == 'success' &&
+      github.event_name == 'workflow_dispatch' && inputs.preview
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      TAG: v${{ needs.version.outputs.label }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Gather the files and the checksums
+        run: |
+          mkdir -p publish
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -exec cp {} publish/ \;
+          cat artifacts/*/*.sha256 | sed 's#.*/##' > publish/SHA256SUMS.txt
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: publish/*
+
+      - name: Create the prerelease
+        run: >-
+          gh release create "$TAG" publish/* -R "$GITHUB_REPOSITORY"
+          --prerelease --target "$GITHUB_SHA" --title "Arca $TAG (preview)"
+          --generate-notes
 
   # Package managers, once the files are public. Each channel stays off until
   # its secret exists, so a fork or a new repository publishes nothing; see
