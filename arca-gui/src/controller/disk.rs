@@ -446,6 +446,9 @@ impl AppController {
         } else {
             disk_dir(path)
         };
+        // The panes still point into the archive that was open; rebuilding
+        // them from that path would try to read it off the disk.
+        self.state.current_dir.clear();
         self.reset_browser_panes();
         self.navigate_panes(dir);
         self.record_pane_history();
