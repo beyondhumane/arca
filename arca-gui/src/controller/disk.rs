@@ -310,7 +310,8 @@ impl AppController {
             let Some(leaf) = from.rsplit('/').next().filter(|leaf| !leaf.is_empty()) else {
                 continue;
             };
-            if format!("{from}/") == target || target.starts_with(&format!("{from}/")) {
+            let parent = from.rfind('/').map_or("", |cut| &from[..=cut]);
+            if parent == target || target.starts_with(&format!("{from}/")) {
                 continue;
             }
             let dest = into.join(leaf);
