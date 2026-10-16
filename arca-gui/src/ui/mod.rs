@@ -972,6 +972,12 @@ impl Shell {
         if !modifiers.command && self.search_key(key, modifiers) {
             return;
         }
+        // The palette is a modal, which silences shortcuts below; Ctrl+K has
+        // to get through so the same key opens and closes it.
+        if modifiers.command && key == egui::Key::K && self.search.is_some() {
+            self.search = None;
+            return;
+        }
         if self.background_blocked() {
             return;
         }
