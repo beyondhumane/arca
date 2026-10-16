@@ -4,6 +4,7 @@ mod dialogs;
 mod header;
 mod jobs;
 mod layout;
+mod pathbar;
 mod preview;
 mod sidebar;
 #[cfg(test)]
@@ -72,6 +73,12 @@ pub(crate) struct Shell {
     width: f32,
     title: String,
     look: String,
+    path_edit: Option<String>,
+    path_pick: Option<usize>,
+    path_missing: bool,
+    focus_path: bool,
+    path_grace: u8,
+    path_cache: Option<(String, Vec<String>)>,
     themes: Vec<themes::Theme>,
     theme_query: String,
     theme_filter: usize,
@@ -113,6 +120,12 @@ impl Shell {
             width: NORMAL_SIZE.0,
             title: String::new(),
             look,
+            path_edit: None,
+            path_pick: None,
+            path_missing: false,
+            focus_path: false,
+            path_grace: 0,
+            path_cache: None,
             themes: library,
             theme_query: String::new(),
             theme_filter: 0,
@@ -867,6 +880,7 @@ impl Shell {
         match shortcut {
             Shortcut::Back => self.controller.dispatch(AppAction::Back),
             Shortcut::Forward => self.controller.dispatch(AppAction::Forward),
+            Shortcut::EditPath => self.start_path_edit(),
             Shortcut::Open => self.begin_dialog(DialogKind::Open),
             Shortcut::Compress => {
                 let inputs = self.controller.selected_disk_paths();

@@ -263,6 +263,10 @@ impl Shell {
     }
 
     fn breadcrumbs(&mut self, ui: &mut egui::Ui) {
+        if self.path_edit.is_some() {
+            self.path_field(ui);
+            return;
+        }
         let s = self.controller.s();
         let crumbs = self.crumbs();
         let (shown, hidden) = breadcrumb_indices(crumbs.len(), self.width);
@@ -301,6 +305,25 @@ impl Shell {
             if let Some(payload) = response.dnd_release_payload::<DraggedRows>() {
                 dropped = Some((payload.0.clone(), path.clone()));
             }
+        }
+        let mut edit = false;
+        if !crumbs.is_empty() {
+            let rest = ui.available_width() - 72.0;
+            if rest > 8.0 {
+                let (_, response) =
+                    ui.allocate_exact_size(egui::vec2(rest, 26.0), egui::Sense::click());
+                edit = response
+                    .on_hover_cursor(egui::CursorIcon::Text)
+                    .on_hover_text(format!("{}  (Ctrl+L)", s.edit_path))
+                    .clicked();
+            }
+            edit |= icon_button(ui, icon::PENCIL_SIMPLE, s.edit_path, true).clicked();
+            if icon_button(ui, icon::COPY, s.copy_path, true).clicked() {
+                self.copy_current_path();
+            }
+        }
+        if edit {
+            self.start_path_edit();
         }
         if let Some(path) = go {
             self.controller.dispatch(AppAction::Navigate(path));

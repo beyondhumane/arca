@@ -298,6 +298,7 @@ pub(crate) enum Shortcut {
     View,
     Back,
     Forward,
+    EditPath,
     /// A mask that picks names, or one that drops them.
     PickGroup(bool),
 }
@@ -323,6 +324,7 @@ pub(crate) fn shortcut_for(
             "n" => Some(Shortcut::Compress),
             "e" => Some(Shortcut::ExtractAll),
             "t" => Some(Shortcut::Test),
+            "l" => Some(Shortcut::EditPath),
             "i" => Some(Shortcut::Invert),
             "z" if !typing => Some(Shortcut::Undo),
             _ => None,

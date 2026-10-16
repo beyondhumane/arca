@@ -47,6 +47,7 @@ pub(crate) fn shortcut_rows(s: &'static Strings) -> [Vec<ShortcutRow>; 2] {
             (&["ctrl-x"], s.cut_word),
             (&["ctrl-v"], s.paste_word),
             (&["ctrl-shift-c"], s.copy_names),
+            (&["ctrl-l"], s.edit_path),
             (&["enter"], s.open_word),
             (&["backspace", "left"], s.up),
             (&["right"], s.enter_folder),
@@ -951,6 +952,7 @@ impl Shell {
             ui.add(
                 egui::TextEdit::singleline(&mut self.theme_query)
                     .hint_text(s.search_themes)
+                    .background_color(hex(p.raised))
                     .desired_width(240.0),
             );
             let f = self.theme_filter;
@@ -999,11 +1001,8 @@ impl Shell {
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         for t in &shown {
-                            let active = if t.dark {
-                                t.name == dark_name
-                            } else {
-                                t.name == light_name
-                            };
+                            let active = t.dark == dark_now
+                                && &t.name == if t.dark { &dark_name } else { &light_name };
                             let (rect, response) = ui.allocate_exact_size(
                                 egui::vec2(ui.available_width(), 40.0),
                                 egui::Sense::click(),
@@ -1221,7 +1220,7 @@ impl Shell {
         };
         let size = self.controller.state.settings.text_size;
         let mut size_pick = None;
-        card(ui, s.text_size_title, Some(s.text_size_hint), true, |ui| {
+        card(ui, s.text_size_title, Some(s.text_size_hint), false, |ui| {
             size_pick = segmented(
                 ui,
                 &[
