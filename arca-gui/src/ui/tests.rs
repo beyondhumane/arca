@@ -30,7 +30,7 @@ fn dialogs_fit_compact_and_normal_viewports() {
         }
     }
     assert_eq!(dialog_width(ModalKind::Add, NORMAL_SIZE.0), 600.);
-    assert_eq!(dialog_width(ModalKind::Settings, 1200.), 860.);
+    assert_eq!(dialog_width(ModalKind::Settings, 1200.), 1040.);
 }
 
 #[test]
@@ -410,4 +410,15 @@ fn settings_search_finds_a_section_by_the_settings_inside_it() {
     assert!(section_words(SettingsSection::Appearance, s)
         .iter()
         .any(|word| word.to_lowercase().contains("theme")));
+}
+
+#[test]
+fn columns_show_whole_panes_and_keep_the_active_one() {
+    use super::browser::column_slots;
+    assert_eq!(column_slots(2, 1, 240., 9., 1000.), (0, 240.));
+    let (first, width) = column_slots(5, 4, 240., 9., 700.);
+    assert_eq!(first, 3);
+    assert!((width * 2. + 9. * 2. - 700. - 9.).abs() < 0.01);
+    assert_eq!(column_slots(5, 1, 240., 9., 700.).0, 1);
+    assert_eq!(column_slots(3, 2, 240., 9., 100.), (2, 100.));
 }

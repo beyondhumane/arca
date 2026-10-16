@@ -650,7 +650,11 @@ impl AppController {
             return format!(
                 "{} {} · {} {}",
                 rows.len(),
-                s.items_word,
+                if rows.len() == 1 {
+                    s.item_word
+                } else {
+                    s.items_word
+                },
                 human(raw),
                 s.in_folder
             );

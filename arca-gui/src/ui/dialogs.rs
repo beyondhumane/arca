@@ -6,7 +6,7 @@ use egui_phosphor::regular as icon;
 
 pub(crate) fn dialog_width(kind: ModalKind, window: f32) -> f32 {
     let wanted: f32 = match kind {
-        ModalKind::Settings => 860.0,
+        ModalKind::Settings => 1040.0,
         ModalKind::Shortcuts => 720.0,
         ModalKind::Add => 600.0,
         ModalKind::Conflict => 560.0,
@@ -147,7 +147,9 @@ impl Shell {
         let modal = egui::Modal::new(egui::Id::new(("arca-modal", kind as u8))).frame(
             egui::Frame::popup(&ctx.global_style())
                 .fill(hex(p.surface))
-                .inner_margin(18),
+                .stroke(egui::Stroke::new(1.0, theme::alpha(p.border, 0.8)))
+                .corner_radius(9)
+                .inner_margin(if kind == ModalKind::Settings { 0 } else { 18 }),
         );
         let tallest = dialog_max_height(ctx.content_rect().height());
         let measured = egui::Id::new(("arca-modal-content", kind as u8));
@@ -157,6 +159,11 @@ impl Shell {
             .min(tallest);
         let response = modal.show(ctx, |ui| {
             ui.set_width(width);
+            if kind == ModalKind::Settings {
+                ui.set_height((ctx.content_rect().height() - 64.0).clamp(320.0, 760.0));
+                self.settings_dialog(ui);
+                return;
+            }
             let shown = egui::ScrollArea::vertical()
                 .max_height(tallest)
                 .min_scrolled_height(wanted.max(64.0))
@@ -574,15 +581,6 @@ impl Shell {
     fn settings_dialog(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
-        ui.horizontal(|ui| {
-            heading(ui, s.settings);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icon_button(ui, icon::X, s.cancel, true).clicked() {
-                    self.cancel_modal(ModalKind::Settings);
-                }
-            });
-        });
-        ui.add_space(8.0);
         let sections = [
             (SettingsSection::General, s.settings_general, icon::GEAR_SIX),
             (
@@ -627,141 +625,252 @@ impl Shell {
                 self.settings_section = *first;
             }
         }
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                ui.set_width(180.0);
+        let size = egui::vec2(ui.available_width(), ui.available_height());
+        let (whole, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        let compact = whole.width() < 700.0;
+        let nav_width = if compact { 52.0 } else { 220.0 };
+        let nav = egui::Rect::from_min_size(whole.min, egui::vec2(nav_width, whole.height()));
+        ui.painter().rect_filled(
+            nav,
+            egui::CornerRadius {
+                nw: 9,
+                sw: 9,
+                ne: 0,
+                se: 0,
+            },
+            theme::alpha(p.background, 0.35),
+        );
+        ui.painter().vline(
+            nav.right(),
+            nav.y_range(),
+            egui::Stroke::new(1.0, theme::alpha(p.border, 0.6)),
+        );
+        let inset = if compact {
+            egui::vec2(8.0, 12.0)
+        } else {
+            egui::vec2(12.0, 18.0)
+        };
+        let mut rail = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(nav.shrink2(inset))
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        rail.spacing_mut().item_spacing.y = 2.0;
+        if compact {
+            rail.menu_button(theme::icon_text(icon::MAGNIFYING_GLASS).size(16.0), |ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.settings_query)
-                        .hint_text(format!("{}  {}", icon::MAGNIFYING_GLASS, s.settings_search))
-                        .desired_width(f32::INFINITY),
+                        .hint_text(s.settings_search)
+                        .desired_width(200.0),
                 );
-                ui.add_space(4.0);
-                if matching.is_empty() {
-                    ui.label(RichText::new(s.settings_no_match).color(hex(p.muted)));
-                }
-                for (section, label, glyph) in matching {
-                    if nav_item(ui, glyph, label, self.settings_section == section, false).clicked()
-                    {
-                        self.settings_section = section;
-                    }
-                }
+            })
+            .response
+            .on_hover_text(s.settings_search);
+        } else {
+            rail.add(
+                egui::TextEdit::singleline(&mut self.settings_query)
+                    .hint_text(format!("{}  {}", icon::MAGNIFYING_GLASS, s.settings_search))
+                    .margin(egui::vec2(8.0, 5.0))
+                    .desired_width(f32::INFINITY),
+            );
+        }
+        rail.add_space(10.0);
+        if matching.is_empty() && !compact {
+            rail.label(RichText::new(s.settings_no_match).color(hex(p.muted)));
+        }
+        for (section, label, glyph) in &matching {
+            let on = self.settings_section == *section;
+            if nav_item(&mut rail, glyph, label, on, compact).clicked() {
+                self.settings_section = *section;
+            }
+        }
+        let page = egui::Rect::from_min_max(egui::pos2(nav.right() + 1.0, whole.top()), whole.max);
+        let mut body = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(page)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        let title = sections
+            .iter()
+            .find(|(section, _, _)| *section == self.settings_section)
+            .map_or(s.settings, |(_, label, _)| *label);
+        let bar = body
+            .allocate_ui_with_layout(
+                egui::vec2(page.width(), 44.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.add_space(20.0);
+                    ui.label(RichText::new(title).font(theme::display(15.0)).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(8.0);
+                        if icon_button(ui, icon::X, s.cancel, true).clicked() {
+                            self.cancel_modal(ModalKind::Settings);
+                        }
+                    });
+                },
+            )
+            .response
+            .rect;
+        body.painter().hline(
+            page.x_range(),
+            bar.bottom(),
+            egui::Stroke::new(1.0, theme::alpha(p.border, 0.5)),
+        );
+        egui::ScrollArea::vertical()
+            .id_salt("settings-page")
+            .auto_shrink(false)
+            .show(&mut body, |ui| {
+                egui::Frame::new()
+                    .inner_margin(egui::Margin {
+                        left: 24,
+                        right: 24,
+                        top: 18,
+                        bottom: 26,
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        self.settings_page(ui);
+                    });
             });
-            ui.separator();
-            ui.vertical(|ui| {
-                ui.set_min_height(420.0);
-                ui.set_width(ui.available_width());
-                let title = sections
-                    .iter()
-                    .find(|(section, _, _)| *section == self.settings_section)
-                    .map_or(s.settings, |(_, label, _)| *label);
-                ui.label(RichText::new(title).font(theme::display(16.0)));
-                ui.add_space(8.0);
-                match self.settings_section {
-                    SettingsSection::General => self.settings_general(ui),
-                    SettingsSection::Archives => {
-                        ui.label(RichText::new(s.defaults_title).color(hex(p.muted)));
-                        self.pickers(ui);
-                        ui.add_space(6.0);
-                        let mut on = self.controller.state.into_subfolder;
-                        if ui.checkbox(&mut on, s.into_subfolder).changed() {
-                            self.settings_activate(SettingsControl::Subfolder);
-                        }
+    }
+
+    fn settings_page(&mut self, ui: &mut egui::Ui) {
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        match self.settings_section {
+            SettingsSection::General => self.settings_general(ui),
+            SettingsSection::Archives => {
+                section_title(ui, s.defaults_title);
+                card(ui, s.defaults_title, None, false, |ui| self.pickers(ui));
+                let mut on = self.controller.state.into_subfolder;
+                card(ui, s.into_subfolder, Some(s.subfolder_hint), true, |ui| {
+                    if switch(ui, &mut on, s.into_subfolder).changed() {
+                        self.settings_activate(SettingsControl::Subfolder);
                     }
-                    SettingsSection::Appearance => {
-                        ui.label(s.theme);
-                        self.choices(ui, SettingsSection::Appearance);
+                });
+            }
+            SettingsSection::Appearance => {
+                card(ui, s.theme, Some(s.theme_hint), false, |ui| {
+                    self.choices(ui, SettingsSection::Appearance);
+                });
+            }
+            SettingsSection::Views => self.settings_views(ui),
+            SettingsSection::Keybindings => shortcuts_table(ui, s),
+            SettingsSection::Updates => {
+                let mut version = format!("Arca {}", env!("CARGO_PKG_VERSION"));
+                if let Some(release) = &self.controller.state.update {
+                    version.push_str(&format!(" \u{b7} {}", release.tag));
+                }
+                let description = format!("{} {version}", s.updates_hint);
+                let mut on = self.controller.state.settings.updates;
+                card(ui, s.check_updates, Some(&description), true, |ui| {
+                    if switch(ui, &mut on, s.check_updates).changed() {
+                        self.settings_activate(SettingsControl::Updates);
                     }
-                    SettingsSection::Views => self.settings_views(ui),
-                    SettingsSection::Keybindings => shortcuts_table(ui, s),
-                    SettingsSection::Updates => {
-                        let mut on = self.controller.state.settings.updates;
-                        if ui.checkbox(&mut on, s.check_updates).changed() {
-                            self.settings_activate(SettingsControl::Updates);
-                        }
-                        let mut version = format!("Arca {}", env!("CARGO_PKG_VERSION"));
-                        if let Some(release) = &self.controller.state.update {
-                            version.push_str(&format!(" · {}", release.tag));
-                        }
-                        ui.label(RichText::new(version).color(hex(p.muted)));
-                        if let Some(release) = &self.controller.state.update {
-                            let label = fill(s.update_ready, &[("version", &release.tag)]);
-                            if primary_button(ui, &label, true).clicked() {
-                                self.controller.start_update();
-                            }
-                        }
+                });
+                if let Some(release) = &self.controller.state.update {
+                    let label = fill(s.update_ready, &[("version", &release.tag)]);
+                    if primary_button(ui, &label, true).clicked() {
+                        self.controller.start_update();
                     }
-                    SettingsSection::About => {
-                        ui.add(
-                            egui::Image::from_bytes("bytes://arca-mark.svg", crate::assets::MARK)
+                }
+            }
+            SettingsSection::About => {
+                egui::Frame::new()
+                    .fill(theme::alpha(p.background, 0.55))
+                    .stroke(egui::Stroke::new(1.0, theme::alpha(p.border, 0.6)))
+                    .corner_radius(6)
+                    .inner_margin(egui::Margin::same(16))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::Image::from_bytes(
+                                    "bytes://arca-mark.svg",
+                                    crate::assets::MARK,
+                                )
                                 .fit_to_exact_size(egui::Vec2::splat(56.0)),
-                        );
-                        ui.label(
-                            RichText::new(format!("Arca {}", env!("CARGO_PKG_VERSION")))
-                                .font(theme::display(18.0)),
-                        );
-                        ui.label(RichText::new(s.about_blurb).color(hex(p.muted)));
-                    }
-                }
-            });
-        });
+                            );
+                            ui.add_space(8.0);
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    RichText::new(format!("Arca {}", env!("CARGO_PKG_VERSION")))
+                                        .font(theme::display(18.0)),
+                                );
+                                ui.label(RichText::new(s.about_blurb).color(hex(p.muted)));
+                            });
+                        });
+                    });
+            }
+        }
     }
 
     fn settings_general(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
-        let lang = self.controller.state.settings.lang;
-        let _ = lang;
-        ui.label(s.language);
-        self.choices(ui, SettingsSection::General);
-        ui.add_space(8.0);
-        ui.label(s.name_encoding);
+        card(ui, s.language, Some(s.language_hint), false, |ui| {
+            self.choices(ui, SettingsSection::General);
+        });
         let page = self.controller.state.settings.page;
         let current = arca_zip::pages::Page::ALL
             .iter()
             .find(|(candidate, _, _)| *candidate == page)
             .map_or("", |(_, _, label)| *label);
         let mut chosen = page;
-        egui::ComboBox::from_id_salt("settings-page")
-            .selected_text(current)
-            .show_ui(ui, |ui| {
-                for (candidate, _, label) in arca_zip::pages::Page::ALL {
-                    ui.selectable_value(&mut chosen, candidate, label);
-                }
-            });
+        card(ui, s.name_encoding, Some(s.encoding_hint), true, |ui| {
+            egui::ComboBox::from_id_salt("settings-page")
+                .selected_text(current)
+                .width(200.0)
+                .show_ui(ui, |ui| {
+                    for (candidate, _, label) in arca_zip::pages::Page::ALL {
+                        ui.selectable_value(&mut chosen, candidate, label);
+                    }
+                });
+        });
         if chosen != page {
             self.controller.reread_names(chosen);
         }
-        ui.add_space(8.0);
         let mut hidden = self.controller.state.settings.show_hidden;
-        if ui.checkbox(&mut hidden, s.show_hidden).changed() {
-            self.controller.dispatch(AppAction::SetShowHidden(hidden));
-        }
+        card(ui, s.show_hidden, Some(s.hidden_hint), true, |ui| {
+            if switch(ui, &mut hidden, s.show_hidden).changed() {
+                self.controller.dispatch(AppAction::SetShowHidden(hidden));
+            }
+        });
     }
 
     fn settings_views(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
         let columns =
             self.controller.state.settings.browser_view == crate::settings::BrowserView::Columns;
-        ui.label(s.default_view);
-        if ui.radio(columns, s.column_view).clicked() && !columns {
-            self.switch_view(true, false);
-        }
-        if ui.radio(!columns, s.details_view).clicked() && columns {
-            self.switch_view(false, self.controller.state.settings.flat);
-        }
-        ui.add_space(8.0);
-        let settings = &mut self.controller.state.settings;
-        let mut changed = false;
-        changed |= ui
-            .checkbox(&mut settings.preview_visible, s.show_preview_panel)
-            .changed();
-        changed |= ui
-            .checkbox(&mut settings.folders, s.show_folder_tree)
-            .changed();
-        changed |= ui
-            .checkbox(&mut settings.sidebar_collapsed, s.icon_sidebar)
-            .changed();
-        if changed {
-            settings.save();
+        card(
+            ui,
+            s.default_view,
+            Some(s.view_hint),
+            false,
+            |ui| match segmented(ui, &[(s.column_view, columns), (s.details_view, !columns)]) {
+                Some(0) if !columns => self.switch_view(true, false),
+                Some(1) if columns => self.switch_view(false, self.controller.state.settings.flat),
+                _ => {}
+            },
+        );
+        for (label, hint, pick) in [
+            (
+                s.show_preview_panel,
+                s.preview_hint,
+                (|settings| &mut settings.preview_visible) as fn(&mut crate::Settings) -> &mut bool,
+            ),
+            (s.show_folder_tree, s.tree_hint, |settings| {
+                &mut settings.folders
+            }),
+            (s.icon_sidebar, s.rail_hint, |settings| {
+                &mut settings.sidebar_collapsed
+            }),
+        ] {
+            card(ui, label, Some(hint), true, |ui| {
+                let settings = &mut self.controller.state.settings;
+                if switch(ui, pick(settings), label).changed() {
+                    settings.save();
+                }
+            });
         }
     }
 
@@ -769,6 +878,7 @@ impl Shell {
         let s = self.controller.s();
         let lang = self.controller.state.settings.lang;
         let theme = self.controller.state.settings.theme;
+        let mut shown = Vec::new();
         for control in SettingsControl::ALL {
             let (owner, on, label) = match control {
                 SettingsControl::LangSystem => {
@@ -801,7 +911,14 @@ impl Shell {
                 ),
                 SettingsControl::Updates | SettingsControl::Subfolder => continue,
             };
-            if owner == section && ui.radio(on, label).clicked() && !on {
+            if owner == section {
+                shown.push((control, label, on));
+            }
+        }
+        let labels: Vec<_> = shown.iter().map(|(_, label, on)| (*label, *on)).collect();
+        if let Some(index) = segmented(ui, &labels) {
+            let (control, _, on) = shown[index];
+            if !on {
                 self.settings_activate(control);
             }
         }

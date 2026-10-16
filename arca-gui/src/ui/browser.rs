@@ -408,29 +408,27 @@ impl Shell {
 
     fn columns_view(&mut self, ui: &mut egui::Ui) {
         let panes = self.controller.state.browser.panes.len();
-        let width = self.controller.state.settings.directory_width;
-        egui::ScrollArea::horizontal()
-            .id_salt("panes")
-            .stick_to_right(true)
-            .auto_shrink(false)
-            .show(ui, |ui| {
-                ui.horizontal_top(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    for pane in 0..panes {
-                        let height = ui.available_height();
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(width, height),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                ui.set_width(width);
-                                ui.set_height(height);
-                                self.pane(ui, pane, width);
-                            },
-                        );
-                        ui.separator();
-                    }
-                });
-            });
+        let active = self.controller.state.browser.active;
+        let wanted = self.controller.state.settings.directory_width;
+        let gap = 1.0;
+        let room = ui.available_width();
+        let (first, width) = column_slots(panes, active, wanted, gap, room);
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            for pane in first..panes {
+                let height = ui.available_height();
+                ui.allocate_ui_with_layout(
+                    Vec2::new(width, height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_width(width);
+                        ui.set_height(height);
+                        self.pane(ui, pane, width);
+                    },
+                );
+                ui.add(egui::Separator::default().spacing(1.0));
+            }
+        });
     }
 
     fn pane(&mut self, ui: &mut egui::Ui, pane: usize, width: f32) {
@@ -449,7 +447,7 @@ impl Shell {
         let remembered = data.scroll_offset;
         let directory = data.directory.clone();
         let order = data.order;
-        ui.horizontal(|ui| {
+        let header = ui.horizontal(|ui| {
             let title = directory
                 .trim_end_matches('/')
                 .rsplit('/')
@@ -458,9 +456,16 @@ impl Shell {
                 .unwrap_or(self.controller.root_label())
                 .to_string();
             let color = if active { p.text } else { p.muted };
-            ui.add_sized(
-                [width - 40.0, 22.0],
-                egui::Label::new(RichText::new(title).strong().color(hex(color))).truncate(),
+            ui.add_space(8.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(width - 48.0, 26.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(title).strong().color(hex(color)))
+                            .truncate(),
+                    )
+                },
             );
             ui.menu_button(
                 super::theme::icon_text(icon::SORT_ASCENDING).color(hex(p.muted)),
@@ -495,6 +500,18 @@ impl Shell {
             .response
             .on_hover_text(s.sort_word);
         });
+        let rect = header.response.rect;
+        let span = egui::Rangef::new(rect.left(), rect.left() + width);
+        ui.painter().hline(
+            span,
+            rect.bottom() + 1.0,
+            egui::Stroke::new(1.0, super::theme::alpha(p.border, 0.6)),
+        );
+        if active {
+            ui.painter()
+                .hline(span, rect.top() + 1.0, egui::Stroke::new(2.0, hex(p.focus)));
+        }
+        ui.add_space(2.0);
         if rows.is_empty() {
             ui.label(RichText::new(s.empty_folder).color(hex(p.muted)));
             self.empty_space(ui, Some(pane));
@@ -782,4 +799,22 @@ impl Shell {
         }
         response.context_menu(|ui| self.row_menu(ui, None, usize::MAX));
     }
+}
+
+pub(crate) fn column_slots(
+    panes: usize,
+    active: usize,
+    wanted: f32,
+    gap: f32,
+    room: f32,
+) -> (usize, f32) {
+    let fit = (((room + gap) / (wanted + gap)).floor() as usize).max(1);
+    if panes <= fit {
+        return (0, wanted);
+    }
+    let first = (panes - fit).min(active);
+    (
+        first,
+        ((room + gap) / fit as f32 - gap).max(wanted.min(room)),
+    )
 }

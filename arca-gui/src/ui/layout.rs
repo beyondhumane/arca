@@ -8,7 +8,7 @@ pub(crate) struct Layout {
 }
 
 pub(crate) fn decide(width: f32, settings: &Settings) -> Layout {
-    let rail = settings.sidebar_collapsed || width < 1100.;
+    let rail = settings.sidebar_collapsed || width < 720.;
     let sidebar = settings.folders;
     let side = if !sidebar {
         0.
@@ -60,7 +60,7 @@ mod tests {
     fn narrow_layout_preserves_preferences_and_restores_panels() {
         let settings = Settings::default();
         assert_eq!(
-            decide(800., &settings),
+            decide(700., &settings),
             Layout {
                 sidebar: true,
                 rail: true,

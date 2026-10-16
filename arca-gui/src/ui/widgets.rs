@@ -99,12 +99,165 @@ pub(crate) fn muted(ui: &mut Ui, text: impl Into<String>) -> Response {
 
 pub(crate) fn group_label(ui: &mut Ui, text: &str) {
     let p = palette_of(ui.ctx());
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(text.to_uppercase())
+                .size(10.5)
+                .strong()
+                .extra_letter_spacing(0.6)
+                .color(hex(p.muted)),
+        );
+    });
+    ui.add_space(2.0);
+}
+
+/// A settings card: a title, an optional description, and its control.
+pub(crate) fn card(
+    ui: &mut Ui,
+    title: &str,
+    description: Option<&str>,
+    inline: bool,
+    control: impl FnOnce(&mut Ui),
+) {
+    let p = palette_of(ui.ctx());
+    egui::Frame::new()
+        .fill(theme::alpha(p.background, 0.55))
+        .stroke(Stroke::new(1.0, theme::alpha(p.border, 0.6)))
+        .corner_radius(6)
+        .inner_margin(egui::Margin::symmetric(14, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let words = |ui: &mut Ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(title.trim_end_matches(':')).strong());
+                    if let Some(description) = description {
+                        ui.label(RichText::new(description).size(12.0).color(hex(p.muted)));
+                    }
+                });
+            };
+            if inline {
+                ui.horizontal(|ui| {
+                    words(ui);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control);
+                });
+            } else {
+                words(ui);
+                ui.add_space(6.0);
+                control(ui);
+            }
+        });
+    ui.add_space(8.0);
+}
+
+/// A section title inside a settings page.
+pub(crate) fn section_title(ui: &mut Ui, text: &str) {
+    let p = palette_of(ui.ctx());
     ui.add_space(6.0);
     ui.label(
         RichText::new(text.to_uppercase())
-            .size(10.5)
+            .size(11.0)
+            .strong()
+            .extra_letter_spacing(1.0)
             .color(hex(p.muted)),
     );
+    ui.add_space(6.0);
+}
+
+/// An on/off switch with the semantics of a checkbox.
+pub(crate) fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
+    let p = palette_of(ui.ctx());
+    let size = Vec2::new(34.0, 18.0);
+    let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    let t = ui.ctx().animate_bool_responsive(response.id, *on);
+    let track = if *on { hex(p.focus) } else { hex(p.raised) };
+    ui.painter().rect(
+        rect,
+        9,
+        track,
+        Stroke::new(1.0, hex(p.border)),
+        egui::StrokeKind::Inside,
+    );
+    let x = egui::lerp(rect.left() + 9.0..=rect.right() - 9.0, t);
+    let knob = if *on {
+        hex(p.state_foreground)
+    } else {
+        hex(p.muted)
+    };
+    ui.painter()
+        .circle_filled(egui::pos2(x, rect.center().y), 6.0, knob);
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.expand(2.0),
+            11,
+            Stroke::new(1.5, hex(p.focus)),
+            egui::StrokeKind::Outside,
+        );
+    }
+    let label = label.to_string();
+    let value = *on;
+    response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, true, value, &label));
+    response
+}
+
+/// A row of mutually exclusive choices drawn as one segmented control.
+pub(crate) fn segmented(ui: &mut Ui, choices: &[(&str, bool)]) -> Option<usize> {
+    let p = palette_of(ui.ctx());
+    let mut picked = None;
+    egui::Frame::new()
+        .fill(hex(p.raised))
+        .corner_radius(6)
+        .inner_margin(egui::Margin::same(2))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let gap = 2.0;
+            let count = choices.len().max(1) as f32;
+            let each = (ui.available_width() - gap * (count - 1.0)) / count;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for (index, (label, on)) in choices.iter().enumerate() {
+                    let (rect, response) =
+                        ui.allocate_exact_size(Vec2::new(each, 26.0), Sense::click());
+                    let fill = if *on {
+                        theme::alpha(p.focus, 0.28)
+                    } else if response.hovered() {
+                        theme::alpha(p.focus, 0.12)
+                    } else {
+                        Color32::TRANSPARENT
+                    };
+                    ui.painter().rect_filled(rect, 5, fill);
+                    if response.has_focus() {
+                        ui.painter().rect_stroke(
+                            rect,
+                            5,
+                            Stroke::new(1.5, hex(p.focus)),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        *label,
+                        egui::FontId::proportional(13.0),
+                        if *on { hex(p.text) } else { hex(p.muted) },
+                    );
+                    let text = label.to_string();
+                    let selected = *on;
+                    response.widget_info(|| {
+                        WidgetInfo::selected(WidgetType::RadioButton, true, selected, &text)
+                    });
+                    if response.clicked() {
+                        picked = Some(index);
+                    }
+                }
+            });
+        });
+    picked
 }
 
 /// A key cap, as drawn in the shortcut sheet and the footer.
@@ -130,13 +283,13 @@ pub(crate) fn nav_item(
 ) -> Response {
     let p = palette_of(ui.ctx());
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 26.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 30.0), Sense::click());
     let visuals = ui.style().interact_selectable(&response, selected);
     if selected || response.hovered() || response.has_focus() {
         let fill = if selected {
-            hex(p.selected)
+            theme::alpha(p.focus, 0.18)
         } else {
-            theme::alpha(p.focus, 0.10)
+            theme::alpha(p.focus, 0.12)
         };
         ui.painter().rect_filled(rect, 6, fill);
     }
@@ -161,12 +314,12 @@ pub(crate) fn nav_item(
         if selected { hex(p.focus) } else { hex(p.muted) },
     );
     if !rail {
-        let galley = ui.painter().layout(
+        let mut job = egui::text::LayoutJob::single_section(
             label.to_string(),
-            egui::FontId::proportional(13.0),
-            visuals.text_color(),
-            rect.width() - 36.0,
+            egui::TextFormat::simple(egui::FontId::proportional(13.0), visuals.text_color()),
         );
+        job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 36.0);
+        let galley = ui.painter().layout_job(job);
         ui.painter().galley(
             egui::pos2(rect.left() + 30.0, rect.center().y - galley.size().y / 2.0),
             galley,

@@ -32,11 +32,11 @@ pub(crate) struct Palette {
 // Tokyo Night, the dark one Arca opens with.
 pub(crate) const DARK: Palette = Palette {
     background: 0x16161E,
-    surface: 0x1A1B26,
-    raised: 0x232637,
-    border: 0x2F344D,
+    surface: 0x1F2335,
+    raised: 0x292E42,
+    border: 0x3B4261,
     text: 0xC0CAF5,
-    muted: 0xA9B1D6,
+    muted: 0x9A9FBC,
     selected: 0x2A3459,
     focus: 0x7AA2F7,
     link: 0x7AA2F7,
