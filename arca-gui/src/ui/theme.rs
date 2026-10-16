@@ -120,6 +120,23 @@ fn palettes_id() -> egui::Id {
     egui::Id::new("arca-palettes")
 }
 
+/// Goes from 0 to 1 the first time `id` is drawn, and stays at 1. Nothing
+/// moves when animations are off: the style's animation time is then zero.
+pub(crate) fn appear(ctx: &egui::Context, id: egui::Id) -> f32 {
+    let seen = id.with("seen");
+    if ctx.data(|d| d.get_temp::<bool>(seen)).is_none() {
+        ctx.data_mut(|d| d.insert_temp(seen, true));
+        ctx.animate_bool_with_time(id, false, 0.0);
+    }
+    let time = ctx.global_style().animation_time * 1.6;
+    ctx.animate_bool_with_time(id, true, time)
+}
+
+/// Lets `id` appear again the next time it is drawn.
+pub(crate) fn forget(ctx: &egui::Context, id: egui::Id) {
+    ctx.data_mut(|d| d.remove::<bool>(id.with("seen")));
+}
+
 pub(crate) fn hex(value: u32) -> Color32 {
     Color32::from_rgb((value >> 16) as u8, (value >> 8) as u8, value as u8)
 }

@@ -255,10 +255,22 @@ impl Shell {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_min_width(width);
                         for (i, name) in suggestions.iter().enumerate() {
-                            let label = format!("{}  {name}", icon::FOLDER);
-                            let row = ui.add_sized(
-                                [width, 26.0],
-                                egui::Button::selectable(self.path_pick == Some(i), label),
+                            let (rect, row) = ui
+                                .allocate_exact_size(egui::vec2(width, 26.0), egui::Sense::click());
+                            let lit = ui
+                                .ctx()
+                                .animate_bool(row.id, row.hovered() || self.path_pick == Some(i));
+                            ui.painter().rect_filled(
+                                rect,
+                                4,
+                                super::theme::alpha(p.focus, 0.22 * lit),
+                            );
+                            ui.painter().text(
+                                rect.left_center() + egui::vec2(10.0, 0.0),
+                                egui::Align2::LEFT_CENTER,
+                                format!("{}  {name}", icon::FOLDER),
+                                egui::TextStyle::Body.resolve(ui.style()),
+                                hex(p.text),
                             );
                             if row.clicked() {
                                 clicked = Some(i);

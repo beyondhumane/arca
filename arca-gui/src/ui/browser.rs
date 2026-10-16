@@ -59,13 +59,20 @@ fn paint_row_back(
     look: &RowLook,
     p: Palette,
 ) {
+    let checked = ui
+        .ctx()
+        .animate_bool(response.id.with("checked"), look.checked);
+    let hover = ui
+        .ctx()
+        .animate_bool(response.id.with("hover"), response.hovered());
     let painter = ui.painter();
-    if look.checked {
-        painter.rect_filled(rect, 4, hex(p.selected));
-    } else if look.open {
+    if look.open && !look.checked {
         painter.rect_filled(rect, 4, alpha(p.selected, 0.55));
-    } else if response.hovered() {
-        painter.rect_filled(rect, 4, alpha(p.focus, 0.08));
+    } else if hover > 0.0 && !look.checked {
+        painter.rect_filled(rect, 4, alpha(p.focus, 0.08 * hover));
+    }
+    if checked > 0.0 {
+        painter.rect_filled(rect, 4, alpha(p.selected, checked));
     }
     if look.cursor {
         painter.rect_stroke(
@@ -417,10 +424,13 @@ impl Shell {
             ui.spacing_mut().item_spacing.x = 0.0;
             for pane in first..panes {
                 let height = ui.available_height();
+                let directory = &self.controller.state.browser.panes[pane].directory;
+                let shown = super::theme::appear(ui.ctx(), egui::Id::new(("arca-pane", directory)));
                 ui.allocate_ui_with_layout(
                     Vec2::new(width, height),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
+                        ui.multiply_opacity(shown);
                         ui.set_width(width);
                         ui.set_height(height);
                         self.pane(ui, pane, width);

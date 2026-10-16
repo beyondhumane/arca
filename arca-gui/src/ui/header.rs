@@ -47,22 +47,30 @@ impl Shell {
                 self.remember_width(width, |settings| &mut settings.sidebar);
             }
         }
-        if layout.preview && browsing && !one_shot {
+        let preview_open = layout.preview && browsing && !one_shot;
+        if preview_open {
             self.preview_for_cursor();
-            let shown = egui::Panel::right("arca-preview")
-                .frame(
-                    egui::Frame::new()
-                        .fill(hex(p.surface))
-                        .inner_margin(egui::Margin::same(10)),
-                )
-                .default_size(self.controller.state.settings.preview_width)
-                .size_range(280.0..=800.0)
-                .resizable(true)
-                .show(ui, |ui| self.preview_panel(ui));
-            let width = shown.response.rect.width();
-            self.remember_width(width, |settings| &mut settings.preview_width);
         } else if self.controller.state.preview.index.is_some() {
             self.close_preview();
+        }
+        let mut expanded = preview_open;
+        let shown = egui::Panel::right("arca-preview")
+            .frame(
+                egui::Frame::new()
+                    .fill(hex(p.surface))
+                    .inner_margin(egui::Margin::same(10)),
+            )
+            .default_size(self.controller.state.settings.preview_width)
+            .size_range(280.0..=800.0)
+            .resizable(true)
+            .show_collapsible(ui, &mut expanded, |ui| self.preview_panel(ui));
+        let settled = ui
+            .ctx()
+            .animate_bool(egui::Id::new("arca-preview-settled"), preview_open)
+            >= 1.0;
+        if let Some(shown) = shown.filter(|_| preview_open && settled) {
+            let width = shown.response.rect.width();
+            self.remember_width(width, |settings| &mut settings.preview_width);
         }
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(hex(p.background)))

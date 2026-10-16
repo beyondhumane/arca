@@ -154,7 +154,9 @@ fn ui_id(ui: &egui::Ui, salt: &str) -> egui::Id {
 
 impl Shell {
     pub(super) fn dialogs(&mut self, ctx: &egui::Context) {
+        let fade = egui::Id::new("arca-modal-fade");
         let Some(kind) = self.modal_kind() else {
+            theme::forget(ctx, fade);
             return;
         };
         let width = dialog_width(kind, ctx.content_rect().width());
@@ -173,6 +175,7 @@ impl Shell {
             .unwrap_or(0.0)
             .min(tallest);
         let response = modal.show(ctx, |ui| {
+            ui.multiply_opacity(theme::appear(ui.ctx(), fade));
             ui.set_width(width);
             if kind == ModalKind::Settings {
                 ui.set_height((ctx.content_rect().height() - 64.0).clamp(320.0, 760.0));
