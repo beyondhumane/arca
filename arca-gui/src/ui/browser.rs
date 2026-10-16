@@ -355,7 +355,7 @@ impl Shell {
                         area = area.vertical_scroll_offset(scroll_target(offset, height, cursor));
                     }
                 }
-                area.show_rows(ui, ROW_HEIGHT, rows.len(), |ui, range| {
+                let shown = area.show_rows(ui, ROW_HEIGHT, rows.len(), |ui, range| {
                     self.autoscroll(ui);
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for index in range {
@@ -409,7 +409,7 @@ impl Shell {
                         self.row_events(ui, &response, row, index, None, look.checked);
                     }
                 });
-                self.empty_space(ui, None);
+                self.blank_below(ui, &shown, None);
             });
     }
 
@@ -580,7 +580,7 @@ impl Shell {
         if (shown.state.offset.y - remembered).abs() > 0.5 {
             self.controller.set_pane_scroll(pane, shown.state.offset.y);
         }
-        self.empty_space(ui, Some(pane));
+        self.blank_below(ui, &shown, Some(pane));
     }
 
     fn autoscroll(&mut self, ui: &mut egui::Ui) {
@@ -774,6 +774,11 @@ impl Shell {
             }
             first = false;
             let (label, keys) = action.label(s);
+            let label = if row.is_none() && action == RowAction::Compress {
+                s.compress
+            } else {
+                label
+            };
             let label = action.destination_label(label, row, &current_dir);
             let enabled = idle
                 && match action {
@@ -799,6 +804,30 @@ impl Shell {
     fn empty_space(&mut self, ui: &mut egui::Ui, pane: Option<usize>) {
         let size = ui.available_size().max(Vec2::new(1.0, 1.0));
         let response = ui.allocate_response(size, Sense::click());
+        self.blank_events(response, pane);
+    }
+
+    /// The part of a scroll area under its last row. The area keeps the
+    /// whole height, so nothing is left to allocate after it; the blank is
+    /// worked out from what it shows and gets the same menu as empty space.
+    fn blank_below(
+        &mut self,
+        ui: &mut egui::Ui,
+        shown: &egui::scroll_area::ScrollAreaOutput<()>,
+        pane: Option<usize>,
+    ) {
+        let inner = shown.inner_rect;
+        let used = (shown.content_size.y - shown.state.offset.y).max(0.0);
+        let blank =
+            egui::Rect::from_min_max(egui::pos2(inner.left(), inner.top() + used), inner.max);
+        if blank.height() < 1.0 {
+            return;
+        }
+        let response = ui.interact(blank, ui.id().with(("blank", pane)), Sense::click());
+        self.blank_events(response, pane);
+    }
+
+    fn blank_events(&mut self, response: egui::Response, pane: Option<usize>) {
         if response.clicked() && self.background_idle() {
             if let Some(pane) = pane {
                 if self.controller.state.browser.active != pane {

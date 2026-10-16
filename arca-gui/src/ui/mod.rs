@@ -664,6 +664,11 @@ impl Shell {
                 let inputs = self.controller.selected_disk_paths();
                 self.controller.dispatch(AppAction::PrepareCompress(inputs));
             }
+            RowAction::OpenArchive => self.begin_dialog(DialogKind::Open),
+            RowAction::ExtractAll => self.begin_dialog(DialogKind::Extract {
+                only_checked: false,
+            }),
+            RowAction::TestArchive => self.shortcut(Shortcut::Test),
             RowAction::Pin => {
                 if let Some(row) = row.filter(|row| row.is_dir && !row.up) {
                     self.controller

@@ -36,14 +36,6 @@ pub(crate) fn icon_toggle(
     response
 }
 
-/// A button with a glyph and a word next to it.
-pub(crate) fn labelled_button(ui: &mut Ui, glyph: &str, label: &str, enabled: bool) -> Response {
-    ui.add_enabled(
-        enabled,
-        egui::Button::new(format!("{glyph}  {label}")).min_size(Vec2::new(0.0, 28.0)),
-    )
-}
-
 /// The blue call to action of a dialog.
 pub(crate) fn primary_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     ui.scope(|ui| {

@@ -161,56 +161,18 @@ impl Shell {
         let s = self.controller.s();
         let idle = self.background_idle();
         let archive = self.controller.state.archive.is_some();
-        let wide = self.width >= 1000.0;
         let own_bar = self.own_title_bar();
         if own_bar {
             self.title_grip(ui);
         }
         ui.horizontal(|ui| {
-            let button = |ui: &mut egui::Ui, glyph: &str, label: &str, enabled: bool| {
-                if wide {
-                    labelled_button(ui, glyph, label, enabled)
-                } else {
-                    icon_button(ui, glyph, label, enabled)
-                }
-            };
-            if button(ui, icon::FOLDER_OPEN, s.open, idle).clicked() {
-                self.begin_dialog(DialogKind::Open);
-            }
-            if button(ui, icon::PACKAGE, s.compress, idle).clicked() {
-                let inputs = self.controller.selected_disk_paths();
-                self.controller.dispatch(AppAction::PrepareCompress(inputs));
-            }
-            ui.add_enabled_ui(idle && archive, |ui| {
-                let title = if wide {
-                    format!("{}  {}", icon::EXPORT, s.extract_all)
-                } else {
-                    icon::EXPORT.to_string()
-                };
-                ui.menu_button(title, |ui| {
-                    if ui.button(s.extract_all).clicked() {
-                        self.begin_dialog(DialogKind::Extract {
-                            only_checked: false,
-                        });
-                    }
-                    let any = self.selected_count() > 0;
-                    let (label, _) = RowAction::ExtractSelection.label(s);
-                    if ui.add_enabled(any, egui::Button::new(label)).clicked() {
-                        self.begin_dialog(DialogKind::Extract { only_checked: true });
-                    }
-                    if ui
-                        .add(egui::Button::new(s.extract_here).shortcut_text("Alt+W"))
-                        .clicked()
-                    {
-                        self.controller.extract_here();
-                    }
-                })
-                .response
-                .on_hover_text(s.extract_all);
-            });
-            if button(ui, icon::CHECK_CIRCLE, s.test_word, idle && archive).clicked() {
-                self.shortcut(Shortcut::Test);
-            }
+            ui.add_space(2.0);
+            ui.add(
+                egui::Image::from_bytes("bytes://arca-mark.svg", crate::assets::MARK)
+                    .fit_to_exact_size(egui::vec2(18.0, 18.0)),
+            );
+            ui.add_space(4.0);
+            ui.label(RichText::new(&self.title).strong());
             if let Some(release) = &self.controller.state.update {
                 let label = fill(s.update_ready, &[("version", &release.tag)]);
                 if ui

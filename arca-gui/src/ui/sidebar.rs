@@ -251,7 +251,14 @@ fn tree(
                 for action in RowAction::ALL {
                     if !action.offered()
                         || !action.shown(context.on_disk)
-                        || matches!(action, RowAction::View | RowAction::Pin)
+                        || matches!(
+                            action,
+                            RowAction::View
+                                | RowAction::Pin
+                                | RowAction::OpenArchive
+                                | RowAction::ExtractAll
+                                | RowAction::TestArchive
+                        )
                         || (action.writable_only() && !context.writable)
                     {
                         continue;

@@ -20,10 +20,13 @@ pub(crate) enum RowAction {
     Compress,
     CopyPath,
     Pin,
+    OpenArchive,
+    ExtractAll,
+    TestArchive,
 }
 
 impl RowAction {
-    pub(crate) const ALL: [RowAction; 16] = [
+    pub(crate) const ALL: [RowAction; 19] = [
         RowAction::Open,
         RowAction::ExtractSelection,
         RowAction::ExtractHere,
@@ -40,12 +43,25 @@ impl RowAction {
         RowAction::Compress,
         RowAction::CopyPath,
         RowAction::Pin,
+        RowAction::OpenArchive,
+        RowAction::ExtractAll,
+        RowAction::TestArchive,
     ];
 
     /// What the menu offers where there is no row under the pointer: the
     /// space under the last one is the folder itself, not an entry.
-    pub(crate) const EMPTY_SPACE: [RowAction; 3] =
-        [RowAction::NewFolder, RowAction::Paste, RowAction::SelectAll];
+    /// The menu over the empty part of the list also carries what the
+    /// toolbar used to: opening another archive, compressing, extracting
+    /// and testing the whole thing.
+    pub(crate) const EMPTY_SPACE: [RowAction; 7] = [
+        RowAction::NewFolder,
+        RowAction::Paste,
+        RowAction::SelectAll,
+        RowAction::OpenArchive,
+        RowAction::Compress,
+        RowAction::ExtractAll,
+        RowAction::TestArchive,
+    ];
 
     /// Whether the entry is about the place being pointed at rather than the
     /// thing sitting in it. The tree runs the first kind inside the folder and
@@ -53,7 +69,13 @@ impl RowAction {
     pub(crate) fn about_the_place(self) -> bool {
         matches!(
             self,
-            RowAction::Open | RowAction::Paste | RowAction::SelectAll | RowAction::NewFolder
+            RowAction::Open
+                | RowAction::Paste
+                | RowAction::SelectAll
+                | RowAction::NewFolder
+                | RowAction::OpenArchive
+                | RowAction::ExtractAll
+                | RowAction::TestArchive
         )
     }
 
@@ -80,7 +102,7 @@ impl RowAction {
     pub(crate) fn label(self, s: &'static Strings) -> (&'static str, &'static str) {
         match self {
             RowAction::Open => (s.open_word, "Enter"),
-            RowAction::ExtractSelection => (s.extract_selected, "Ctrl+E"),
+            RowAction::ExtractSelection => (s.extract_selected, ""),
             RowAction::ExtractHere => (s.extract_here, "Alt+W"),
             RowAction::TestSelection => (s.test_selection, ""),
             RowAction::View => (s.view_word, "F3"),
@@ -95,6 +117,9 @@ impl RowAction {
             RowAction::Compress => (s.compress_selection, "Ctrl+N"),
             RowAction::CopyPath => (s.copy_path, ""),
             RowAction::Pin => (s.pin_word, ""),
+            RowAction::OpenArchive => (s.open, "Ctrl+O"),
+            RowAction::ExtractAll => (s.extract_all, "Ctrl+E"),
+            RowAction::TestArchive => (s.test_word, "Ctrl+T"),
         }
     }
 
@@ -104,7 +129,11 @@ impl RowAction {
     pub(crate) fn starts_group(self) -> bool {
         matches!(
             self,
-            RowAction::Rename | RowAction::Copy | RowAction::CopyNames | RowAction::NewFolder
+            RowAction::Rename
+                | RowAction::Copy
+                | RowAction::CopyNames
+                | RowAction::NewFolder
+                | RowAction::OpenArchive
         )
     }
 
@@ -137,6 +166,8 @@ impl RowAction {
                     | Self::Cut
                     | Self::Paste
                     | Self::NewFolder
+                    | Self::ExtractAll
+                    | Self::TestArchive
             )
         } else {
             !matches!(self, Self::Compress | Self::CopyPath | Self::Pin)
