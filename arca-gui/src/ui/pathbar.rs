@@ -207,6 +207,8 @@ impl Shell {
         let response = ui.add(
             egui::TextEdit::singleline(&mut text)
                 .id(id)
+                // Keep Tab for completion; the key itself is consumed above.
+                .lock_focus(true)
                 .hint_text(s.edit_path)
                 .background_color(hex(p.raised))
                 .desired_width(ui.available_width()),
