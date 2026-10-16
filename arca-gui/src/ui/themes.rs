@@ -345,7 +345,16 @@ pub(crate) fn all() -> Vec<Theme> {
     out
 }
 
+/// Whether a built-in theme already uses `name`, ignoring case: a custom theme
+/// by that name would be hidden behind it.
+pub(crate) fn builtin_name(name: &str) -> bool {
+    builtin().iter().any(|t| t.name.eq_ignore_ascii_case(name))
+}
+
 pub(crate) fn save(theme: &Theme) -> std::io::Result<()> {
+    if builtin_name(theme.name.trim()) {
+        return Err(std::io::ErrorKind::AlreadyExists.into());
+    }
     let dir = folder().ok_or(std::io::ErrorKind::NotFound)?;
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join(file_name(&theme.name)), text(theme))
@@ -399,5 +408,15 @@ mod tests {
         assert!(all.iter().any(|t| t.dark) && all.iter().any(|t| !t.dark));
         assert_eq!(palette(&all, "Tokyo Night", true), DARK);
         assert_eq!(palette(&all, "missing", false), LIGHT);
+    }
+
+    #[test]
+    fn built_in_names_cannot_be_saved_over() {
+        assert!(builtin_name("nord"));
+        assert!(builtin_name("Tokyo Night"));
+        assert!(!builtin_name("My Nord"));
+        let mut theme = builtin().remove(0);
+        theme.custom = true;
+        assert!(save(&theme).is_err());
     }
 }

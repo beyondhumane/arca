@@ -1142,10 +1142,15 @@ impl Shell {
                                 }
                             }
                         });
+                    let taken = themes::builtin_name(draft.name.trim());
+                    if taken {
+                        ui.add_space(4.0);
+                        ui.colored_label(hex(p.danger), s.theme_name_taken);
+                    }
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        save = primary_button(ui, s.save_theme, !draft.name.trim().is_empty())
-                            .clicked();
+                        let ready = !draft.name.trim().is_empty() && !taken;
+                        save = primary_button(ui, s.save_theme, ready).clicked();
                         if secondary_button(ui, s.cancel, true).clicked() {
                             keep = false;
                         }
@@ -1168,6 +1173,15 @@ impl Shell {
             let _ = themes::delete(&name);
             self.themes = themes::all();
             self.look.clear();
+            let settings = &mut self.controller.state.settings;
+            let fresh = crate::settings::Settings::default();
+            if settings.dark_theme == name {
+                settings.dark_theme = fresh.dark_theme;
+            }
+            if settings.light_theme == name {
+                settings.light_theme = fresh.light_theme;
+            }
+            settings.save();
         }
         if let Some(t) = pick {
             let settings = &mut self.controller.state.settings;
