@@ -61,6 +61,7 @@ pub(crate) struct Search {
     shown: Vec<usize>,
     filtered_for: (String, usize),
     follow: bool,
+    scroll: f32,
 }
 
 impl Drop for Search {
@@ -100,6 +101,7 @@ impl Search {
             shown: Vec::new(),
             filtered_for: (String::from("\u{0}"), 0),
             follow: false,
+            scroll: 0.0,
         }
     }
 
@@ -394,6 +396,7 @@ impl Shell {
         let hits = search.hits();
         let pick = search.pick;
         let follow = std::mem::take(&mut search.follow);
+        let scroll = search.scroll;
         let scope = search.scope.clone();
         let query_empty = search.query.trim().is_empty();
         let mut chosen = None;
@@ -414,80 +417,92 @@ impl Shell {
                 },
             );
         } else {
-            egui::ScrollArea::vertical()
+            // Only the rows in view are laid out, so a pick that moved off
+            // screen cannot ask to be scrolled to: the offset is set here
+            // from where the row would be instead.
+            let mut area = egui::ScrollArea::vertical()
                 .max_height(height)
                 .min_scrolled_height(height)
-                .auto_shrink([false, false])
-                .show_rows(ui, ROW, hits.len(), |ui, range| {
-                    ui.add_space(4.0);
-                    for i in range {
-                        let hit = &hits[i];
-                        let size = egui::vec2(ui.available_width() - 12.0, ROW - 2.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(6.0);
-                            let (rect, response) =
-                                ui.allocate_exact_size(size, egui::Sense::click());
-                            let on = i == pick;
-                            if on && follow {
-                                ui.scroll_to_rect(rect, None);
-                            }
-                            if on {
-                                ui.painter().rect_filled(rect, 6, alpha(p.selected, 1.0));
-                            } else if response.hovered() {
-                                ui.painter().rect_filled(rect, 6, alpha(p.focus, 0.08));
-                            }
-                            let glyph = if hit.is_dir { icon::FOLDER } else { icon::FILE };
-                            let painter = ui.painter();
-                            let left = rect.left() + 10.0;
-                            painter.text(
-                                egui::pos2(left, rect.center().y),
-                                egui::Align2::LEFT_CENTER,
-                                glyph,
-                                egui::FontId::proportional(16.0),
-                                hex(if hit.is_dir { p.focus } else { p.muted }),
+                .auto_shrink([false, false]);
+            if follow {
+                let top = pick as f32 * ROW;
+                let bottom = top + ROW + 8.0;
+                let offset = if top < scroll {
+                    top
+                } else if bottom > scroll + height {
+                    bottom - height
+                } else {
+                    scroll
+                };
+                area = area.vertical_scroll_offset(offset.max(0.0));
+            }
+            let shown = area.show_rows(ui, ROW, hits.len(), |ui, range| {
+                ui.add_space(4.0);
+                for i in range {
+                    let hit = &hits[i];
+                    let size = egui::vec2(ui.available_width() - 12.0, ROW - 2.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(6.0);
+                        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+                        let on = i == pick;
+                        if on {
+                            ui.painter().rect_filled(rect, 6, alpha(p.selected, 1.0));
+                        } else if response.hovered() {
+                            ui.painter().rect_filled(rect, 6, alpha(p.focus, 0.08));
+                        }
+                        let glyph = if hit.is_dir { icon::FOLDER } else { icon::FILE };
+                        let painter = ui.painter();
+                        let left = rect.left() + 10.0;
+                        painter.text(
+                            egui::pos2(left, rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            glyph,
+                            egui::FontId::proportional(16.0),
+                            hex(if hit.is_dir { p.focus } else { p.muted }),
+                        );
+                        let name = painter.layout_no_wrap(
+                            hit.name.clone(),
+                            egui::TextStyle::Body.resolve(ui.style()),
+                            hex(p.text),
+                        );
+                        let name_at =
+                            egui::pos2(left + 26.0, rect.center().y - name.size().y / 2.0);
+                        painter.galley(name_at, name.clone(), hex(p.text));
+                        let room = rect.right() - 10.0 - (name_at.x + name.size().x + 12.0);
+                        if room > 40.0 {
+                            let parent = hit.parent();
+                            let shown = if parent.is_empty() {
+                                scope.clone()
+                            } else {
+                                parent
+                            };
+                            let where_at = painter.layout(
+                                shown,
+                                egui::TextStyle::Small.resolve(ui.style()),
+                                hex(p.muted),
+                                room,
                             );
-                            let name = painter.layout_no_wrap(
-                                hit.name.clone(),
-                                egui::TextStyle::Body.resolve(ui.style()),
-                                hex(p.text),
+                            painter.galley(
+                                egui::pos2(
+                                    rect.right() - 10.0 - where_at.size().x.min(room),
+                                    rect.center().y - where_at.size().y / 2.0,
+                                ),
+                                where_at,
+                                hex(p.muted),
                             );
-                            let name_at =
-                                egui::pos2(left + 26.0, rect.center().y - name.size().y / 2.0);
-                            painter.galley(name_at, name.clone(), hex(p.text));
-                            let room = rect.right() - 10.0 - (name_at.x + name.size().x + 12.0);
-                            if room > 40.0 {
-                                let parent = hit.parent();
-                                let shown = if parent.is_empty() {
-                                    scope.clone()
-                                } else {
-                                    parent
-                                };
-                                let where_at = painter.layout(
-                                    shown,
-                                    egui::TextStyle::Small.resolve(ui.style()),
-                                    hex(p.muted),
-                                    room,
-                                );
-                                painter.galley(
-                                    egui::pos2(
-                                        rect.right() - 10.0 - where_at.size().x.min(room),
-                                        rect.center().y - where_at.size().y / 2.0,
-                                    ),
-                                    where_at,
-                                    hex(p.muted),
-                                );
-                            }
-                            if response.clicked() {
-                                chosen = Some(if ui.input(|i| i.modifiers.alt) {
-                                    Pick::Reveal(hit.clone())
-                                } else {
-                                    Pick::Open(hit.clone())
-                                });
-                            }
-                        });
-                    }
-                    ui.add_space(4.0);
-                });
+                        }
+                        if response.clicked() {
+                            chosen = Some(if ui.input(|i| i.modifiers.alt) {
+                                Pick::Reveal(hit.clone())
+                            } else {
+                                Pick::Open(hit.clone())
+                            });
+                        }
+                    });
+                }
+                ui.add_space(4.0);
+            });
+            search.scroll = shown.state.offset.y;
         }
         let line = ui.available_rect_before_wrap();
         ui.painter().hline(
