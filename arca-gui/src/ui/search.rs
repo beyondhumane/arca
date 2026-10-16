@@ -452,9 +452,12 @@ impl Shell {
                 .max_height(height)
                 .min_scrolled_height(height)
                 .auto_shrink([false, false]);
+            // `show_rows` lays rows out `ROW` tall plus the item spacing, and
+            // the list starts after a small gap, so the pitch has to match.
+            let pitch = ROW + ui.spacing().item_spacing.y;
             if follow {
-                let top = pick as f32 * ROW;
-                let bottom = top + ROW + 8.0;
+                let top = pick as f32 * pitch;
+                let bottom = top + pitch + 8.0;
                 let offset = if top < scroll {
                     top
                 } else if bottom > scroll + height {
@@ -468,10 +471,10 @@ impl Shell {
                 ui.add_space(4.0);
                 for i in range {
                     let hit = &hits[i];
-                    let size = egui::vec2(ui.available_width() - 12.0, ROW - 2.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(6.0);
+                    let size = egui::vec2(ui.available_width(), ROW);
+                    {
                         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+                        let rect = rect.shrink2(egui::vec2(6.0, 1.0));
                         let on = i == pick;
                         if on {
                             ui.painter().rect_filled(rect, 6, alpha(p.selected, 1.0));
@@ -526,7 +529,7 @@ impl Shell {
                                 Pick::Open(hit.clone())
                             });
                         }
-                    });
+                    }
                 }
                 ui.add_space(4.0);
             });
