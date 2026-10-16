@@ -174,7 +174,7 @@ impl Shell {
             }
             Some(TreeEvent::Action(action, path)) => self.folder_action(action, &path),
             Some(TreeEvent::Drop(roots, target))
-                if self.controller.writable() && self.background_idle() =>
+                if self.controller.can_drop() && self.background_idle() =>
             {
                 self.controller.move_into(&roots, &target);
             }

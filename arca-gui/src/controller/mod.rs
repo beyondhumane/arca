@@ -1,7 +1,7 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
-mod disk;
+pub(crate) mod disk;
 #[cfg(test)]
 use disk::disk_dir;
 pub(crate) use disk::{disk_path, DiskState, Origin, PlaceKind};
@@ -993,6 +993,10 @@ impl AppController {
     // front of it, and a rename is a rewrite of the whole archive: doing them
     // one at a time would rewrite it once per file.
     pub(crate) fn move_into(&mut self, roots: &[String], target: &str) {
+        if self.on_disk() {
+            self.move_on_disk(roots, target);
+            return;
+        }
         let Some(archive) = self.state.archive.clone() else {
             return;
         };
@@ -1192,6 +1196,24 @@ impl AppController {
     // fast as a drag of one file.
     #[cfg(windows)]
     pub(crate) fn drag_out(&mut self) {
+        if self.on_disk() {
+            let picked = self.disk_drag_items();
+            if picked.is_empty() {
+                return;
+            }
+            let items: Vec<arca_drag::Item> = picked
+                .iter()
+                .map(|(_, name, size, mtime)| arca_drag::Item {
+                    name: name.clone(),
+                    size: *size,
+                    mtime: *mtime,
+                })
+                .collect();
+            let paths: Vec<PathBuf> = picked.into_iter().map(|(path, ..)| path).collect();
+            let deliver = Box::new(move |i: usize| paths.get(i).cloned());
+            let _ = arca_drag::drag(items, deliver, false);
+            return;
+        }
         let Some(archive) = self.state.archive.clone() else {
             return;
         };

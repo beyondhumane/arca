@@ -6,6 +6,7 @@ mod jobs;
 mod layout;
 mod pathbar;
 mod preview;
+mod search;
 mod sidebar;
 #[cfg(test)]
 mod tests;
@@ -85,6 +86,8 @@ pub(crate) struct Shell {
     theme_draft: Option<themes::Theme>,
     carrying: bool,
     anchor: Option<(egui::Id, egui::Pos2)>,
+    search: Option<search::Search>,
+    decorated: bool,
 }
 
 impl Shell {
@@ -98,6 +101,7 @@ impl Shell {
         let library = themes::all();
         theme::install(ctx, &controller.state.settings, &library);
         let look = look_of(&controller.state.settings);
+        let settings_now = controller.state.settings.title_bar;
         egui_extras::install_image_loaders(ctx);
         Self {
             filter_value: controller.state.filter.clone(),
@@ -132,6 +136,8 @@ impl Shell {
             theme_draft: None,
             carrying: false,
             anchor: None,
+            search: None,
+            decorated: system_title_bar(&settings_now),
         }
     }
 
@@ -186,6 +192,117 @@ impl Shell {
             theme::install(ctx, &self.controller.state.settings, &self.themes);
             self.look = look;
         }
+        let decorated = system_title_bar(&self.controller.state.settings.title_bar);
+        if decorated != self.decorated {
+            self.decorated = decorated;
+            if !cfg!(target_os = "macos") {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(decorated));
+            }
+        }
+    }
+
+    /// Whether Arca is drawing the title bar itself right now, with the
+    /// window buttons in its toolbar.
+    pub(super) fn own_title_bar(&self) -> bool {
+        !self.decorated && !cfg!(target_os = "macos")
+    }
+
+    /// Without the system's frame the window has no edges to grab, so thin
+    /// strips along the border take that over, and a hairline marks where
+    /// the window ends.
+    fn window_chrome(&self, ctx: &egui::Context) {
+        if !self.own_title_bar() {
+            return;
+        }
+        let p = theme::palette_of(ctx);
+        let rect = ctx.content_rect();
+        let id = egui::Id::new("arca-window-chrome");
+        ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, id))
+            .rect_stroke(
+                rect.shrink(0.5),
+                0,
+                egui::Stroke::new(1.0, theme::alpha(p.border, 0.9)),
+                egui::StrokeKind::Inside,
+            );
+        let fixed = ctx.input(|i| {
+            i.viewport().maximized.unwrap_or(false) || i.viewport().fullscreen.unwrap_or(false)
+        });
+        if fixed {
+            return;
+        }
+        use egui::{CursorIcon as C, ResizeDirection as D};
+        let edge = 5.0;
+        let corner = 14.0;
+        let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
+        let grips: [(egui::Rect, D, C); 8] = [
+            (
+                egui::Rect::from_min_max(egui::pos2(l, t), egui::pos2(l + corner, t + corner)),
+                D::NorthWest,
+                C::ResizeNwSe,
+            ),
+            (
+                egui::Rect::from_min_max(egui::pos2(r - corner, t), egui::pos2(r, t + corner)),
+                D::NorthEast,
+                C::ResizeNeSw,
+            ),
+            (
+                egui::Rect::from_min_max(egui::pos2(l, b - corner), egui::pos2(l + corner, b)),
+                D::SouthWest,
+                C::ResizeNeSw,
+            ),
+            (
+                egui::Rect::from_min_max(egui::pos2(r - corner, b - corner), egui::pos2(r, b)),
+                D::SouthEast,
+                C::ResizeNwSe,
+            ),
+            (
+                egui::Rect::from_min_max(
+                    egui::pos2(l + corner, t),
+                    egui::pos2(r - corner, t + edge),
+                ),
+                D::North,
+                C::ResizeVertical,
+            ),
+            (
+                egui::Rect::from_min_max(
+                    egui::pos2(l + corner, b - edge),
+                    egui::pos2(r - corner, b),
+                ),
+                D::South,
+                C::ResizeVertical,
+            ),
+            (
+                egui::Rect::from_min_max(
+                    egui::pos2(l, t + corner),
+                    egui::pos2(l + edge, b - corner),
+                ),
+                D::West,
+                C::ResizeHorizontal,
+            ),
+            (
+                egui::Rect::from_min_max(
+                    egui::pos2(r - edge, t + corner),
+                    egui::pos2(r, b - corner),
+                ),
+                D::East,
+                C::ResizeHorizontal,
+            ),
+        ];
+        egui::Area::new(id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(rect.min)
+            .interactable(true)
+            .show(ctx, |ui| {
+                for (grip, direction, cursor) in grips {
+                    let response = ui.interact(grip, id.with(direction as u8), egui::Sense::drag());
+                    if response.hovered() || response.dragged() {
+                        ctx.set_cursor_icon(cursor);
+                    }
+                    if response.drag_started() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+                    }
+                }
+            });
     }
 
     fn notice_new_tasks(&mut self) {
@@ -233,6 +350,8 @@ impl Shell {
             Some(ModalKind::Settings)
         } else if state.show_shortcuts {
             Some(ModalKind::Shortcuts)
+        } else if self.search.is_some() {
+            Some(ModalKind::Search)
         } else {
             None
         }
@@ -250,6 +369,7 @@ impl Shell {
             ModalKind::NewFolder | ModalKind::Mask => self.close_name(),
             ModalKind::Settings => self.controller.state.show_settings = false,
             ModalKind::Shortcuts => self.controller.state.show_shortcuts = false,
+            ModalKind::Search => self.search = None,
         }
     }
 
@@ -804,8 +924,15 @@ impl Shell {
             self.drop_external(dropped);
         }
         if self.carrying {
-            let outside = ctx
-                .input(|input| input.pointer.primary_down() && input.pointer.hover_pos().is_none());
+            // Windows keeps the pointer captured while a button is down, so
+            // it never "leaves": it just reports positions past the edge.
+            let outside = ctx.input(|input| {
+                input.pointer.primary_down()
+                    && input
+                        .pointer
+                        .latest_pos()
+                        .is_none_or(|pos| !input.content_rect().contains(pos))
+            });
             if outside {
                 self.carrying = false;
                 egui::DragAndDrop::clear_payload(ctx);
@@ -842,6 +969,9 @@ impl Shell {
     }
 
     fn key_down(&mut self, key: egui::Key, modifiers: egui::Modifiers) {
+        if !modifiers.command && self.search_key(key, modifiers) {
+            return;
+        }
         if self.background_blocked() {
             return;
         }
@@ -881,6 +1011,7 @@ impl Shell {
             Shortcut::Back => self.controller.dispatch(AppAction::Back),
             Shortcut::Forward => self.controller.dispatch(AppAction::Forward),
             Shortcut::EditPath => self.start_path_edit(),
+            Shortcut::Search => self.toggle_search(),
             Shortcut::Open => self.begin_dialog(DialogKind::Open),
             Shortcut::Compress => {
                 let inputs = self.controller.selected_disk_paths();
@@ -1094,7 +1225,15 @@ impl eframe::App for Shell {
         }
         self.jobs(&ctx);
         self.dialogs(&ctx);
+        self.window_chrome(&ctx);
     }
+}
+
+/// Whether the window system is asked for its own title bar. macOS keeps its
+/// frame either way: hiding the strip there means hiding only the strip, and
+/// the traffic lights stay where they are.
+fn system_title_bar(title_bar: &crate::settings::TitleBar) -> bool {
+    *title_bar == crate::settings::TitleBar::System
 }
 
 pub(crate) fn run() {
@@ -1103,12 +1242,21 @@ pub(crate) fn run() {
     let (width, height) = shell_size(compact);
     let floor = if compact { COMPACT_SIZE } else { MINIMUM_SIZE };
     let icon = eframe::icon_data::from_png_bytes(crate::assets::ICON).ok();
+    let decorated = system_title_bar(&Settings::load().title_bar);
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Arca")
         .with_app_id("arca")
         .with_inner_size([width, height])
         .with_min_inner_size([floor.0, floor.1])
         .with_drag_and_drop(true);
+    if cfg!(target_os = "macos") {
+        viewport = viewport
+            .with_titlebar_shown(decorated)
+            .with_title_shown(decorated)
+            .with_fullsize_content_view(!decorated);
+    } else {
+        viewport = viewport.with_decorations(decorated);
+    }
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }

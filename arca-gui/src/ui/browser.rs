@@ -738,7 +738,7 @@ impl Shell {
         }
         if row.is_dir && !row.up {
             if let Some(payload) = response.dnd_release_payload::<DraggedRows>() {
-                if idle && self.controller.writable() && !payload.0.contains(&row.path) {
+                if idle && self.controller.can_drop() && !payload.0.contains(&row.path) {
                     self.controller.move_into(&payload.0, &row.path);
                 }
             }

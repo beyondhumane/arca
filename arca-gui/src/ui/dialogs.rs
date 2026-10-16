@@ -1,6 +1,7 @@
 use super::theme::{hex, palette_of};
 use super::widgets::*;
 use super::*;
+use crate::settings::TitleBar;
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
 
@@ -8,6 +9,7 @@ pub(crate) fn dialog_width(kind: ModalKind, window: f32) -> f32 {
     let wanted: f32 = match kind {
         ModalKind::Settings => 1040.0,
         ModalKind::Shortcuts => 720.0,
+        ModalKind::Search => 640.0,
         ModalKind::Add => 600.0,
         ModalKind::Conflict => 560.0,
         _ => 448.0,
@@ -48,6 +50,7 @@ pub(crate) fn shortcut_rows(s: &'static Strings) -> [Vec<ShortcutRow>; 2] {
             (&["ctrl-v"], s.paste_word),
             (&["ctrl-shift-c"], s.copy_names),
             (&["ctrl-l"], s.edit_path),
+            (&["ctrl-k"], s.search_word),
             (&["enter"], s.open_word),
             (&["backspace", "left"], s.up),
             (&["right"], s.enter_folder),
@@ -129,6 +132,7 @@ pub(crate) fn section_words(section: SettingsSection, s: &'static Strings) -> Ve
             s.add_theme,
             s.font_title,
             s.text_size_title,
+            s.title_bar_title,
             s.motion_title,
         ],
         SettingsSection::Views => vec![
@@ -166,7 +170,11 @@ impl Shell {
                 .fill(hex(p.surface))
                 .stroke(egui::Stroke::new(1.0, theme::alpha(p.border, 0.8)))
                 .corner_radius(9)
-                .inner_margin(if kind == ModalKind::Settings { 0 } else { 18 }),
+                .inner_margin(if matches!(kind, ModalKind::Settings | ModalKind::Search) {
+                    0
+                } else {
+                    18
+                }),
         );
         let tallest = dialog_max_height(ctx.content_rect().height());
         let measured = egui::Id::new(("arca-modal-content", kind as u8));
@@ -182,6 +190,10 @@ impl Shell {
                 self.settings_dialog(ui);
                 return;
             }
+            if kind == ModalKind::Search {
+                self.search_dialog(ui);
+                return;
+            }
             let shown = egui::ScrollArea::vertical()
                 .max_height(tallest)
                 .min_scrolled_height(wanted.max(64.0))
@@ -192,7 +204,7 @@ impl Shell {
                     ModalKind::Delete => self.delete_dialog(ui),
                     ModalKind::Drop => self.drop_dialog(ui),
                     ModalKind::Add => self.add_dialog(ui),
-                    ModalKind::Settings => self.settings_dialog(ui),
+                    ModalKind::Settings | ModalKind::Search => {}
                     ModalKind::Shortcuts => {
                         let s = self.controller.s();
                         heading(ui, s.shortcuts_title);
@@ -1120,28 +1132,29 @@ impl Shell {
                         draft.dark = i == 0;
                     }
                     ui.add_space(6.0);
-                    egui::Grid::new("theme-colors")
-                        .num_columns(3)
-                        .spacing([18.0, 8.0])
-                        .show(ui, |ui| {
-                            for (i, key) in theme::Palette::KEYS.iter().enumerate() {
-                                if let Some(slot) = draft.palette.slot(key) {
-                                    let mut rgb =
-                                        [(*slot >> 16) as u8, (*slot >> 8) as u8, *slot as u8];
-                                    ui.horizontal(|ui| {
-                                        if ui.color_edit_button_srgb(&mut rgb).changed() {
-                                            *slot = (rgb[0] as u32) << 16
-                                                | (rgb[1] as u32) << 8
-                                                | rgb[2] as u32;
-                                        }
-                                        ui.label(s.palette_labels[i]);
-                                    });
-                                }
-                                if i % 3 == 2 {
-                                    ui.end_row();
-                                }
-                            }
-                        });
+                    let per_column = theme::Palette::KEYS.len().div_ceil(3);
+                    ui.columns(3, |columns| {
+                        for (i, key) in theme::Palette::KEYS.iter().enumerate() {
+                            let ui = &mut columns[i / per_column];
+                            let Some(slot) = draft.palette.slot(key) else {
+                                continue;
+                            };
+                            let mut rgb = [(*slot >> 16) as u8, (*slot >> 8) as u8, *slot as u8];
+                            let line = egui::vec2(ui.available_width(), 28.0);
+                            ui.allocate_ui_with_layout(
+                                line,
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    if ui.color_edit_button_srgb(&mut rgb).changed() {
+                                        *slot = (rgb[0] as u32) << 16
+                                            | (rgb[1] as u32) << 8
+                                            | rgb[2] as u32;
+                                    }
+                                    ui.label(s.palette_labels[i]);
+                                },
+                            );
+                        }
+                    });
                     let taken = themes::builtin_name(draft.name.trim());
                     if taken {
                         ui.add_space(4.0);
@@ -1255,6 +1268,16 @@ impl Shell {
         card(ui, s.motion_title, Some(s.motion_hint), true, |ui| {
             motion_changed = switch(ui, &mut motion, s.motion_title).changed();
         });
+        ui.add_space(12.0);
+        section_title(ui, s.title_bar_title);
+        let custom = self.controller.state.settings.title_bar == TitleBar::Custom;
+        let mut bar_pick = None;
+        card(ui, s.title_bar_title, Some(s.title_bar_hint), false, |ui| {
+            bar_pick = segmented(
+                ui,
+                &[(s.title_bar_system, !custom), (s.title_bar_custom, custom)],
+            );
+        });
         let settings = &mut self.controller.state.settings;
         let mut dirty = false;
         if let Some(font) = chosen {
@@ -1267,6 +1290,14 @@ impl Shell {
         }
         if motion_changed {
             settings.motion = motion;
+            dirty = true;
+        }
+        if let Some(i) = bar_pick {
+            settings.title_bar = if i == 0 {
+                TitleBar::System
+            } else {
+                TitleBar::Custom
+            };
             dirty = true;
         }
         if dirty {

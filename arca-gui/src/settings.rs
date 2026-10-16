@@ -39,6 +39,15 @@ pub(crate) enum Channel {
     Preview,
 }
 
+/// Who draws the strip above the toolbar: the window system, or Arca itself
+/// with the window buttons folded into its own toolbar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum TitleBar {
+    System,
+    #[default]
+    Custom,
+}
+
 pub(crate) const TEXT_LEAST: f32 = 11.0;
 pub(crate) const TEXT_MOST: f32 = 16.0;
 
@@ -67,6 +76,7 @@ pub(crate) struct Settings {
     pub(crate) font: FontChoice,
     pub(crate) text_size: f32,
     pub(crate) motion: bool,
+    pub(crate) title_bar: TitleBar,
     pub(crate) columns: Columns,
     pub(crate) browser_view: BrowserView,
     pub(crate) sidebar_collapsed: bool,
@@ -136,6 +146,7 @@ impl Default for Settings {
             font: FontChoice::Inter,
             text_size: 13.0,
             motion: true,
+            title_bar: TitleBar::default(),
             columns: Columns::default(),
             browser_view: BrowserView::default(),
             sidebar_collapsed: false,
@@ -200,6 +211,8 @@ impl Settings {
                     }
                 }
                 ("motion", v) => s.motion = v != "no",
+                ("title_bar", "system") => s.title_bar = TitleBar::System,
+                ("title_bar", "custom") => s.title_bar = TitleBar::Custom,
                 ("browser_view", "columns") => s.browser_view = BrowserView::Columns,
                 ("browser_view", "details") => s.browser_view = BrowserView::Details,
                 ("sidebar_collapsed", "yes") => s.sidebar_collapsed = true,
@@ -385,6 +398,10 @@ impl Settings {
         out.push_str(&format!("font = {font}\n"));
         out.push_str(&format!("text_size = {}\n", self.text_size));
         out.push_str(&format!("motion = {}\n", yes(self.motion)));
+        out.push_str(match self.title_bar {
+            TitleBar::System => "title_bar = system\n",
+            TitleBar::Custom => "title_bar = custom\n",
+        });
         out.push_str(match self.channel {
             Channel::Stable => "channel = stable\n",
             Channel::Preview => "channel = preview\n",
@@ -444,6 +461,10 @@ mod tests {
         assert_eq!(s.font, FontChoice::Mono);
         assert_eq!(s.text_size, TEXT_MOST);
         assert!(!s.motion);
+        assert_eq!(s.title_bar, TitleBar::Custom);
+        let bar = Settings::parse("title_bar = system\n");
+        assert_eq!(bar.title_bar, TitleBar::System);
+        assert!(bar.text().contains("title_bar = system\n"));
         assert_eq!(Settings::parse(&s.text()).light_theme, "Gruvbox Light");
         let f = Settings::parse("font = /usr/share/fonts/a b.ttf\ntext_size = NaN\n");
         assert_eq!(f.font, FontChoice::File("/usr/share/fonts/a b.ttf".into()));

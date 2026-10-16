@@ -191,6 +191,7 @@ pub(crate) enum ModalKind {
     Mask,
     Settings,
     Shortcuts,
+    Search,
 }
 
 pub(crate) fn column_text(
@@ -299,6 +300,7 @@ pub(crate) enum Shortcut {
     Back,
     Forward,
     EditPath,
+    Search,
     /// A mask that picks names, or one that drops them.
     PickGroup(bool),
 }
@@ -325,6 +327,7 @@ pub(crate) fn shortcut_for(
             "e" => Some(Shortcut::ExtractAll),
             "t" => Some(Shortcut::Test),
             "l" => Some(Shortcut::EditPath),
+            "k" => Some(Shortcut::Search),
             "i" => Some(Shortcut::Invert),
             "z" if !typing => Some(Shortcut::Undo),
             _ => None,

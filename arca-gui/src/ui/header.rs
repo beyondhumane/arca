@@ -107,6 +107,48 @@ impl Shell {
             });
     }
 
+    /// The toolbar doubles as the title bar when Arca draws its own: the
+    /// empty stretch moves the window, and a double click fills the screen.
+    /// It is laid down before the buttons so that they stay on top of it.
+    fn title_grip(&mut self, ui: &mut egui::Ui) {
+        let height = ui.spacing().interact_size.y + 6.0;
+        let rect =
+            egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), height));
+        let response = ui.interact(
+            rect,
+            egui::Id::new("arca-title-grip"),
+            egui::Sense::click_and_drag(),
+        );
+        if response.double_clicked() {
+            let full = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!full));
+        } else if response.drag_started_by(egui::PointerButton::Primary) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+    }
+
+    fn window_buttons(&mut self, ui: &mut egui::Ui) {
+        let s = self.controller.s();
+        let full = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+        if icon_button(ui, icon::X, s.close_window, true).clicked() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        let (glyph, tip) = if full {
+            (icon::CORNERS_IN, s.restore)
+        } else {
+            (icon::CORNERS_OUT, s.maximize)
+        };
+        if icon_button(ui, glyph, tip, true).clicked() {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!full));
+        }
+        if icon_button(ui, icon::MINUS, s.minimize, true).clicked() {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+    }
+
     fn remember_width(&mut self, width: f32, slot: impl Fn(&mut Settings) -> &mut f32) {
         let settings = &mut self.controller.state.settings;
         if (*slot(settings) - width).abs() > 0.5 && !self.ctx.input(|i| i.pointer.any_down()) {
@@ -120,6 +162,10 @@ impl Shell {
         let idle = self.background_idle();
         let archive = self.controller.state.archive.is_some();
         let wide = self.width >= 1000.0;
+        let own_bar = self.own_title_bar();
+        if own_bar {
+            self.title_grip(ui);
+        }
         ui.horizontal(|ui| {
             let button = |ui: &mut egui::Ui, glyph: &str, label: &str, enabled: bool| {
                 if wide {
@@ -178,9 +224,20 @@ impl Shell {
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if own_bar {
+                    self.window_buttons(ui);
+                    ui.separator();
+                }
                 self.overflow_menu(ui);
                 if icon_button(ui, icon::GEAR_SIX, s.settings, idle).clicked() {
                     self.controller.state.show_settings = true;
+                }
+                let browsing = archive || self.controller.on_disk();
+                if icon_button(ui, icon::MAGNIFYING_GLASS, s.search_word, idle && browsing)
+                    .on_hover_text(format!("{}  (Ctrl+K)", s.search_word))
+                    .clicked()
+                {
+                    self.toggle_search();
                 }
                 let preview = self.controller.state.settings.preview_visible;
                 if icon_toggle(ui, icon::EYE, s.view_word, true, preview).clicked() {
@@ -337,7 +394,7 @@ impl Shell {
             self.controller.dispatch(AppAction::Navigate(path));
         }
         if let Some((roots, target)) = dropped {
-            if self.controller.writable() && self.background_idle() {
+            if self.controller.can_drop() && self.background_idle() {
                 self.controller.move_into(&roots, &target);
             }
         }

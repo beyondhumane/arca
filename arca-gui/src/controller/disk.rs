@@ -147,7 +147,7 @@ fn disk_entry(name: String, is_dir: bool, meta: Option<&fs::Metadata>, hidden: b
     }
 }
 
-fn hidden_on_disk(name: &str, meta: Option<&fs::Metadata>) -> bool {
+pub(crate) fn hidden_on_disk(name: &str, meta: Option<&fs::Metadata>) -> bool {
     if cfg!(windows) {
         meta.is_some_and(|m| native_attributes(m) & ATTR_HIDDEN != 0)
     } else {
@@ -291,6 +291,80 @@ impl AppController {
 
     pub(crate) fn on_disk(&self) -> bool {
         self.state.archive.is_none() && self.state.disk.is_some()
+    }
+
+    /// Whether rows dragged inside the window can land on a folder here: a
+    /// zip takes a rewrite, and the disk takes a rename.
+    pub(crate) fn can_drop(&self) -> bool {
+        self.writable() || self.on_disk()
+    }
+
+    /// Dragging rows onto a folder on the disk. A rename on the same volume
+    /// is instant and leaves nothing half done; across volumes it fails, and
+    /// the notice says so rather than starting a copy nobody asked for.
+    pub(crate) fn move_on_disk(&mut self, roots: &[String], target: &str) {
+        let s = self.s();
+        let into = disk_path(target);
+        for root in roots {
+            let from = root.trim_end_matches('/');
+            let Some(leaf) = from.rsplit('/').next().filter(|leaf| !leaf.is_empty()) else {
+                continue;
+            };
+            if format!("{from}/") == target || target.starts_with(&format!("{from}/")) {
+                continue;
+            }
+            let dest = into.join(leaf);
+            if dest.symlink_metadata().is_ok() {
+                self.state.notice = fill(s.name_taken, &[("name", leaf)]);
+                self.state.error = true;
+                break;
+            }
+            if fs::rename(disk_path(from), &dest).is_err() {
+                self.state.notice = fill(s.cannot_move, &[("name", leaf)]);
+                self.state.error = true;
+                break;
+            }
+        }
+        self.refresh_disk();
+    }
+
+    /// What a drag out of a disk folder carries: every picked file, and the
+    /// files under every picked folder with their path from that folder, so
+    /// the shell can rebuild the tree where it drops.
+    #[cfg(windows)]
+    pub(crate) fn disk_drag_items(&self) -> Vec<(PathBuf, String, u64, Option<i64>)> {
+        const MOST: usize = 50_000;
+        let mut out = Vec::new();
+        for root in self.selected_roots() {
+            let trimmed = root.trim_end_matches('/');
+            let leaf = trimmed.rsplit('/').next().unwrap_or(trimmed).to_string();
+            let mut stack = vec![(disk_path(trimmed), leaf)];
+            while let Some((path, name)) = stack.pop() {
+                if out.len() >= MOST {
+                    return out;
+                }
+                let Ok(meta) = fs::metadata(&path) else {
+                    continue;
+                };
+                if meta.is_dir() {
+                    let Ok(items) = fs::read_dir(&path) else {
+                        continue;
+                    };
+                    for item in items.flatten() {
+                        let child = item.file_name().to_string_lossy().to_string();
+                        stack.push((item.path(), format!("{name}\\{child}")));
+                    }
+                } else {
+                    let mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64);
+                    out.push((path, name, meta.len(), mtime));
+                }
+            }
+        }
+        out
     }
 
     pub(crate) fn root_label(&self) -> &'static str {
