@@ -285,6 +285,14 @@ pub(crate) fn nav_item(
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 30.0), Sense::click());
     let visuals = ui.style().interact_selectable(&response, selected);
+    if response.dnd_hover_payload::<super::DraggedRows>().is_some() {
+        ui.painter().rect_stroke(
+            rect,
+            6,
+            Stroke::new(1.5, hex(p.spark)),
+            egui::StrokeKind::Inside,
+        );
+    }
     if selected || response.hovered() || response.has_focus() {
         let fill = if selected {
             theme::alpha(p.focus, 0.18)

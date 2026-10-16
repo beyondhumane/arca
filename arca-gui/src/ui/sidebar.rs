@@ -70,6 +70,12 @@ impl Shell {
                         if response.clicked() {
                             browse = Some(place.path.clone());
                         }
+                        if let Some(payload) = response.dnd_release_payload::<DraggedRows>() {
+                            if self.controller.on_disk() && self.background_idle() {
+                                let target = crate::controller::disk::disk_dir(&place.path);
+                                self.controller.move_on_disk(&payload.0, &target);
+                            }
+                        }
                         if pinned {
                             response.context_menu(|ui| {
                                 if ui.button(s.unpin_word).clicked() {
