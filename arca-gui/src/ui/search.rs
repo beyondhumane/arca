@@ -247,6 +247,26 @@ fn walk(root: &Path, halt: &AtomicBool, mut send: impl FnMut(Vec<Hit>) -> bool) 
     }
 }
 
+/// Every folder in the tree, as `a/b/`, that is not already a hit.
+fn implied_folders(
+    folder: &crate::tree::Folder,
+    prefix: &str,
+    known: &std::collections::HashSet<String>,
+    out: &mut Vec<Hit>,
+) {
+    for (name, kid) in &folder.kids {
+        let path = format!("{prefix}{name}/");
+        if !known.contains(&path) {
+            out.push(Hit {
+                name: name.clone(),
+                path: path.clone(),
+                is_dir: true,
+            });
+        }
+        implied_folders(kid, &path, known, out);
+    }
+}
+
 impl Shell {
     /// Ctrl+K and the toolbar button: opens the palette over what is showing,
     /// or closes it if it is already up.
@@ -270,7 +290,7 @@ impl Shell {
                 .map_or_else(|| s.computer_word.to_string(), str::to_string);
             self.search = Some(Search::over_disk(&dir, scope));
         } else if let Some(archive) = &state.archive {
-            let index = state
+            let mut index: Vec<Hit> = state
                 .entries
                 .iter()
                 .map(|entry| {
@@ -289,6 +309,14 @@ impl Shell {
                 })
                 .filter(|hit| !hit.name.is_empty())
                 .collect();
+            // Many zips never store their folders as entries; the tree
+            // already knows them from the file names, so they can be found.
+            let known: std::collections::HashSet<String> = index
+                .iter()
+                .filter(|hit| hit.is_dir)
+                .map(|hit| hit.path.clone())
+                .collect();
+            implied_folders(&state.folders, "", &known, &mut index);
             let scope = archive
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -581,6 +609,23 @@ mod tests {
         let index = vec![hit("Photos 2024/beach day.jpg"), hit("beach.txt")];
         let got = rank(&index, "day beach");
         assert_eq!(got, [0]);
+    }
+
+    #[test]
+    fn folders_the_zip_never_stored_are_still_found() {
+        let mut root = crate::tree::Folder::default();
+        let mut docs = crate::tree::Folder::default();
+        docs.kids
+            .insert("deep".into(), crate::tree::Folder::default());
+        root.kids.insert("docs".into(), docs);
+        root.kids
+            .insert("stored".into(), crate::tree::Folder::default());
+        let known = std::collections::HashSet::from(["stored/".to_string()]);
+        let mut out = Vec::new();
+        implied_folders(&root, "", &known, &mut out);
+        let paths: Vec<&str> = out.iter().map(|h| h.path.as_str()).collect();
+        assert_eq!(paths, ["docs/", "docs/deep/"]);
+        assert!(out.iter().all(|h| h.is_dir));
     }
 
     #[test]
