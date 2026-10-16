@@ -1,4 +1,6 @@
+use super::themes::{self, Theme};
 use crate::assets::FONT_FILES;
+use crate::settings::{FontChoice, Settings};
 use crate::ThemePreference;
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Stroke, TextStyle,
@@ -64,6 +66,60 @@ pub(crate) const LIGHT: Palette = Palette {
     state_foreground: 0xFFFFFF,
 };
 
+impl Palette {
+    pub(crate) const KEYS: [&'static str; 14] = [
+        "background",
+        "surface",
+        "raised",
+        "border",
+        "text",
+        "muted",
+        "selected",
+        "focus",
+        "link",
+        "spark",
+        "danger",
+        "warning",
+        "success",
+        "state_foreground",
+    ];
+
+    pub(crate) fn slot(&mut self, key: &str) -> Option<&mut u32> {
+        Some(match key {
+            "background" => &mut self.background,
+            "surface" => &mut self.surface,
+            "raised" => &mut self.raised,
+            "border" => &mut self.border,
+            "text" => &mut self.text,
+            "muted" => &mut self.muted,
+            "selected" => &mut self.selected,
+            "focus" => &mut self.focus,
+            "link" => &mut self.link,
+            "spark" => &mut self.spark,
+            "danger" => &mut self.danger,
+            "warning" => &mut self.warning,
+            "success" => &mut self.success,
+            "state_foreground" => &mut self.state_foreground,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn get(&self, key: &str) -> Option<u32> {
+        let mut copy = *self;
+        copy.slot(key).map(|v| *v)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Palettes {
+    dark: Palette,
+    light: Palette,
+}
+
+fn palettes_id() -> egui::Id {
+    egui::Id::new("arca-palettes")
+}
+
 pub(crate) fn hex(value: u32) -> Color32 {
     Color32::from_rgb((value >> 16) as u8, (value >> 8) as u8, value as u8)
 }
@@ -74,16 +130,36 @@ pub(crate) fn alpha(value: u32, amount: f32) -> Color32 {
 }
 
 pub(crate) fn palette_of(ctx: &egui::Context) -> Palette {
+    let set = ctx
+        .data(|d| d.get_temp::<Palettes>(palettes_id()))
+        .unwrap_or(Palettes {
+            dark: DARK,
+            light: LIGHT,
+        });
     if ctx.global_style().visuals.dark_mode {
-        DARK
+        set.dark
     } else {
-        LIGHT
+        set.light
     }
 }
 
 pub(crate) const DISPLAY: &str = "Sora";
 
-pub(crate) fn fonts() -> FontDefinitions {
+const FONT_LIMIT: u64 = 32 * 1024 * 1024;
+
+fn font_file(path: &str) -> Option<Vec<u8>> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > FONT_LIMIT {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let font = skrifa::FontRef::from_index(&bytes, 0).ok()?;
+    use skrifa::MetadataProvider;
+    font.charmap().map('a')?;
+    Some(bytes)
+}
+
+pub(crate) fn fonts(choice: &FontChoice) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
         DISPLAY.into(),
@@ -93,14 +169,36 @@ pub(crate) fn fonts() -> FontDefinitions {
         "Inter".into(),
         Arc::new(FontData::from_static(FONT_FILES[1])),
     );
+    let primary = match choice {
+        FontChoice::Inter => "Inter",
+        FontChoice::Sora => DISPLAY,
+        FontChoice::Mono => "Hack",
+        FontChoice::Ubuntu => "Ubuntu-Light",
+        FontChoice::File(path) => match font_file(path) {
+            Some(bytes) => {
+                fonts
+                    .font_data
+                    .insert("custom".into(), Arc::new(FontData::from_owned(bytes)));
+                "custom"
+            }
+            None => "Inter",
+        },
+    };
     if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
+        family.retain(|f| f != primary && f != "Inter");
         family.insert(0, "Inter".into());
+        if primary != "Inter" {
+            family.insert(0, primary.into());
+        }
     }
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     fonts
         .families
         .insert(FontFamily::Name("phosphor".into()), vec!["phosphor".into()]);
-    let mut display = vec![DISPLAY.to_string()];
+    let mut display = match choice {
+        FontChoice::Inter => vec![DISPLAY.to_string()],
+        _ => Vec::new(),
+    };
     display.extend(
         fonts
             .families
@@ -170,12 +268,20 @@ fn visuals(p: Palette, dark: bool) -> Visuals {
     v
 }
 
-/// Fonts, spacing and both palettes, installed once.
-pub(crate) fn install(ctx: &egui::Context, preference: ThemePreference) {
-    ctx.set_fonts(fonts());
-    ctx.set_visuals_of(egui::Theme::Dark, visuals(DARK, true));
-    ctx.set_visuals_of(egui::Theme::Light, visuals(LIGHT, false));
+/// Fonts, spacing and both palettes, from what the settings ask for.
+pub(crate) fn install(ctx: &egui::Context, settings: &Settings, library: &[Theme]) {
+    let set = Palettes {
+        dark: themes::palette(library, &settings.dark_theme, true),
+        light: themes::palette(library, &settings.light_theme, false),
+    };
+    ctx.data_mut(|d| d.insert_temp(palettes_id(), set));
+    ctx.set_fonts(fonts(&settings.font));
+    ctx.set_visuals_of(egui::Theme::Dark, visuals(set.dark, true));
+    ctx.set_visuals_of(egui::Theme::Light, visuals(set.light, false));
+    let size = settings.text_size;
+    let motion = settings.motion;
     ctx.all_styles_mut(|style| {
+        style.animation_time = if motion { 0.14 } else { 0.0 };
         style.spacing.item_spacing = egui::vec2(6.0, 4.0);
         style.spacing.button_padding = egui::vec2(8.0, 3.0);
         style.spacing.interact_size.y = 24.0;
@@ -183,19 +289,21 @@ pub(crate) fn install(ctx: &egui::Context, preference: ThemePreference) {
         style.interaction.selectable_labels = false;
         style
             .text_styles
-            .insert(TextStyle::Body, FontId::proportional(13.0));
+            .insert(TextStyle::Body, FontId::proportional(size));
         style
             .text_styles
-            .insert(TextStyle::Button, FontId::proportional(13.0));
+            .insert(TextStyle::Button, FontId::proportional(size));
         style
             .text_styles
-            .insert(TextStyle::Small, FontId::proportional(11.0));
+            .insert(TextStyle::Small, FontId::proportional(size - 2.0));
         style
             .text_styles
-            .insert(TextStyle::Monospace, FontId::monospace(12.0));
-        style.text_styles.insert(TextStyle::Heading, display(17.0));
+            .insert(TextStyle::Monospace, FontId::monospace(size - 1.0));
+        style
+            .text_styles
+            .insert(TextStyle::Heading, display(size + 4.0));
     });
-    apply(ctx, preference);
+    apply(ctx, settings.theme);
 }
 
 pub(crate) fn apply(ctx: &egui::Context, preference: ThemePreference) {
@@ -232,7 +340,7 @@ mod tests {
 
     #[test]
     fn icons_are_drawn_from_phosphor_and_not_from_the_text_font() {
-        let fonts = fonts();
+        let fonts = fonts(&FontChoice::Inter);
         let icons = &fonts.families[&FontFamily::Name("phosphor".into())];
         assert_eq!(icons, &vec!["phosphor".to_string()]);
         assert_eq!(fonts.families[&FontFamily::Proportional][0], "Inter");
@@ -240,7 +348,7 @@ mod tests {
 
     #[test]
     fn text_and_selection_meet_wcag_aa_in_both_modes() {
-        for (name, p) in [("dark", DARK), ("light", LIGHT)] {
+        for (name, p) in themes::builtin().into_iter().map(|t| (t.name, t.palette)) {
             for ground in [p.background, p.surface, p.raised, p.selected] {
                 for ink in [p.text, p.muted] {
                     assert!(
@@ -259,7 +367,7 @@ mod tests {
         for primary in [BLUE, BLUE_HOVER, BLUE_ACTIVE] {
             assert!(contrast(WHITE, primary) >= 4.5);
         }
-        for (name, p) in [("dark", DARK), ("light", LIGHT)] {
+        for (name, p) in themes::builtin().into_iter().map(|t| (t.name, t.palette)) {
             for state in [p.link, p.danger, p.warning, p.success] {
                 for ground in [p.background, p.surface, p.raised] {
                     assert!(contrast(state, ground) >= 4.5, "{name}: {state:06x}");
@@ -271,7 +379,7 @@ mod tests {
 
     #[test]
     fn the_brand_fonts_and_icons_are_installed() {
-        let fonts = fonts();
+        let fonts = fonts(&FontChoice::Inter);
         assert!(fonts.font_data.contains_key("Sora"));
         assert!(fonts.font_data.contains_key("Inter"));
         assert_eq!(fonts.families[&FontFamily::Proportional][0], "Inter");

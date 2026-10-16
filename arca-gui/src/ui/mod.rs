@@ -9,6 +9,7 @@ mod sidebar;
 #[cfg(test)]
 mod tests;
 mod theme;
+mod themes;
 mod widgets;
 
 use crate::tree::children_of;
@@ -43,6 +44,13 @@ enum DialogResult {
 #[derive(Clone)]
 pub(crate) struct DraggedRows(pub Vec<String>);
 
+fn look_of(s: &Settings) -> String {
+    format!(
+        "{:?}|{}|{}|{:?}|{}|{}",
+        s.theme, s.dark_theme, s.light_theme, s.font, s.text_size, s.motion
+    )
+}
+
 pub(crate) struct Shell {
     controller: AppController,
     ctx: egui::Context,
@@ -63,7 +71,11 @@ pub(crate) struct Shell {
     scroll_to_cursor: bool,
     width: f32,
     title: String,
-    theme: ThemePreference,
+    look: String,
+    themes: Vec<themes::Theme>,
+    theme_query: String,
+    theme_filter: usize,
+    theme_draft: Option<themes::Theme>,
     carrying: bool,
     anchor: Option<(egui::Id, egui::Pos2)>,
 }
@@ -76,8 +88,9 @@ impl Shell {
         let flat = controller.state.settings.flat;
         controller.transition_browser_view(columns, flat);
         apply_startup(&mut controller, startup);
-        let theme = controller.state.settings.theme;
-        theme::install(ctx, theme);
+        let library = themes::all();
+        theme::install(ctx, &controller.state.settings, &library);
+        let look = look_of(&controller.state.settings);
         egui_extras::install_image_loaders(ctx);
         Self {
             filter_value: controller.state.filter.clone(),
@@ -99,7 +112,11 @@ impl Shell {
             scroll_to_cursor: false,
             width: NORMAL_SIZE.0,
             title: String::new(),
-            theme,
+            look,
+            themes: library,
+            theme_query: String::new(),
+            theme_filter: 0,
+            theme_draft: None,
             carrying: false,
             anchor: None,
         }
@@ -151,10 +168,10 @@ impl Shell {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.title = title;
         }
-        let theme = self.controller.state.settings.theme;
-        if theme != self.theme {
-            theme::apply(ctx, theme);
-            self.theme = theme;
+        let look = look_of(&self.controller.state.settings);
+        if look != self.look {
+            theme::install(ctx, &self.controller.state.settings, &self.themes);
+            self.look = look;
         }
     }
 
@@ -373,7 +390,6 @@ impl Shell {
     fn set_theme(&mut self, theme: ThemePreference) {
         self.controller.dispatch(AppAction::SetTheme(theme));
         theme::apply(&self.ctx, theme);
-        self.theme = theme;
     }
 
     fn overflow_action(&mut self, action: OverflowAction) {

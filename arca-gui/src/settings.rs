@@ -22,12 +22,25 @@ pub(crate) enum BrowserView {
     Details,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FontChoice {
+    #[default]
+    Inter,
+    Sora,
+    Mono,
+    Ubuntu,
+    File(String),
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Channel {
     #[default]
     Stable,
     Preview,
 }
+
+pub(crate) const TEXT_LEAST: f32 = 11.0;
+pub(crate) const TEXT_MOST: f32 = 16.0;
 
 fn bounded_width(width: f32, least: f32, most: f32) -> Option<f32> {
     width.is_finite().then(|| width.clamp(least, most))
@@ -49,6 +62,11 @@ pub(crate) fn config_file() -> Option<PathBuf> {
 pub(crate) struct Settings {
     pub(crate) lang: Option<Lang>,
     pub(crate) theme: ThemePreference,
+    pub(crate) dark_theme: String,
+    pub(crate) light_theme: String,
+    pub(crate) font: FontChoice,
+    pub(crate) text_size: f32,
+    pub(crate) motion: bool,
     pub(crate) columns: Columns,
     pub(crate) browser_view: BrowserView,
     pub(crate) sidebar_collapsed: bool,
@@ -113,6 +131,11 @@ impl Default for Settings {
         Settings {
             lang: None,
             theme: ThemePreference::Dark,
+            dark_theme: "Tokyo Night".into(),
+            light_theme: "Arca Light".into(),
+            font: FontChoice::Inter,
+            text_size: 13.0,
+            motion: true,
             columns: Columns::default(),
             browser_view: BrowserView::default(),
             sidebar_collapsed: false,
@@ -162,6 +185,21 @@ impl Settings {
                 ("theme", "light") => s.theme = ThemePreference::Light,
                 ("theme", "dark") => s.theme = ThemePreference::Dark,
                 ("theme", _) => s.theme = ThemePreference::System,
+                ("dark_theme", v) if !v.is_empty() => s.dark_theme = v.to_string(),
+                ("light_theme", v) if !v.is_empty() => s.light_theme = v.to_string(),
+                ("font", "inter") => s.font = FontChoice::Inter,
+                ("font", "sora") => s.font = FontChoice::Sora,
+                ("font", "mono") => s.font = FontChoice::Mono,
+                ("font", "ubuntu") => s.font = FontChoice::Ubuntu,
+                ("font", v) if !v.is_empty() => s.font = FontChoice::File(v.to_string()),
+                ("text_size", v) => {
+                    if let Ok(size) = v.parse::<f32>() {
+                        if size.is_finite() {
+                            s.text_size = size.clamp(TEXT_LEAST, TEXT_MOST);
+                        }
+                    }
+                }
+                ("motion", v) => s.motion = v != "no",
                 ("browser_view", "columns") => s.browser_view = BrowserView::Columns,
                 ("browser_view", "details") => s.browser_view = BrowserView::Details,
                 ("sidebar_collapsed", "yes") => s.sidebar_collapsed = true,
@@ -335,6 +373,18 @@ impl Settings {
         out.push_str(&format!("preview_width = {preview_width:.1}\n"));
         out.push_str(&format!("directory_width = {directory_width:.1}\n"));
         out.push_str(&format!("updates = {}\n", yes(self.updates)));
+        out.push_str(&format!("dark_theme = {}\n", self.dark_theme));
+        out.push_str(&format!("light_theme = {}\n", self.light_theme));
+        let font = match &self.font {
+            FontChoice::Inter => "inter",
+            FontChoice::Sora => "sora",
+            FontChoice::Mono => "mono",
+            FontChoice::Ubuntu => "ubuntu",
+            FontChoice::File(path) => path,
+        };
+        out.push_str(&format!("font = {font}\n"));
+        out.push_str(&format!("text_size = {}\n", self.text_size));
+        out.push_str(&format!("motion = {}\n", yes(self.motion)));
         out.push_str(match self.channel {
             Channel::Stable => "channel = stable\n",
             Channel::Preview => "channel = preview\n",
@@ -383,6 +433,22 @@ mod tests {
         assert_eq!(s.preview_width, 440.0);
         assert_eq!(s.directory_width, 280.0);
         assert_eq!(s.text(), Settings::default().text());
+    }
+
+    #[test]
+    fn the_look_is_kept_and_odd_values_are_tamed() {
+        let s = Settings::parse(
+            "dark_theme = Nord\nlight_theme = Gruvbox Light\nfont = mono\ntext_size = 99\nmotion = no\n",
+        );
+        assert_eq!(s.dark_theme, "Nord");
+        assert_eq!(s.font, FontChoice::Mono);
+        assert_eq!(s.text_size, TEXT_MOST);
+        assert!(!s.motion);
+        assert_eq!(Settings::parse(&s.text()).light_theme, "Gruvbox Light");
+        let f = Settings::parse("font = /usr/share/fonts/a b.ttf\ntext_size = NaN\n");
+        assert_eq!(f.font, FontChoice::File("/usr/share/fonts/a b.ttf".into()));
+        assert_eq!(f.text_size, 13.0);
+        assert_eq!(Settings::parse(&f.text()).font, f.font);
     }
 
     #[test]

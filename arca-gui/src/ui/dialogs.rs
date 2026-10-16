@@ -121,7 +121,15 @@ pub(crate) fn section_words(section: SettingsSection, s: &'static Strings) -> Ve
     match section {
         SettingsSection::General => vec![s.language, s.name_encoding, s.show_hidden],
         SettingsSection::Archives => vec![s.defaults_title, s.into_subfolder],
-        SettingsSection::Appearance => vec![s.theme],
+        SettingsSection::Appearance => vec![
+            s.theme,
+            s.current_theme,
+            s.library_section,
+            s.add_theme,
+            s.font_title,
+            s.text_size_title,
+            s.motion_title,
+        ],
         SettingsSection::Views => vec![
             s.default_view,
             s.show_preview_panel,
@@ -755,11 +763,7 @@ impl Shell {
                     }
                 });
             }
-            SettingsSection::Appearance => {
-                card(ui, s.theme, Some(s.theme_hint), false, |ui| {
-                    self.choices(ui, SettingsSection::Appearance);
-                });
-            }
+            SettingsSection::Appearance => self.settings_appearance(ui),
             SettingsSection::Views => self.settings_views(ui),
             SettingsSection::Keybindings => shortcuts_table(ui, s),
             SettingsSection::Updates => self.settings_updates(ui),
@@ -912,6 +916,348 @@ impl Shell {
         }
     }
 
+    fn settings_appearance(&mut self, ui: &mut egui::Ui) {
+        use super::themes::{self, Theme};
+        use crate::settings::FontChoice;
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        let dark_now = ui.visuals().dark_mode;
+        section_title(ui, s.theme_section);
+        card(ui, s.theme, Some(s.theme_hint), false, |ui| {
+            self.choices(ui, SettingsSection::Appearance);
+        });
+        let settings = &self.controller.state.settings;
+        let current = if dark_now {
+            settings.dark_theme.clone()
+        } else {
+            settings.light_theme.clone()
+        };
+        card(
+            ui,
+            s.current_theme,
+            Some(s.current_theme_hint),
+            true,
+            |ui| {
+                ui.label(egui::RichText::new(&current).strong());
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(66.0, 22.0), egui::Sense::hover());
+                paint_swatch(ui, rect, p);
+            },
+        );
+
+        ui.add_space(12.0);
+        section_title(ui, s.library_section);
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.theme_query)
+                    .hint_text(s.search_themes)
+                    .desired_width(240.0),
+            );
+            let f = self.theme_filter;
+            if let Some(i) = segmented(
+                ui,
+                &[
+                    (s.filter_all, f == 0),
+                    (s.kind_light, f == 1),
+                    (s.kind_dark, f == 2),
+                ],
+            ) {
+                self.theme_filter = i;
+            }
+        });
+        ui.add_space(6.0);
+        let query = self.theme_query.to_lowercase();
+        let filter = self.theme_filter;
+        let shown: Vec<Theme> = self
+            .themes
+            .iter()
+            .filter(|t| match filter {
+                1 => !t.dark,
+                2 => t.dark,
+                _ => true,
+            })
+            .filter(|t| t.name.to_lowercase().contains(&query))
+            .cloned()
+            .collect();
+        let (dark_name, light_name) = (settings.dark_theme.clone(), settings.light_theme.clone());
+        let mut pick = None;
+        let mut remove = None;
+        let mut add = false;
+        let folder = themes::folder()
+            .map(|d| d.display().to_string())
+            .unwrap_or_default();
+        egui::Frame::new()
+            .fill(theme::alpha(p.background, 0.55))
+            .stroke(egui::Stroke::new(1.0, theme::alpha(p.border, 0.6)))
+            .corner_radius(6)
+            .inner_margin(egui::Margin::same(4))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .id_salt("theme-library")
+                    .max_height(300.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for t in &shown {
+                            let active = if t.dark {
+                                t.name == dark_name
+                            } else {
+                                t.name == light_name
+                            };
+                            let (rect, response) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), 40.0),
+                                egui::Sense::click(),
+                            );
+                            let lit = ui
+                                .ctx()
+                                .animate_bool(response.id, response.hovered() || active);
+                            let painter = ui.painter();
+                            painter.rect_filled(
+                                rect.shrink(1.0),
+                                4,
+                                theme::alpha(p.focus, 0.03 + 0.11 * lit),
+                            );
+                            let swatch = egui::Rect::from_min_size(
+                                egui::pos2(rect.left() + 12.0, rect.center().y - 11.0),
+                                egui::vec2(66.0, 22.0),
+                            );
+                            paint_swatch(ui, swatch, t.palette);
+                            let painter = ui.painter();
+                            painter.text(
+                                egui::pos2(rect.left() + 92.0, rect.center().y),
+                                egui::Align2::LEFT_CENTER,
+                                &t.name,
+                                egui::FontId::proportional(13.0),
+                                hex(if active { p.focus } else { p.text }),
+                            );
+                            let kind = if t.dark { s.kind_dark } else { s.kind_light };
+                            painter.text(
+                                egui::pos2(rect.right() - 16.0, rect.center().y),
+                                egui::Align2::RIGHT_CENTER,
+                                kind.to_uppercase(),
+                                egui::FontId::proportional(10.5),
+                                hex(p.muted),
+                            );
+                            if t.custom {
+                                let bin = egui::Rect::from_center_size(
+                                    egui::pos2(rect.right() - 76.0, rect.center().y),
+                                    egui::vec2(24.0, 24.0),
+                                );
+                                let del = ui
+                                    .interact(bin, response.id.with("delete"), egui::Sense::click())
+                                    .on_hover_text(s.delete_word);
+                                ui.painter().text(
+                                    bin.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    egui_phosphor::regular::TRASH,
+                                    theme::icon_font(14.0),
+                                    hex(if del.hovered() { p.danger } else { p.muted }),
+                                );
+                                if del.clicked() {
+                                    remove = Some(t.name.clone());
+                                    continue;
+                                }
+                            }
+                            response.widget_info(|| {
+                                egui::WidgetInfo::selected(
+                                    egui::WidgetType::RadioButton,
+                                    true,
+                                    active,
+                                    &t.name,
+                                )
+                            });
+                            if response.clicked() {
+                                pick = Some(t.clone());
+                            }
+                        }
+                    });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(fill(s.custom_themes_in, &[("path", &folder)]))
+                            .small()
+                            .color(hex(p.muted)),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        add = secondary_button(ui, &format!("+  {}", s.add_theme), true).clicked();
+                    });
+                });
+            });
+        if add && self.theme_draft.is_none() {
+            self.theme_draft = Some(Theme {
+                name: String::new(),
+                dark: dark_now,
+                palette: p,
+                custom: true,
+            });
+        }
+        if let Some(mut draft) = self.theme_draft.take() {
+            let mut keep = true;
+            let mut save = false;
+            ui.add_space(8.0);
+            egui::Frame::new()
+                .fill(theme::alpha(p.background, 0.55))
+                .stroke(egui::Stroke::new(1.0, theme::alpha(p.border, 0.6)))
+                .corner_radius(6)
+                .inner_margin(egui::Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(egui::RichText::new(s.add_theme).strong());
+                    ui.add_space(4.0);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft.name)
+                            .hint_text(s.theme_name)
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(4.0);
+                    if let Some(i) = segmented(
+                        ui,
+                        &[(s.kind_dark, draft.dark), (s.kind_light, !draft.dark)],
+                    ) {
+                        draft.dark = i == 0;
+                    }
+                    ui.add_space(6.0);
+                    egui::Grid::new("theme-colors")
+                        .num_columns(3)
+                        .spacing([18.0, 8.0])
+                        .show(ui, |ui| {
+                            for (i, key) in theme::Palette::KEYS.iter().enumerate() {
+                                if let Some(slot) = draft.palette.slot(key) {
+                                    let mut rgb =
+                                        [(*slot >> 16) as u8, (*slot >> 8) as u8, *slot as u8];
+                                    ui.horizontal(|ui| {
+                                        if ui.color_edit_button_srgb(&mut rgb).changed() {
+                                            *slot = (rgb[0] as u32) << 16
+                                                | (rgb[1] as u32) << 8
+                                                | rgb[2] as u32;
+                                        }
+                                        ui.label(s.palette_labels[i]);
+                                    });
+                                }
+                                if i % 3 == 2 {
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        save = primary_button(ui, s.save_theme, !draft.name.trim().is_empty())
+                            .clicked();
+                        if secondary_button(ui, s.cancel, true).clicked() {
+                            keep = false;
+                        }
+                    });
+                });
+            if save {
+                draft.name = draft.name.trim().to_string();
+                if themes::save(&draft).is_ok() {
+                    self.themes = themes::all();
+                    pick = Some(draft.clone());
+                    self.look.clear();
+                }
+                keep = false;
+            }
+            if keep {
+                self.theme_draft = Some(draft);
+            }
+        }
+        if let Some(name) = remove {
+            let _ = themes::delete(&name);
+            self.themes = themes::all();
+            self.look.clear();
+        }
+        if let Some(t) = pick {
+            let settings = &mut self.controller.state.settings;
+            if t.dark {
+                settings.dark_theme = t.name.clone();
+            } else {
+                settings.light_theme = t.name.clone();
+            }
+            settings.save();
+            let follow = settings.theme == ThemePreference::System && dark_now == t.dark;
+            if !follow {
+                self.set_theme(if t.dark {
+                    ThemePreference::Dark
+                } else {
+                    ThemePreference::Light
+                });
+            }
+        }
+
+        ui.add_space(12.0);
+        section_title(ui, s.text_section);
+        let font = self.controller.state.settings.font.clone();
+        let mut font_pick = None;
+        let mut from_file = false;
+        card(ui, s.font_title, Some(s.font_hint), false, |ui| {
+            font_pick = segmented(
+                ui,
+                &[
+                    ("Inter", font == FontChoice::Inter),
+                    ("Sora", font == FontChoice::Sora),
+                    ("Hack", font == FontChoice::Mono),
+                    ("Ubuntu", font == FontChoice::Ubuntu),
+                ],
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                from_file = secondary_button(ui, s.font_file, true).clicked();
+                if let FontChoice::File(path) = &font {
+                    ui.label(egui::RichText::new(path).small().color(hex(p.muted)));
+                }
+            });
+        });
+        let chosen = match font_pick {
+            Some(0) => Some(FontChoice::Inter),
+            Some(1) => Some(FontChoice::Sora),
+            Some(2) => Some(FontChoice::Mono),
+            Some(3) => Some(FontChoice::Ubuntu),
+            _ if from_file => rfd::FileDialog::new()
+                .add_filter("Fonts", &["ttf", "otf", "ttc"])
+                .pick_file()
+                .map(|path| FontChoice::File(path.to_string_lossy().into_owned())),
+            _ => None,
+        };
+        let size = self.controller.state.settings.text_size;
+        let mut size_pick = None;
+        card(ui, s.text_size_title, Some(s.text_size_hint), true, |ui| {
+            size_pick = segmented(
+                ui,
+                &[
+                    ("12", size == 12.0),
+                    ("13", size == 13.0),
+                    ("14", size == 14.0),
+                    ("15", size == 15.0),
+                ],
+            );
+        });
+        ui.add_space(12.0);
+        section_title(ui, s.motion_section);
+        let mut motion = self.controller.state.settings.motion;
+        let mut motion_changed = false;
+        card(ui, s.motion_title, Some(s.motion_hint), true, |ui| {
+            motion_changed = switch(ui, &mut motion, s.motion_title).changed();
+        });
+        let settings = &mut self.controller.state.settings;
+        let mut dirty = false;
+        if let Some(font) = chosen {
+            settings.font = font;
+            dirty = true;
+        }
+        if let Some(i) = size_pick {
+            settings.text_size = 12.0 + i as f32;
+            dirty = true;
+        }
+        if motion_changed {
+            settings.motion = motion;
+            dirty = true;
+        }
+        if dirty {
+            settings.save();
+        }
+    }
+
     fn settings_updates(&mut self, ui: &mut egui::Ui) {
         use crate::controller::UpdateCheck;
         use crate::settings::Channel;
@@ -1024,5 +1370,26 @@ impl Shell {
                 self.controller.state.into_subfolder = !self.controller.state.into_subfolder;
             }
         }
+    }
+}
+
+fn paint_swatch(ui: &egui::Ui, rect: egui::Rect, palette: theme::Palette) {
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        5,
+        hex(palette.background),
+        egui::Stroke::new(1.0, hex(palette.border)),
+        egui::StrokeKind::Inside,
+    );
+    for (i, color) in [palette.focus, palette.danger, palette.muted, palette.text]
+        .into_iter()
+        .enumerate()
+    {
+        painter.circle_filled(
+            egui::pos2(rect.left() + 12.0 + i as f32 * 14.0, rect.center().y),
+            4.0,
+            hex(color),
+        );
     }
 }

@@ -339,6 +339,7 @@ dependencies = [
  "rayon",
  "rfd",
  "sha2 0.10.9",
+ "skrifa",
  "sys-locale",
  "tempfile",
  "winresource",
