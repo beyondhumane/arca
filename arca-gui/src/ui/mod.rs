@@ -207,9 +207,11 @@ impl Shell {
         !self.decorated && !cfg!(target_os = "macos")
     }
 
-    /// Without the system's frame the window has no edges to grab, so thin
-    /// strips along the border take that over, and a hairline marks where
-    /// the window ends.
+    /// Without the system's frame the window has no edges to grab, so the
+    /// strip along the border takes that over, and a hairline marks where
+    /// the window ends. The pointer is read directly rather than through a
+    /// widget: the strip is thinner than egui's hit radius, and whatever
+    /// sits inside the edge would win the hit test on the bottom and right.
     fn window_chrome(&self, ctx: &egui::Context) {
         if !self.own_title_bar() {
             return;
@@ -230,79 +232,24 @@ impl Shell {
         if fixed {
             return;
         }
-        use egui::{CursorIcon as C, ResizeDirection as D};
-        let edge = 5.0;
-        let corner = 14.0;
-        let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
-        let grips: [(egui::Rect, D, C); 8] = [
+        let (pos, pressed, down) = ctx.input(|i| {
             (
-                egui::Rect::from_min_max(egui::pos2(l, t), egui::pos2(l + corner, t + corner)),
-                D::NorthWest,
-                C::ResizeNwSe,
-            ),
-            (
-                egui::Rect::from_min_max(egui::pos2(r - corner, t), egui::pos2(r, t + corner)),
-                D::NorthEast,
-                C::ResizeNeSw,
-            ),
-            (
-                egui::Rect::from_min_max(egui::pos2(l, b - corner), egui::pos2(l + corner, b)),
-                D::SouthWest,
-                C::ResizeNeSw,
-            ),
-            (
-                egui::Rect::from_min_max(egui::pos2(r - corner, b - corner), egui::pos2(r, b)),
-                D::SouthEast,
-                C::ResizeNwSe,
-            ),
-            (
-                egui::Rect::from_min_max(
-                    egui::pos2(l + corner, t),
-                    egui::pos2(r - corner, t + edge),
-                ),
-                D::North,
-                C::ResizeVertical,
-            ),
-            (
-                egui::Rect::from_min_max(
-                    egui::pos2(l + corner, b - edge),
-                    egui::pos2(r - corner, b),
-                ),
-                D::South,
-                C::ResizeVertical,
-            ),
-            (
-                egui::Rect::from_min_max(
-                    egui::pos2(l, t + corner),
-                    egui::pos2(l + edge, b - corner),
-                ),
-                D::West,
-                C::ResizeHorizontal,
-            ),
-            (
-                egui::Rect::from_min_max(
-                    egui::pos2(r - edge, t + corner),
-                    egui::pos2(r, b - corner),
-                ),
-                D::East,
-                C::ResizeHorizontal,
-            ),
-        ];
-        egui::Area::new(id)
-            .order(egui::Order::Foreground)
-            .fixed_pos(rect.min)
-            .interactable(true)
-            .show(ctx, |ui| {
-                for (grip, direction, cursor) in grips {
-                    let response = ui.interact(grip, id.with(direction as u8), egui::Sense::drag());
-                    if response.hovered() || response.dragged() {
-                        ctx.set_cursor_icon(cursor);
-                    }
-                    if response.drag_started() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
-                    }
-                }
-            });
+                i.pointer.latest_pos(),
+                i.pointer.primary_pressed(),
+                i.pointer.any_down(),
+            )
+        });
+        let Some(pos) = pos else {
+            return;
+        };
+        if let Some((direction, cursor)) = resize_edge(rect, pos) {
+            if !down || pressed {
+                ctx.set_cursor_icon(cursor);
+            }
+            if pressed {
+                ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+            }
+        }
     }
 
     fn notice_new_tasks(&mut self) {
@@ -1233,6 +1180,43 @@ impl eframe::App for Shell {
         self.dialogs(&ctx);
         self.window_chrome(&ctx);
     }
+}
+
+/// Which way the window would grow from a pointer at `pos`, if `pos` is on
+/// the border of `rect`: corners first, then the four edges.
+fn resize_edge(
+    rect: egui::Rect,
+    pos: egui::Pos2,
+) -> Option<(egui::ResizeDirection, egui::CursorIcon)> {
+    use egui::{CursorIcon as C, ResizeDirection as D};
+    const EDGE: f32 = 6.0;
+    const CORNER: f32 = 16.0;
+    if !rect.contains(pos) {
+        return None;
+    }
+    let left = pos.x - rect.left();
+    let right = rect.right() - pos.x;
+    let top = pos.y - rect.top();
+    let bottom = rect.bottom() - pos.y;
+    let (w, e) = (left < EDGE, right < EDGE);
+    let (n, s) = (top < EDGE, bottom < EDGE);
+    let (near_w, near_e) = (left < CORNER, right < CORNER);
+    let (near_n, near_s) = (top < CORNER, bottom < CORNER);
+    Some(match (n, s, w, e) {
+        (true, _, _, _) if near_w => (D::NorthWest, C::ResizeNwSe),
+        (true, _, _, _) if near_e => (D::NorthEast, C::ResizeNeSw),
+        (_, true, _, _) if near_w => (D::SouthWest, C::ResizeNeSw),
+        (_, true, _, _) if near_e => (D::SouthEast, C::ResizeNwSe),
+        (_, _, true, _) if near_n => (D::NorthWest, C::ResizeNwSe),
+        (_, _, true, _) if near_s => (D::SouthWest, C::ResizeNeSw),
+        (_, _, _, true) if near_n => (D::NorthEast, C::ResizeNeSw),
+        (_, _, _, true) if near_s => (D::SouthEast, C::ResizeNwSe),
+        (true, _, _, _) => (D::North, C::ResizeVertical),
+        (_, true, _, _) => (D::South, C::ResizeVertical),
+        (_, _, true, _) => (D::West, C::ResizeHorizontal),
+        (_, _, _, true) => (D::East, C::ResizeHorizontal),
+        _ => return None,
+    })
 }
 
 /// Whether the window system is asked for its own title bar. macOS keeps its

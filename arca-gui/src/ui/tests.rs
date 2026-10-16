@@ -422,3 +422,19 @@ fn columns_show_whole_panes_and_keep_the_active_one() {
     assert_eq!(column_slots(5, 1, 240., 9., 700.).0, 1);
     assert_eq!(column_slots(3, 2, 240., 9., 100.), (2, 100.));
 }
+
+#[test]
+fn resize_edges_pick_corners_then_sides_and_nothing_inside() {
+    use egui::ResizeDirection as D;
+    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
+    let at = |x: f32, y: f32| super::resize_edge(rect, egui::pos2(x, y)).map(|(d, _)| d);
+    assert_eq!(at(2.0, 2.0), Some(D::NorthWest));
+    assert_eq!(at(798.0, 598.0), Some(D::SouthEast));
+    assert_eq!(at(400.0, 598.0), Some(D::South));
+    assert_eq!(at(798.0, 300.0), Some(D::East));
+    assert_eq!(at(2.0, 300.0), Some(D::West));
+    assert_eq!(at(400.0, 2.0), Some(D::North));
+    assert_eq!(at(10.0, 598.0), Some(D::SouthWest));
+    assert_eq!(at(400.0, 300.0), None);
+    assert_eq!(at(-1.0, 300.0), None);
+}
