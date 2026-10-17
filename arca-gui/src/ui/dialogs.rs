@@ -212,6 +212,7 @@ impl Shell {
                         shortcuts_table(ui, s);
                     }
                     ModalKind::NewFolder | ModalKind::Mask => self.name_dialog(ui, kind),
+                    ModalKind::Properties => self.properties_dialog(ui),
                 });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(measured, shown.content_size.y));
@@ -341,6 +342,64 @@ impl Shell {
         }
         if let Some(answer) = answer {
             self.answer_conflict(answer);
+        }
+    }
+
+    fn properties_dialog(&mut self, ui: &mut egui::Ui) {
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        let Some(props) = &self.properties else {
+            return;
+        };
+        heading(ui, &props.name);
+        ui.add_space(6.0);
+        let kind = if props.is_dir {
+            s.folder_word
+        } else {
+            s.file_word
+        };
+        let size = if props.capped {
+            format!("≥ {}", pretty_bytes(props.size))
+        } else {
+            pretty_bytes(props.size)
+        };
+        let items = if props.capped {
+            format!("≥ {}", props.items)
+        } else {
+            props.items.to_string()
+        };
+        let location = props
+            .path
+            .parent()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_default();
+        let mut rows: Vec<(&str, String)> = vec![
+            (s.col_type, kind.to_string()),
+            (s.location_word, location),
+            (s.col_size, size),
+        ];
+        if props.is_dir {
+            rows.push((s.items_word, items));
+        }
+        if let Some(when) = props.modified {
+            rows.push((s.col_modified, stamp(when)));
+        }
+        egui::Grid::new("arca-properties")
+            .num_columns(2)
+            .spacing(egui::vec2(18.0, 8.0))
+            .show(ui, |ui| {
+                for (label, value) in rows {
+                    ui.label(RichText::new(label).color(hex(p.muted)));
+                    ui.add(egui::Label::new(value).wrap());
+                    ui.end_row();
+                }
+            });
+        let mut close = false;
+        Self::footer_buttons(ui, |ui| {
+            close = secondary_button(ui, s.close_word, true).clicked();
+        });
+        if close {
+            self.properties = None;
         }
     }
 
@@ -1448,4 +1507,44 @@ fn paint_swatch(ui: &egui::Ui, rect: egui::Rect, palette: theme::Palette) {
             hex(color),
         );
     }
+}
+
+fn pretty_bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = n as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{n} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+/// Local-agnostic `YYYY-MM-DD HH:MM` from a system time, without a dates
+/// crate: days to civil date after Howard Hinnant.
+fn stamp(when: std::time::SystemTime) -> String {
+    let secs = when
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs.div_euclid(86_400);
+    let rest = secs.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}",
+        rest / 3600,
+        (rest % 3600) / 60
+    )
 }

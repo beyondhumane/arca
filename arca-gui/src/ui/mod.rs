@@ -69,6 +69,66 @@ impl Marquee {
     }
 }
 
+/// What the Properties dialog says about a path on the disk.
+pub(crate) struct Props {
+    pub(crate) name: String,
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) is_dir: bool,
+    pub(crate) size: u64,
+    pub(crate) items: usize,
+    /// The walk stopped early, so size and items are lower bounds.
+    pub(crate) capped: bool,
+    pub(crate) modified: Option<std::time::SystemTime>,
+}
+
+const PROPS_WALK_MOST: usize = 50_000;
+
+/// Sizes up a path without going on for ever: deep trees are cut off at
+/// `PROPS_WALK_MOST` entries and said to be at least that big.
+pub(crate) fn inspect(path: &std::path::Path) -> Props {
+    let meta = std::fs::symlink_metadata(path).ok();
+    let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string());
+    let mut props = Props {
+        name,
+        path: path.to_path_buf(),
+        is_dir,
+        size: meta
+            .as_ref()
+            .map_or(0, |m| if m.is_dir() { 0 } else { m.len() }),
+        items: 0,
+        capped: false,
+        modified: meta.and_then(|m| m.modified().ok()),
+    };
+    if is_dir {
+        let mut stack = vec![path.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(read) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in read.flatten() {
+                props.items += 1;
+                if props.items >= PROPS_WALK_MOST {
+                    props.capped = true;
+                    return props;
+                }
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                if kind.is_dir() {
+                    stack.push(entry.path());
+                } else if kind.is_file() {
+                    props.size += entry.metadata().map_or(0, |m| m.len());
+                }
+            }
+        }
+    }
+    props
+}
+
 pub(crate) struct Shell {
     controller: AppController,
     ctx: egui::Context,
@@ -78,6 +138,7 @@ pub(crate) struct Shell {
     filter_open: bool,
     marquee: Option<Marquee>,
     pane_to_close: Option<usize>,
+    properties: Option<Props>,
     last_active_pane: Option<usize>,
     name_value: String,
     focus_name: bool,
@@ -133,6 +194,7 @@ impl Shell {
             filter_open: false,
             marquee: None,
             pane_to_close: None,
+            properties: None,
             last_active_pane: None,
             name_value: String::new(),
             focus_name: false,
@@ -318,6 +380,8 @@ impl Shell {
             Some(ModalKind::NewFolder)
         } else if state.picking_group.is_some() {
             Some(ModalKind::Mask)
+        } else if self.properties.is_some() {
+            Some(ModalKind::Properties)
         } else if state.show_settings {
             Some(ModalKind::Settings)
         } else if state.show_shortcuts {
@@ -342,6 +406,7 @@ impl Shell {
             ModalKind::Settings => self.controller.state.show_settings = false,
             ModalKind::Shortcuts => self.controller.state.show_shortcuts = false,
             ModalKind::Search => self.search = None,
+            ModalKind::Properties => self.properties = None,
         }
     }
 

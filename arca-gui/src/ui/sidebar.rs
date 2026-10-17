@@ -46,6 +46,11 @@ impl Shell {
         let mut browse = None;
         let mut unpin = None;
         let mut open = None;
+        let mut new_pane: Option<PathBuf> = None;
+        let mut copy: Option<String> = None;
+        let mut props: Option<PathBuf> = None;
+        let mut forget: Option<String> = None;
+        let free = self.controller.state.browser.free;
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
@@ -79,15 +84,50 @@ impl Shell {
                                 self.controller.move_on_disk(&payload.0, &target);
                             }
                         }
-                        if pinned {
-                            response.context_menu(|ui| {
-                                if menu_entry(ui, icon::PUSH_PIN_SLASH, s.unpin_word, "", true)
-                                    .clicked()
-                                {
+                        let is_computer = place.kind == PlaceKind::Computer;
+                        let is_pinned = pinned || self.controller.is_pinned(&place.path);
+                        response.context_menu(|ui| {
+                            if menu_entry(ui, icon::ARROW_SQUARE_OUT, s.open_word, "", true)
+                                .clicked()
+                            {
+                                browse = Some(place.path.clone());
+                                ui.close();
+                            }
+                            if free
+                                && menu_entry(
+                                    ui,
+                                    icon::COLUMNS_PLUS_RIGHT,
+                                    s.open_in_pane,
+                                    "",
+                                    true,
+                                )
+                                .clicked()
+                            {
+                                new_pane = Some(place.path.clone());
+                                ui.close();
+                            }
+                            ui.separator();
+                            if !is_computer {
+                                let (glyph, label) = if is_pinned {
+                                    (icon::PUSH_PIN_SLASH, s.unpin_word)
+                                } else {
+                                    (icon::PUSH_PIN, s.pin_word)
+                                };
+                                if menu_entry(ui, glyph, label, "", true).clicked() {
                                     unpin = Some(place.path.clone());
+                                    ui.close();
                                 }
-                            });
-                        }
+                            }
+                            if menu_entry(ui, icon::LINK, s.copy_path, "", true).clicked() {
+                                copy = Some(place.path.display().to_string());
+                                ui.close();
+                            }
+                            ui.separator();
+                            if menu_entry(ui, icon::INFO, s.properties_word, "", true).clicked() {
+                                props = Some(place.path.clone());
+                                ui.close();
+                            }
+                        });
                     }
                 }
                 let recent = &self.controller.state.settings.recent;
@@ -104,12 +144,33 @@ impl Shell {
                             .archive
                             .as_ref()
                             .is_some_and(|archive| archive == std::path::Path::new(path));
-                        if nav_item(ui, icon::CLOCK_COUNTER_CLOCKWISE, &name, open_now, false)
-                            .on_hover_text(path)
-                            .clicked()
-                        {
+                        let item =
+                            nav_item(ui, icon::CLOCK_COUNTER_CLOCKWISE, &name, open_now, false)
+                                .on_hover_text(path);
+                        if item.clicked() {
                             open = Some(PathBuf::from(path));
                         }
+                        item.context_menu(|ui| {
+                            if menu_entry(ui, icon::ARROW_SQUARE_OUT, s.open_word, "", true)
+                                .clicked()
+                            {
+                                open = Some(PathBuf::from(path));
+                                ui.close();
+                            }
+                            if menu_entry(ui, icon::LINK, s.copy_path, "", true).clicked() {
+                                copy = Some(path.clone());
+                                ui.close();
+                            }
+                            if menu_entry(ui, icon::X_CIRCLE, s.remove_recent, "", true).clicked() {
+                                forget = Some(path.clone());
+                                ui.close();
+                            }
+                            ui.separator();
+                            if menu_entry(ui, icon::INFO, s.properties_word, "", true).clicked() {
+                                props = Some(PathBuf::from(path));
+                                ui.close();
+                            }
+                        });
                     }
                 }
                 if !rail && self.controller.state.archive.is_some() && !self.controller.on_disk() {
@@ -127,6 +188,20 @@ impl Shell {
         }
         if let Some(path) = open {
             self.controller.dispatch(AppAction::Open(path));
+        }
+        if let Some(path) = new_pane {
+            let dir = crate::controller::disk::disk_dir(&path);
+            self.controller.open_in_pane(&dir);
+        }
+        if let Some(text) = copy {
+            self.copy_text(vec![text]);
+        }
+        if let Some(path) = props {
+            self.properties = Some(super::inspect(&path));
+        }
+        if let Some(path) = forget {
+            self.controller.state.settings.recent.retain(|p| *p != path);
+            self.controller.state.settings.save();
         }
     }
 
