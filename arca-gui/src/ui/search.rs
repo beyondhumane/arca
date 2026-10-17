@@ -224,7 +224,9 @@ fn walk(root: &Path, halt: &AtomicBool, mut send: impl FnMut(Vec<Hit>) -> bool) 
                 continue;
             };
             let meta = std::fs::symlink_metadata(item.path()).ok();
-            if hidden_on_disk(&leaf, meta.as_ref()) {
+            // Dot folders (.git, .cache) are noise in a search on every
+            // platform, including Windows, where hidden is an attribute.
+            if leaf.starts_with('.') || hidden_on_disk(&leaf, meta.as_ref()) {
                 continue;
             }
             let is_dir = kind.is_dir();
