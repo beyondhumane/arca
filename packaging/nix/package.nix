@@ -77,7 +77,9 @@ rustPlatform.buildRustPackage {
       genericName = "Archive Manager";
       comment = "Create, browse and extract ZIP and TAR archives";
       exec = "arca-gui %f";
-      icon = "arca";
+      # Reverse-DNS so no icon theme can shadow it: Colloid ships an
+      # unrelated "arca".
+      icon = "dev.beyondhumane.Arca";
       categories = [
         "Utility"
         "Archiving"
@@ -99,7 +101,7 @@ rustPlatform.buildRustPackage {
   ];
 
   postInstall = ''
-    install -Dm644 brand/arca-monolito-256.png $out/share/icons/hicolor/256x256/apps/arca.png
+    install -Dm644 brand/arca-monolito-256.png $out/share/icons/hicolor/256x256/apps/dev.beyondhumane.Arca.png
     install -Dm644 RAR-NOTICES.txt $out/share/licenses/arca/RAR-NOTICES.txt
   '';
 

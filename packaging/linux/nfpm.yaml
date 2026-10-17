@@ -24,8 +24,8 @@ contents:
     file_info: { mode: 0755 }
   - src: usr/share/applications/arca.desktop
     dst: /usr/share/applications/arca.desktop
-  - src: usr/share/icons/hicolor/256x256/apps/arca.png
-    dst: /usr/share/icons/hicolor/256x256/apps/arca.png
+  - src: usr/share/icons/hicolor/256x256/apps/dev.beyondhumane.Arca.png
+    dst: /usr/share/icons/hicolor/256x256/apps/dev.beyondhumane.Arca.png
   - src: usr/share/doc/arca/README.md
     dst: /usr/share/doc/arca/README.md
   - src: usr/share/licenses/arca/LICENSE
