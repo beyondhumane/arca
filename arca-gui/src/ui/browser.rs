@@ -7,6 +7,8 @@ use egui_phosphor::regular as icon;
 
 #[cfg(test)]
 pub(crate) const ROW_HEIGHT: f32 = 24.0;
+/// Space around the rows that belongs to the list but to no row.
+const GUTTER: f32 = 10.0;
 
 pub(crate) fn column_slot(column: SortColumn) -> usize {
     Columns::ALL
@@ -131,11 +133,21 @@ impl Shell {
             self.welcome(ui);
             return;
         }
-        if self.controller.state.browser.columns {
-            self.columns_view(ui);
-        } else {
-            self.details(ui);
-        }
+        // A gutter on all four sides, so that a selection rectangle can be
+        // dragged out from anywhere around the rows, not only under them.
+        let columns = self.controller.state.browser.columns;
+        let pane = columns.then_some(self.controller.state.browser.active);
+        let outer = ui.available_rect_before_wrap();
+        let response = ui.interact(outer, ui.id().with("gutter"), Sense::click_and_drag());
+        self.blank_events(response, pane, ui.painter_at(outer));
+        let inner = outer.shrink2(Vec2::new(GUTTER, GUTTER * 0.6));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+            if columns {
+                self.columns_view(ui);
+            } else {
+                self.details(ui);
+            }
+        });
     }
 
     fn welcome(&mut self, ui: &mut egui::Ui) {
