@@ -955,7 +955,12 @@ impl Shell {
                                             None => String::new(),
                                         };
                                         ui.label(RichText::new(size).color(hex(p.muted)));
-                                        ui.add(egui::Label::new(name).truncate());
+                                        ui.with_layout(
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.add(egui::Label::new(name).truncate());
+                                            },
+                                        );
                                     },
                                 );
                             });
