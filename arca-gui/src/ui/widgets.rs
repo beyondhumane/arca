@@ -57,6 +57,9 @@ pub(crate) fn menu_entry(
         };
         (ink, egui::TextStyle::Body.resolve(style))
     };
+    // The trailing dots belong to entries that go on to ask where; a plain
+    // verb reads better without them, even when a picker follows.
+    let label = label.trim_end_matches('…');
     let mut job = egui::text::LayoutJob::default();
     job.append(
         glyph,
