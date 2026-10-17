@@ -165,7 +165,10 @@ impl Shell {
             icon::LIST
         };
         ui.menu_button(super::theme::icon_text(current).size(16.0), |ui| {
+            // A right-to-left row inside a menu would otherwise stretch the
+            // menu across the whole window.
             ui.set_min_width(240.0);
+            ui.set_max_width(240.0);
             group_label(ui, s.view_group);
             for (glyph, label, want_columns, want_flat) in [
                 (icon::COLUMNS, s.column_view, true, false),
