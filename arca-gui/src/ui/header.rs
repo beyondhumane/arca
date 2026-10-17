@@ -188,7 +188,7 @@ impl Shell {
     /// One menu for how the list looks: the view, the preview panel, how
     /// tall the rows are, the text size and hidden files.
     fn view_menu(&mut self, ui: &mut egui::Ui, idle: bool) {
-        use crate::settings::{Density, TEXT_LEAST, TEXT_MOST};
+        use crate::settings::{BrowserView, Density, TEXT_LEAST, TEXT_MOST};
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
         let columns = self.controller.state.browser.columns;
@@ -199,14 +199,30 @@ impl Shell {
             ui.set_min_width(240.0);
             ui.set_max_width(240.0);
             group_label(ui, s.view_group);
-            for (glyph, label, want_columns, want_flat) in [
-                (icon::COLUMNS, s.column_view, true, false),
-                (icon::LIST_BULLETS, s.details_view, false, false),
-                (icon::ROWS, s.flat_view, false, true),
+            let view = self.controller.state.settings.browser_view;
+            for (glyph, label, want, want_flat) in [
+                (icon::COLUMNS, s.column_view, BrowserView::Columns, false),
+                (
+                    icon::SQUARE_SPLIT_HORIZONTAL,
+                    s.panes_view,
+                    BrowserView::Panes,
+                    false,
+                ),
+                (
+                    icon::LIST_BULLETS,
+                    s.details_view,
+                    BrowserView::Details,
+                    false,
+                ),
+                (icon::ROWS, s.flat_view, BrowserView::Details, true),
             ] {
-                let on = columns == want_columns && (want_columns || flat == want_flat);
+                let on = if want == BrowserView::Details {
+                    !columns && flat == want_flat
+                } else {
+                    columns && view == want
+                };
                 if pick_entry(ui, glyph, label, on).clicked() && !on && idle {
-                    self.switch_view(want_columns, want_flat);
+                    self.switch_view(want, want_flat);
                 }
             }
             let preview = self.controller.state.settings.preview_visible;

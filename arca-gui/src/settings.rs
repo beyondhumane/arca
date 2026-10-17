@@ -20,6 +20,8 @@ pub(crate) enum BrowserView {
     #[default]
     Columns,
     Details,
+    /// Side-by-side panes that each browse on their own.
+    Panes,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -237,6 +239,7 @@ impl Settings {
                 ("density", "airy") => s.density = Density::Airy,
                 ("browser_view", "columns") => s.browser_view = BrowserView::Columns,
                 ("browser_view", "details") => s.browser_view = BrowserView::Details,
+                ("browser_view", "panes") => s.browser_view = BrowserView::Panes,
                 ("sidebar_collapsed", "yes") => s.sidebar_collapsed = true,
                 ("sidebar_collapsed", "no") => s.sidebar_collapsed = false,
                 ("preview_visible", "yes") => s.preview_visible = true,
@@ -378,6 +381,7 @@ impl Settings {
         let yes = |b: bool| if b { "yes" } else { "no" };
         let browser_view = match (self.flat, self.browser_view) {
             (false, BrowserView::Columns) => "columns",
+            (false, BrowserView::Panes) => "panes",
             _ => "details",
         };
         let preview_width =

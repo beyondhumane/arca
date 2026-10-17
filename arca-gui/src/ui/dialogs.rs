@@ -855,8 +855,13 @@ impl Shell {
             Some(s.view_hint),
             false,
             |ui| match segmented(ui, &[(s.column_view, columns), (s.details_view, !columns)]) {
-                Some(0) if !columns => self.switch_view(true, false),
-                Some(1) if columns => self.switch_view(false, self.controller.state.settings.flat),
+                Some(0) if !columns => {
+                    self.switch_view(crate::settings::BrowserView::Columns, false)
+                }
+                Some(1) if columns => self.switch_view(
+                    crate::settings::BrowserView::Details,
+                    self.controller.state.settings.flat,
+                ),
                 _ => {}
             },
         );

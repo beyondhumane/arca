@@ -472,31 +472,48 @@ impl Shell {
         let wanted = self.controller.state.settings.directory_width;
         let gap = 1.0;
         let room = ui.available_width();
+        // When they all fit they widen to fill; otherwise each keeps its
+        // width and the row scrolls sideways, following the active one.
         let (first, width) = column_slots(panes, active, wanted, gap, room);
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            for pane in first..panes {
-                // Picking a folder in an earlier pane rebuilds the ones after
-                // it while this loop is still running, so count again.
-                if pane >= self.controller.state.browser.panes.len() {
-                    break;
-                }
-                let height = ui.available_height();
-                let directory = &self.controller.state.browser.panes[pane].directory;
-                let shown = super::theme::appear(ui.ctx(), egui::Id::new(("arca-pane", directory)));
-                ui.allocate_ui_with_layout(
-                    Vec2::new(width, height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.multiply_opacity(shown);
-                        ui.set_width(width);
-                        ui.set_height(height);
-                        self.pane(ui, pane, width);
-                    },
-                );
-                ui.add(egui::Separator::default().spacing(1.0));
-            }
-        });
+        let width = if first == 0 { width } else { wanted };
+        let follow = self.last_active_pane != Some(active);
+        self.last_active_pane = Some(active);
+        egui::ScrollArea::horizontal()
+            .id_salt("arca-columns")
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    for pane in 0..panes {
+                        // Picking a folder in an earlier pane rebuilds the
+                        // ones after it while this loop is still running.
+                        if pane >= self.controller.state.browser.panes.len() {
+                            break;
+                        }
+                        let height = ui.available_height();
+                        let directory = &self.controller.state.browser.panes[pane].directory;
+                        let shown =
+                            super::theme::appear(ui.ctx(), egui::Id::new(("arca-pane", directory)));
+                        let placed = ui.allocate_ui_with_layout(
+                            Vec2::new(width, height),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.multiply_opacity(shown);
+                                ui.set_width(width);
+                                ui.set_height(height);
+                                self.pane(ui, pane, width);
+                            },
+                        );
+                        if follow && pane == active {
+                            ui.scroll_to_rect(placed.response.rect, None);
+                        }
+                        ui.add(egui::Separator::default().spacing(1.0));
+                    }
+                });
+            });
+        if let Some(pane) = self.pane_to_close.take() {
+            self.controller.close_pane(pane);
+        }
     }
 
     fn pane(&mut self, ui: &mut egui::Ui, pane: usize, width: f32) {
@@ -515,6 +532,7 @@ impl Shell {
         let remembered = data.scroll_offset;
         let directory = data.directory.clone();
         let order = data.order;
+        let closable = browser.free && browser.panes.len() > 1;
         let header = ui.horizontal(|ui| {
             let title = directory
                 .trim_end_matches('/')
@@ -526,7 +544,7 @@ impl Shell {
             let color = if active { p.text } else { p.muted };
             ui.add_space(8.0);
             ui.allocate_ui_with_layout(
-                egui::vec2(width - 48.0, 26.0),
+                egui::vec2(width - if closable { 74.0 } else { 48.0 }, 26.0),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.add(
@@ -567,6 +585,9 @@ impl Shell {
             )
             .response
             .on_hover_text(s.sort_word);
+            if closable && icon_button(ui, icon::X, s.close_pane, true).clicked() {
+                self.pane_to_close = Some(pane);
+            }
         });
         let rect = header.response.rect;
         let span = egui::Rangef::new(rect.left(), rect.left() + width);
@@ -834,7 +855,13 @@ impl Shell {
             &RowAction::EMPTY_SPACE
         };
         let mut first = true;
+        let free = self.controller.state.browser.free;
         for action in actions.iter().copied() {
+            if action == RowAction::OpenInPane
+                && !(free && row.is_some_and(|row| row.is_dir && !row.up))
+            {
+                continue;
+            }
             if !action.offered()
                 || !action.shown(on_disk)
                 || (action.writable_only() && !writable)

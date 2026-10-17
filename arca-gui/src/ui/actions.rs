@@ -5,6 +5,7 @@ use std::path::PathBuf;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RowAction {
     Open,
+    OpenInPane,
     ExtractSelection,
     ExtractHere,
     TestSelection,
@@ -26,8 +27,9 @@ pub(crate) enum RowAction {
 }
 
 impl RowAction {
-    pub(crate) const ALL: [RowAction; 19] = [
+    pub(crate) const ALL: [RowAction; 20] = [
         RowAction::Open,
+        RowAction::OpenInPane,
         RowAction::ExtractSelection,
         RowAction::ExtractHere,
         RowAction::TestSelection,
@@ -116,6 +118,7 @@ impl RowAction {
     pub(crate) fn label(self, s: &'static Strings) -> (&'static str, &'static str) {
         match self {
             RowAction::Open => (s.open_word, "Enter"),
+            RowAction::OpenInPane => (s.open_in_pane, ""),
             RowAction::ExtractSelection => (s.extract_selected, ""),
             RowAction::ExtractHere => (s.extract_here, "Alt+W"),
             RowAction::TestSelection => (s.test_selection, ""),
@@ -142,6 +145,7 @@ impl RowAction {
         use egui_phosphor::regular as icon;
         match self {
             RowAction::Open => icon::ARROW_SQUARE_OUT,
+            RowAction::OpenInPane => icon::COLUMNS_PLUS_RIGHT,
             RowAction::ExtractSelection | RowAction::ExtractAll => icon::EXPORT,
             RowAction::ExtractHere => icon::DOWNLOAD_SIMPLE,
             RowAction::TestSelection | RowAction::TestArchive => icon::CHECK_CIRCLE,

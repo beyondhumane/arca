@@ -27,12 +27,16 @@ pub(crate) struct BrowserState {
     pub(crate) panes: Vec<DirectoryPane>,
     pub(crate) active: usize,
     pub(crate) columns: bool,
+    /// Panes that browse on their own instead of each being the child of
+    /// the one before it.
+    pub(crate) free: bool,
 }
 
 impl Default for BrowserState {
     fn default() -> Self {
         Self {
             panes: vec![DirectoryPane::new(String::new())],
+            free: false,
             active: 0,
             columns: false,
         }
@@ -138,6 +142,10 @@ impl AppController {
     }
 
     pub(crate) fn navigate_panes(&mut self, path: String) {
+        if self.state.browser.free {
+            self.navigate_in_place(path);
+            return;
+        }
         self.snapshot_active_pane();
         self.load_disk_ancestors(&normalized_dir(&path));
         let path = nearest_existing_dir(&self.state.entries, &path);
@@ -166,6 +174,62 @@ impl AppController {
         self.retain_visible_selection();
     }
 
+    /// In free panes, going somewhere moves only the active pane there.
+    fn navigate_in_place(&mut self, path: String) {
+        self.snapshot_active_pane();
+        self.load_disk_ancestors(&normalized_dir(&path));
+        let path = nearest_existing_dir(&self.state.entries, &path);
+        let active = self.state.browser.active;
+        self.state.browser.panes[active] = DirectoryPane::new(path);
+        self.restore_active_pane();
+        self.retain_visible_selection();
+    }
+
+    /// Opens `path` in a new pane right after the active one.
+    pub(crate) fn open_in_pane(&mut self, path: &str) {
+        let path = normalized_dir(path);
+        self.snapshot_active_pane();
+        self.load_disk_ancestors(&path);
+        let path = nearest_existing_dir(&self.state.entries, &path);
+        let at = self.state.browser.active + 1;
+        self.state
+            .browser
+            .panes
+            .insert(at, DirectoryPane::new(path));
+        self.state.browser.active = at;
+        self.restore_active_pane();
+        self.retain_visible_selection();
+        self.record_pane_history();
+    }
+
+    pub(crate) fn close_pane(&mut self, pane: usize) {
+        let count = self.state.browser.panes.len();
+        if count <= 1 || pane >= count {
+            return;
+        }
+        self.snapshot_active_pane();
+        self.state.browser.panes.remove(pane);
+        let active = self.state.browser.active;
+        self.state.browser.active = if active > pane {
+            active - 1
+        } else {
+            active.min(count - 2)
+        };
+        self.restore_active_pane();
+        self.retain_visible_selection();
+        self.record_pane_history();
+    }
+
+    /// Switches between child columns and free panes, starting afresh from
+    /// the folder being shown when the mode changes.
+    pub(crate) fn set_free_panes(&mut self, free: bool) {
+        if self.state.browser.free == free {
+            return;
+        }
+        self.state.browser.free = free;
+        self.reset_browser_panes();
+    }
+
     pub(crate) fn record_pane_history(&mut self) {
         if self.state.history.get(self.state.here) != Some(&self.state.current_dir) {
             self.state.history.truncate(self.state.here + 1);
@@ -177,8 +241,10 @@ impl AppController {
     pub(crate) fn reset_browser_panes(&mut self) {
         let directory = self.state.current_dir.clone();
         let columns = self.state.browser.columns;
+        let free = self.state.browser.free;
         self.state.browser = BrowserState::default();
         self.state.browser.columns = columns;
+        self.state.browser.free = free;
         self.state.current_dir.clear();
         self.state.filter.clear();
         self.state.checked = vec![false; self.state.entries.len()];

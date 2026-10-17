@@ -77,6 +77,8 @@ pub(crate) struct Shell {
     focus_filter: bool,
     filter_open: bool,
     marquee: Option<Marquee>,
+    pane_to_close: Option<usize>,
+    last_active_pane: Option<usize>,
     name_value: String,
     focus_name: bool,
     rename_value: String,
@@ -111,10 +113,11 @@ pub(crate) struct Shell {
 impl Shell {
     fn new(ctx: &egui::Context, startup: Startup) -> Self {
         let mut controller = AppController::new(Settings::load());
-        let columns =
-            controller.state.settings.browser_view == crate::settings::BrowserView::Columns;
+        let view = controller.state.settings.browser_view;
+        let columns = view != crate::settings::BrowserView::Details;
         let flat = controller.state.settings.flat;
         controller.transition_browser_view(columns, flat);
+        controller.set_free_panes(view == crate::settings::BrowserView::Panes);
         apply_startup(&mut controller, startup);
         let library = themes::all();
         theme::install(ctx, &controller.state.settings, &library);
@@ -129,6 +132,8 @@ impl Shell {
             focus_filter: false,
             filter_open: false,
             marquee: None,
+            pane_to_close: None,
+            last_active_pane: None,
             name_value: String::new(),
             focus_name: false,
             rename_value: String::new(),
@@ -689,6 +694,11 @@ impl Shell {
                 only_checked: false,
             }),
             RowAction::TestArchive => self.shortcut(Shortcut::Test),
+            RowAction::OpenInPane => {
+                if let Some(row) = row.filter(|row| row.is_dir && !row.up) {
+                    self.controller.open_in_pane(&row.path);
+                }
+            }
             RowAction::Pin => match row {
                 Some(row) if row.is_dir && !row.up => {
                     self.controller
@@ -789,13 +799,13 @@ impl Shell {
         self.controller.dispatch(AppAction::Paste);
     }
 
-    fn switch_view(&mut self, columns: bool, flat: bool) {
+    fn switch_view(&mut self, view: crate::settings::BrowserView, flat: bool) {
+        use crate::settings::BrowserView;
+        let columns = view != BrowserView::Details;
         self.controller.transition_browser_view(columns, flat);
-        self.controller.state.settings.browser_view = if columns {
-            crate::settings::BrowserView::Columns
-        } else {
-            crate::settings::BrowserView::Details
-        };
+        self.controller.set_free_panes(view == BrowserView::Panes);
+        self.controller.state.settings.browser_view =
+            if columns { view } else { BrowserView::Details };
         if flat {
             self.controller
                 .state

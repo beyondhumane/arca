@@ -256,6 +256,7 @@ fn tree(
                         || matches!(
                             action,
                             RowAction::View
+                                | RowAction::OpenInPane
                                 | RowAction::Pin
                                 | RowAction::OpenArchive
                                 | RowAction::ExtractAll
