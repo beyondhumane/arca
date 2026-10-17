@@ -214,6 +214,7 @@ impl AppController {
             AppAction::Back => self.go_back(),
             AppAction::Forward => self.go_forward(),
             AppAction::SetChecked { row, value } => self.set_checked(&row, value),
+            AppAction::SelectOnly(row) => self.select_only(&row),
             AppAction::ClearSelection => self.clear_picked(),
             AppAction::Sort(column) => self.sort_by(column),
             AppAction::ToggleColumn(column) => {
@@ -1089,16 +1090,27 @@ impl AppController {
         if row.up {
             return;
         }
-        if !self
-            .visible_rows()
-            .iter()
-            .any(|r| r.path == row.path && r.entry == row.entry)
-        {
+        if !self.is_visible(row) {
             return;
         }
         self.cancel_preview();
         self.set_checked_projection(row, value);
         self.snapshot_active_pane();
+    }
+
+    pub(crate) fn select_only(&mut self, row: &Row) {
+        self.cancel_preview();
+        self.state.checked.fill(false);
+        if !row.up && self.is_visible(row) {
+            self.set_checked_projection(row, true);
+        }
+        self.snapshot_active_pane();
+    }
+
+    fn is_visible(&self, row: &Row) -> bool {
+        self.visible_rows()
+            .iter()
+            .any(|r| r.path == row.path && r.entry == row.entry)
     }
 
     fn set_checked_projection(&mut self, row: &Row, value: bool) {
