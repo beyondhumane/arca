@@ -812,6 +812,21 @@ impl Shell {
             } else {
                 label
             };
+            let pin_target = (action == RowAction::Pin).then(|| {
+                row.map_or_else(
+                    || crate::controller::disk::disk_path(&current_dir),
+                    |row| crate::controller::disk::disk_path(&row.path),
+                )
+            });
+            let pinned = pin_target
+                .as_ref()
+                .is_some_and(|path| self.controller.is_pinned(path));
+            let label = if pinned { s.unpin_word } else { label };
+            let glyph = if pinned {
+                icon::PUSH_PIN_SLASH
+            } else {
+                action.glyph()
+            };
             let label = action.destination_label(label, row, &current_dir, s);
             let enabled = idle
                 && match action {
@@ -819,7 +834,7 @@ impl Shell {
                     RowAction::Copy | RowAction::Cut => self.can_copy_files() || row.is_some(),
                     _ => true,
                 };
-            if menu_entry(ui, action.glyph(), &label, keys, enabled).clicked() {
+            if menu_entry(ui, glyph, &label, keys, enabled).clicked() {
                 if row.is_none() {
                     self.controller.dispatch(AppAction::ClearSelection);
                 }

@@ -27,22 +27,47 @@ impl Shell {
                 region(ui, egui::accesskit::Role::Status, s.status_region);
                 self.footer(ui);
             });
-        if layout.sidebar && !one_shot {
+        let want_sidebar = layout.sidebar && !one_shot;
+        let open = ui
+            .ctx()
+            .animate_bool(egui::Id::new("arca-sidebar-open"), want_sidebar);
+        if open > 0.0 {
+            let full = if layout.rail {
+                44.0
+            } else {
+                self.controller.state.settings.sidebar
+            };
             let panel = egui::Panel::left("arca-sidebar").frame(
                 egui::Frame::new()
                     .fill(hex(p.surface))
                     .inner_margin(egui::Margin::symmetric(6, 8)),
             );
-            let panel = if layout.rail {
-                panel.exact_size(44.0).resizable(false)
+            let settled = open >= 1.0;
+            let panel = if layout.rail || !settled {
+                panel.exact_size(full * open).resizable(false)
             } else {
                 panel
-                    .default_size(self.controller.state.settings.sidebar)
+                    .default_size(full)
                     .size_range(SIDEBAR_LEAST..=SIDEBAR_MOST)
                     .resizable(true)
             };
-            let shown = panel.show(ui, |ui| self.sidebar(ui, layout.rail));
-            if !layout.rail {
+            let rail = layout.rail;
+            let shown = panel.show(ui, |ui| {
+                if settled {
+                    self.sidebar(ui, rail);
+                } else {
+                    // Slide in at full width under a clip, so that the
+                    // rows do not re-wrap while the panel is still growing.
+                    let rect = ui.max_rect();
+                    let wide =
+                        egui::Rect::from_min_size(rect.min, egui::vec2(full - 12.0, rect.height()));
+                    ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(wide));
+                    child.multiply_opacity(open);
+                    self.sidebar(&mut child, rail);
+                }
+            });
+            if !layout.rail && settled {
                 let width = shown.response.rect.width();
                 self.remember_width(width, |settings| &mut settings.sidebar);
             }
@@ -81,6 +106,7 @@ impl Shell {
                         .show(ui, |ui| self.jobs_body(ui, true));
                 } else {
                     if browsing {
+                        self.nav_row(ui);
                         region(ui, egui::accesskit::Role::Region, s.archive_contents);
                     }
                     self.browser(ui);
@@ -259,24 +285,10 @@ impl Shell {
             self.title_grip(ui);
         }
         ui.horizontal(|ui| {
-            ui.add_space(2.0);
-            ui.add(
-                egui::Image::from_bytes("bytes://arca-mark.svg", crate::assets::MARK)
-                    .fit_to_exact_size(egui::vec2(18.0, 18.0)),
-            );
-            ui.add_space(4.0);
-            ui.label(RichText::new(&self.title).strong());
-            if let Some(release) = &self.controller.state.update {
-                let label = fill(s.update_ready, &[("version", &release.tag)]);
-                if ui
-                    .add(egui::Button::new(
-                        RichText::new(format!("{}  {label}", icon::DOWNLOAD_SIMPLE))
-                            .color(hex(palette_of(ui.ctx()).success)),
-                    ))
-                    .clicked()
-                {
-                    self.controller.start_update();
-                }
+            let folders = self.controller.state.settings.folders;
+            if icon_toggle(ui, icon::SIDEBAR_SIMPLE, s.folder_tree, true, folders).clicked() {
+                cycle_sidebar(&mut self.controller.state.settings);
+                self.controller.state.settings.save();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if own_bar {
@@ -295,56 +307,102 @@ impl Shell {
                     self.toggle_search();
                 }
                 self.view_menu(ui, idle);
-            });
-        });
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            let folders = self.controller.state.settings.folders;
-            if icon_toggle(ui, icon::SIDEBAR_SIMPLE, s.folder_tree, true, folders).clicked() {
-                cycle_sidebar(&mut self.controller.state.settings);
-                self.controller.state.settings.save();
-            }
-            if icon_button(ui, icon::ARROW_LEFT, s.back, self.controller.can_go_back()).clicked() {
-                self.controller.dispatch(AppAction::Back);
-            }
-            if icon_button(
-                ui,
-                icon::ARROW_RIGHT,
-                s.forward,
-                self.controller.can_go_forward(),
-            )
-            .clicked()
-            {
-                self.controller.dispatch(AppAction::Forward);
-            }
-            if icon_button(
-                ui,
-                icon::ARROW_UP,
-                s.up,
-                idle && self.controller.can_go_up(),
-            )
-            .clicked()
-            {
-                self.controller.dispatch(AppAction::Up);
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let filtering = !self.controller.state.filter.is_empty();
-                let on = self.filter_open || filtering;
-                if icon_toggle(ui, icon::FUNNEL, s.find_word, true, on)
-                    .on_hover_text(format!("{}  (Ctrl+F)", s.find_word))
-                    .clicked()
-                {
-                    self.toggle_filter();
-                }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     self.breadcrumbs(ui);
+                    if let Some(release) = &self.controller.state.update {
+                        let label = fill(s.update_ready, &[("version", &release.tag)]);
+                        if ui
+                            .add(egui::Button::new(
+                                RichText::new(format!("{}  {label}", icon::DOWNLOAD_SIMPLE))
+                                    .color(hex(palette_of(ui.ctx()).success)),
+                            ))
+                            .clicked()
+                        {
+                            self.controller.start_update();
+                        }
+                    }
                 });
             });
         });
-        if self.filter_open || !self.controller.state.filter.is_empty() {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| self.filter(ui));
-        }
+    }
+
+    /// Above the list, as Strata has it: back, forward, up, the folder's
+    /// name, and the funnel; the filter row slides out underneath.
+    fn nav_row(&mut self, ui: &mut egui::Ui) {
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        let idle = self.background_idle();
+        egui::Frame::new()
+            .fill(hex(p.surface))
+            .inner_margin(egui::Margin::symmetric(8, 4))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if icon_button(ui, icon::ARROW_LEFT, s.back, self.controller.can_go_back())
+                        .clicked()
+                    {
+                        self.controller.dispatch(AppAction::Back);
+                    }
+                    if icon_button(
+                        ui,
+                        icon::ARROW_RIGHT,
+                        s.forward,
+                        self.controller.can_go_forward(),
+                    )
+                    .clicked()
+                    {
+                        self.controller.dispatch(AppAction::Forward);
+                    }
+                    if icon_button(
+                        ui,
+                        icon::ARROW_UP,
+                        s.up,
+                        idle && self.controller.can_go_up(),
+                    )
+                    .clicked()
+                    {
+                        self.controller.dispatch(AppAction::Up);
+                    }
+                    ui.add_space(6.0);
+                    let here = self
+                        .crumbs()
+                        .last()
+                        .map(|crumb| crumb.0.clone())
+                        .unwrap_or_default();
+                    ui.label(RichText::new(here).strong().color(hex(p.link)));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let filtering = !self.controller.state.filter.is_empty();
+                        let on = self.filter_open || filtering;
+                        if icon_toggle(ui, icon::FUNNEL, s.find_word, true, on)
+                            .on_hover_text(format!("{}  (Ctrl+F)", s.find_word))
+                            .clicked()
+                        {
+                            self.toggle_filter();
+                        }
+                    });
+                });
+                let wanted = self.filter_open || !self.controller.state.filter.is_empty();
+                let open = ui
+                    .ctx()
+                    .animate_bool(egui::Id::new("arca-filter-open"), wanted);
+                if open > 0.0 {
+                    let full = ui.spacing().interact_size.y + 6.0;
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), full * open),
+                        egui::Sense::hover(),
+                    );
+                    let mut child = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(egui::Rect::from_min_size(
+                                rect.min,
+                                egui::vec2(rect.width(), full),
+                            ))
+                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    );
+                    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+                    child.multiply_opacity(open);
+                    self.filter(&mut child);
+                }
+            });
     }
 
     /// The funnel button: opens the filter row with the field focused, or

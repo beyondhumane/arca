@@ -671,12 +671,18 @@ impl Shell {
                 only_checked: false,
             }),
             RowAction::TestArchive => self.shortcut(Shortcut::Test),
-            RowAction::Pin => {
-                if let Some(row) = row.filter(|row| row.is_dir && !row.up) {
+            RowAction::Pin => match row {
+                Some(row) if row.is_dir && !row.up => {
                     self.controller
                         .dispatch(AppAction::TogglePinned(disk_path(&row.path)));
                 }
-            }
+                Some(_) => {}
+                None if self.controller.on_disk() => {
+                    let here = disk_path(&self.controller.state.current_dir);
+                    self.controller.dispatch(AppAction::TogglePinned(here));
+                }
+                None => {}
+            },
             RowAction::CopyPath => {
                 let paths = self
                     .controller

@@ -53,10 +53,11 @@ impl RowAction {
     /// The menu over the empty part of the list also carries what the
     /// toolbar used to: opening another archive, compressing, extracting
     /// and testing the whole thing.
-    pub(crate) const EMPTY_SPACE: [RowAction; 7] = [
+    pub(crate) const EMPTY_SPACE: [RowAction; 8] = [
         RowAction::NewFolder,
         RowAction::Paste,
         RowAction::SelectAll,
+        RowAction::Pin,
         RowAction::OpenArchive,
         RowAction::Compress,
         RowAction::ExtractAll,
@@ -130,7 +131,7 @@ impl RowAction {
             RowAction::Compress => (s.compress_selection, "Ctrl+N"),
             RowAction::CopyPath => (s.copy_path, ""),
             RowAction::Pin => (s.pin_word, ""),
-            RowAction::OpenArchive => (s.open, "Ctrl+O"),
+            RowAction::OpenArchive => (s.open_archive, "Ctrl+O"),
             RowAction::ExtractAll => (s.extract_all, "Ctrl+E"),
             RowAction::TestArchive => (s.test_word, "Ctrl+T"),
         }

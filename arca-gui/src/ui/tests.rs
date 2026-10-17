@@ -170,12 +170,13 @@ fn the_menu_under_the_last_row_asks_for_nothing_that_needs_a_row() {
             RowAction::NewFolder
                 | RowAction::Paste
                 | RowAction::SelectAll
+                | RowAction::Pin
                 | RowAction::OpenArchive
                 | RowAction::Compress
                 | RowAction::ExtractAll
                 | RowAction::TestArchive
         ));
-        assert!(action.about_the_place() || action == RowAction::Compress);
+        assert!(action.about_the_place() || matches!(action, RowAction::Compress | RowAction::Pin));
     }
     // Making a folder is the reason the menu exists, and it is the one
     // entry the row menu must not repeat.

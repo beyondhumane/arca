@@ -77,7 +77,9 @@ impl Shell {
                         }
                         if pinned {
                             response.context_menu(|ui| {
-                                if ui.button(s.unpin_word).clicked() {
+                                if menu_entry(ui, icon::PUSH_PIN_SLASH, s.unpin_word, "", true)
+                                    .clicked()
+                                {
                                     unpin = Some(place.path.clone());
                                 }
                             });
