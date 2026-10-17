@@ -709,6 +709,16 @@ impl Shell {
             egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, checked, &spoken)
         });
         let idle = self.background_idle();
+        if let Some(marquee) = self.marquee.as_ref().filter(|m| m.pane == pane) {
+            let swept = response.rect.intersects(marquee.rect());
+            let want = marquee.base.get(index).copied().unwrap_or(false) || swept;
+            if want != checked && !row.up && idle {
+                self.controller.dispatch(AppAction::SetChecked {
+                    row: row.clone(),
+                    value: want,
+                });
+            }
+        }
         let modifiers = ui.input(|i| i.modifiers);
         let activate = |shell: &mut Shell| {
             if let Some(pane) = pane {
@@ -845,8 +855,9 @@ impl Shell {
 
     fn empty_space(&mut self, ui: &mut egui::Ui, pane: Option<usize>) {
         let size = ui.available_size().max(Vec2::new(1.0, 1.0));
-        let response = ui.allocate_response(size, Sense::click());
-        self.blank_events(response, pane);
+        let response = ui.allocate_response(size, Sense::click_and_drag());
+        let painter = ui.painter_at(ui.clip_rect());
+        self.blank_events(response, pane, painter);
     }
 
     /// The part of a scroll area under its last row. The area keeps the
@@ -865,11 +876,21 @@ impl Shell {
         if blank.height() < 1.0 {
             return;
         }
-        let response = ui.interact(blank, ui.id().with(("blank", pane)), Sense::click());
-        self.blank_events(response, pane);
+        let response = ui.interact(
+            blank,
+            ui.id().with(("blank", pane)),
+            Sense::click_and_drag(),
+        );
+        self.blank_events(response, pane, ui.painter_at(inner));
     }
 
-    fn blank_events(&mut self, response: egui::Response, pane: Option<usize>) {
+    fn blank_events(
+        &mut self,
+        response: egui::Response,
+        pane: Option<usize>,
+        painter: egui::Painter,
+    ) {
+        let clip = painter.clip_rect();
         if response.clicked() && self.background_idle() {
             if let Some(pane) = pane {
                 if self.controller.state.browser.active != pane {
@@ -877,6 +898,53 @@ impl Shell {
                 }
             }
             self.controller.dispatch(AppAction::ClearSelection);
+        }
+        if response.drag_started() && self.background_idle() {
+            // A drag is only a drag once the pointer has moved, so the
+            // corner is where the button went down, not where it is now.
+            let origin = response
+                .ctx
+                .input(|i| i.pointer.press_origin())
+                .or_else(|| response.interact_pointer_pos());
+            if let Some(from) = origin {
+                if let Some(pane) = pane {
+                    if self.controller.state.browser.active != pane {
+                        self.controller.activate_pane(pane);
+                    }
+                }
+                let keep = response.ctx.input(|i| i.modifiers.command);
+                if !keep {
+                    self.controller.dispatch(AppAction::ClearSelection);
+                }
+                let base = if keep {
+                    self.controller.state.checked.clone()
+                } else {
+                    vec![false; self.controller.state.checked.len()]
+                };
+                self.marquee = Some(Marquee {
+                    from,
+                    to: from,
+                    pane,
+                    base,
+                });
+            }
+        }
+        if response.dragged() {
+            if let (Some(marquee), Some(to)) =
+                (self.marquee.as_mut(), response.interact_pointer_pos())
+            {
+                marquee.to = to.clamp(clip.min, clip.max);
+            }
+        }
+        if response.drag_stopped() {
+            self.marquee = None;
+        }
+        if let Some(marquee) = &self.marquee {
+            let p = palette_of(&response.ctx);
+            let rect = marquee.rect();
+            painter.rect_filled(rect, 2, alpha(p.focus, 0.18));
+            painter.rect_stroke(rect, 2, Stroke::new(1.0, hex(p.focus)), StrokeKind::Inside);
+            response.ctx.request_repaint();
         }
         response.context_menu(|ui| self.row_menu(ui, None, usize::MAX));
     }

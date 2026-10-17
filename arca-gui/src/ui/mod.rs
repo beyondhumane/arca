@@ -53,6 +53,22 @@ fn look_of(s: &Settings) -> String {
     )
 }
 
+/// A rectangle being dragged out over the rows from the blank space, which
+/// picks every row it crosses. `base` is what was checked when it started,
+/// kept when Ctrl is held so the sweep adds to it.
+pub(crate) struct Marquee {
+    from: egui::Pos2,
+    to: egui::Pos2,
+    pane: Option<usize>,
+    base: Vec<bool>,
+}
+
+impl Marquee {
+    pub(crate) fn rect(&self) -> egui::Rect {
+        egui::Rect::from_two_pos(self.from, self.to)
+    }
+}
+
 pub(crate) struct Shell {
     controller: AppController,
     ctx: egui::Context,
@@ -60,6 +76,7 @@ pub(crate) struct Shell {
     filter_value: String,
     focus_filter: bool,
     filter_open: bool,
+    marquee: Option<Marquee>,
     name_value: String,
     focus_name: bool,
     rename_value: String,
@@ -111,6 +128,7 @@ impl Shell {
             dialog: None,
             focus_filter: false,
             filter_open: false,
+            marquee: None,
             name_value: String::new(),
             focus_name: false,
             rename_value: String::new(),
