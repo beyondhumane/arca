@@ -346,6 +346,8 @@ pub(crate) const INSTALLER_LIMIT: usize = 64 * 1024 * 1024;
 #[derive(Clone)]
 pub(crate) struct Release {
     pub(crate) tag: String,
+    /// The file for this machine: the Windows installer, the AppImage, or
+    /// the tar.gz with the two binaries.
     pub(crate) installer: Option<String>,
     pub(crate) sums: Option<String>,
     /// The release notes, as written on GitHub: Markdown, or nothing.
@@ -363,8 +365,7 @@ pub(crate) struct Release {
 /// `SHA256SUMS.txt` is called that because we named it.
 pub(crate) fn release_of(reply: &str) -> Option<Release> {
     let tag = tag_of(reply)?;
-    let mut installer = None;
-    let mut sums = None;
+    let mut urls = Vec::new();
     for piece in reply.split("\"browser_download_url\"").skip(1) {
         let Some(open) = piece.find('"').and_then(|c| piece.get(c + 1..)) else {
             continue;
@@ -375,21 +376,47 @@ pub(crate) fn release_of(reply: &str) -> Option<Release> {
         let url = &open[..close];
         // Only ours, and only over the wire we trust. A reply that names some
         // other place is not one to go and fetch an executable from.
-        if !url.starts_with("https://github.com/beyondhumane/arca/releases/download/") {
-            continue;
-        }
-        if url.ends_with("/SHA256SUMS.txt") {
-            sums = Some(url.to_string());
-        } else if url.ends_with("-x86_64.exe") && url.contains("/arca-setup-") {
-            installer = Some(url.to_string());
+        if url.starts_with("https://github.com/beyondhumane/arca/releases/download/") {
+            urls.push(url.to_string());
         }
     }
+    let sums = urls
+        .iter()
+        .find(|url| url.ends_with("/SHA256SUMS.txt"))
+        .cloned();
+    let installer = asset_for(
+        &urls,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        std::env::var_os("APPIMAGE").is_some(),
+    );
     Some(Release {
         tag,
         installer,
         sums,
         notes: notes_of(reply).unwrap_or_default(),
     })
+}
+
+/// The release file that replaces this copy: the installer on Windows, the
+/// AppImage for a copy running as one, and the tar.gz with the binaries for
+/// the rest of Linux and for macOS. Named by what they end in, because we
+/// named them.
+pub(crate) fn asset_for(urls: &[String], os: &str, arch: &str, appimage: bool) -> Option<String> {
+    let arch = match arch {
+        "aarch64" | "arm64" => "arm64",
+        _ => "x86_64",
+    };
+    let suffix = match os {
+        "windows" => "-x86_64.exe".to_string(),
+        "linux" if appimage => format!("-linux-{arch}.AppImage"),
+        "linux" => format!("-linux-{arch}.tar.gz"),
+        "macos" => format!("-macos-{arch}.tar.gz"),
+        _ => return None,
+    };
+    urls.iter()
+        .find(|url| url.ends_with(&suffix) && (os != "windows" || url.contains("/arca-setup-")))
+        .cloned()
 }
 
 /// The release notes out of the announcement: the `body` string, unescaped.
@@ -482,19 +509,6 @@ pub(crate) fn sum_for(listing: &str, name: &str) -> Option<[u8; 32]> {
         return Some(out);
     }
     None
-}
-
-/// Whether this copy of Arca was put here by the installer.
-///
-/// Inno Setup leaves its uninstaller in the folder it installed to, so that
-/// file being next to the program is the program saying how it got there. A
-/// copy unpacked from the .zip has no uninstaller and nothing to update: for
-/// that one the only honest offer is the page.
-pub(crate) fn installed_by_setup() -> bool {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|d| d.join("unins000.exe")))
-        .is_some_and(|u| u.exists())
 }
 
 /// Pulls the release's name out of what the announcement page answered.
@@ -678,8 +692,39 @@ mod release_tests {
     fn the_release_carries_its_notes_unescaped() {
         let release = release_of(REPLY).expect("release");
         assert_eq!(release.tag, "v0.9.0");
-        assert!(release.installer.is_some());
         assert!(release.sums.is_some());
+        let urls: Vec<String> = [
+            "SHA256SUMS.txt",
+            "arca-setup-0.9.0-x86_64.exe",
+            "arca-v0.9.0-windows-x86_64.zip",
+            "arca-v0.9.0-linux-x86_64.tar.gz",
+            "arca-v0.9.0-linux-arm64.AppImage",
+            "arca-v0.9.0-macos-arm64.tar.gz",
+        ]
+        .iter()
+        .map(|n| format!("https://github.com/beyondhumane/arca/releases/download/v0.9.0/{n}"))
+        .collect();
+        let pick = |os, arch, app| {
+            asset_for(&urls, os, arch, app).map(|u| u.rsplit('/').next().unwrap().to_string())
+        };
+        assert_eq!(
+            pick("windows", "x86_64", false).as_deref(),
+            Some("arca-setup-0.9.0-x86_64.exe")
+        );
+        assert_eq!(
+            pick("linux", "x86_64", false).as_deref(),
+            Some("arca-v0.9.0-linux-x86_64.tar.gz")
+        );
+        assert_eq!(
+            pick("linux", "aarch64", true).as_deref(),
+            Some("arca-v0.9.0-linux-arm64.AppImage")
+        );
+        assert_eq!(
+            pick("macos", "aarch64", false).as_deref(),
+            Some("arca-v0.9.0-macos-arm64.tar.gz")
+        );
+        assert_eq!(pick("macos", "x86_64", false), None);
+        assert_eq!(pick("freebsd", "x86_64", false), None);
         assert_eq!(
             release.notes,
             "<!-- generated -->\n## What's Changed\n* feat: a \"quoted\" thing \\ by @x in https://github.com/o/r/pull/1\n* café 😀\n"

@@ -422,11 +422,20 @@ impl AppController {
                             .as_ref()
                             .map(|r| r.tag.clone())
                             .unwrap_or_default();
-                        let notice = super::fill(words.update_installing, &[("version", &version)]);
-                        match super::install_update(&path) {
+                        let notice = if cfg!(windows) {
+                            super::fill(words.update_installing, &[("version", &version)])
+                        } else {
+                            super::fill(words.update_installed, &[("version", &version)])
+                        };
+                        match super::install_update(&path, words) {
                             Ok(()) => {
-                                installing = true;
+                                // Windows hands over to the installer, which
+                                // closes Arca; elsewhere the files are already
+                                // in place and the next start is the new one.
+                                installing = cfg!(windows);
                                 self.state.notice = notice;
+                                self.state.error = false;
+                                self.state.update = None;
                             }
                             Err(e) => {
                                 self.state.notice = e;

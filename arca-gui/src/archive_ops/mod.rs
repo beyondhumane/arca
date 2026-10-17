@@ -252,7 +252,7 @@ pub(crate) fn download_update(
 /// Arca is deliberately not closed here: Inno sees that the program it is about
 /// to replace is open and closes it itself.
 #[cfg(windows)]
-pub(crate) fn install_update(path: &Path) -> std::result::Result<(), String> {
+pub(crate) fn install_update(path: &Path, _s: &'static Strings) -> std::result::Result<(), String> {
     std::process::Command::new(path)
         .args([
             "/VERYSILENT",
@@ -268,11 +268,90 @@ pub(crate) fn install_update(path: &Path) -> std::result::Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Puts the new version where this one is.
+///
+/// An AppImage is one file and is swapped for the new one. Otherwise the
+/// tar.gz holds the two binaries, which go next to the running one: the old
+/// file is renamed aside first, because a running program can be renamed but
+/// not written over, and the new one takes its place. The copy that is
+/// running keeps running until it is closed; the next start is the new one.
 #[cfg(not(windows))]
-pub(crate) fn install_update(_path: &Path) -> std::result::Result<(), String> {
-    // There is no installer to fetch outside Windows, so this is never reached:
-    // `arca_net` does not answer and there is never a new version to offer.
-    Err("no installer on this system".into())
+pub(crate) fn install_update(path: &Path, s: &'static Strings) -> std::result::Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    if let Some(appimage) = std::env::var_os("APPIMAGE").map(PathBuf::from) {
+        if path.extension().is_some_and(|ext| ext == "AppImage") {
+            return replace_binary(path, &appimage).map_err(|_| s.update_unwritable.to_string());
+        }
+    }
+    let dir = exe.parent().ok_or_else(|| s.update_failed.to_string())?;
+    let unpack = std::env::temp_dir().join(format!("arca-update-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&unpack);
+    fs::create_dir_all(&unpack).map_err(|e| e.to_string())?;
+    let unpacked = std::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(path)
+        .arg("-C")
+        .arg(&unpack)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !unpacked {
+        let _ = fs::remove_dir_all(&unpack);
+        return Err(s.update_failed.to_string());
+    }
+    let mut outcome = Ok(());
+    for name in ["arca-gui", "arca"] {
+        let Some(new) = find_file(&unpack, name, 2) else {
+            continue;
+        };
+        if let Err(error) = replace_binary(&new, &dir.join(name)) {
+            outcome = Err(if error.kind() == std::io::ErrorKind::PermissionDenied {
+                s.update_unwritable.to_string()
+            } else {
+                error.to_string()
+            });
+            break;
+        }
+    }
+    let _ = fs::remove_dir_all(&unpack);
+    let _ = fs::remove_file(path);
+    outcome
+}
+
+#[cfg(not(windows))]
+fn find_file(dir: &Path, name: &str, depth: usize) -> Option<PathBuf> {
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_file() && path.file_name().is_some_and(|n| n == name) {
+            return Some(path);
+        }
+        if path.is_dir() && depth > 0 {
+            if let Some(found) = find_file(&path, name, depth - 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn replace_binary(new: &Path, target: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let staged = target.with_extension("arca-new");
+    let aside = target.with_extension("arca-old");
+    fs::copy(new, &staged)?;
+    fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?;
+    let _ = fs::remove_file(&aside);
+    if target.exists() {
+        fs::rename(target, &aside)?;
+    }
+    if let Err(error) = fs::rename(&staged, target) {
+        let _ = fs::rename(&aside, target);
+        let _ = fs::remove_file(&staged);
+        return Err(error);
+    }
+    let _ = fs::remove_file(&aside);
+    Ok(())
 }
 
 pub(crate) fn run_job_blocking(

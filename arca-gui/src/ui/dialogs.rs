@@ -1110,10 +1110,11 @@ impl Shell {
                     .max_height(260.0)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        if release.notes.trim().is_empty() {
+                        let notes = changelog_only(&release.notes);
+                        if notes.trim().is_empty() {
                             ui.label(RichText::new(s.no_notes).color(hex(p.muted)));
                         } else {
-                            release_notes(ui, &p, &release.notes);
+                            release_notes(ui, &p, notes);
                         }
                     });
             });
@@ -1126,11 +1127,7 @@ impl Shell {
         }
         ui.add_space(4.0);
         ui.label(RichText::new(s.review_notes).size(12.0).color(hex(p.muted)));
-        let label = if self.controller.can_self_update() {
-            s.download_update
-        } else {
-            s.open_download_page
-        };
+        let label = s.download_update;
         let mut go = false;
         let mut cancel = false;
         Self::footer_buttons(ui, |ui| {
@@ -2125,6 +2122,25 @@ fn suggested_name(taken: &std::path::Path) -> String {
         .unwrap_or(stem)
 }
 
+/// The part of the notes that says what changed. The release workflow
+/// appends sections after the changelog (Downloads, Unsigned binaries)
+/// that the box has no use for: everything from the second top-level
+/// heading on is left out.
+pub(crate) fn changelog_only(notes: &str) -> &str {
+    let mut seen = false;
+    let mut at = 0;
+    for line in notes.split_inclusive('\n') {
+        if line.starts_with("## ") {
+            if seen {
+                return &notes[..at];
+            }
+            seen = true;
+        }
+        at += line.len();
+    }
+    notes
+}
+
 /// Release notes as GitHub writes them, read as far as a dialog needs:
 /// headings in bold, bullets with a dot, the HTML comment the generator
 /// leaves at the top dropped, and the rest as wrapped text.
@@ -2237,7 +2253,17 @@ pub(crate) fn plain_markdown(text: &str) -> String {
 
 #[cfg(test)]
 mod notes_tests {
-    use super::plain_markdown;
+    use super::{changelog_only, plain_markdown};
+
+    #[test]
+    fn the_changelog_stops_where_the_downloads_begin() {
+        let notes = "<!-- x -->\n## [0.8.2](u) (2026)\n\n### Maintenance\n\n* a\n\n## Downloads\n\n| a | b |\n## Unsigned binaries\n";
+        assert_eq!(
+            changelog_only(notes),
+            "<!-- x -->\n## [0.8.2](u) (2026)\n\n### Maintenance\n\n* a\n\n"
+        );
+        assert_eq!(changelog_only("just words"), "just words");
+    }
 
     #[test]
     fn markdown_loses_its_marks_but_keeps_its_words() {

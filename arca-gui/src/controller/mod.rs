@@ -955,24 +955,8 @@ impl AppController {
         });
     }
 
-    /// Whether "download" means this copy replaces itself, or only that the
-    /// release page opens.
-    pub(crate) fn can_self_update(&self) -> bool {
-        matches!(
-            &self.state.update,
-            Some(Release {
-                installer: Some(_),
-                sums: Some(_),
-                ..
-            })
-        ) && installed_by_setup()
-    }
-
-    // Takes the new version, if this copy is one that can replace itself.
-    //
-    // A copy put here by the installer updates itself. One unpacked from the
-    // .zip is loose files in a folder somebody chose, and there is nothing to
-    // update: for that one the only honest offer is the page.
+    // Takes the new version: gets the file for this machine, checks it
+    // against the published sums and puts it in place.
     pub(crate) fn start_update(&mut self) {
         match self.state.update.clone() {
             Some(Release {
@@ -980,13 +964,14 @@ impl AppController {
                 installer: Some(installer),
                 sums: Some(sums),
                 ..
-            }) if installed_by_setup() => self.run_job(Job::Update {
+            }) => self.run_job(Job::Update {
                 tag,
                 installer,
                 sums,
             }),
             _ => {
-                let _ = launch_with_system(Path::new(RELEASES_PAGE));
+                self.state.notice = self.s().update_failed.to_string();
+                self.state.error = true;
             }
         }
     }

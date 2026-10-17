@@ -142,10 +142,15 @@ mod tests {
             {"name":"arca-v0.6.2-linux-x86_64.tar.gz","browser_download_url":"https://github.com/beyondhumane/arca/releases/download/v0.6.2/arca-v0.6.2-linux-x86_64.tar.gz"}]}"#;
         let r = release_of(reply).expect("una release");
         assert_eq!(r.tag, "v0.6.2");
-        assert_eq!(
-            r.installer.as_deref(),
-            Some("https://github.com/beyondhumane/arca/releases/download/v0.6.2/arca-setup-0.6.2-x86_64.exe")
-        );
+        // The file picked is the one for the machine running the test.
+        let expected = match std::env::consts::OS {
+            "windows" => Some("https://github.com/beyondhumane/arca/releases/download/v0.6.2/arca-setup-0.6.2-x86_64.exe"),
+            "linux" if std::env::consts::ARCH == "x86_64" && std::env::var_os("APPIMAGE").is_none() => {
+                Some("https://github.com/beyondhumane/arca/releases/download/v0.6.2/arca-v0.6.2-linux-x86_64.tar.gz")
+            }
+            _ => None,
+        };
+        assert_eq!(r.installer.as_deref(), expected);
         assert!(r.sums.is_some());
     }
 
