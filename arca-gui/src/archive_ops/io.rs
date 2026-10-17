@@ -148,15 +148,19 @@ impl<R: Read> Read for Paced<'_, R> {
     }
 }
 
+fn staged_path(out: &Path) -> PathBuf {
+    let mut name = out.file_name().unwrap_or_default().to_os_string();
+    name.push(".arca-new");
+    out.with_file_name(name)
+}
+
 // Written under a temporary name beside `out` and renamed once complete, so a
 // stop or a failure halfway leaves no truncated archive under the real name.
 fn staged<T>(
     out: &Path,
     write: impl FnOnce(BufWriter<File>) -> arca_core::Result<T>,
 ) -> arca_core::Result<T> {
-    let mut name = out.file_name().unwrap_or_default().to_os_string();
-    name.push(".arca-new");
-    let temp = out.with_file_name(name);
+    let temp = staged_path(out);
     let result = File::create(&temp)
         .map_err(arca_core::Error::from)
         .and_then(|f| write(BufWriter::with_capacity(BUF, f)))
@@ -280,6 +284,22 @@ pub(crate) fn step_aside(archive: &Path) -> std::io::Result<()> {
         fs::remove_file(&keep)?;
     }
     fs::rename(archive, &keep)
+}
+
+// The archive is the only copy of what is inside it, so the new one is written
+// beside it and read back in full by `write` before the original steps aside.
+pub(crate) fn rewrite_zip<T>(
+    archive: &Path,
+    write: impl FnOnce(&Path) -> arca_core::Result<T>,
+) -> std::result::Result<T, String> {
+    let temp = staged_path(archive);
+    let value = write(&temp).map_err(|e| {
+        let _ = fs::remove_file(&temp);
+        e.to_string()
+    })?;
+    step_aside(archive).map_err(|e| e.to_string())?;
+    fs::rename(&temp, archive).map_err(|e| e.to_string())?;
+    Ok(value)
 }
 
 // One entry straight into memory, for looking at rather than for keeping.
@@ -1318,6 +1338,37 @@ mod tests {
         .unwrap();
         zip.finish().unwrap();
         path
+    }
+
+    #[test]
+    fn rewrite_zip_moves_the_new_archive_in_and_keeps_the_old_one() {
+        let dir = room("rewrite-ok");
+        let archive = dir.join("a.zip");
+        fs::write(&archive, b"old").unwrap();
+        let wrote = rewrite_zip(&archive, |temp| {
+            assert_eq!(temp, dir.join("a.zip.arca-new"));
+            fs::write(temp, b"new")?;
+            Ok(3)
+        });
+        assert_eq!(wrote, Ok(3));
+        assert_eq!(fs::read(&archive).unwrap(), b"new");
+        assert_eq!(fs::read(undo_path(&archive)).unwrap(), b"old");
+        assert!(!dir.join("a.zip.arca-new").exists());
+    }
+
+    #[test]
+    fn rewrite_zip_failure_removes_the_temp_and_leaves_the_archive() {
+        let dir = room("rewrite-fail");
+        let archive = dir.join("a.zip");
+        fs::write(&archive, b"old").unwrap();
+        let wrote: std::result::Result<(), String> = rewrite_zip(&archive, |temp| {
+            fs::write(temp, b"half")?;
+            Err(arca_core::Error::Cancelled)
+        });
+        assert_eq!(wrote, Err(arca_core::Error::Cancelled.to_string()));
+        assert_eq!(fs::read(&archive).unwrap(), b"old");
+        assert!(!undo_path(&archive).exists());
+        assert!(!dir.join("a.zip.arca-new").exists());
     }
 
     #[test]

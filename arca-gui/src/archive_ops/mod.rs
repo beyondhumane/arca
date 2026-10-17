@@ -439,26 +439,15 @@ pub(crate) fn run_job_blocking(
             if detect(&archive) != Some(Format::Zip) {
                 return Err(s.only_zip_can_change.to_string());
             }
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
-            let done = arca_zip::rewrite_password(
-                &archive,
-                &temp,
-                current.as_deref(),
-                new.as_deref(),
-                notify,
-            );
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
+            rewrite_zip(&archive, |temp| {
+                arca_zip::rewrite_password(
+                    &archive,
+                    temp,
+                    current.as_deref(),
+                    new.as_deref(),
+                    notify,
+                )
+            })?;
             let name = archive
                 .file_name()
                 .map(|x| x.to_string_lossy().to_string())
@@ -484,27 +473,16 @@ pub(crate) fn run_job_blocking(
                 return Err(s.only_zip_can_change.to_string());
             }
             let doomed: HashSet<String> = names.into_iter().collect();
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
-            let done = arca_zip::remove_entries(
-                &archive,
-                &temp,
-                password.as_deref(),
-                &|e| !doomed.contains(&e.name),
-                notify,
-            );
+            rewrite_zip(&archive, |temp| {
+                arca_zip::remove_entries(
+                    &archive,
+                    temp,
+                    password.as_deref(),
+                    &|e| !doomed.contains(&e.name),
+                    notify,
+                )
+            })?;
             let gone = doomed.len();
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
             Ok(fill(s.deleted, &[("n", &gone.to_string())]))
         }
         Job::CopyTo { archive, dest } => {
@@ -573,30 +551,19 @@ pub(crate) fn run_job_blocking(
             if detect(&archive) != Some(Format::Zip) {
                 return Err(s.only_zip_can_change.to_string());
             }
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
             // A folder answers to two spellings: some tools file an entry for
             // the folder itself with a slash on the end, others only file what
             // is inside it. Both have to move, and neither can be assumed.
             let rename = |name: &str| rename_entry_name(name, &from, &to, folder);
-            let done = arca_zip::rename_entries(
-                &archive,
-                &temp,
-                password.as_deref(),
-                &|e| rename(&e.name),
-                notify,
-            );
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
+            rewrite_zip(&archive, |temp| {
+                arca_zip::rename_entries(
+                    &archive,
+                    temp,
+                    password.as_deref(),
+                    &|e| rename(&e.name),
+                    notify,
+                )
+            })?;
             // Nothing to say: the new name is in the list, which is where the
             // eye already is. An empty word here leaves the summary of the
             // archive standing, which is what the bar is for.
@@ -671,21 +638,10 @@ pub(crate) fn run_job_blocking(
             if extra.is_empty() {
                 return Err(s.nothing_to_do.to_string());
             }
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
             let n = extra.len();
-            let done = arca_zip::add_entries(&archive, &temp, password.as_deref(), &extra, notify);
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
+            rewrite_zip(&archive, |temp| {
+                arca_zip::add_entries(&archive, temp, password.as_deref(), &extra, notify)
+            })?;
             Ok(fill(s.added, &[("n", &n.to_string())]))
         }
         // Not reached: getting the new version is handled earlier, on the
@@ -700,29 +656,18 @@ pub(crate) fn run_job_blocking(
             if detect(&archive) != Some(Format::Zip) {
                 return Err(s.only_zip_can_change.to_string());
             }
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
             // All of them in one pass. Moving is renaming with a different
             // folder in front, and renaming is a rewrite of the whole archive:
             // five files moved one at a time would be five rewrites.
-            let done = arca_zip::rename_entries(
-                &archive,
-                &temp,
-                password.as_deref(),
-                &|e| moved_name(&e.name, &moves),
-                notify,
-            );
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
+            rewrite_zip(&archive, |temp| {
+                arca_zip::rename_entries(
+                    &archive,
+                    temp,
+                    password.as_deref(),
+                    &|e| moved_name(&e.name, &moves),
+                    notify,
+                )
+            })?;
             // The list says where everything is now, which is the whole answer.
             Ok(String::new())
         }
@@ -734,13 +679,6 @@ pub(crate) fn run_job_blocking(
             if detect(&archive) != Some(Format::Zip) {
                 return Err(s.only_zip_can_change.to_string());
             }
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
             let extra = [arca_zip::Addition {
                 // No file behind it: a folder in a zip is a name and nothing
                 // else.
@@ -749,13 +687,9 @@ pub(crate) fn run_job_blocking(
                 codec: Codec::Store,
                 level: Level::STORE,
             }];
-            let done = arca_zip::add_entries(&archive, &temp, password.as_deref(), &extra, notify);
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
+            rewrite_zip(&archive, |temp| {
+                arca_zip::add_entries(&archive, temp, password.as_deref(), &extra, notify)
+            })?;
             // Nothing to say: the folder is in the list, which is where the eye
             // already is.
             Ok(String::new())
