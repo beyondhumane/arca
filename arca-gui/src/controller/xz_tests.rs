@@ -35,3 +35,25 @@ fn switching_to_xz_keeps_the_file_name_and_drops_encryption() {
     app.set_create_format(Format::Zip);
     assert_eq!(app.state.output_name, "custom.zip");
 }
+
+#[test]
+fn compress_box_destination_and_automatic_extension() {
+    let room = Room::new();
+    let file = room.path("notes.txt");
+    std::fs::write(&file, b"notes").unwrap();
+    let elsewhere = room.path("out");
+    let mut app = AppController::new(Settings::default());
+    app.state.format = Format::TarGz;
+    app.prepare_compress(vec![file]);
+    app.state.output_dir = Some(elsewhere.clone());
+    app.state.output_name = "bundle".into();
+    let Some(Job::Compress { out, .. }) = app.compression_job() else {
+        panic!("compression job")
+    };
+    assert_eq!(out, elsewhere.join("bundle.tar.gz"));
+    app.state.auto_extension = false;
+    let Some(Job::Compress { out, .. }) = app.compression_job() else {
+        panic!("compression job")
+    };
+    assert_eq!(out, elsewhere.join("bundle"));
+}

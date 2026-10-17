@@ -882,18 +882,17 @@ impl Shell {
         let level_label = self.controller.level_name(level);
         let mut moved = false;
         card(ui, s.level, Some(level_label), true, |ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.label(RichText::new(s.min_word).size(12.0).color(hex(p.muted)));
-                ui.spacing_mut().slider_width = 220.0;
-                moved = ui
-                    .add(
-                        egui::Slider::new(&mut at, 0.0..=3.0)
-                            .step_by(1.0)
-                            .show_value(false),
-                    )
-                    .changed();
-                ui.label(RichText::new(s.max_word).size(12.0).color(hex(p.muted)));
-            });
+            // The card lays inline controls out right to left.
+            ui.label(RichText::new(s.max_word).size(12.0).color(hex(p.muted)));
+            ui.spacing_mut().slider_width = 220.0;
+            moved = ui
+                .add(
+                    egui::Slider::new(&mut at, 0.0..=3.0)
+                        .step_by(1.0)
+                        .show_value(false),
+                )
+                .changed();
+            ui.label(RichText::new(s.min_word).size(12.0).color(hex(p.muted)));
         });
         if moved {
             self.controller.state.level = levels[(at.round() as usize).min(3)];
