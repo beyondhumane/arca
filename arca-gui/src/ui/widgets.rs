@@ -106,6 +106,30 @@ pub(crate) fn pick_entry(ui: &mut Ui, glyph: &str, label: &str, on: bool) -> Res
     ui.add(egui::Button::new(job).shortcut_text(mark))
 }
 
+/// A sort-menu entry: the column's glyph and label, with the direction
+/// arrow where the shortcut goes for the column in force.
+pub(crate) fn sort_entry(
+    ui: &mut Ui,
+    glyph: &str,
+    label: &str,
+    on: bool,
+    ascending: bool,
+) -> Response {
+    let p = palette_of(ui.ctx());
+    let job = entry_job(ui, glyph, label, true);
+    let mark = if on {
+        let arrow = if ascending {
+            egui_phosphor::regular::ARROW_UP
+        } else {
+            egui_phosphor::regular::ARROW_DOWN
+        };
+        theme::icon_text(arrow).color(hex(p.focus))
+    } else {
+        egui::RichText::new(" ")
+    };
+    ui.add(egui::Button::new(job).shortcut_text(mark))
+}
+
 /// A one-line text field as tall as the buttons beside it, with the text
 /// centred in it; egui's own comes out shorter and sits oddly in a row.
 pub(crate) fn field<'t>(ui: &Ui, text: &'t mut dyn egui::TextBuffer) -> egui::TextEdit<'t> {

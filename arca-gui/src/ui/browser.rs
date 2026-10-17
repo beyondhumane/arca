@@ -556,11 +556,12 @@ impl Shell {
             ui.menu_button(
                 super::theme::icon_text(icon::SORT_ASCENDING).color(hex(p.muted)),
                 |ui| {
-                    for column in [
-                        SortColumn::Name,
-                        SortColumn::Size,
-                        SortColumn::Modified,
-                        SortColumn::Type,
+                    ui.set_min_width(180.0);
+                    for (column, glyph) in [
+                        (SortColumn::Name, icon::TEXT_AA),
+                        (SortColumn::Size, icon::HARD_DRIVES),
+                        (SortColumn::Modified, icon::CLOCK),
+                        (SortColumn::Type, icon::TAG),
                     ] {
                         let label = if column == SortColumn::Name {
                             s.col_name
@@ -568,15 +569,7 @@ impl Shell {
                             Columns::label(column, s)
                         };
                         let on = order.0 == column;
-                        let text = if on {
-                            format!(
-                                "{label} {}",
-                                if order.1 { s.ascending } else { s.descending }
-                            )
-                        } else {
-                            label.to_string()
-                        };
-                        if ui.selectable_label(on, text).clicked() {
+                        if sort_entry(ui, glyph, label, on, order.1).clicked() {
                             let ascending = if on { !order.1 } else { true };
                             self.controller.set_pane_order(pane, (column, ascending));
                         }
