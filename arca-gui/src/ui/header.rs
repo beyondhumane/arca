@@ -27,27 +27,31 @@ impl Shell {
                 region(ui, egui::accesskit::Role::Status, s.status_region);
                 self.footer(ui);
             });
-        let want_sidebar = layout.sidebar && !one_shot;
-        let open = ui
-            .ctx()
-            .animate_bool(egui::Id::new("arca-sidebar-open"), want_sidebar);
-        if open > 0.0 {
-            let full = if layout.rail {
-                44.0
-            } else {
-                self.controller.state.settings.sidebar
-            };
+        // The width itself is animated, so that open, rail and hidden all
+        // slide into one another rather than only hidden and shown.
+        let target = if !(layout.sidebar && !one_shot) {
+            0.0
+        } else if layout.rail {
+            44.0
+        } else {
+            self.controller.state.settings.sidebar
+        };
+        let time = ui.ctx().global_style().animation_time;
+        let width =
+            ui.ctx()
+                .animate_value_with_time(egui::Id::new("arca-sidebar-width"), target, time);
+        if width > 0.5 {
             let panel = egui::Panel::left("arca-sidebar").frame(
                 egui::Frame::new()
                     .fill(hex(p.surface))
                     .inner_margin(egui::Margin::symmetric(6, 8)),
             );
-            let settled = open >= 1.0;
+            let settled = (width - target).abs() < 0.5;
             let panel = if layout.rail || !settled {
-                panel.exact_size(full * open).resizable(false)
+                panel.exact_size(width).resizable(false)
             } else {
                 panel
-                    .default_size(full)
+                    .default_size(target)
                     .size_range(SIDEBAR_LEAST..=SIDEBAR_MOST)
                     .resizable(true)
             };
@@ -56,14 +60,17 @@ impl Shell {
                 if settled {
                     self.sidebar(ui, rail);
                 } else {
-                    // Slide in at full width under a clip, so that the
-                    // rows do not re-wrap while the panel is still growing.
+                    // Draw at the width it is heading for under a clip, so
+                    // that the rows do not re-wrap while the panel moves.
                     let rect = ui.max_rect();
-                    let wide =
-                        egui::Rect::from_min_size(rect.min, egui::vec2(full - 12.0, rect.height()));
+                    let full = target.max(width) - 12.0;
+                    let wide = egui::Rect::from_min_size(
+                        rect.min,
+                        egui::vec2(full.max(1.0), rect.height()),
+                    );
                     ui.set_clip_rect(rect.intersect(ui.clip_rect()));
                     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(wide));
-                    child.multiply_opacity(open);
+                    child.multiply_opacity((width / 44.0).clamp(0.0, 1.0));
                     self.sidebar(&mut child, rail);
                 }
             });
