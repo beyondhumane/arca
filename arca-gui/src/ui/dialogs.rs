@@ -264,7 +264,7 @@ impl Shell {
         ui.add_space(8.0);
         let mut value = self.controller.state.password_input.clone();
         let field = ui.add(
-            egui::TextEdit::singleline(&mut value)
+            super::widgets::field(ui, &mut value)
                 .password(true)
                 .desired_width(f32::INFINITY),
         );
@@ -488,7 +488,7 @@ impl Shell {
         ui.add_space(6.0);
         ui.label(s.output_name);
         ui.add(
-            egui::TextEdit::singleline(&mut self.controller.state.output_name)
+            super::widgets::field(ui, &mut self.controller.state.output_name)
                 .desired_width(f32::INFINITY),
         );
         ui.add_space(6.0);
@@ -497,7 +497,7 @@ impl Shell {
         if matches!(format, Format::Zip | Format::SevenZ) {
             ui.add_space(6.0);
             ui.add(
-                egui::TextEdit::singleline(&mut self.controller.state.add_password)
+                super::widgets::field(ui, &mut self.controller.state.add_password)
                     .password(true)
                     .hint_text(s.password_optional)
                     .desired_width(f32::INFINITY),
@@ -590,7 +590,7 @@ impl Shell {
         ui.label(RichText::new(description).color(hex(p.muted)));
         ui.add_space(6.0);
         let field =
-            ui.add(egui::TextEdit::singleline(&mut self.name_value).desired_width(f32::INFINITY));
+            ui.add(super::widgets::field(ui, &mut self.name_value).desired_width(f32::INFINITY));
         if self.focus_name {
             field.request_focus();
             self.focus_name = false;
@@ -689,7 +689,7 @@ impl Shell {
         if compact {
             rail.menu_button(theme::icon_text(icon::MAGNIFYING_GLASS).size(16.0), |ui| {
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.settings_query)
+                    super::widgets::field(ui, &mut self.settings_query)
                         .hint_text(s.settings_search)
                         .desired_width(200.0),
                 );
@@ -698,7 +698,7 @@ impl Shell {
             .on_hover_text(s.settings_search);
         } else {
             rail.add(
-                egui::TextEdit::singleline(&mut self.settings_query)
+                super::widgets::field(ui, &mut self.settings_query)
                     .hint_text(format!("{}  {}", icon::MAGNIFYING_GLASS, s.settings_search))
                     .margin(egui::vec2(8.0, 5.0))
                     .desired_width(f32::INFINITY),
@@ -965,7 +965,7 @@ impl Shell {
         section_title(ui, s.library_section);
         ui.horizontal(|ui| {
             ui.add(
-                egui::TextEdit::singleline(&mut self.theme_query)
+                super::widgets::field(ui, &mut self.theme_query)
                     .hint_text(s.search_themes)
                     .background_color(hex(p.raised))
                     .desired_width(240.0),
@@ -1120,7 +1120,7 @@ impl Shell {
                     ui.label(egui::RichText::new(s.add_theme).strong());
                     ui.add_space(4.0);
                     ui.add(
-                        egui::TextEdit::singleline(&mut draft.name)
+                        super::widgets::field(ui, &mut draft.name)
                             .hint_text(s.theme_name)
                             .desired_width(f32::INFINITY),
                     );

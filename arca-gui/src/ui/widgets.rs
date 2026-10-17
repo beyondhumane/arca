@@ -106,6 +106,16 @@ pub(crate) fn pick_entry(ui: &mut Ui, glyph: &str, label: &str, on: bool) -> Res
     ui.add(egui::Button::new(job).shortcut_text(mark))
 }
 
+/// A one-line text field as tall as the buttons beside it, with the text
+/// centred in it; egui's own comes out shorter and sits oddly in a row.
+pub(crate) fn field<'t>(ui: &Ui, text: &'t mut dyn egui::TextBuffer) -> egui::TextEdit<'t> {
+    let tall = ui.spacing().interact_size.y;
+    egui::TextEdit::singleline(text)
+        .min_size(egui::vec2(0.0, tall))
+        .vertical_align(egui::Align::Center)
+        .margin(egui::Margin::symmetric(8, 4))
+}
+
 pub(crate) fn primary_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     ui.scope(|ui| {
         let (rest, hover) = if ui.style().visuals.dark_mode {

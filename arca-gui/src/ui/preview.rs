@@ -121,7 +121,7 @@ impl Shell {
         ) {
             let index = self.controller.state.preview.index;
             let field = ui.add(
-                egui::TextEdit::singleline(&mut self.preview_password)
+                super::widgets::field(ui, &mut self.preview_password)
                     .password(true)
                     .hint_text(s.password_needed)
                     .desired_width(f32::INFINITY),

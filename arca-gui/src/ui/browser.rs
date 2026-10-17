@@ -675,7 +675,7 @@ impl Shell {
     fn rename_field(&mut self, ui: &mut egui::Ui, rect: Rect) {
         let response = ui.put(
             rect,
-            egui::TextEdit::singleline(&mut self.rename_value).desired_width(rect.width()),
+            super::widgets::field(ui, &mut self.rename_value).desired_width(rect.width()),
         );
         if self.focus_rename {
             response.request_focus();

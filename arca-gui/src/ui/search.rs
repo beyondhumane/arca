@@ -414,7 +414,7 @@ impl Shell {
                     );
                     let room = ui.available_width() - if busy { 30.0 } else { 0.0 };
                     let response = ui.add(
-                        egui::TextEdit::singleline(&mut search.query)
+                        super::widgets::field(ui, &mut search.query)
                             .id(egui::Id::new("arca-search-field"))
                             .lock_focus(true)
                             .frame(egui::Frame::NONE)

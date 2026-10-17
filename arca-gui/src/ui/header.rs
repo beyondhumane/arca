@@ -443,7 +443,7 @@ impl Shell {
         let total = self.controller.folder_total();
         let hint = fill(s.filter_items, &[("count", &total.to_string())]);
         let response = ui.add(
-            egui::TextEdit::singleline(&mut self.filter_value)
+            super::widgets::field(ui, &mut self.filter_value)
                 .id(id)
                 .hint_text(hint)
                 .frame(egui::Frame::NONE)

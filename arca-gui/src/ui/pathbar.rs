@@ -205,7 +205,7 @@ impl Shell {
             }
         }
         let response = ui.add(
-            egui::TextEdit::singleline(&mut text)
+            super::widgets::field(ui, &mut text)
                 .id(id)
                 // Keep Tab for completion; the key itself is consumed above.
                 .lock_focus(true)

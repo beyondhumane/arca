@@ -224,7 +224,7 @@ fn tree(
         let row = |ui: &mut egui::Ui, event: &mut Option<TreeEvent>, rename: &mut RenameField| {
             if context.renaming.as_deref() == Some(id.as_str()) {
                 let response =
-                    ui.add(egui::TextEdit::singleline(rename.value).desired_width(f32::INFINITY));
+                    ui.add(super::widgets::field(ui, rename.value).desired_width(f32::INFINITY));
                 if *rename.focus {
                     response.request_focus();
                     *rename.focus = false;
