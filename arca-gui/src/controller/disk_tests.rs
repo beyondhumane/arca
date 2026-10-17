@@ -1,4 +1,5 @@
 use super::disk::ancestors_of;
+use super::disk::{desktop_app, duplicate_target, split_exec};
 use super::*;
 use crate::test_support::Room;
 

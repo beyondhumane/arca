@@ -1355,7 +1355,7 @@ impl DesktopApp {
 }
 
 /// Splits an Exec= line on spaces, honouring double quotes.
-fn split_exec(exec: &str) -> Vec<String> {
+pub(crate) fn split_exec(exec: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
     let mut quoted = false;
