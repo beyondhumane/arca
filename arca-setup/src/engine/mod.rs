@@ -62,8 +62,25 @@ pub struct Job {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Event {
     Progress(f32),
+    Warning(String),
     Finished,
     Failed(String),
+}
+
+#[cfg(windows)]
+pub fn warn_on(step: Result<(), String>, report: &mut dyn FnMut(Event)) {
+    if let Err(message) = step {
+        report(Event::Warning(message));
+    }
+}
+
+#[cfg(any(windows, test))]
+pub fn leftovers_error(left: &[PathBuf]) -> Result<(), String> {
+    if left.is_empty() {
+        return Ok(());
+    }
+    let list: Vec<String> = left.iter().map(|path| path.display().to_string()).collect();
+    Err(format!("could not remove {}", list.join(", ")))
 }
 
 pub fn overall(step: usize, fraction: f32) -> f32 {
@@ -281,6 +298,16 @@ mod tests {
             "<Identity Name=\"x\" Version=\"0.7.1.0\"/>"
         );
         assert_eq!(stamp_manifest("nothing here", "0.7.1"), "nothing here");
+    }
+
+    #[test]
+    fn leftover_files_are_named_in_the_error() {
+        assert_eq!(leftovers_error(&[]), Ok(()));
+        let left = [PathBuf::from("a.exe"), PathBuf::from("b.dll")];
+        assert_eq!(
+            leftovers_error(&left),
+            Err("could not remove a.exe, b.dll".to_string())
+        );
     }
 
     #[test]

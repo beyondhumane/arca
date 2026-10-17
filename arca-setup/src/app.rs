@@ -97,6 +97,7 @@ fn simulate(report: &mut dyn FnMut(Event)) {
 
 fn work(job: Job, preview: bool, tx: Sender<Event>) {
     let mut report = |event: Event| {
+        log_warning(&event);
         let _ = tx.send(event);
     };
     let outcome = if preview {
@@ -139,8 +140,14 @@ fn log_failure(message: &str) {
     }
 }
 
+fn log_warning(event: &Event) {
+    if let Event::Warning(message) = event {
+        log_failure(&format!("warning: {message}"));
+    }
+}
+
 fn run_silent(options: &Options) -> i32 {
-    match engine::run(&job_from(options), &mut |_| {}) {
+    match engine::run(&job_from(options), &mut |event| log_warning(&event)) {
         Ok(()) => 0,
         Err(message) => {
             log_failure(&message);
@@ -241,6 +248,7 @@ impl Setup {
         loop {
             match events.try_recv() {
                 Ok(Event::Progress(percent)) => self.target = percent.clamp(0., 100.),
+                Ok(Event::Warning(_)) => {}
                 Ok(Event::Finished) => {
                     self.finished = true;
                     self.target = 100.;
@@ -547,6 +555,19 @@ mod tests {
         run_ticks(&mut setup, 10_000);
         assert_eq!(setup.screen, Screen::Done);
         assert_eq!(setup.percent, 100.);
+    }
+
+    #[test]
+    fn a_warning_does_not_stop_the_job() {
+        let mut setup = setup(&["--preview"]);
+        setup.screen = Screen::Installing;
+        let _worker = feed(
+            &mut setup,
+            vec![Event::Warning("modern menu".to_string()), Event::Finished],
+        );
+        run_ticks(&mut setup, 10_000);
+        assert_eq!(setup.screen, Screen::Done);
+        assert!(setup.error.is_none());
     }
 
     #[test]

@@ -1,4 +1,7 @@
-use super::{overall, system, Event, Job, INNO_LEFTOVERS, KNOWN_FILES, SHELL_DLL, UNINSTALLER};
+use super::{
+    leftovers_error, overall, system, warn_on, Event, Job, INNO_LEFTOVERS, KNOWN_FILES, SHELL_DLL,
+    UNINSTALLER,
+};
 use std::{fs, path::Path};
 
 const PACKAGE_METADATA: &str = "microsoft.system.package.metadata";
@@ -7,7 +10,7 @@ pub fn run(job: &Job, report: &mut dyn FnMut(Event)) -> Result<(), String> {
     let dir = job.dir.as_path();
     report(Event::Progress(0.));
     if !job.files_only {
-        system::unregister_modern_menu();
+        warn_on(system::unregister_modern_menu(), report);
         report(Event::Progress(overall(0, 0.7)));
         system::unregister_classic_menu()?;
     }
@@ -18,11 +21,11 @@ pub fn run(job: &Job, report: &mut dyn FnMut(Event)) -> Result<(), String> {
         system::unregister_associations()?;
         report(Event::Progress(overall(1, 0.5)));
         system::remove_from_path(dir)?;
-        system::remove_shortcut();
+        warn_on(system::remove_shortcut(), report);
     }
     report(Event::Progress(overall(1, 1.)));
 
-    remove_files(dir, job.files_only, report);
+    remove_files(dir, job.files_only, report)?;
     report(Event::Progress(overall(2, 1.)));
 
     if !job.files_only {
@@ -34,7 +37,7 @@ pub fn run(job: &Job, report: &mut dyn FnMut(Event)) -> Result<(), String> {
     Ok(())
 }
 
-fn remove_files(dir: &Path, files_only: bool, report: &mut dyn FnMut(Event)) {
+fn remove_files(dir: &Path, files_only: bool, report: &mut dyn FnMut(Event)) -> Result<(), String> {
     let names: Vec<&str> = KNOWN_FILES
         .iter()
         .copied()
@@ -43,6 +46,7 @@ fn remove_files(dir: &Path, files_only: bool, report: &mut dyn FnMut(Event)) {
         .collect();
     let total = names.len() as f32;
     let mut explorer_restarted = false;
+    let mut left = Vec::new();
     for (index, name) in names.iter().enumerate() {
         let path = dir.join(name);
         if path.exists() && fs::remove_file(&path).is_err() {
@@ -50,8 +54,8 @@ fn remove_files(dir: &Path, files_only: bool, report: &mut dyn FnMut(Event)) {
                 system::restart_explorer();
                 explorer_restarted = true;
             }
-            if fs::remove_file(&path).is_err() {
-                let _ = system::move_aside(&path);
+            if fs::remove_file(&path).is_err() && system::move_aside(&path).is_err() {
+                left.push(path);
             }
         }
         report(Event::Progress(overall(2, (index + 1) as f32 / total)));
@@ -60,4 +64,5 @@ fn remove_files(dir: &Path, files_only: bool, report: &mut dyn FnMut(Event)) {
     system::sweep_leftovers(dir);
     let _ = fs::remove_dir(dir.join("Assets"));
     let _ = fs::remove_dir(dir);
+    leftovers_error(&left)
 }
