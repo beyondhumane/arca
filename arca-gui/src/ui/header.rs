@@ -299,20 +299,42 @@ impl Shell {
                     self.toggle_search();
                 }
                 self.view_menu(ui, idle);
+                if let Some(release) = self.controller.state.update.clone() {
+                    // A short green pill with the version; the full sentence
+                    // is the tooltip, so that the row keeps its shape.
+                    let p = palette_of(ui.ctx());
+                    let mut job = egui::text::LayoutJob::default();
+                    job.append(
+                        icon::DOWNLOAD_SIMPLE,
+                        0.0,
+                        egui::TextFormat {
+                            font_id: super::theme::icon_font(15.0),
+                            color: hex(p.success),
+                            valign: egui::Align::Center,
+                            ..Default::default()
+                        },
+                    );
+                    job.append(
+                        &release.tag,
+                        6.0,
+                        egui::TextFormat {
+                            font_id: egui::TextStyle::Body.resolve(ui.style()),
+                            color: hex(p.success),
+                            valign: egui::Align::Center,
+                            ..Default::default()
+                        },
+                    );
+                    let label = fill(s.update_ready, &[("version", &release.tag)]);
+                    if ui
+                        .add(egui::Button::new(job).fill(super::theme::alpha(p.success, 0.12)))
+                        .on_hover_text(label)
+                        .clicked()
+                    {
+                        self.controller.start_update();
+                    }
+                }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     self.breadcrumbs(ui);
-                    if let Some(release) = &self.controller.state.update {
-                        let label = fill(s.update_ready, &[("version", &release.tag)]);
-                        if ui
-                            .add(egui::Button::new(
-                                RichText::new(format!("{}  {label}", icon::DOWNLOAD_SIMPLE))
-                                    .color(hex(palette_of(ui.ctx()).success)),
-                            ))
-                            .clicked()
-                        {
-                            self.controller.start_update();
-                        }
-                    }
                 });
             });
         });
