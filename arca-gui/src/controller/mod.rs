@@ -667,7 +667,7 @@ impl AppController {
                 .map(|row| row.size)
                 .sum();
             return format!(
-                "{} {} · {} {}",
+                "{} {} \u{b7} {} {}",
                 rows.len(),
                 if rows.len() == 1 {
                     s.item_word
@@ -687,7 +687,7 @@ impl AppController {
             (1.0 - packed as f64 / raw as f64) * 100.0
         };
         format!(
-            "{n} {} · {} {} · {} {} · {ratio:.1}% {}",
+            "{n} {} \u{b7} {} {} \u{b7} {} {} \u{b7} {ratio:.1}% {}",
             s.files_word,
             human(raw),
             s.uncompressed_word,
