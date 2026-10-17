@@ -49,6 +49,7 @@ impl Shell {
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
+                let mut first = true;
                 for (title, places, pinned) in [
                     (s.places_group, self.controller.places(), false),
                     (s.pinned_group, self.controller.pinned_places(), true),
@@ -57,11 +58,14 @@ impl Shell {
                     if places.is_empty() {
                         continue;
                     }
-                    if rail {
-                        ui.separator();
-                    } else {
+                    // The rail has no titles, so a rule stands between the
+                    // groups; there is nothing above the first to divide.
+                    if !rail {
                         group_label(ui, title);
+                    } else if !first {
+                        ui.separator();
                     }
+                    first = false;
                     for place in places {
                         let selected = here.as_ref() == Some(&place.path);
                         let response =
