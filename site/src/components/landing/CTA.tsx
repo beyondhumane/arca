@@ -1,6 +1,6 @@
-import { ArrowRight, BookOpen, Download } from 'lucide-react';
+import { ArrowRight, BookOpen, ChevronDown, Download } from 'lucide-react';
 import { cn } from '@/utils/cn';
-import { CLONE_CMD, DOWNLOADS, RELEASE_URL, VERSION } from '@/lib/site';
+import { CLONE_CMD, DOWNLOADS, PACKAGES, RELEASE_URL, VERSION } from '@/lib/site';
 import type { Platform } from '@/lib/site';
 import { Accent, ButtonLink, Container, CopyButton, Reveal } from '../ui';
 import { DownloadButton, PLATFORM_ICONS, useRecommendedDownload } from '../download';
@@ -15,6 +15,7 @@ const COPY = {
     download: (f: string) => `Download ${f}`,
     yours: 'Your system',
     details: { windows: 'Installer · x86_64', macos: 'Apple silicon · arm64', 'macos-intel': 'Intel · x86_64', linux: 'x86_64' },
+    also: (n: number) => `More downloads (${n})`,
     copyBuild: 'Copy build-from-source command',
     rust: 'Needs Rust 1.95+.',
     notes: 'Release notes & checksums',
@@ -26,6 +27,7 @@ const COPY = {
     download: (f: string) => `Descargar ${f}`,
     yours: 'Tu sistema',
     details: { windows: 'Instalador · x86_64', macos: 'Apple silicon · arm64', 'macos-intel': 'Intel · x86_64', linux: 'x86_64' },
+    also: (n: number) => `Más descargas (${n})`,
     copyBuild: 'Copiar el comando para compilar',
     rust: 'Requiere Rust 1.95 o superior.',
     notes: 'Notas de la versión y sumas',
@@ -102,6 +104,27 @@ export function CTA() {
                 );
               })}
             </div>
+
+            <details className="group relative mx-auto mt-4 max-w-5xl">
+              <summary className="mx-auto flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-xs text-slate-400 transition hover:border-white/20 hover:text-white [&::-webkit-details-marker]:hidden">
+                {t.also(PACKAGES.length)}
+                <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
+              </summary>
+              <ul className="mx-auto mt-3 grid max-w-xl grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {PACKAGES.map((d) => (
+                  <li key={d.file}>
+                    <a
+                      href={d.url}
+                      aria-label={t.download(d.file)}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-xs text-slate-300 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white"
+                    >
+                      <span className="truncate">{d.label}</span>
+                      {d.size && <span className="shrink-0 tabular-nums text-slate-500">{d.size}</span>}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </details>
 
             <div className="relative mx-auto mt-6 max-w-3xl">
               <div className="flex items-center gap-2 rounded-2xl border border-white/[0.08] bg-black/40 py-2 pl-4 pr-2 backdrop-blur">

@@ -21,13 +21,13 @@ export type DownloadAsset = {
   label: string;
   file: string;
   url: string;
-  /** Formatted size, e.g. "7.3 MB", or empty when the build has no release data. */
+  /** Formatted size, e.g. "7.3 MiB", or empty when the build has no release data. */
   size: string;
 };
 
 function asset(os: string, label: string, file: string): DownloadAsset {
   const bytes = __ARCA_RELEASE__.sizes[file];
-  return { os, label, file, url: `${DL}/${file}`, size: bytes ? `${(bytes / 1e6).toFixed(1)} MB` : '' };
+  return { os, label, file, url: `${DL}/${file}`, size: bytes ? `${(bytes / 1_048_576).toFixed(1)} MiB` : '' };
 }
 
 export const DOWNLOADS: Record<Platform, DownloadAsset> = {
@@ -36,3 +36,15 @@ export const DOWNLOADS: Record<Platform, DownloadAsset> = {
   'macos-intel': asset('macOS', 'macOS Intel', `arca-v${VERSION}-macos-x86_64.tar.gz`),
   linux: asset('Linux', 'Linux', `arca-v${VERSION}-linux-x86_64.tar.gz`),
 };
+
+/** The rest of the release: Linux packages and the other archives, after the four main downloads. */
+export const PACKAGES: DownloadAsset[] = [
+  asset('Linux', 'AppImage x86_64', `arca-v${VERSION}-linux-x86_64.AppImage`),
+  asset('Linux', 'AppImage arm64', `arca-v${VERSION}-linux-arm64.AppImage`),
+  asset('Linux', '.deb amd64', `arca_${VERSION}-1_amd64.deb`),
+  asset('Linux', '.deb arm64', `arca_${VERSION}-1_arm64.deb`),
+  asset('Linux', '.rpm x86_64', `arca-${VERSION}-1.x86_64.rpm`),
+  asset('Linux', '.rpm aarch64', `arca-${VERSION}-1.aarch64.rpm`),
+  asset('Linux', 'Linux arm64 tar.gz', `arca-v${VERSION}-linux-arm64.tar.gz`),
+  asset('Windows', 'Windows portable zip', `arca-v${VERSION}-windows-x86_64.zip`),
+];
