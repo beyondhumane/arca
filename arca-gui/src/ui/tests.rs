@@ -313,11 +313,19 @@ fn context_destinations_name_the_clicked_folder_or_containing_directory() {
         );
         assert_eq!(action.destination(None, ""), Some(String::new()));
         for lang in [super::super::Lang::En, super::super::Lang::Es] {
-            let (label, _) = action.label(crate::i18n::strings(lang));
-            assert_eq!(
-                action.destination_label(label, None, ""),
-                format!("{label}: /")
+            let s = crate::i18n::strings(lang);
+            let (label, _) = action.label(s);
+            // Inside the folder being shown the entry says only what it does;
+            // over another folder it names that folder, by its leaf alone.
+            assert_eq!(action.destination_label(label, None, "", s), label);
+            let mut folder = crate::up_row("parent/child/deeper/");
+            folder.up = false;
+            let named = action.destination_label(label, Some(&folder), "parent/", s);
+            assert!(
+                named.starts_with(label) && named.ends_with("child"),
+                "{named}"
             );
+            assert!(!named.contains('/'));
         }
         row = crate::up_row("parent/child/");
     }

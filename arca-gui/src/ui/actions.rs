@@ -87,14 +87,27 @@ impl RowAction {
         })
     }
 
+    /// Pasting into, or making a folder inside, the folder under the pointer
+    /// says so by that folder's name; inside the folder being shown it says
+    /// nothing, because that is what the entry always means.
     pub(crate) fn destination_label(
         self,
         label: &str,
         row: Option<&Row>,
         directory: &str,
+        s: &'static Strings,
     ) -> String {
-        self.destination(row, directory)
-            .map_or_else(|| label.to_string(), |path| format!("{label}: /{path}"))
+        match self.destination(row, directory) {
+            Some(path) if path != directory => {
+                let leaf = path
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&path);
+                format!("{label} {}", fill(s.in_named, &[("name", leaf)]))
+            }
+            _ => label.to_string(),
+        }
     }
 
     /// What it is called, and the keys that do the same thing. A menu that does

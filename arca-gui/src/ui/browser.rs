@@ -778,7 +778,7 @@ impl Shell {
             } else {
                 label
             };
-            let label = action.destination_label(label, row, &current_dir);
+            let label = action.destination_label(label, row, &current_dir, s);
             let enabled = idle
                 && match action {
                     RowAction::Paste => self.can_paste_files(),
