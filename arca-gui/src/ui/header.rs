@@ -296,8 +296,7 @@ impl Shell {
             self.title_grip(ui);
         }
         ui.horizontal(|ui| {
-            let folders = self.controller.state.settings.folders;
-            if icon_toggle(ui, icon::SIDEBAR_SIMPLE, s.folder_tree, true, folders).clicked() {
+            if icon_button(ui, icon::SIDEBAR_SIMPLE, s.folder_tree, true).clicked() {
                 cycle_sidebar(&mut self.controller.state.settings);
                 self.controller.state.settings.save();
             }
@@ -508,18 +507,23 @@ impl Shell {
         }
         let mut edit = false;
         if !crumbs.is_empty() {
-            let rest = ui.available_width() - 72.0;
+            // Copy and edit sit right after the path and only show while the
+            // pointer is over the bar, so the row stays quiet otherwise.
+            if ui.rect_contains_pointer(ui.max_rect()) {
+                ui.add_space(2.0);
+                if icon_button(ui, icon::COPY, s.copy_path, true).clicked() {
+                    self.copy_current_path();
+                }
+                edit |= icon_button(ui, icon::PENCIL_SIMPLE, s.edit_path, true).clicked();
+            }
+            let rest = ui.available_width();
             if rest > 8.0 {
                 let (_, response) =
                     ui.allocate_exact_size(egui::vec2(rest, 26.0), egui::Sense::click());
-                edit = response
+                edit |= response
                     .on_hover_cursor(egui::CursorIcon::Text)
                     .on_hover_text(format!("{}  (Ctrl+L)", s.edit_path))
                     .clicked();
-            }
-            edit |= icon_button(ui, icon::PENCIL_SIMPLE, s.edit_path, true).clicked();
-            if icon_button(ui, icon::COPY, s.copy_path, true).clicked() {
-                self.copy_current_path();
             }
         }
         if edit {
