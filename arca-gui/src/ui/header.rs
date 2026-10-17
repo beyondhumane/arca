@@ -740,7 +740,7 @@ impl Shell {
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
-            self.controller.start_update();
+            self.controller.state.show_update = true;
         }
         ui.separator();
     }

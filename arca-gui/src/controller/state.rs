@@ -147,6 +147,8 @@ pub(crate) struct AppState {
     pub(crate) cut_armed: Option<(super::TaskId, Cut)>,
     pub(crate) cut_pending: Option<Cut>,
     pub(crate) show_shortcuts: bool,
+    // The box announcing a newer version, with its notes.
+    pub(crate) show_update: bool,
     // Set for work that says nothing while it runs. Copying to the clipboard is
     // the only such job: it is over before a bar has finished appearing, and a
     // bar that flashes past says less than nothing.

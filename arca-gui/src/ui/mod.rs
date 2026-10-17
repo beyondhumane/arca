@@ -450,6 +450,8 @@ impl Shell {
             Some(ModalKind::Mask)
         } else if self.properties.is_some() {
             Some(ModalKind::Properties)
+        } else if state.show_update && state.update.is_some() {
+            Some(ModalKind::Update)
         } else if state.show_settings {
             Some(ModalKind::Settings)
         } else if state.show_shortcuts {
@@ -475,6 +477,7 @@ impl Shell {
             ModalKind::Shortcuts => self.controller.state.show_shortcuts = false,
             ModalKind::Search => self.search = None,
             ModalKind::Properties => self.properties = None,
+            ModalKind::Update => self.controller.state.show_update = false,
         }
     }
 
@@ -825,7 +828,7 @@ impl Shell {
 
     fn overflow_action(&mut self, action: OverflowAction) {
         match action {
-            OverflowAction::Release => self.controller.start_update(),
+            OverflowAction::Release => self.controller.state.show_update = true,
             OverflowAction::AddFiles => self.begin_dialog(DialogKind::AddFiles { folders: false }),
             OverflowAction::AddFolders => self.begin_dialog(DialogKind::AddFiles { folders: true }),
             OverflowAction::NewFolder => {

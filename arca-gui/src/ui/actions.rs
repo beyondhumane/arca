@@ -266,6 +266,7 @@ pub(crate) enum ModalKind {
     Shortcuts,
     Search,
     Properties,
+    Update,
 }
 
 pub(crate) fn column_text(

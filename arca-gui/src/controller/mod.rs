@@ -641,6 +641,7 @@ impl AppController {
                 cut_armed: None,
                 cut_pending: None,
                 show_shortcuts: false,
+                show_update: false,
                 quiet: false,
                 browser: BrowserState::default(),
                 preview: PreviewState::default(),
@@ -954,6 +955,19 @@ impl AppController {
         });
     }
 
+    /// Whether "download" means this copy replaces itself, or only that the
+    /// release page opens.
+    pub(crate) fn can_self_update(&self) -> bool {
+        matches!(
+            &self.state.update,
+            Some(Release {
+                installer: Some(_),
+                sums: Some(_),
+                ..
+            })
+        ) && installed_by_setup()
+    }
+
     // Takes the new version, if this copy is one that can replace itself.
     //
     // A copy put here by the installer updates itself. One unpacked from the
@@ -965,6 +979,7 @@ impl AppController {
                 tag,
                 installer: Some(installer),
                 sums: Some(sums),
+                ..
             }) if installed_by_setup() => self.run_job(Job::Update {
                 tag,
                 installer,
@@ -1508,6 +1523,10 @@ impl AppController {
                     } else {
                         UpdateCheck::Current
                     };
+                    // The box with the notes comes up once, when a newer
+                    // version is first heard of; after that the status bar
+                    // keeps the offer.
+                    self.state.show_update = found.is_some();
                     self.state.update = found;
                     self.state.update_rx = None;
                 }

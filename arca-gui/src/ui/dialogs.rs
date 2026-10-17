@@ -12,6 +12,7 @@ pub(crate) fn dialog_width(kind: ModalKind, window: f32) -> f32 {
         ModalKind::Search => 640.0,
         ModalKind::Add => 640.0,
         ModalKind::Conflict => 560.0,
+        ModalKind::Update => 560.0,
         _ => 448.0,
     };
     wanted.min(window - 32.0).max(240.0)
@@ -218,6 +219,7 @@ impl Shell {
                     }
                     ModalKind::NewFolder | ModalKind::Mask => self.name_dialog(ui, kind),
                     ModalKind::Properties => self.properties_dialog(ui),
+                    ModalKind::Update => self.update_dialog(ui),
                 });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(measured, shown.content_size.y));
@@ -1056,6 +1058,93 @@ impl Shell {
         }
     }
 
+    /// The new-version box: what it is, what changed, and the two ways out.
+    fn update_dialog(&mut self, ui: &mut egui::Ui) {
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        let Some(release) = self.controller.state.update.clone() else {
+            return;
+        };
+        let installed = crate::controller::VERSION.trim_start_matches('v');
+        let available = release.tag.trim_start_matches('v');
+        let mut close = false;
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rect, 8.0, theme::alpha(p.focus, 0.18));
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                icon::DOWNLOAD_SIMPLE,
+                super::theme::icon_font(22.0),
+                hex(p.focus),
+            );
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                close = icon_button(ui, icon::X, s.cancel, true).clicked();
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    heading(ui, &fill(s.update_title, &[("version", available)]));
+                    ui.label(
+                        RichText::new(fill(
+                            s.update_versions,
+                            &[("installed", installed), ("available", available)],
+                        ))
+                        .size(12.0)
+                        .color(hex(p.muted)),
+                    );
+                });
+            });
+        });
+        ui.add_space(14.0);
+        section_title(ui, &fill(s.whats_new, &[("version", available)]));
+        ui.add_space(4.0);
+        egui::Frame::new()
+            .fill(theme::alpha(p.background, 0.55))
+            .stroke(egui::Stroke::new(1.0, theme::alpha(p.border, 0.6)))
+            .corner_radius(6)
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .max_height(260.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        if release.notes.trim().is_empty() {
+                            ui.label(RichText::new(s.no_notes).color(hex(p.muted)));
+                        } else {
+                            release_notes(ui, &p, &release.notes);
+                        }
+                    });
+            });
+        ui.add_space(10.0);
+        if ui
+            .link(RichText::new(s.view_release).color(hex(p.link)))
+            .clicked()
+        {
+            self.controller.open_release_page();
+        }
+        ui.add_space(4.0);
+        ui.label(RichText::new(s.review_notes).size(12.0).color(hex(p.muted)));
+        let label = if self.controller.can_self_update() {
+            s.download_update
+        } else {
+            s.open_download_page
+        };
+        let mut go = false;
+        let mut cancel = false;
+        Self::footer_buttons(ui, |ui| {
+            go = primary_button(ui, label, true).clicked();
+            cancel = secondary_button(ui, s.cancel, true).clicked();
+        });
+        if go {
+            self.controller.state.show_update = false;
+            self.controller.start_update();
+        } else if cancel || close {
+            self.controller.state.show_update = false;
+        }
+    }
+
     fn name_dialog(&mut self, ui: &mut egui::Ui, kind: ModalKind) {
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
@@ -1833,7 +1922,7 @@ impl Shell {
             self.controller.check_for_updates();
         }
         if install {
-            self.controller.start_update();
+            self.controller.state.show_update = true;
         }
         ui.add_space(12.0);
         section_title(ui, s.preferences_section);
@@ -2021,4 +2110,136 @@ fn suggested_name(taken: &std::path::Path) -> String {
         .map(|n| format!("{stem} ({n}){ext}"))
         .find(|name| !dir.join(name).exists())
         .unwrap_or(stem)
+}
+
+/// Release notes as GitHub writes them, read as far as a dialog needs:
+/// headings in bold, bullets with a dot, the HTML comment the generator
+/// leaves at the top dropped, and the rest as wrapped text.
+pub(crate) fn release_notes(ui: &mut egui::Ui, p: &theme::Palette, notes: &str) {
+    let mut in_comment = false;
+    let mut blank = false;
+    ui.spacing_mut().item_spacing.y = 4.0;
+    for raw in notes.lines() {
+        let mut line = raw.trim_end();
+        if in_comment {
+            match line.find("-->") {
+                Some(at) => {
+                    line = line[at + 3..].trim_start();
+                    in_comment = false;
+                }
+                None => continue,
+            }
+        }
+        if let Some(at) = line.find("<!--") {
+            match line[at..].find("-->") {
+                Some(end) => {
+                    let joined = format!("{}{}", &line[..at], &line[at + end + 3..]);
+                    if joined.trim().is_empty() {
+                        continue;
+                    }
+                    bullet_or_text(ui, p, joined.trim_end());
+                    blank = false;
+                    continue;
+                }
+                None => {
+                    in_comment = true;
+                    line = line[..at].trim_end();
+                }
+            }
+        }
+        if line.trim().is_empty() {
+            if !blank {
+                ui.add_space(6.0);
+            }
+            blank = true;
+            continue;
+        }
+        blank = false;
+        let trimmed = line.trim_start();
+        // A table row: the cells with a dot between them, the ruler dropped.
+        if let Some(row) = trimmed.strip_prefix('|') {
+            let cells: Vec<&str> = row
+                .trim_end_matches('|')
+                .split('|')
+                .map(str::trim)
+                .filter(|cell| !cell.is_empty())
+                .collect();
+            if cells
+                .iter()
+                .all(|cell| cell.chars().all(|c| matches!(c, '-' | ':')))
+            {
+                continue;
+            }
+            ui.add(egui::Label::new(plain_markdown(&cells.join("  \u{b7}  "))).wrap());
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix('#') {
+            let title = plain_markdown(rest.trim_start_matches('#').trim());
+            ui.add_space(2.0);
+            ui.label(RichText::new(title).strong().size(14.0));
+            continue;
+        }
+        bullet_or_text(ui, p, trimmed);
+    }
+}
+
+fn bullet_or_text(ui: &mut egui::Ui, p: &theme::Palette, line: &str) {
+    let bullet = line
+        .strip_prefix("* ")
+        .or_else(|| line.strip_prefix("- "))
+        .or_else(|| line.strip_prefix("+ "));
+    match bullet {
+        Some(text) => {
+            ui.horizontal_top(|ui| {
+                ui.label(RichText::new("\u{2022}").color(hex(p.focus)));
+                ui.add(egui::Label::new(plain_markdown(text)).wrap());
+            });
+        }
+        None => {
+            ui.add(egui::Label::new(plain_markdown(line)).wrap());
+        }
+    }
+}
+
+/// Markdown reduced to its words: emphasis marks dropped and a link kept
+/// as its text. The addresses are not lost, only not here: the release page
+/// has them all, and it is one click below.
+pub(crate) fn plain_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let Some(mid) = rest[open..].find("](") else {
+            break;
+        };
+        let Some(end) = rest[open + mid + 2..].find(')') else {
+            break;
+        };
+        out.push_str(&rest[..open]);
+        out.push_str(&rest[open + 1..open + mid]);
+        rest = &rest[open + mid + 2 + end + 1..];
+    }
+    out.push_str(rest);
+    out.replace("**", "").replace('`', "")
+}
+
+#[cfg(test)]
+mod notes_tests {
+    use super::plain_markdown;
+
+    #[test]
+    fn markdown_loses_its_marks_but_keeps_its_words() {
+        assert_eq!(plain_markdown("**bold** and `code`"), "bold and code");
+        assert_eq!(
+            plain_markdown("by @x in https://github.com/o/r/pull/1"),
+            "by @x in https://github.com/o/r/pull/1"
+        );
+        assert_eq!(
+            plain_markdown("see [the docs](https://a.b)"),
+            "see the docs"
+        );
+        assert_eq!(
+            plain_markdown("[#47](https://a.b/47) ([f56](https://a.b/c))"),
+            "#47 (f56)"
+        );
+    }
 }
