@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.9.0](https://github.com/beyondhumane/arca/compare/v0.8.2...v0.9.0) (2026-10-17)
+
+
+### Features
+
+* **arca-gui:** Arca is now a file explorer and an archiver in one window. It starts in the folder you left it in, browses the disk like any explorer and opens ZIP, 7z, TAR, RAR and ISO archives in place when you double-click them ([#52](https://github.com/beyondhumane/arca/issues/52)) ([de20c20](https://github.com/beyondhumane/arca/commit/de20c205e3a4c516c6c4cd9bb5bcfc9b21fd3d50))
+* **arca-gui:** the window moves from GPUI to egui/eframe over OpenGL: a smaller binary, less memory, the same startup, and GPUI leaves the workspace ([#52](https://github.com/beyondhumane/arca/issues/52))
+* **arca-gui:** Panes view with one folder per pane, each with Reload, Up, Sort, Filter and Close; settings to open folders in the next pane, to peek into folders on hover, and for the focus to follow the pointer; Details and Flat views stay ([#52](https://github.com/beyondhumane/arca/issues/52))
+* **arca-gui:** right-click menu on files and folders: new folder with selection, open, open with, quick preview, cut, copy, paste, duplicate, rename, move to, copy to, compress, copy path, copy name, properties, move to Trash and permanently delete ([#52](https://github.com/beyondhumane/arca/issues/52))
+* **arca-gui:** Devices lists the real volumes (removable, under /media, /run/media or /mnt, or not mounted yet) and offers Mount, Unmount, Format and Set label through UDisks ([#52](https://github.com/beyondhumane/arca/issues/52))
+* **arca-gui:** preview panel with the file's icon, size, date and MIME type, text with line numbers and syntax highlighting, hex and images, line wrapping and "open with the system application" ([#52](https://github.com/beyondhumane/arca/issues/52))
+* **arca-gui:** redesigned compress box: editable destination, automatic extension, format and method dropdowns, 0-9 level slider, password with hidden names for 7z, and a content list ([#52](https://github.com/beyondhumane/arca/issues/52))
+* **arca-gui:** update dialog with the release notes, installed and available versions and a link to the release; the update downloads and installs from inside the app on Windows, macOS and Linux (installer, tar.gz or AppImage) ([#52](https://github.com/beyondhumane/arca/issues/52))
+* **arca-gui:** search palette (Ctrl+K), themes (fifteen built in, plus custom theme files), fonts, text size, motion switch and an own title bar ([#52](https://github.com/beyondhumane/arca/issues/52))
+* **arca-gui:** the sidebar shows or hides with one button and shrinks to icons on its own when the window is narrow ([#52](https://github.com/beyondhumane/arca/issues/52))
+* **arca-cli:** `--level` accepts 0-9 as well as store, fast, normal and best ([#52](https://github.com/beyondhumane/arca/issues/52))
+
+
+### Bug fixes
+
+* **arca-gui:** skip dot folders in search on every platform ([#60](https://github.com/beyondhumane/arca/issues/60)) ([a03a7b6](https://github.com/beyondhumane/arca/commit/a03a7b6c4a1cbdb9a651e080ea42dc7b05430af3))
+* **packaging:** name the launcher icon dev.beyondhumane.Arca ([#56](https://github.com/beyondhumane/arca/issues/56)) ([e8a0597](https://github.com/beyondhumane/arca/commit/e8a059775fc29cb7d501d09865bb2160f155ce72))
+* **site:** give inline SVG icons and the logo image an intrinsic size ([#49](https://github.com/beyondhumane/arca/issues/49)) ([3627457](https://github.com/beyondhumane/arca/commit/36274574b71128ad02b3aea87f7daa6809608329))
+* **site:** keep download cards aligned on mobile ([#51](https://github.com/beyondhumane/arca/issues/51)) ([a0e2282](https://github.com/beyondhumane/arca/commit/a0e22820d30b8f150f73aaaadc1a0c318ce79f21))
+
+
+### Maintenance
+
+* release 0.9.0 ([#59](https://github.com/beyondhumane/arca/issues/59)) ([ec94058](https://github.com/beyondhumane/arca/commit/ec94058ef264611014e819e4731ed7293a749494))
+
 ## [0.8.2](https://github.com/beyondhumane/arca/compare/v0.8.1...v0.8.2) (2026-10-05)
 
 
