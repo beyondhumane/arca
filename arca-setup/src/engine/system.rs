@@ -111,7 +111,7 @@ fn write_env_path(key: &RegKey, text: &str) -> Res<()> {
     key.set_raw_value(
         "Path",
         &RegValue {
-            bytes: utf16_bytes(text),
+            bytes: utf16_bytes(text).into(),
             vtype: REG_EXPAND_SZ,
         },
     )
