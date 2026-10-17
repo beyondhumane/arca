@@ -8,7 +8,7 @@ use egui_phosphor::regular as icon;
 #[cfg(test)]
 pub(crate) const ROW_HEIGHT: f32 = 24.0;
 /// Space around the rows that belongs to the list but to no row.
-const GUTTER: f32 = 10.0;
+const GUTTER: f32 = 16.0;
 
 pub(crate) fn column_slot(column: SortColumn) -> usize {
     Columns::ALL
