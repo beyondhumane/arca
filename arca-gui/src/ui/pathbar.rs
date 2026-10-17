@@ -249,16 +249,35 @@ impl Shell {
         let pointer = ui.input(|i| i.pointer.any_down() || i.pointer.any_released());
         let mut clicked = None;
         if (focused || pointer || self.path_grace > 0) && !suggestions.is_empty() && !escape {
-            let width = response.rect.width().min(460.0);
+            // As wide as the field, with where each folder lives on the
+            // right and the keys that work along the bottom.
+            let width = response.rect.width();
+            let home = crate::controller::disk::home_dir()
+                .map(|home| crate::controller::disk::disk_dir(&home))
+                .unwrap_or_default();
+            let home = home.trim_matches('/');
+            let here = parent.trim_matches('/');
+            let place = match here.strip_prefix(home) {
+                Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => {
+                    format!("~{rest}")
+                }
+                _ => format!("/{here}"),
+            };
+            let frame = egui::Frame::popup(ui.style());
+            let inner_width = width - frame.inner_margin.sum().x;
             egui::Area::new(id.with("suggestions"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(response.rect.left_bottom() + egui::vec2(0.0, 4.0))
                 .show(ui.ctx(), |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        ui.set_min_width(width);
+                    frame.show(ui, |ui| {
+                        ui.set_min_width(inner_width);
+                        ui.set_max_width(inner_width);
+                        let row_width = ui.available_width();
                         for (i, name) in suggestions.iter().enumerate() {
-                            let (rect, row) = ui
-                                .allocate_exact_size(egui::vec2(width, 26.0), egui::Sense::click());
+                            let (rect, row) = ui.allocate_exact_size(
+                                egui::vec2(row_width, 28.0),
+                                egui::Sense::click(),
+                            );
                             let lit = ui
                                 .ctx()
                                 .animate_bool(row.id, row.hovered() || self.path_pick == Some(i));
@@ -270,14 +289,45 @@ impl Shell {
                             ui.painter().text(
                                 rect.left_center() + egui::vec2(10.0, 0.0),
                                 egui::Align2::LEFT_CENTER,
-                                format!("{}  {name}", icon::FOLDER),
+                                icon::FOLDER,
+                                super::theme::icon_font(15.0),
+                                hex(p.link),
+                            );
+                            ui.painter().text(
+                                rect.left_center() + egui::vec2(34.0, 0.0),
+                                egui::Align2::LEFT_CENTER,
+                                format!("{name}/"),
                                 egui::TextStyle::Body.resolve(ui.style()),
                                 hex(p.text),
+                            );
+                            ui.painter().text(
+                                rect.right_center() - egui::vec2(10.0, 0.0),
+                                egui::Align2::RIGHT_CENTER,
+                                &place,
+                                egui::FontId::proportional(12.0),
+                                hex(p.muted),
                             );
                             if row.clicked() {
                                 clicked = Some(i);
                             }
                         }
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.add_space(2.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(6.0);
+                            for (keys, what) in [
+                                ("Tab", s.complete_word),
+                                ("↑↓", s.choose_word),
+                                ("↵", s.open_word),
+                                ("Esc", s.cancel),
+                            ] {
+                                super::widgets::kbd(ui, keys);
+                                ui.label(egui::RichText::new(what).size(12.0).color(hex(p.muted)));
+                                ui.add_space(10.0);
+                            }
+                        });
+                        ui.add_space(2.0);
                     });
                 });
         }
