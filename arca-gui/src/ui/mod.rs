@@ -191,6 +191,11 @@ pub(crate) struct Shell {
     // Whether the last thing the user did was press a key. While it was,
     // the pointer resting on another pane does not steal the focus.
     keyboard_drove: bool,
+    // The folder row the pointer has rested on, and since when; the peek
+    // card comes up once it has rested long enough.
+    peek: Option<(String, egui::Rect, f64)>,
+    peek_seen: bool,
+    peek_loaded: Option<String>,
     name_value: String,
     focus_name: bool,
     rename_value: String,
@@ -242,7 +247,7 @@ impl Shell {
         let columns = view != crate::settings::BrowserView::Details;
         let flat = controller.state.settings.flat;
         controller.transition_browser_view(columns, flat);
-        controller.set_free_panes(!controller.state.settings.peek_folders);
+        controller.set_free_panes(!controller.state.settings.next_pane);
         apply_startup(&mut controller, startup);
         let library = themes::all();
         theme::install(ctx, &controller.state.settings, &library);
@@ -261,6 +266,9 @@ impl Shell {
             properties: None,
             last_active_pane: None,
             keyboard_drove: false,
+            peek: None,
+            peek_seen: false,
+            peek_loaded: None,
             name_value: String::new(),
             focus_name: false,
             rename_value: String::new(),
@@ -1132,8 +1140,8 @@ impl Shell {
         self.controller.dispatch(AppAction::Paste);
     }
 
-    fn set_peek_folders(&mut self, on: bool) {
-        self.controller.state.settings.peek_folders = on;
+    fn set_next_pane(&mut self, on: bool) {
+        self.controller.state.settings.next_pane = on;
         self.controller.set_free_panes(!on);
         self.controller.state.settings.save();
     }
@@ -1143,7 +1151,7 @@ impl Shell {
         let columns = view != BrowserView::Details;
         self.controller.transition_browser_view(columns, flat);
         self.controller
-            .set_free_panes(!self.controller.state.settings.peek_folders);
+            .set_free_panes(!self.controller.state.settings.next_pane);
         self.controller.state.settings.browser_view =
             if columns { view } else { BrowserView::Details };
         if flat {

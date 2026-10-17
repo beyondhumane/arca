@@ -154,6 +154,7 @@ impl Shell {
         } else {
             outer
         };
+        self.peek_seen = false;
         ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
             if columns {
                 self.columns_view(ui);
@@ -161,6 +162,113 @@ impl Shell {
                 self.details(ui);
             }
         });
+        if !self.peek_seen {
+            self.peek = None;
+        }
+        self.peek_card(ui);
+    }
+
+    /// Strata's folder peeking: a card with the folder's name and the
+    /// first of what it holds, for a pointer that has rested on its row.
+    fn peek_card(&mut self, ui: &mut egui::Ui) {
+        const REST: f64 = 0.45;
+        const SHOWN: usize = 8;
+        let Some((path, rect, since)) = self.peek.clone() else {
+            return;
+        };
+        if ui.input(|i| i.time) - since < REST || self.modal_kind().is_some() {
+            return;
+        }
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        // Folders on disk are read when first looked into, which a peek is.
+        if self.controller.on_disk() && self.peek_loaded.as_deref() != Some(path.as_str()) {
+            self.controller.load_disk_ancestors(&path);
+            self.peek_loaded = Some(path.clone());
+        }
+        let rows = self
+            .controller
+            .rows_for(&path, "", (SortColumn::Name, true), false, false);
+        let title = path
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(&path)
+            .to_string();
+        let width = 300.0_f32.min(ui.ctx().content_rect().width() - 32.0);
+        let screen = ui.ctx().content_rect();
+        // Below the row and inset from its left edge; above it if the
+        // bottom would not fit.
+        let height = 46.0 + (rows.len().clamp(1, SHOWN) as f32 + 1.0) * 26.0;
+        let x = (rect.left() + 48.0).min(screen.right() - width - 8.0);
+        let y = if rect.bottom() + 6.0 + height <= screen.bottom() {
+            rect.bottom() + 6.0
+        } else {
+            (rect.top() - 6.0 - height).max(screen.top() + 8.0)
+        };
+        egui::Area::new(egui::Id::new("arca-folder-peek"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(egui::pos2(x, y))
+            .interactable(false)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::new()
+                    .fill(hex(p.surface))
+                    .stroke(egui::Stroke::new(1.0, super::theme::alpha(p.border, 0.9)))
+                    .corner_radius(8)
+                    .shadow(egui::epaint::Shadow {
+                        offset: [0, 4],
+                        blur: 16,
+                        spread: 0,
+                        color: egui::Color32::from_black_alpha(90),
+                    })
+                    .inner_margin(egui::Margin::symmetric(14, 10))
+                    .show(ui, |ui| {
+                        ui.set_width(width);
+                        ui.add(
+                            egui::Label::new(RichText::new(title).strong().color(hex(p.muted)))
+                                .truncate(),
+                        );
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+                        if rows.is_empty() {
+                            ui.label(RichText::new(s.empty_folder).color(hex(p.muted)));
+                        }
+                        for row in rows.iter().take(SHOWN) {
+                            ui.horizontal(|ui| {
+                                ui.set_height(22.0);
+                                ui.label(
+                                    super::theme::icon_text(kind_glyph(row.kind))
+                                        .size(15.0)
+                                        .color(hex(p.focus)),
+                                );
+                                ui.add(egui::Label::new(&row.label).truncate());
+                                if row.is_dir {
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                super::theme::icon_text(icon::CARET_RIGHT)
+                                                    .size(12.0)
+                                                    .color(hex(p.muted)),
+                                            );
+                                        },
+                                    );
+                                }
+                            });
+                        }
+                        if rows.len() > SHOWN {
+                            ui.label(
+                                RichText::new(fill(
+                                    s.more_items,
+                                    &[("count", &(rows.len() - SHOWN).to_string())],
+                                ))
+                                .size(12.0)
+                                .color(hex(p.muted)),
+                            );
+                        }
+                    });
+            });
     }
 
     fn welcome(&mut self, ui: &mut egui::Ui) {
@@ -822,6 +930,26 @@ impl Shell {
             egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, checked, &spoken)
         });
         let idle = self.background_idle();
+        if row.is_dir
+            && !row.up
+            && self.controller.state.settings.folder_peek
+            && response.hovered()
+            && !ui.input(|i| i.pointer.any_down())
+            && self.marquee.is_none()
+            && !self.carrying
+        {
+            self.peek_seen = true;
+            let now = ui.input(|i| i.time);
+            match &self.peek {
+                Some((path, _, _)) if *path == row.path => {}
+                _ => self.peek = Some((row.path.clone(), response.rect, now)),
+            }
+            if let Some(peek) = &mut self.peek {
+                peek.1 = response.rect;
+            }
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(120));
+        }
         if let Some(marquee) = self.marquee.as_ref().filter(|m| m.pane == pane) {
             let swept = response.rect.intersects(marquee.rect());
             let want = marquee.base.get(index).copied().unwrap_or(false) || swept;

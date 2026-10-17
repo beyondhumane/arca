@@ -1706,7 +1706,7 @@ impl AppController {
         )
     }
 
-    fn rows_for(
+    pub(crate) fn rows_for(
         &self,
         directory: &str,
         filter: &str,

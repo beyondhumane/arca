@@ -1437,14 +1437,21 @@ impl Shell {
                 _ => {}
             },
         );
-        let mut peek = self.controller.state.settings.peek_folders;
+        let mut peek = self.controller.state.settings.next_pane;
         let mut peek_changed = false;
-        card(ui, s.peek_folders, Some(s.peek_hint), true, |ui| {
-            peek_changed = switch(ui, &mut peek, s.peek_folders).changed();
+        card(ui, s.next_pane, Some(s.next_pane_hint), true, |ui| {
+            peek_changed = switch(ui, &mut peek, s.next_pane).changed();
         });
         if peek_changed {
-            self.set_peek_folders(peek);
+            self.set_next_pane(peek);
         }
+        let mut folder_peek = self.controller.state.settings.folder_peek;
+        card(ui, s.folder_peek, Some(s.folder_peek_hint), true, |ui| {
+            if switch(ui, &mut folder_peek, s.folder_peek).changed() {
+                self.controller.state.settings.folder_peek = folder_peek;
+                self.controller.state.settings.save();
+            }
+        });
         for (label, hint, pick) in [
             (
                 s.show_preview_panel,
