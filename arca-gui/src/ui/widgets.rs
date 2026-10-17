@@ -202,16 +202,27 @@ pub(crate) fn card(
             ui.set_width(ui.available_width());
             let words = |ui: &mut Ui| {
                 ui.vertical(|ui| {
+                    ui.set_max_width(ui.available_width());
                     ui.label(RichText::new(title.trim_end_matches(':')).strong());
                     if let Some(description) = description {
-                        ui.label(RichText::new(description).size(12.0).color(hex(p.muted)));
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(description).size(12.0).color(hex(p.muted)),
+                            )
+                            .wrap(),
+                        );
                     }
                 });
             };
             if inline {
+                // The control goes down first so that the words get what is
+                // left, and a clear gap, instead of running into it.
                 ui.horizontal(|ui| {
-                    words(ui);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        control(ui);
+                        ui.add_space(24.0);
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), words);
+                    });
                 });
             } else {
                 words(ui);

@@ -1362,7 +1362,7 @@ impl Shell {
             s.channel_stable_hint
         };
         let mut pick = None;
-        card(ui, s.channel_title, Some(hint), true, |ui| {
+        card(ui, s.channel_title, Some(hint), false, |ui| {
             pick = segmented(
                 ui,
                 &[(s.channel_stable, !preview), (s.channel_preview, preview)],
