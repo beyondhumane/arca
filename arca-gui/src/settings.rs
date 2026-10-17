@@ -1,10 +1,12 @@
 //! Persistent user preferences for the Arca GUI.
 
 use crate::i18n::Lang;
+use crate::model::Format;
 use crate::{
     Columns, ThemePreference, CELL_LEAST, CELL_WIDE, NAME_LEAST, NAME_WIDE, SIDEBAR_LEAST,
     SIDEBAR_MOST, SIDEBAR_WIDE,
 };
+use arca_core::{Codec, Level};
 use std::fs;
 use std::path::PathBuf;
 
@@ -129,6 +131,10 @@ pub(crate) struct Settings {
     // person looking at the archive can know, so it is remembered: somebody
     // whose archives all come from one machine says it once.
     pub(crate) page: arca_zip::pages::Page,
+    // What a new archive starts out as: Settings > Archives > Defaults.
+    pub(crate) new_format: Format,
+    pub(crate) new_codec: Codec,
+    pub(crate) new_level: Level,
     // Where the window was left and how big: x, y, width, height. None until it
     // has been opened once.
     pub(crate) window: Option<[f32; 4]>,
@@ -191,6 +197,9 @@ impl Default for Settings {
             flat: false,
             folders: true,
             page: arca_zip::pages::Page::default(),
+            new_format: Format::Zip,
+            new_codec: Codec::Deflate,
+            new_level: Level::NORMAL,
             window: None,
             recent: Vec::new(),
             last_folder: None,
@@ -294,6 +303,19 @@ impl Settings {
                 ("page", v) => {
                     if let Some(p) = arca_zip::pages::Page::from_code(v) {
                         s.page = p;
+                    }
+                }
+                ("new_format", v) => {
+                    if let Some(f) = Format::CREATABLE.into_iter().find(|f| f.extension() == v) {
+                        s.new_format = f;
+                    }
+                }
+                ("new_codec", "store") => s.new_codec = Codec::Store,
+                ("new_codec", "deflate") => s.new_codec = Codec::Deflate,
+                ("new_codec", "zstd") => s.new_codec = Codec::Zstd,
+                ("new_level", v) => {
+                    if let Ok(n) = v.parse::<u8>() {
+                        s.new_level = Level::new(n);
                     }
                 }
                 // One line each, because a path can hold anything a filename
@@ -455,6 +477,13 @@ impl Settings {
             Channel::Preview => "channel = preview\n",
         });
         out.push_str(&format!("page = {}\n", self.page.code()));
+        out.push_str(&format!("new_format = {}\n", self.new_format.extension()));
+        out.push_str(match self.new_codec {
+            Codec::Store => "new_codec = store\n",
+            Codec::Deflate => "new_codec = deflate\n",
+            Codec::Zstd => "new_codec = zstd\n",
+        });
+        out.push_str(&format!("new_level = {}\n", self.new_level.get()));
         out.push_str(&format!("columns = {}\n", columns.join(",")));
         out.push_str(&format!("widths = {}\n", widths.join(",")));
         out.push_str(&format!("sidebar = {:.1}\n", self.sidebar));
@@ -521,6 +550,26 @@ mod tests {
         assert_eq!(f.font, FontChoice::File("/usr/share/fonts/a b.ttf".into()));
         assert_eq!(f.text_size, 13.0);
         assert_eq!(Settings::parse(&f.text()).font, f.font);
+    }
+
+    #[test]
+    fn the_defaults_for_new_archives_are_kept() {
+        let s = Settings::parse("");
+        assert_eq!(s.new_format, Format::Zip);
+        assert_eq!(s.new_codec, Codec::Deflate);
+        assert_eq!(s.new_level, Level::NORMAL);
+        let s = Settings::parse("new_format = tar.xz\nnew_codec = zstd\nnew_level = 9\n");
+        assert_eq!(s.new_format, Format::TarXz);
+        assert_eq!(s.new_codec, Codec::Zstd);
+        assert_eq!(s.new_level, Level::BEST);
+        let back = Settings::parse(&s.text());
+        assert_eq!(back.new_format, Format::TarXz);
+        assert_eq!(back.new_codec, Codec::Zstd);
+        assert_eq!(back.new_level, Level::BEST);
+        let odd = Settings::parse("new_format = iso\nnew_codec = lzma\nnew_level = 42\n");
+        assert_eq!(odd.new_format, Format::Zip);
+        assert_eq!(odd.new_codec, Codec::Deflate);
+        assert_eq!(odd.new_level, Level::BEST);
     }
 
     #[test]

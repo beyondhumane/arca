@@ -406,7 +406,7 @@ impl AppController {
     }
     pub(crate) fn prepare_compress(&mut self, inputs: Vec<PathBuf>) {
         if !Self::create_formats().contains(&self.state.format) {
-            self.state.format = Format::Zip;
+            self.state.format = Self::default_format(&self.state.settings);
         }
         if !matches!(self.state.view, View::Add) {
             self.state.pending_inputs.clear();
@@ -438,6 +438,16 @@ impl AppController {
             .collect()
     }
 
+    /// The format a new archive starts out as: the one saved in Settings when
+    /// this build can create it, ZIP otherwise.
+    pub(crate) fn default_format(settings: &Settings) -> Format {
+        if Self::create_formats().contains(&settings.new_format) {
+            settings.new_format
+        } else {
+            Format::Zip
+        }
+    }
+
     /// Text the create and settings dialogs show instead of the ZIP codec
     /// picker and the password controls for a format that has its own fixed
     /// compressor and no encryption, so nothing is accepted and then dropped.
@@ -446,6 +456,22 @@ impl AppController {
             Format::Rar => Some(self.s().rar_create_policy),
             _ => None,
         }
+    }
+
+    /// Saves what new archives start out as and applies it to the next one.
+    /// The format is left alone while an archive is being browsed, because
+    /// then `state.format` is the format of what is open.
+    pub(crate) fn set_archive_defaults(&mut self, format: Format, codec: Codec, level: Level) {
+        let settings = &mut self.state.settings;
+        settings.new_format = format;
+        settings.new_codec = codec;
+        settings.new_level = level;
+        settings.save();
+        if self.state.archive.is_none() || matches!(self.state.view, View::Add) {
+            self.set_create_format(format);
+        }
+        self.state.codec = codec;
+        self.state.level = level;
     }
 
     pub(crate) fn set_create_format(&mut self, format: Format) {
@@ -577,6 +603,8 @@ impl AppController {
     }
 
     pub(crate) fn new(settings: Settings) -> Self {
+        let format = Self::default_format(&settings);
+        let (codec, level) = (settings.new_codec, settings.new_level);
         AppController {
             volumes: Vec::new(),
             volumes_at: None,
@@ -598,9 +626,9 @@ impl AppController {
                 total_count: 0,
                 current_file: String::new(),
                 started: None,
-                format: Format::Zip,
-                codec: Codec::Deflate,
-                level: Level::NORMAL,
+                format,
+                codec,
+                level,
                 into_subfolder: false,
                 pending_inputs: Vec::new(),
                 output_name: String::new(),
@@ -2543,6 +2571,19 @@ mod compress_tests {
             }
             assert_eq!(controller.state.pending_inputs.len(), 2);
         }
+    }
+
+    #[test]
+    fn new_archives_start_from_the_saved_defaults() {
+        let settings = Settings::parse("new_format = 7z\nnew_codec = zstd\nnew_level = 1\n");
+        let mut controller = AppController::new(settings);
+        assert_eq!(controller.state.format, Format::SevenZ);
+        assert_eq!(controller.state.codec, Codec::Zstd);
+        assert_eq!(controller.state.level, Level::FAST);
+        controller.state.format = Format::Iso;
+        controller.prepare_compress(vec![PathBuf::from("a.txt")]);
+        assert_eq!(controller.state.format, Format::SevenZ);
+        assert_eq!(controller.state.output_name, "a.7z");
     }
 
     #[test]
