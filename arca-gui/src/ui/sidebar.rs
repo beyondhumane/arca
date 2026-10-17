@@ -197,7 +197,8 @@ impl Shell {
             self.copy_text(vec![text]);
         }
         if let Some(path) = props {
-            self.properties = Some(super::inspect(&path));
+            let pinned = self.controller.is_pinned(&path);
+            self.properties = Some(super::inspect(&path, pinned));
         }
         if let Some(path) = forget {
             self.controller.state.settings.recent.retain(|p| *p != path);

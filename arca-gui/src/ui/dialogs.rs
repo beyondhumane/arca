@@ -351,55 +351,182 @@ impl Shell {
         let Some(props) = &self.properties else {
             return;
         };
-        heading(ui, &props.name);
-        ui.add_space(6.0);
-        let kind = if props.is_dir {
-            s.folder_word
-        } else {
-            s.file_word
+        let mut close = false;
+        let mut go: Option<(std::path::PathBuf, bool)> = None;
+        let mut copy = None;
+        ui.horizontal(|ui| {
+            let (badge, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(badge, 8, super::theme::alpha(p.focus, 0.16));
+            ui.painter().text(
+                badge.center(),
+                egui::Align2::CENTER_CENTER,
+                if props.is_dir {
+                    icon::FOLDER
+                } else {
+                    icon::FILE
+                },
+                super::theme::icon_font(24.0),
+                hex(p.link),
+            );
+            ui.add_space(6.0);
+            ui.vertical(|ui| {
+                ui.add_space(2.0);
+                ui.label(RichText::new(&props.name).strong().size(16.0));
+                let kind = if props.is_dir {
+                    s.folder_word
+                } else {
+                    s.file_word
+                };
+                ui.label(RichText::new(kind).size(12.0).color(hex(p.muted)));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                if icon_button(ui, icon::X, s.close_word, true).clicked() {
+                    close = true;
+                }
+            });
+        });
+        ui.add_space(10.0);
+        let at_least = |text: String| {
+            if props.capped {
+                format!("≥ {text}")
+            } else {
+                text
+            }
         };
-        let size = if props.capped {
-            format!("≥ {}", pretty_bytes(props.size))
-        } else {
-            pretty_bytes(props.size)
-        };
-        let items = if props.capped {
-            format!("≥ {}", props.items)
-        } else {
-            props.items.to_string()
-        };
+        let home = crate::controller::disk::home_dir();
         let location = props
             .path
             .parent()
-            .map(|dir| dir.display().to_string())
+            .map(|dir| match &home {
+                Some(home) if dir.starts_with(home) => {
+                    let rest = dir.strip_prefix(home).unwrap_or(dir);
+                    if rest.as_os_str().is_empty() {
+                        "~".to_string()
+                    } else {
+                        format!("~/{}", rest.display())
+                    }
+                }
+                _ => dir.display().to_string(),
+            })
             .unwrap_or_default();
+        let yes_no = |on: bool| if on { s.yes_word } else { s.no_word };
         let mut rows: Vec<(&str, String)> = vec![
-            (s.col_type, kind.to_string()),
             (s.location_word, location),
-            (s.col_size, size),
+            (s.col_size, at_least(pretty_bytes(props.size))),
         ];
-        // The footer's "items" is lower case; a row label leads with a capital.
-        let items_label = capitalised(s.items_word);
         if props.is_dir {
-            rows.push((&items_label, items));
+            rows.push((
+                s.contains_word,
+                at_least(fill(
+                    s.files_and_folders,
+                    &[
+                        ("files", &props.files.to_string()),
+                        ("folders", &props.folders.to_string()),
+                    ],
+                )),
+            ));
         }
         if let Some(when) = props.modified {
             rows.push((s.col_modified, stamp(when)));
         }
-        egui::Grid::new("arca-properties")
-            .num_columns(2)
-            .spacing(egui::vec2(18.0, 8.0))
-            .show(ui, |ui| {
-                for (label, value) in rows {
-                    ui.label(RichText::new(label).color(hex(p.muted)));
-                    ui.add(egui::Label::new(value).wrap());
-                    ui.end_row();
-                }
+        rows.push((s.hidden_word, yes_no(props.hidden).to_string()));
+        rows.push((s.pinned_word, yes_no(props.pinned).to_string()));
+        for (label, value) in rows {
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    egui::vec2(110.0, 20.0),
+                    egui::Label::new(
+                        RichText::new(label.to_uppercase())
+                            .size(10.5)
+                            .strong()
+                            .extra_letter_spacing(0.8)
+                            .color(hex(p.muted)),
+                    )
+                    .halign(egui::Align::LEFT),
+                );
+                ui.add(egui::Label::new(value).wrap());
             });
-        let mut close = false;
+            ui.separator();
+        }
+        if let Some(mode) = props.mode {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(s.permissions_word.to_uppercase())
+                        .size(10.5)
+                        .strong()
+                        .extra_letter_spacing(0.8)
+                        .color(hex(p.muted)),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("{}   {mode:03o}", rwx(mode)))
+                            .monospace()
+                            .size(12.0)
+                            .color(hex(p.muted)),
+                    );
+                });
+            });
+            ui.add_space(4.0);
+            for (who, name, shift) in [
+                (s.owner_word, props.owner.as_str(), 6),
+                (s.group_word, props.group.as_str(), 3),
+                (s.others_word, "", 0),
+            ] {
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        egui::vec2(80.0, 24.0),
+                        egui::Label::new(who).halign(egui::Align::LEFT),
+                    );
+                    ui.label(RichText::new(name).size(12.0).color(hex(p.muted)));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        for (bit, letter) in [(1u32, "x"), (2, "w"), (4, "r")] {
+                            let on = (mode >> shift) & bit != 0;
+                            let (rect, _) = ui
+                                .allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::hover());
+                            let ink = if on { hex(p.link) } else { hex(p.muted) };
+                            ui.painter().rect_stroke(
+                                rect,
+                                5,
+                                egui::Stroke::new(
+                                    1.0,
+                                    if on { hex(p.focus) } else { hex(p.border) },
+                                ),
+                                egui::StrokeKind::Inside,
+                            );
+                            ui.painter().text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                if on { letter } else { "–" },
+                                egui::FontId::monospace(12.0),
+                                ink,
+                            );
+                        }
+                    });
+                });
+            }
+        }
         Self::footer_buttons(ui, |ui| {
-            close = secondary_button(ui, s.close_word, true).clicked();
+            if secondary_button(ui, s.copy_path, true).clicked() {
+                copy = Some(props.path.display().to_string());
+            }
+            if primary_button(ui, s.open_word, true).clicked() {
+                go = Some((props.path.clone(), props.is_dir));
+            }
         });
+        if let Some(text) = copy {
+            self.copy_text(vec![text]);
+        }
+        if let Some((path, is_dir)) = go {
+            self.properties = None;
+            if is_dir {
+                self.controller.dispatch(AppAction::Browse(path));
+            } else {
+                self.controller.dispatch(AppAction::Open(path));
+            }
+            return;
+        }
         if close {
             self.properties = None;
         }
@@ -1551,10 +1678,15 @@ fn stamp(when: std::time::SystemTime) -> String {
     )
 }
 
-fn capitalised(word: &str) -> String {
-    let mut chars = word.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
+fn rwx(mode: u32) -> String {
+    (0..9)
+        .rev()
+        .map(|bit| {
+            if mode & (1 << bit) == 0 {
+                '-'
+            } else {
+                ['x', 'w', 'r'][(bit % 3) as usize]
+            }
+        })
+        .collect()
 }

@@ -544,7 +544,7 @@ impl Shell {
             let color = if active { p.text } else { p.muted };
             ui.add_space(8.0);
             ui.allocate_ui_with_layout(
-                egui::vec2(width - if closable { 74.0 } else { 48.0 }, 26.0),
+                egui::vec2(width - if closable { 70.0 } else { 48.0 }, 26.0),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.add(
@@ -585,8 +585,17 @@ impl Shell {
             )
             .response
             .on_hover_text(s.sort_word);
-            if closable && icon_button(ui, icon::X, s.close_pane, true).clicked() {
-                self.pane_to_close = Some(pane);
+            if closable {
+                let cross = egui::Button::new(
+                    super::theme::icon_text(icon::X)
+                        .size(12.0)
+                        .color(hex(p.muted)),
+                )
+                .frame(false)
+                .min_size(Vec2::splat(20.0));
+                if ui.add(cross).on_hover_text(s.close_pane).clicked() {
+                    self.pane_to_close = Some(pane);
+                }
             }
         });
         let rect = header.response.rect;

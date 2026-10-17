@@ -760,6 +760,15 @@ impl Shell {
             let running = self.controller.active_tasks().filter(|t| !t.quiet).count();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.update_notice(ui);
+                if self.dialog.is_some() {
+                    let p = palette_of(ui.ctx());
+                    ui.label(
+                        RichText::new(s.picker_waiting)
+                            .size(12.0)
+                            .color(hex(p.warning)),
+                    );
+                    ui.separator();
+                }
                 if tasks > 0 && !self.controller.state.one_shot {
                     let label = if running > 0 {
                         fill(s.running_count, &[("n", &running.to_string())])

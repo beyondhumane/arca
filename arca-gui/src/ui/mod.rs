@@ -75,17 +75,24 @@ pub(crate) struct Props {
     pub(crate) path: std::path::PathBuf,
     pub(crate) is_dir: bool,
     pub(crate) size: u64,
-    pub(crate) items: usize,
-    /// The walk stopped early, so size and items are lower bounds.
+    pub(crate) files: usize,
+    pub(crate) folders: usize,
+    /// The walk stopped early, so size and counts are lower bounds.
     pub(crate) capped: bool,
     pub(crate) modified: Option<std::time::SystemTime>,
+    pub(crate) hidden: bool,
+    pub(crate) pinned: bool,
+    /// Unix mode bits and the owner's names, where there are such things.
+    pub(crate) mode: Option<u32>,
+    pub(crate) owner: String,
+    pub(crate) group: String,
 }
 
 const PROPS_WALK_MOST: usize = 50_000;
 
 /// Sizes up a path without going on for ever: deep trees are cut off at
 /// `PROPS_WALK_MOST` entries and said to be at least that big.
-pub(crate) fn inspect(path: &std::path::Path) -> Props {
+pub(crate) fn inspect(path: &std::path::Path, pinned: bool) -> Props {
     let meta = std::fs::symlink_metadata(path).ok();
     let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
     let name = path
@@ -99,10 +106,25 @@ pub(crate) fn inspect(path: &std::path::Path) -> Props {
         size: meta
             .as_ref()
             .map_or(0, |m| if m.is_dir() { 0 } else { m.len() }),
-        items: 0,
+        files: 0,
+        folders: 0,
         capped: false,
-        modified: meta.and_then(|m| m.modified().ok()),
+        modified: meta.as_ref().and_then(|m| m.modified().ok()),
+        hidden: path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with('.')),
+        pinned,
+        mode: None,
+        owner: String::new(),
+        group: String::new(),
     };
+    #[cfg(unix)]
+    if let Some(meta) = &meta {
+        use std::os::unix::fs::MetadataExt;
+        props.mode = Some(meta.mode() & 0o777);
+        props.owner = unix_name("/etc/passwd", meta.uid());
+        props.group = unix_name("/etc/group", meta.gid());
+    }
     if is_dir {
         let mut stack = vec![path.to_path_buf()];
         while let Some(dir) = stack.pop() {
@@ -110,8 +132,7 @@ pub(crate) fn inspect(path: &std::path::Path) -> Props {
                 continue;
             };
             for entry in read.flatten() {
-                props.items += 1;
-                if props.items >= PROPS_WALK_MOST {
+                if props.files + props.folders >= PROPS_WALK_MOST {
                     props.capped = true;
                     return props;
                 }
@@ -119,14 +140,32 @@ pub(crate) fn inspect(path: &std::path::Path) -> Props {
                     continue;
                 };
                 if kind.is_dir() {
+                    props.folders += 1;
                     stack.push(entry.path());
-                } else if kind.is_file() {
+                } else {
+                    props.files += 1;
                     props.size += entry.metadata().map_or(0, |m| m.len());
                 }
             }
         }
     }
     props
+}
+
+/// The name for an id in a passwd/group style file, or the number itself.
+#[cfg(unix)]
+fn unix_name(file: &str, id: u32) -> String {
+    std::fs::read_to_string(file)
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                let mut parts = line.split(':');
+                let name = parts.next()?;
+                let found: u32 = parts.nth(1)?.parse().ok()?;
+                (found == id).then(|| name.to_string())
+            })
+        })
+        .unwrap_or_else(|| id.to_string())
 }
 
 pub(crate) struct Shell {
@@ -1042,6 +1081,12 @@ impl Shell {
         }
         // The palette is a modal, which silences shortcuts below; Ctrl+K has
         // to get through so the same key opens and closes it.
+        // A file picker that never shows up must not hold the window
+        // hostage; Esc lets go of it and ignores whatever it sends later.
+        if key == egui::Key::Escape && self.dialog.is_some() && self.modal_kind().is_none() {
+            self.dialog = None;
+            return;
+        }
         if modifiers.command && key == egui::Key::K && self.search.is_some() {
             self.search = None;
             return;
