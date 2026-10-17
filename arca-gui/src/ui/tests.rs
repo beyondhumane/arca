@@ -97,13 +97,13 @@ fn clipboard_actions_require_capability_idle_archive_and_selection() {
 #[test]
 fn moving_the_cursor_scrolls_only_as_far_as_it_has_to() {
     let height = ROW_HEIGHT * 10.0;
-    assert_eq!(scroll_target(0.0, height, 3), 0.0);
+    assert_eq!(scroll_target(0.0, height, 3, ROW_HEIGHT), 0.0);
     assert_eq!(
-        scroll_target(ROW_HEIGHT * 20.0, height, 5),
+        scroll_target(ROW_HEIGHT * 20.0, height, 5, ROW_HEIGHT),
         ROW_HEIGHT * 5.0
     );
-    assert_eq!(scroll_target(0.0, height, 10), ROW_HEIGHT);
-    assert_eq!(scroll_target(0.0, height, 9), 0.0);
+    assert_eq!(scroll_target(0.0, height, 10, ROW_HEIGHT), ROW_HEIGHT);
+    assert_eq!(scroll_target(0.0, height, 9, ROW_HEIGHT), 0.0);
 }
 
 #[test]

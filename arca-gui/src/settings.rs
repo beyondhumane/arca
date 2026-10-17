@@ -48,6 +48,23 @@ pub(crate) enum TitleBar {
     Custom,
 }
 
+/// How tall the rows of the list are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Density {
+    #[default]
+    Compact,
+    Airy,
+}
+
+impl Settings {
+    pub(crate) fn row_height(&self) -> f32 {
+        match self.density {
+            Density::Compact => 24.0,
+            Density::Airy => 30.0,
+        }
+    }
+}
+
 pub(crate) const TEXT_LEAST: f32 = 11.0;
 pub(crate) const TEXT_MOST: f32 = 16.0;
 
@@ -77,6 +94,7 @@ pub(crate) struct Settings {
     pub(crate) text_size: f32,
     pub(crate) motion: bool,
     pub(crate) title_bar: TitleBar,
+    pub(crate) density: Density,
     pub(crate) columns: Columns,
     pub(crate) browser_view: BrowserView,
     pub(crate) sidebar_collapsed: bool,
@@ -141,12 +159,13 @@ impl Default for Settings {
         Settings {
             lang: None,
             theme: ThemePreference::Dark,
-            dark_theme: "Tokyo Night".into(),
-            light_theme: "Arca Light".into(),
+            dark_theme: "Arca Midnight".into(),
+            light_theme: "Arca Daylight".into(),
             font: FontChoice::Inter,
             text_size: 13.0,
             motion: true,
             title_bar: TitleBar::default(),
+            density: Density::default(),
             columns: Columns::default(),
             browser_view: BrowserView::default(),
             sidebar_collapsed: false,
@@ -213,6 +232,8 @@ impl Settings {
                 ("motion", v) => s.motion = v != "no",
                 ("title_bar", "system") => s.title_bar = TitleBar::System,
                 ("title_bar", "custom") => s.title_bar = TitleBar::Custom,
+                ("density", "compact") => s.density = Density::Compact,
+                ("density", "airy") => s.density = Density::Airy,
                 ("browser_view", "columns") => s.browser_view = BrowserView::Columns,
                 ("browser_view", "details") => s.browser_view = BrowserView::Details,
                 ("sidebar_collapsed", "yes") => s.sidebar_collapsed = true,
@@ -402,6 +423,10 @@ impl Settings {
             TitleBar::System => "title_bar = system\n",
             TitleBar::Custom => "title_bar = custom\n",
         });
+        out.push_str(match self.density {
+            Density::Compact => "density = compact\n",
+            Density::Airy => "density = airy\n",
+        });
         out.push_str(match self.channel {
             Channel::Stable => "channel = stable\n",
             Channel::Preview => "channel = preview\n",
@@ -465,6 +490,10 @@ mod tests {
         let bar = Settings::parse("title_bar = system\n");
         assert_eq!(bar.title_bar, TitleBar::System);
         assert!(bar.text().contains("title_bar = system\n"));
+        assert_eq!(bar.density, Density::Compact);
+        let airy = Settings::parse("density = airy\n");
+        assert_eq!(airy.row_height(), 30.0);
+        assert!(airy.text().contains("density = airy\n"));
         assert_eq!(Settings::parse(&s.text()).light_theme, "Gruvbox Light");
         let f = Settings::parse("font = /usr/share/fonts/a b.ttf\ntext_size = NaN\n");
         assert_eq!(f.font, FontChoice::File("/usr/share/fonts/a b.ttf".into()));

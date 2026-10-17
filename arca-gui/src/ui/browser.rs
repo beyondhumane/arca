@@ -5,6 +5,7 @@ use crate::tree::Kind;
 use eframe::egui::{self, Align2, FontId, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};
 use egui_phosphor::regular as icon;
 
+#[cfg(test)]
 pub(crate) const ROW_HEIGHT: f32 = 24.0;
 
 pub(crate) fn column_slot(column: SortColumn) -> usize {
@@ -33,9 +34,9 @@ fn right_aligned(column: SortColumn) -> bool {
     )
 }
 
-pub(crate) fn scroll_target(offset: f32, height: f32, index: usize) -> f32 {
-    let top = index as f32 * ROW_HEIGHT;
-    let bottom = top + ROW_HEIGHT;
+pub(crate) fn scroll_target(offset: f32, height: f32, index: usize, row: f32) -> f32 {
+    let top = index as f32 * row;
+    let bottom = top + row;
     if top < offset {
         top
     } else if bottom > offset + height {
@@ -231,10 +232,11 @@ impl Shell {
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let (header, _) =
-                    ui.allocate_exact_size(Vec2::new(total, ROW_HEIGHT + 2.0), Sense::hover());
+                    ui.allocate_exact_size(Vec2::new(total, self.row_h() + 2.0), Sense::hover());
                 ui.painter().rect_filled(header, 0, hex(p.surface));
                 let mut x = header.left();
                 let mut resized = None;
+                let mut edges = Vec::with_capacity(shown.len());
                 for (slot, column) in shown.iter().enumerate() {
                     let rect = Rect::from_min_size(
                         egui::pos2(x, header.top()),
@@ -308,18 +310,36 @@ impl Shell {
                             }
                         }
                     });
+                    edges.push((slot, *column, rect.right()));
+                }
+                // The grips go down after every header so that they sit on
+                // top of them; a grip laid under the next header lost to it.
+                for (slot, column, edge) in edges {
                     let handle = Rect::from_min_max(
-                        egui::pos2(rect.right() - 3.0, rect.top()),
-                        egui::pos2(rect.right() + 3.0, rect.bottom()),
+                        egui::pos2(edge - 4.0, header.top()),
+                        egui::pos2(edge + 4.0, header.bottom()),
                     );
                     let drag = ui
                         .interact(handle, ui.id().with(("resize", slot)), Sense::drag())
                         .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+                    let lit = drag.hovered() || drag.dragged();
+                    ui.painter().vline(
+                        edge - 0.5,
+                        header.y_range(),
+                        egui::Stroke::new(
+                            1.0,
+                            if lit {
+                                hex(p.focus)
+                            } else {
+                                super::theme::alpha(p.border, 0.9)
+                            },
+                        ),
+                    );
                     if drag.dragged() {
-                        resized = Some((*column, widths[slot] + drag.drag_delta().x, false));
+                        resized = Some((column, widths[slot] + drag.drag_delta().x, false));
                     }
                     if drag.drag_stopped() {
-                        resized = Some((*column, widths[slot], true));
+                        resized = Some((column, widths[slot], true));
                     }
                 }
                 if let Some((column, width, done)) = resized {
@@ -352,16 +372,21 @@ impl Shell {
                         let offset = egui::scroll_area::State::load(ui.ctx(), id)
                             .map_or(0.0, |state| state.offset.y);
                         let height = ui.available_height() - 40.0;
-                        area = area.vertical_scroll_offset(scroll_target(offset, height, cursor));
+                        area = area.vertical_scroll_offset(scroll_target(
+                            offset,
+                            height,
+                            cursor,
+                            self.row_h(),
+                        ));
                     }
                 }
-                let shown = area.show_rows(ui, ROW_HEIGHT, rows.len(), |ui, range| {
+                let shown = area.show_rows(ui, self.row_h(), rows.len(), |ui, range| {
                     self.autoscroll(ui);
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for index in range {
                         let row = &rows[index];
                         let (rect, response) = ui.allocate_exact_size(
-                            Vec2::new(total, ROW_HEIGHT),
+                            Vec2::new(total, self.row_h()),
                             Sense::click_and_drag(),
                         );
                         let look = RowLook {
@@ -375,7 +400,7 @@ impl Shell {
                         for (slot, column) in shown.iter().enumerate() {
                             let cell = Rect::from_min_size(
                                 egui::pos2(x, rect.top()),
-                                Vec2::new(widths[slot], ROW_HEIGHT),
+                                Vec2::new(widths[slot], self.row_h()),
                             );
                             x += widths[slot];
                             if *column == SortColumn::Name {
@@ -540,16 +565,21 @@ impl Shell {
                 let offset = egui::scroll_area::State::load(ui.ctx(), id)
                     .map_or(0.0, |state| state.offset.y);
                 let height = ui.available_height() - 20.0;
-                area = area.vertical_scroll_offset(scroll_target(offset, height, cursor));
+                area = area.vertical_scroll_offset(scroll_target(
+                    offset,
+                    height,
+                    cursor,
+                    self.row_h(),
+                ));
             }
         }
         ui.spacing_mut().item_spacing.y = 0.0;
-        let shown = area.show_rows(ui, ROW_HEIGHT, rows.len(), |ui, range| {
+        let shown = area.show_rows(ui, self.row_h(), rows.len(), |ui, range| {
             self.autoscroll(ui);
             for index in range {
                 let row = &rows[index];
                 let (rect, response) = ui.allocate_exact_size(
-                    Vec2::new(width - 8.0, ROW_HEIGHT),
+                    Vec2::new(width - 8.0, self.row_h()),
                     Sense::click_and_drag(),
                 );
                 let checked = self.controller.pane_is_checked(pane, row);
@@ -743,6 +773,10 @@ impl Shell {
                 }
             }
         }
+    }
+
+    fn row_h(&self) -> f32 {
+        self.controller.state.settings.row_height()
     }
 
     fn row_menu(&mut self, ui: &mut egui::Ui, row: Option<&Row>, index: usize) {

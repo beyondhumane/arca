@@ -149,6 +149,96 @@ impl Shell {
         }
     }
 
+    /// One menu for how the list looks: the view, the preview panel, how
+    /// tall the rows are, the text size and hidden files.
+    fn view_menu(&mut self, ui: &mut egui::Ui, idle: bool) {
+        use crate::settings::{Density, TEXT_LEAST, TEXT_MOST};
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        let columns = self.controller.state.browser.columns;
+        let flat = self.controller.state.settings.flat;
+        let current = if columns {
+            icon::COLUMNS
+        } else if flat {
+            icon::ROWS
+        } else {
+            icon::LIST
+        };
+        ui.menu_button(super::theme::icon_text(current).size(16.0), |ui| {
+            ui.set_min_width(240.0);
+            group_label(ui, s.view_group);
+            for (glyph, label, want_columns, want_flat) in [
+                (icon::COLUMNS, s.column_view, true, false),
+                (icon::LIST, s.details_view, false, false),
+                (icon::ROWS, s.flat_view, false, true),
+            ] {
+                let on = columns == want_columns && (want_columns || flat == want_flat);
+                if pick_entry(ui, glyph, label, on).clicked() && !on && idle {
+                    self.switch_view(want_columns, want_flat);
+                }
+            }
+            let preview = self.controller.state.settings.preview_visible;
+            if pick_entry(ui, icon::EYE, s.preview_panel, preview).clicked() {
+                self.controller.state.settings.preview_visible = !preview;
+                self.controller.state.settings.save();
+            }
+            ui.separator();
+            group_label(ui, s.density_title);
+            let density = self.controller.state.settings.density;
+            for (glyph, label, want) in [
+                (
+                    icon::ARROWS_IN_LINE_VERTICAL,
+                    s.compact_word,
+                    Density::Compact,
+                ),
+                (icon::ARROWS_OUT_LINE_VERTICAL, s.airy_word, Density::Airy),
+            ] {
+                if pick_entry(ui, glyph, label, density == want).clicked() && density != want {
+                    self.controller.state.settings.density = want;
+                    self.controller.state.settings.save();
+                }
+            }
+            ui.separator();
+            group_label(ui, s.text_size_title);
+            let size = self.controller.state.settings.text_size;
+            let mut wanted = size;
+            ui.horizontal(|ui| {
+                ui.add_space(6.0);
+                ui.label(
+                    super::theme::icon_text(icon::TEXT_AA)
+                        .size(15.0)
+                        .color(hex(p.focus)),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled(size < TEXT_MOST, egui::Button::new("+"))
+                        .clicked()
+                    {
+                        wanted = size + 1.0;
+                    }
+                    ui.label(format!("{size:.0} px"));
+                    if ui
+                        .add_enabled(size > TEXT_LEAST, egui::Button::new("−"))
+                        .clicked()
+                    {
+                        wanted = size - 1.0;
+                    }
+                });
+            });
+            if wanted != size {
+                self.controller.state.settings.text_size = wanted.clamp(TEXT_LEAST, TEXT_MOST);
+                self.controller.state.settings.save();
+            }
+            ui.separator();
+            let hidden = self.controller.state.settings.show_hidden;
+            if pick_entry(ui, icon::EYE_SLASH, s.hidden_files, hidden).clicked() {
+                self.controller.dispatch(AppAction::SetShowHidden(!hidden));
+            }
+        })
+        .response
+        .on_hover_text(s.view_group);
+    }
+
     fn remember_width(&mut self, width: f32, slot: impl Fn(&mut Settings) -> &mut f32) {
         let settings = &mut self.controller.state.settings;
         if (*slot(settings) - width).abs() > 0.5 && !self.ctx.input(|i| i.pointer.any_down()) {
@@ -201,24 +291,7 @@ impl Shell {
                 {
                     self.toggle_search();
                 }
-                let preview = self.controller.state.settings.preview_visible;
-                if icon_toggle(ui, icon::EYE, s.view_word, true, preview).clicked() {
-                    self.controller.state.settings.preview_visible = !preview;
-                    self.controller.state.settings.save();
-                }
-                ui.separator();
-                let columns = self.controller.state.browser.columns;
-                let flat = self.controller.state.settings.flat;
-                for (glyph, label, want_columns, want_flat) in [
-                    (icon::ROWS, s.flat_view, false, true),
-                    (icon::LIST, s.details_view, false, false),
-                    (icon::COLUMNS, s.column_view, true, false),
-                ] {
-                    let on = columns == want_columns && (want_columns || flat == want_flat);
-                    if icon_toggle(ui, glyph, label, idle, on).clicked() && !on {
-                        self.switch_view(want_columns, want_flat);
-                    }
-                }
+                self.view_menu(ui, idle);
             });
         });
         ui.add_space(2.0);

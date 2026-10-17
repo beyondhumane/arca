@@ -40,22 +40,13 @@ pub(crate) fn icon_toggle(
 /// A context-menu entry: glyph, label and the shortcut at the far end. The
 /// glyph comes from the icon font, so it is laid out as its own section
 /// rather than relying on the text font to carry it.
-pub(crate) fn menu_entry(
-    ui: &mut Ui,
-    glyph: &str,
-    label: &str,
-    keys: &str,
-    enabled: bool,
-) -> Response {
+fn entry_job(ui: &Ui, glyph: &str, label: &str, enabled: bool) -> egui::text::LayoutJob {
     let p = palette_of(ui.ctx());
-    let (ink, body) = {
-        let style = ui.style();
-        let ink = if enabled {
-            style.visuals.text_color()
-        } else {
-            style.visuals.weak_text_color()
-        };
-        (ink, egui::TextStyle::Body.resolve(style))
+    let style = ui.style();
+    let ink = if enabled {
+        style.visuals.text_color()
+    } else {
+        style.visuals.weak_text_color()
     };
     // The trailing dots belong to entries that go on to ask where; a plain
     // verb reads better without them, even when a picker follows.
@@ -75,16 +66,44 @@ pub(crate) fn menu_entry(
         label,
         9.0,
         egui::TextFormat {
-            font_id: body,
+            font_id: egui::TextStyle::Body.resolve(style),
             color: ink,
             valign: egui::Align::Center,
             ..Default::default()
         },
     );
+    job
+}
+
+/// A context-menu entry: glyph, label and the shortcut at the far end. The
+/// glyph comes from the icon font, so it is laid out as its own section
+/// rather than relying on the text font to carry it.
+pub(crate) fn menu_entry(
+    ui: &mut Ui,
+    glyph: &str,
+    label: &str,
+    keys: &str,
+    enabled: bool,
+) -> Response {
+    let p = palette_of(ui.ctx());
+    let job = entry_job(ui, glyph, label, enabled);
     ui.add_enabled(
         enabled,
         egui::Button::new(job).shortcut_text(egui::RichText::new(keys).color(hex(p.muted))),
     )
+}
+
+/// A menu entry that is one of a set, with a tick where the shortcut goes
+/// when it is the one in force.
+pub(crate) fn pick_entry(ui: &mut Ui, glyph: &str, label: &str, on: bool) -> Response {
+    let p = palette_of(ui.ctx());
+    let job = entry_job(ui, glyph, label, true);
+    let mark = if on {
+        theme::icon_text(egui_phosphor::regular::CHECK).color(hex(p.focus))
+    } else {
+        egui::RichText::new(" ")
+    };
+    ui.add(egui::Button::new(job).shortcut_text(mark))
 }
 
 pub(crate) fn primary_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
