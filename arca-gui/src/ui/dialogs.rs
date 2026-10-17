@@ -1120,7 +1120,8 @@ impl Shell {
             });
         ui.add_space(10.0);
         if ui
-            .link(RichText::new(s.view_release).color(hex(p.link)))
+            .link(RichText::new(s.view_release).color(hex(p.link)).underline())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
             self.controller.open_release_page();
