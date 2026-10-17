@@ -1215,16 +1215,17 @@ impl Shell {
             return;
         }
         if !clipboard::AVAILABLE {
-            self.controller.state.notice =
-                "File clipboard integration is available on Windows only.".into();
+            self.controller.state.notice = self.controller.s().clipboard_windows_only.into();
             self.controller.state.error = true;
             return;
         }
+        let s = self.controller.s();
         self.controller.state.notice = if cut {
-            "Preparing selected files to move…".into()
+            s.preparing_move
         } else {
-            "Preparing selected files to copy…".into()
-        };
+            s.preparing_copy
+        }
+        .into();
         self.controller.state.error = false;
         self.controller.dispatch(AppAction::Copy { cut });
     }
@@ -1250,8 +1251,7 @@ impl Shell {
             return;
         }
         if !clipboard::AVAILABLE {
-            self.controller.state.notice =
-                "File clipboard integration is available on Windows only.".into();
+            self.controller.state.notice = self.controller.s().clipboard_windows_only.into();
             self.controller.state.error = true;
             return;
         }
@@ -1742,7 +1742,10 @@ impl Shell {
                     }
                     (_, total) => format!("{} / {total}", task.done),
                 };
-                return format!("{} · {}", task.verb, progress);
+                return fill(
+                    s.progress_status,
+                    &[("verb", &task.verb), ("progress", &progress)],
+                );
             }
             many => return fill(s.operations_count, &[("n", &many.len().to_string())]),
         }
@@ -1752,7 +1755,10 @@ impl Shell {
             } else {
                 format!("{} / {}", state.done_count, state.total_count)
             };
-            return format!("{} · {}", state.title, progress);
+            return fill(
+                s.progress_status,
+                &[("verb", &state.title), ("progress", &progress)],
+            );
         }
         if !state.notice.is_empty() {
             return state.notice.clone();
