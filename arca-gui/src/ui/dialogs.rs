@@ -212,7 +212,10 @@ impl Shell {
                         ui.add_space(8.0);
                         shortcuts_table(ui, s);
                     }
-                    ModalKind::NewFolder | ModalKind::Mask => self.name_dialog(ui, kind),
+                    ModalKind::NewFolder | ModalKind::Mask | ModalKind::Label => {
+                        self.name_dialog(ui, kind)
+                    }
+                    ModalKind::Format => self.format_dialog(ui),
                     ModalKind::Properties => self.properties_dialog(ui),
                     ModalKind::Update => self.update_dialog(ui),
                 });
@@ -1143,6 +1146,8 @@ impl Shell {
         let p = palette_of(ui.ctx());
         let (title, hint, confirm) = if kind == ModalKind::NewFolder {
             (s.new_folder, s.folder_name, s.new_folder)
+        } else if kind == ModalKind::Label {
+            (s.label_title, s.label_hint, s.label_title)
         } else if self.controller.state.picking_group.unwrap_or(true) {
             (s.select_group, s.mask_hint, s.start)
         } else {
@@ -1151,6 +1156,9 @@ impl Shell {
         heading(ui, title);
         let description = if kind == ModalKind::NewFolder {
             format!("{hint}: /{}", self.controller.state.current_dir)
+        } else if kind == ModalKind::Label {
+            let device = self.device_label.as_ref().map(|v| v.device.clone());
+            format!("{hint} · {}", device.unwrap_or_default())
         } else {
             hint.to_string()
         };
@@ -1172,6 +1180,55 @@ impl Shell {
             self.confirm_name(kind);
         } else if cancel {
             self.cancel_modal(kind);
+        }
+    }
+
+    fn format_dialog(&mut self, ui: &mut egui::Ui) {
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        let Some((volume, mut fs, mut label)) = self.device_format.clone() else {
+            return;
+        };
+        let name = volume.name(s.volume_word);
+        heading(ui, &fill(s.format_title, &[("name", &name)]));
+        ui.label(
+            RichText::new(fill(
+                s.format_warning,
+                &[("name", &name), ("device", &volume.device)],
+            ))
+            .color(hex(p.danger)),
+        );
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(s.filesystem_word).color(hex(p.muted)));
+            egui::ComboBox::from_id_salt("arca-format-fs")
+                .selected_text(crate::controller::disk::FORMATS[fs])
+                .show_ui(ui, |ui| {
+                    for (index, option) in crate::controller::disk::FORMATS.iter().enumerate() {
+                        ui.selectable_value(&mut fs, index, *option);
+                    }
+                });
+        });
+        ui.add_space(4.0);
+        ui.label(RichText::new(s.label_hint).color(hex(p.muted)));
+        ui.add(super::widgets::field(ui, &mut label).desired_width(f32::INFINITY));
+        let mut go = false;
+        let mut cancel = false;
+        Self::footer_buttons(ui, |ui| {
+            go = danger_button(ui, s.format_button).clicked();
+            cancel = secondary_button(ui, s.cancel, true).clicked();
+        });
+        if go {
+            self.device_format = None;
+            self.controller.format_volume(
+                &volume,
+                crate::controller::disk::FORMATS[fs],
+                label.trim(),
+            );
+        } else if cancel {
+            self.device_format = None;
+        } else {
+            self.device_format = Some((volume, fs, label));
         }
     }
 

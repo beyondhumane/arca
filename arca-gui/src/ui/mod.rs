@@ -15,6 +15,7 @@ mod theme;
 mod themes;
 mod widgets;
 
+use crate::controller::disk::Volume;
 use crate::tree::children_of;
 use crate::*;
 use actions::*;
@@ -201,6 +202,8 @@ pub(crate) struct Shell {
     pointer_focused: bool,
     // The pane whose filter row is open, and what is typed in it.
     pane_filter: Option<(usize, String)>,
+    device_label: Option<Volume>,
+    device_format: Option<(Volume, usize, String)>,
     // What was cut or copied on the disk, as roots, and whether it was cut.
     disk_clip: Option<(Vec<String>, bool)>,
     // The roots to move into the folder being named, for "New folder with
@@ -281,6 +284,8 @@ impl Shell {
             peek_loaded: None,
             pointer_focused: false,
             pane_filter: None,
+            device_label: None,
+            device_format: None,
             disk_clip: None,
             new_folder_with: None,
             name_value: String::new(),
@@ -474,6 +479,10 @@ impl Shell {
             Some(ModalKind::NewFolder)
         } else if state.picking_group.is_some() {
             Some(ModalKind::Mask)
+        } else if self.device_label.is_some() {
+            Some(ModalKind::Label)
+        } else if self.device_format.is_some() {
+            Some(ModalKind::Format)
         } else if self.properties.is_some() {
             Some(ModalKind::Properties)
         } else if state.show_update && state.update.is_some() {
@@ -499,6 +508,11 @@ impl Shell {
                 .dispatch(AppAction::AnswerDrop(DropChoice::Cancel)),
             ModalKind::Add => self.controller.cancel_compress(),
             ModalKind::NewFolder | ModalKind::Mask => self.close_name(),
+            ModalKind::Label => {
+                self.device_label = None;
+                self.name_value.clear();
+            }
+            ModalKind::Format => self.device_format = None,
             ModalKind::Settings => self.controller.state.show_settings = false,
             ModalKind::Shortcuts => self.controller.state.show_shortcuts = false,
             ModalKind::Search => self.search = None,
@@ -925,6 +939,12 @@ impl Shell {
         let s = self.controller.s();
         let name = self.name_value.trim().to_string();
         match kind {
+            ModalKind::Label => {
+                if let Some(volume) = self.device_label.take() {
+                    self.controller.label_volume(&volume, &name);
+                }
+                self.name_value.clear();
+            }
             ModalKind::NewFolder => {
                 let Some(archive) = self.controller.state.archive.clone() else {
                     let carried = self.new_folder_with.take();

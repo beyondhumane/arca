@@ -324,8 +324,11 @@ impl Shell {
         // every mounted volume, never just the folder being shown.
         let mut roots: Vec<PathBuf> = crate::controller::disk::home_dir().into_iter().collect();
         for place in self.controller.devices() {
-            if place.kind == crate::controller::disk::PlaceKind::Drive
-                && !roots.iter().any(|root| place.path.starts_with(root))
+            if matches!(
+                place.kind,
+                crate::controller::disk::PlaceKind::Drive
+                    | crate::controller::disk::PlaceKind::Removable
+            ) && !roots.iter().any(|root| place.path.starts_with(root))
             {
                 roots.push(place.path);
             }

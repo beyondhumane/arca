@@ -1,5 +1,6 @@
 use super::widgets::*;
 use super::*;
+use crate::controller::disk::Volume;
 use crate::tree::Folder;
 use eframe::egui;
 use egui_phosphor::regular as icon;
@@ -15,6 +16,7 @@ pub(crate) fn place_glyph(kind: PlaceKind) -> &'static str {
         PlaceKind::Videos => icon::FILM_STRIP,
         PlaceKind::Computer => icon::MONITOR,
         PlaceKind::Drive => icon::HARD_DRIVE,
+        PlaceKind::Removable => icon::USB,
         PlaceKind::Pinned => icon::PUSH_PIN,
     }
 }
@@ -50,7 +52,12 @@ impl Shell {
         let mut copy: Option<String> = None;
         let mut props: Option<PathBuf> = None;
         let mut forget: Option<String> = None;
+        let mut mount: Option<Volume> = None;
+        let mut unmount: Option<Volume> = None;
+        let mut relabel: Option<Volume> = None;
+        let mut format: Option<Volume> = None;
         let free = self.controller.state.browser.free;
+        self.controller.refresh_volumes();
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
@@ -122,6 +129,35 @@ impl Shell {
                                 copy = Some(place.path.display().to_string());
                                 ui.close();
                             }
+                            let volume =
+                                matches!(place.kind, PlaceKind::Drive | PlaceKind::Removable)
+                                    .then(|| self.controller.volume_at(&place.path).cloned())
+                                    .flatten()
+                                    .filter(|v| !v.device.is_empty());
+                            if let Some(volume) = volume {
+                                ui.separator();
+                                let (glyph, label) = if volume.mount.is_some() {
+                                    (icon::EJECT, s.unmount_word)
+                                } else {
+                                    (icon::PLUG, s.mount_word)
+                                };
+                                if menu_entry(ui, glyph, label, "", true).clicked() {
+                                    if volume.mount.is_some() {
+                                        unmount = Some(volume.clone());
+                                    } else {
+                                        mount = Some(volume.clone());
+                                    }
+                                    ui.close();
+                                }
+                                if menu_entry(ui, icon::ERASER, s.format_word, "", true).clicked() {
+                                    format = Some(volume.clone());
+                                    ui.close();
+                                }
+                                if menu_entry(ui, icon::TAG, s.set_label, "", true).clicked() {
+                                    relabel = Some(volume.clone());
+                                    ui.close();
+                                }
+                            }
                             ui.separator();
                             if menu_entry(ui, icon::INFO, s.properties_word, "", true).clicked() {
                                 props = Some(place.path.clone());
@@ -180,8 +216,34 @@ impl Shell {
         if !self.background_idle() {
             return;
         }
+        if let Some(volume) = mount {
+            browse = self.controller.mount_volume(&volume);
+        }
+        if let Some(volume) = unmount {
+            self.controller.unmount_volume(&volume);
+        }
+        if let Some(volume) = relabel {
+            self.name_value = volume.label.clone();
+            self.focus_name = true;
+            self.device_label = Some(volume);
+        }
+        if let Some(volume) = format {
+            self.device_format = Some((volume, 0, String::new()));
+        }
         if let Some(path) = browse {
-            self.controller.dispatch(AppAction::Browse(path));
+            // A click on a volume that is not mounted yet mounts it first.
+            let unmounted = self
+                .controller
+                .volume_at(&path)
+                .filter(|v| v.mount.is_none() && !v.device.is_empty())
+                .cloned();
+            let path = match unmounted {
+                Some(volume) => self.controller.mount_volume(&volume),
+                None => Some(path),
+            };
+            if let Some(path) = path {
+                self.controller.dispatch(AppAction::Browse(path));
+            }
         }
         if let Some(path) = unpin {
             self.controller.dispatch(AppAction::TogglePinned(path));

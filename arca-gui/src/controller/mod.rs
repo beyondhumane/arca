@@ -49,6 +49,9 @@ use std::time::Instant;
 
 pub(crate) struct AppController {
     pub(crate) state: AppState,
+    pub(crate) volumes: Vec<disk::Volume>,
+    volumes_at: Option<std::time::Instant>,
+    volume_job: Option<disk::DeviceJob>,
 }
 
 fn rename_destination(path: &str, name: &str) -> String {
@@ -575,6 +578,9 @@ impl AppController {
 
     pub(crate) fn new(settings: Settings) -> Self {
         AppController {
+            volumes: Vec::new(),
+            volumes_at: None,
+            volume_job: None,
             state: AppState {
                 view: View::Browse,
                 settings,

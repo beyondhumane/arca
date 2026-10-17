@@ -37,6 +37,7 @@ pub(crate) enum PlaceKind {
     Videos,
     Computer,
     Drive,
+    Removable,
     Pinned,
 }
 
@@ -434,6 +435,290 @@ fn mounted_volumes() -> Vec<PathBuf> {
     roots.sort();
     roots.dedup();
     roots
+}
+
+/// The outcome a device job in the background leaves for the window.
+pub(crate) type DeviceJob = Arc<Mutex<Option<Result<String, String>>>>;
+
+/// A storage volume the sidebar can offer: a partition with a file system
+/// that is not part of the running system.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Volume {
+    /// `/dev/sdb1`; empty where the platform gives no device node.
+    pub(crate) device: String,
+    pub(crate) label: String,
+    pub(crate) model: String,
+    pub(crate) size: String,
+    pub(crate) fs: String,
+    pub(crate) removable: bool,
+    pub(crate) mount: Option<PathBuf>,
+}
+
+impl Volume {
+    pub(crate) fn name(&self, volume_word: &str) -> String {
+        if !self.label.is_empty() {
+            self.label.clone()
+        } else if !self.model.is_empty() {
+            format!("{} {}", self.model, self.size)
+        } else if let Some(name) = self
+            .mount
+            .as_ref()
+            .and_then(|m| m.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+        {
+            name
+        } else {
+            format!("{} {volume_word}", self.size)
+        }
+    }
+
+    /// Where the sidebar sends a click: the mount point, or the device node
+    /// until it is mounted.
+    pub(crate) fn place(&self) -> PathBuf {
+        self.mount
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(&self.device))
+    }
+}
+
+/// Mount points that belong to the system rather than to a volume someone
+/// plugged in or set aside.
+fn system_mount(mount: &str) -> bool {
+    mount == "/"
+        || mount == "[SWAP]"
+        || [
+            "/boot", "/snap/", "/usr", "/var", "/home", "/opt", "/srv", "/tmp", "/nix", "/efi",
+        ]
+        .iter()
+        .any(|base| mount == base.trim_end_matches('/') || mount.starts_with(base))
+}
+
+#[cfg(target_os = "linux")]
+fn lsblk_unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&'x') {
+            chars.next();
+            let hex: String = chars.by_ref().take(2).collect();
+            if let Ok(code) = u8::from_str_radix(&hex, 16) {
+                out.push(code as char);
+                continue;
+            }
+            out.push_str("\\x");
+            out.push_str(&hex);
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The volumes `lsblk -P` describes, one `KEY="value"` line per device.
+#[cfg(target_os = "linux")]
+pub(crate) fn volumes_from_lsblk(text: &str) -> Vec<Volume> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let mut fields: HashMap<&str, String> = HashMap::new();
+        let mut rest = line.trim();
+        while let Some((key, after)) = rest.split_once("=\"") {
+            let Some((value, tail)) = after.split_once('"') else {
+                break;
+            };
+            fields.insert(key.trim(), lsblk_unescape(value));
+            rest = tail.trim_start();
+        }
+        let field = |key: &str| fields.get(key).cloned().unwrap_or_default();
+        let path = field("PATH");
+        let fs = field("FSTYPE");
+        let kind = field("TYPE");
+        let mount = field("MOUNTPOINT");
+        let removable = field("RM") == "1" || field("HOTPLUG") == "1";
+        let virtual_node = ["/dev/loop", "/dev/zram", "/dev/ram", "/dev/sr"]
+            .iter()
+            .any(|base| path.starts_with(base));
+        let no_filesystem = fs.is_empty()
+            || matches!(
+                fs.as_str(),
+                "swap" | "squashfs" | "LVM2_member" | "crypto_LUKS" | "linux_raid_member"
+            );
+        if virtual_node
+            || no_filesystem
+            || !matches!(kind.as_str(), "part" | "disk" | "crypt")
+            || (!mount.is_empty() && system_mount(&mount))
+        {
+            continue;
+        }
+        let set_aside = ["/media/", "/run/media/", "/mnt/"]
+            .iter()
+            .any(|base| mount.starts_with(base) || mount == base.trim_end_matches('/'));
+        if !removable && !mount.is_empty() && !set_aside {
+            continue;
+        }
+        out.push(Volume {
+            device: path,
+            label: field("LABEL"),
+            model: field("MODEL").trim().to_string(),
+            size: field("SIZE"),
+            fs,
+            removable,
+            mount: (!mount.is_empty()).then(|| PathBuf::from(mount)),
+        });
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn volumes() -> Vec<Volume> {
+    let listed = std::process::Command::new("lsblk")
+        .args([
+            "-P",
+            "-n",
+            "-o",
+            "NAME,PATH,LABEL,MOUNTPOINT,RM,HOTPLUG,FSTYPE,SIZE,TYPE,MODEL",
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| volumes_from_lsblk(&String::from_utf8_lossy(&o.stdout)));
+    match listed {
+        Some(volumes) => volumes,
+        None => mounted_volumes()
+            .into_iter()
+            .map(|mount| Volume {
+                mount: Some(mount),
+                ..Volume::default()
+            })
+            .collect(),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn volumes() -> Vec<Volume> {
+    mounted_volumes()
+        .into_iter()
+        .map(|mount| Volume {
+            mount: Some(mount),
+            ..Volume::default()
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn udisks_object(device: &str) -> String {
+    let name = device.trim_start_matches("/dev/");
+    let mut out = String::from("/org/freedesktop/UDisks2/block_devices/");
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else {
+            out.push_str(&format!("_{:02x}", c as u32));
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn run_device_command(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let text = String::from_utf8_lossy(&output.stderr);
+        let text = text.trim();
+        let text = text.rsplit_once(": ").map_or(text, |(_, last)| last);
+        Err(text.trim_end_matches('.').to_string())
+    }
+}
+
+/// Mounts the volume through UDisks and tells where it landed.
+#[cfg(target_os = "linux")]
+pub(crate) fn mount_device(device: &str) -> Result<PathBuf, String> {
+    let said = run_device_command("udisksctl", &["mount", "-b", device])?;
+    said.rsplit_once(" at ")
+        .map(|(_, at)| PathBuf::from(at.trim_end_matches('.')))
+        .ok_or(said)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn unmount_device(device: &str) -> Result<(), String> {
+    run_device_command("udisksctl", &["unmount", "-b", device]).map(|_| ())
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn label_device(device: &str, label: &str) -> Result<(), String> {
+    let object = udisks_object(device);
+    run_device_command(
+        "gdbus",
+        &[
+            "call",
+            "--system",
+            "--dest",
+            "org.freedesktop.UDisks2",
+            "--object-path",
+            &object,
+            "--method",
+            "org.freedesktop.UDisks2.Filesystem.SetLabel",
+            label,
+            "{}",
+        ],
+    )
+    .map(|_| ())
+}
+
+/// The file systems the format box offers, in the order it shows them.
+pub(crate) const FORMATS: [&str; 4] = ["ext4", "exfat", "vfat", "ntfs"];
+
+#[cfg(target_os = "linux")]
+pub(crate) fn format_device(device: &str, fs: &str, label: &str) -> Result<(), String> {
+    let object = udisks_object(device);
+    let options = if label.is_empty() {
+        "{}".to_string()
+    } else {
+        format!(
+            "{{'label': <'{}'>}}",
+            label.replace('\\', "\\\\").replace('\'', "\\'")
+        )
+    };
+    run_device_command(
+        "gdbus",
+        &[
+            "call",
+            "--system",
+            "--dest",
+            "org.freedesktop.UDisks2",
+            "--object-path",
+            &object,
+            "--method",
+            "org.freedesktop.UDisks2.Block.Format",
+            fs,
+            &options,
+        ],
+    )
+    .map(|_| ())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn mount_device(_device: &str) -> Result<PathBuf, String> {
+    Err(String::new())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn unmount_device(_device: &str) -> Result<(), String> {
+    Err(String::new())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn label_device(_device: &str, _label: &str) -> Result<(), String> {
+    Err(String::new())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn format_device(_device: &str, _fs: &str, _label: &str) -> Result<(), String> {
+    Err(String::new())
 }
 
 impl AppController {
@@ -1102,6 +1387,108 @@ impl AppController {
             .collect()
     }
 
+    /// Re-reads the volumes every few seconds and collects what a format
+    /// job in the background has to say.
+    pub(crate) fn refresh_volumes(&mut self) {
+        let due = self
+            .volumes_at
+            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(3));
+        if due {
+            self.volumes = volumes();
+            self.volumes_at = Some(std::time::Instant::now());
+        }
+        let finished = self
+            .volume_job
+            .as_ref()
+            .and_then(|job| job.lock().ok().and_then(|mut slot| slot.take()));
+        if let Some(outcome) = finished {
+            self.volume_job = None;
+            self.volumes_at = None;
+            self.report_device(outcome);
+        }
+    }
+
+    pub(crate) fn volume_at(&self, path: &Path) -> Option<&Volume> {
+        self.volumes
+            .iter()
+            .find(|v| v.mount.as_deref() == Some(path) || Path::new(&v.device) == path)
+    }
+
+    fn report_device(&mut self, outcome: Result<String, String>) {
+        let s = self.s();
+        match outcome {
+            Ok(said) => {
+                self.state.notice = said;
+                self.state.error = false;
+            }
+            Err(e) => {
+                self.state.notice = if e.is_empty() {
+                    s.no_device_tool.to_string()
+                } else {
+                    fill(s.device_failed, &[("error", &e)])
+                };
+                self.state.error = true;
+            }
+        }
+    }
+
+    /// Mounts the volume and tells where it landed, so the caller can go there.
+    pub(crate) fn mount_volume(&mut self, volume: &Volume) -> Option<PathBuf> {
+        let s = self.s();
+        let name = volume.name(s.volume_word);
+        let outcome = mount_device(&volume.device);
+        self.volumes_at = None;
+        match outcome {
+            Ok(at) => {
+                self.report_device(Ok(fill(
+                    s.mounted_at,
+                    &[("name", &name), ("path", &at.display().to_string())],
+                )));
+                Some(at)
+            }
+            Err(e) => {
+                self.report_device(Err(e));
+                None
+            }
+        }
+    }
+
+    pub(crate) fn unmount_volume(&mut self, volume: &Volume) {
+        let s = self.s();
+        let name = volume.name(s.volume_word);
+        let outcome =
+            unmount_device(&volume.device).map(|()| fill(s.unmounted, &[("name", &name)]));
+        self.volumes_at = None;
+        self.report_device(outcome);
+    }
+
+    pub(crate) fn label_volume(&mut self, volume: &Volume, label: &str) {
+        let s = self.s();
+        let name = volume.name(s.volume_word);
+        let outcome = label_device(&volume.device, label)
+            .map(|()| fill(s.labeled, &[("name", &name), ("label", label)]));
+        self.volumes_at = None;
+        self.report_device(outcome);
+    }
+
+    /// Formats in the background; `refresh_volumes` reports the outcome.
+    pub(crate) fn format_volume(&mut self, volume: &Volume, fs: &str, label: &str) {
+        let s = self.s();
+        let name = volume.name(s.volume_word);
+        self.state.notice = fill(s.formatting, &[("name", &name)]);
+        self.state.error = false;
+        let slot: DeviceJob = Arc::new(Mutex::new(None));
+        self.volume_job = Some(slot.clone());
+        let (device, fs, label) = (volume.device.clone(), fs.to_string(), label.to_string());
+        let done = fill(s.formatted, &[("name", &name)]);
+        std::thread::spawn(move || {
+            let outcome = format_device(&device, &fs, &label).map(|()| done);
+            if let Ok(mut slot) = slot.lock() {
+                *slot = Some(outcome);
+            }
+        });
+    }
+
     pub(crate) fn devices(&self) -> Vec<Place> {
         let s = self.s();
         let mut out = Vec::new();
@@ -1125,15 +1512,15 @@ impl AppController {
                 label: s.computer_word.to_string(),
                 path: PathBuf::from("/"),
             });
-            for root in mounted_volumes() {
-                let label = root
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default();
+            for volume in &self.volumes {
                 out.push(Place {
-                    kind: PlaceKind::Drive,
-                    label,
-                    path: root,
+                    kind: if volume.removable {
+                        PlaceKind::Removable
+                    } else {
+                        PlaceKind::Drive
+                    },
+                    label: volume.name(s.volume_word),
+                    path: volume.place(),
                 });
             }
         }

@@ -384,3 +384,28 @@ fn a_desktop_file_is_an_opener_when_it_names_the_mime_type() {
         vec!["/opt/my app/bin", "--open", "%f"]
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn only_volumes_that_are_not_the_system_count_as_devices() {
+    use super::disk::volumes_from_lsblk;
+    let text = concat!(
+        "NAME=\"loop0\" PATH=\"/dev/loop0\" LABEL=\"\" MOUNTPOINT=\"/snap/core/1\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"squashfs\" SIZE=\"74M\" TYPE=\"loop\" MODEL=\"\"\n",
+        "NAME=\"vda\" PATH=\"/dev/vda\" LABEL=\"\" MOUNTPOINT=\"\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"\" SIZE=\"50G\" TYPE=\"disk\" MODEL=\"\"\n",
+        "NAME=\"vda1\" PATH=\"/dev/vda1\" LABEL=\"cloudimg-rootfs\" MOUNTPOINT=\"/\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"ext4\" SIZE=\"49G\" TYPE=\"part\" MODEL=\"\"\n",
+        "NAME=\"vda15\" PATH=\"/dev/vda15\" LABEL=\"UEFI\" MOUNTPOINT=\"/boot/efi\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"vfat\" SIZE=\"99M\" TYPE=\"part\" MODEL=\"\"\n",
+        "NAME=\"vda2\" PATH=\"/dev/vda2\" LABEL=\"\" MOUNTPOINT=\"[SWAP]\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"swap\" SIZE=\"2G\" TYPE=\"part\" MODEL=\"\"\n",
+        "NAME=\"vda3\" PATH=\"/dev/vda3\" LABEL=\"\" MOUNTPOINT=\"/home\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"ext4\" SIZE=\"20G\" TYPE=\"part\" MODEL=\"\"\n",
+        "NAME=\"vdb\" PATH=\"/dev/vdb\" LABEL=\"\" MOUNTPOINT=\"/mnt/host_share\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"ext4\" SIZE=\"10G\" TYPE=\"disk\" MODEL=\"\"\n",
+        "NAME=\"sdb1\" PATH=\"/dev/sdb1\" LABEL=\"My\\x20Stick\" MOUNTPOINT=\"\" RM=\"1\" HOTPLUG=\"1\" FSTYPE=\"vfat\" SIZE=\"7.5G\" TYPE=\"part\" MODEL=\"\"\n",
+        "NAME=\"sdc1\" PATH=\"/dev/sdc1\" LABEL=\"\" MOUNTPOINT=\"/media/me/disk\" RM=\"1\" HOTPLUG=\"1\" FSTYPE=\"exfat\" SIZE=\"1.8T\" TYPE=\"part\" MODEL=\"Elements\"\n",
+    );
+    let found = volumes_from_lsblk(text);
+    let devices: Vec<&str> = found.iter().map(|v| v.device.as_str()).collect();
+    assert_eq!(devices, vec!["/dev/vdb", "/dev/sdb1", "/dev/sdc1"]);
+    assert_eq!(found[0].name("volume"), "host_share");
+    assert_eq!(found[1].name("volume"), "My Stick");
+    assert!(found[1].mount.is_none() && found[1].removable);
+    assert_eq!(found[1].place(), std::path::PathBuf::from("/dev/sdb1"));
+    assert_eq!(found[2].name("volume"), "Elements 1.8T");
+}
