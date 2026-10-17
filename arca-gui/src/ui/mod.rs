@@ -608,25 +608,30 @@ impl Shell {
             .show(ctx, |ui| {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
                     ui.set_min_width(180.0);
-                    let entry = widgets::menu_entry;
-                    if entry(
-                        ui,
-                        egui_phosphor::regular::ARROW_RIGHT,
-                        s.move_here,
-                        "",
-                        true,
-                    )
-                    .clicked()
-                    {
-                        choice = Some(Some(false));
-                    }
-                    if entry(ui, egui_phosphor::regular::COPY, s.copy_here, "", true).clicked() {
-                        choice = Some(Some(true));
-                    }
-                    ui.separator();
-                    if entry(ui, egui_phosphor::regular::X, s.cancel, "Esc", true).clicked() {
-                        choice = Some(None);
-                    }
+                    // Justified, as egui's own menus are, so each entry runs
+                    // the whole width and the hover and click do too.
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                        let entry = widgets::menu_entry;
+                        if entry(
+                            ui,
+                            egui_phosphor::regular::ARROW_RIGHT,
+                            s.move_here,
+                            "",
+                            true,
+                        )
+                        .clicked()
+                        {
+                            choice = Some(Some(false));
+                        }
+                        if entry(ui, egui_phosphor::regular::COPY, s.copy_here, "", true).clicked()
+                        {
+                            choice = Some(Some(true));
+                        }
+                        ui.separator();
+                        if entry(ui, egui_phosphor::regular::X, s.cancel, "Esc", true).clicked() {
+                            choice = Some(None);
+                        }
+                    });
                 });
             });
         let away = ctx.input(|i| {
