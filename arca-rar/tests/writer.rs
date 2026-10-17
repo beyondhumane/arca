@@ -147,10 +147,10 @@ fn assert_roundtrip(archive: &Path, expected: &[(String, Option<Vec<u8>>)]) {
 #[test]
 fn every_level_roundtrips_through_the_reader() {
     for (level, dir) in [
-        (Level::Store, "store"),
-        (Level::Fast, "fast"),
-        (Level::Normal, "normal"),
-        (Level::Best, "best"),
+        (Level::STORE, "store"),
+        (Level::FAST, "fast"),
+        (Level::NORMAL, "normal"),
+        (Level::BEST, "best"),
     ] {
         let tree = fixture_tree();
         let out_dir = tree.root.path().join(dir);
@@ -189,7 +189,7 @@ fn every_level_roundtrips_through_the_reader() {
             .iter()
             .find(|e| e.name == "folder/nested/text.bin")
             .unwrap();
-        if level == Level::Store {
+        if level == Level::STORE {
             assert_eq!(random.method, arca_core::Method::Store, "{dir}");
             assert_eq!(text.compressed_size, text.size, "{dir}");
         } else {
@@ -476,7 +476,7 @@ fn cancelling_before_and_during_the_write_leaves_nothing_behind() {
     let sources = [source(&small, "small.txt"), source(&big, "big.bin")];
     let archive = dir.path().join("new.rar");
 
-    let error = create_rar(&archive, &sources, &options(Level::Normal), &|_, _, _| {
+    let error = create_rar(&archive, &sources, &options(Level::NORMAL), &|_, _, _| {
         false
     })
     .unwrap_err();
@@ -486,7 +486,7 @@ fn cancelling_before_and_during_the_write_leaves_nothing_behind() {
     let error = create_rar(
         &archive,
         &sources,
-        &options(Level::Normal),
+        &options(Level::NORMAL),
         &|done, _, _| done < 1,
     )
     .unwrap_err();
@@ -497,7 +497,7 @@ fn cancelling_before_and_during_the_write_leaves_nothing_behind() {
     let error = create_rar(
         &archive,
         &sources,
-        &options(Level::Normal),
+        &options(Level::NORMAL),
         &|_, _, name| {
             if name == "big.bin" {
                 seen.fetch_add(1, Ordering::Relaxed) < 2
@@ -514,7 +514,7 @@ fn cancelling_before_and_during_the_write_leaves_nothing_behind() {
     let error = create_rar(
         &archive,
         &sources,
-        &options(Level::Store),
+        &options(Level::STORE),
         &|done, total, _| done < total,
     )
     .unwrap_err();
@@ -533,7 +533,7 @@ fn a_false_from_the_last_callback_cancels_before_publication() {
     let archive = dir.path().join("new.rar");
 
     let calls = AtomicUsize::new(0);
-    create_rar(&archive, &sources, &options(Level::Fast), &|_, _, _| {
+    create_rar(&archive, &sources, &options(Level::FAST), &|_, _, _| {
         calls.fetch_add(1, Ordering::Relaxed);
         true
     })
@@ -545,7 +545,7 @@ fn a_false_from_the_last_callback_cancels_before_publication() {
 
     for refuse_at in [total_calls - 1, total_calls - 2] {
         let calls = AtomicUsize::new(0);
-        let error = create_rar(&archive, &sources, &options(Level::Fast), &|_, _, _| {
+        let error = create_rar(&archive, &sources, &options(Level::FAST), &|_, _, _| {
             calls.fetch_add(1, Ordering::Relaxed) != refuse_at
         })
         .unwrap_err();
@@ -572,7 +572,7 @@ fn sources_that_change_during_the_write_fail_without_output() {
     let error = create_rar(
         &archive,
         &[source(&a, "a.bin"), source(&b, "b.bin")],
-        &options(Level::Normal),
+        &options(Level::NORMAL),
         &|_, _, name| {
             if name == "b.bin" {
                 grown.call_once(|| {
@@ -593,7 +593,7 @@ fn sources_that_change_during_the_write_fail_without_output() {
     let error = create_rar(
         &archive,
         &[source(&a, "a.bin"), source(&b, "b.bin")],
-        &options(Level::Store),
+        &options(Level::STORE),
         &|_, _, name| {
             if name == "b.bin" {
                 removed.call_once(|| fs::remove_file(&a).unwrap());
@@ -615,7 +615,7 @@ fn sources_that_change_during_the_write_fail_without_output() {
     let error = create_rar(
         &archive,
         &[source(&b, "b.bin")],
-        &options(Level::Fast),
+        &options(Level::FAST),
         &|_, _, _| {
             if calls.fetch_add(1, Ordering::Relaxed) == 1 {
                 let swap = dir.path().join("swap.bin");
@@ -657,7 +657,7 @@ fn size_and_count_limits_are_checked_before_reading_anything() {
         let error = create_rar(
             &archive,
             &[source(&huge, "huge.bin")],
-            &options(Level::Store),
+            &options(Level::STORE),
             &|_, _, _| true,
         )
         .unwrap_err();
@@ -669,7 +669,7 @@ fn size_and_count_limits_are_checked_before_reading_anything() {
         sparse.set_len(create_limits::MAX_MEMBER_BYTES).unwrap();
         let five: Vec<Source> = (0..5).map(|i| source(&huge, &format!("h{i}"))).collect();
         let error =
-            create_rar(&archive, &five, &options(Level::Store), &|_, _, _| true).unwrap_err();
+            create_rar(&archive, &five, &options(Level::STORE), &|_, _, _| true).unwrap_err();
         assert!(
             matches!(&error, Error::Limit(m) if m.contains("16 GiB")),
             "{error}"
@@ -702,7 +702,7 @@ fn header_budget_is_bounded() {
     let error = create_rar(
         &dir.path().join("new.rar"),
         &sources,
-        &options(Level::Store),
+        &options(Level::STORE),
         &|_, _, _| true,
     )
     .unwrap_err();
@@ -737,17 +737,17 @@ fn empty_members_compress_under_the_managed_memory_ledger() {
         ("nested/also-empty".to_string(), None),
     ];
     for (level, name) in [
-        (Level::Store, "store.rar"),
-        (Level::Fast, "fast.rar"),
-        (Level::Normal, "normal.rar"),
-        (Level::Best, "best.rar"),
+        (Level::STORE, "store.rar"),
+        (Level::FAST, "fast.rar"),
+        (Level::NORMAL, "normal.rar"),
+        (Level::BEST, "best.rar"),
     ] {
         let archive = dir.path().join(name);
         create_rar(&archive, &sources, &options(level), &|_, _, _| true).unwrap();
         assert_roundtrip(&archive, &expected);
         let a = RarArchive::open(&archive, None).unwrap();
         let big = a.entries().iter().find(|e| e.name == "big.bin").unwrap();
-        if level == Level::Store {
+        if level == Level::STORE {
             assert_eq!(big.compressed_size, big.size, "{name}");
         } else {
             assert!(big.compressed_size < big.size / 4, "{name}");
@@ -787,7 +787,7 @@ fn sources_swapped_for_pipes_or_links_at_reopen_are_refused() {
             let error = create_rar(
                 &archive,
                 &[source(&a, "a.bin"), source(&b, "b.bin")],
-                &options(Level::Normal),
+                &options(Level::NORMAL),
                 &|_, _, name| {
                     if name == "b.bin" {
                         once.call_once(|| f(&a));
@@ -846,7 +846,7 @@ fn an_output_that_appears_during_the_write_is_preserved() {
     let error = create_rar(
         &archive,
         &[source(&a, "a.bin")],
-        &options(Level::Fast),
+        &options(Level::FAST),
         &|_, _, _| {
             // The first callback scans `a`; later ones come from the write.
             if calls.fetch_add(1, Ordering::Relaxed) >= 2 {
@@ -872,10 +872,10 @@ fn an_output_that_appears_during_the_write_is_preserved() {
 fn seeded_stress_trees_roundtrip_at_every_level() {
     bounded(Duration::from_secs(240), || {
         for (seed, level) in [
-            (0x5eed_1001u64, Level::Store),
-            (0x5eed_1002, Level::Fast),
-            (0x5eed_1003, Level::Normal),
-            (0x5eed_1004, Level::Best),
+            (0x5eed_1001u64, Level::STORE),
+            (0x5eed_1002, Level::FAST),
+            (0x5eed_1003, Level::NORMAL),
+            (0x5eed_1004, Level::BEST),
         ] {
             let mut rng = Xorshift(seed);
             let dir = tempfile::tempdir().unwrap();
@@ -1008,10 +1008,10 @@ fn external_tools_can_read_what_arca_writes() {
         return;
     };
     for (level, label) in [
-        (Level::Store, "store"),
-        (Level::Fast, "fast"),
-        (Level::Normal, "normal"),
-        (Level::Best, "best"),
+        (Level::STORE, "store"),
+        (Level::FAST, "fast"),
+        (Level::NORMAL, "normal"),
+        (Level::BEST, "best"),
     ] {
         let tree = fixture_tree();
         let archive = tree.root.path().join(format!("{label}.rar"));

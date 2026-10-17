@@ -32,7 +32,7 @@ impl Room {
             &[source],
             Format::SevenZ,
             Codec::Deflate,
-            Level::Normal,
+            Level::NORMAL,
             &|_, _, _| true,
             (password, hidden),
         )

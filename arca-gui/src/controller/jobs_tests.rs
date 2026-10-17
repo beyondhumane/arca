@@ -243,7 +243,7 @@ fn two_real_extractions_finish_with_their_own_results() {
         &[second_dir],
         Format::Zip,
         Codec::Deflate,
-        Level::Normal,
+        Level::NORMAL,
         &|_, _, _| true,
         (None, false),
     )
@@ -458,7 +458,7 @@ fn an_edit_can_still_be_undone_after_the_archive_is_read_again() {
         &[source],
         crate::Format::Zip,
         Codec::Deflate,
-        Level::Normal,
+        Level::NORMAL,
         &|_, _, _| true,
         (None, false),
     )

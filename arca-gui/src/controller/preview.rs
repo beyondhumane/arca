@@ -538,7 +538,7 @@ mod tests {
                     name,
                     bytes,
                     arca_core::Codec::Store,
-                    arca_core::Level::Store,
+                    arca_core::Level::STORE,
                     None,
                     password,
                 )
@@ -980,7 +980,7 @@ mod tests {
                     inputs: vec![],
                     dir: String::new(),
                     codec: Codec::Store,
-                    level: Level::Store,
+                    level: Level::STORE,
                     password: None,
                 },
             ] {

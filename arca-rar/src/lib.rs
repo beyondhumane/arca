@@ -145,7 +145,7 @@ pub struct CreateOptions {
 impl Default for CreateOptions {
     fn default() -> Self {
         Self {
-            level: Level::Normal,
+            level: Level::NORMAL,
         }
     }
 }

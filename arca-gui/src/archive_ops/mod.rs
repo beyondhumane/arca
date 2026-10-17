@@ -184,7 +184,7 @@ pub(crate) fn parse_args() -> Startup {
             inputs: rest,
             format: Format::Zip,
             codec: Codec::Deflate,
-            level: Level::Normal,
+            level: Level::NORMAL,
             password: None,
             hide_names: false,
         }),
@@ -668,7 +668,7 @@ pub(crate) fn run_job_blocking(
                 source: None,
                 name,
                 codec: Codec::Store,
-                level: Level::Store,
+                level: Level::STORE,
             }];
             let done = arca_zip::add_entries(&archive, &temp, password.as_deref(), &extra, notify);
             if let Err(e) = done {

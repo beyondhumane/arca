@@ -187,7 +187,7 @@ fn sevenz_creation_preserves_levels_password_and_hidden_names() {
     app.set_create_format(Format::SevenZ);
     app.state.add_password = "secret".into();
     app.state.hide_names = true;
-    for level in [Level::Store, Level::Fast, Level::Normal, Level::Best] {
+    for level in [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST] {
         app.state.level = level;
         let Some(Job::Compress {
             out,
@@ -241,7 +241,7 @@ fn sevenz_creation_conflicts_preserve_the_original_and_open_the_renamed_output()
             inputs: vec![input],
             format: Format::SevenZ,
             codec: Codec::Deflate,
-            level: Level::Normal,
+            level: Level::NORMAL,
             password: None,
             hide_names: false,
         });

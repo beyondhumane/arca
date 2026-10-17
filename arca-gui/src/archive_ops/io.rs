@@ -1312,7 +1312,7 @@ mod tests {
             "big.bin",
             std::io::repeat(7).take(3 * STEP),
             Codec::Deflate,
-            Level::Normal,
+            Level::NORMAL,
             None,
         )
         .unwrap();

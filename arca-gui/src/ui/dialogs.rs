@@ -739,7 +739,7 @@ impl Shell {
                 egui::ComboBox::from_id_salt("level")
                     .selected_text(self.controller.level_name(level))
                     .show_ui(ui, |ui| {
-                        for candidate in [Level::Store, Level::Fast, Level::Normal, Level::Best] {
+                        for candidate in [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST] {
                             ui.selectable_value(
                                 &mut chosen,
                                 candidate,
@@ -888,17 +888,16 @@ impl Shell {
             self.controller.state.codec = codec;
         }
         let level = self.controller.state.level;
-        let levels = [Level::Store, Level::Fast, Level::Normal, Level::Best];
-        let mut at = levels.iter().position(|l| *l == level).unwrap_or(2) as f32;
+        let mut at = u32::from(level.get());
         let level_label = self.controller.level_name(level);
         let mut moved = false;
-        card(ui, s.level, Some(level_label), true, |ui| {
+        card(ui, s.level, Some(&level_label), true, |ui| {
             // The card lays inline controls out right to left.
             ui.label(RichText::new(s.max_word).size(12.0).color(hex(p.muted)));
             ui.spacing_mut().slider_width = 220.0;
             moved = ui
                 .add(
-                    egui::Slider::new(&mut at, 0.0..=3.0)
+                    egui::Slider::new(&mut at, u32::from(Level::MIN)..=u32::from(Level::MAX))
                         .step_by(1.0)
                         .show_value(false),
                 )
@@ -906,7 +905,7 @@ impl Shell {
             ui.label(RichText::new(s.min_word).size(12.0).color(hex(p.muted)));
         });
         if moved {
-            self.controller.state.level = levels[(at.round() as usize).min(3)];
+            self.controller.state.level = Level::new(at as u8);
         }
 
         if matches!(format, Format::Zip | Format::SevenZ) {

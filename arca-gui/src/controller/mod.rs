@@ -591,7 +591,7 @@ impl AppController {
                 started: None,
                 format: Format::Zip,
                 codec: Codec::Deflate,
-                level: Level::Normal,
+                level: Level::NORMAL,
                 into_subfolder: false,
                 pending_inputs: Vec::new(),
                 output_name: String::new(),
@@ -1285,13 +1285,20 @@ impl AppController {
     // What is picked, named the way it should land where it is dropped: the
     // folder on screen is the base, so dragging a folder out puts that folder
     // down rather than scattering what was inside it.
-    pub(crate) fn level_name(&self, l: Level) -> &'static str {
+    /// The level as the box shows it: the number, with its name when it is
+    /// one of the four named ones.
+    pub(crate) fn level_name(&self, l: Level) -> String {
         let s = self.s();
-        match l {
-            Level::Store => s.level_none,
-            Level::Fast => s.level_fast,
-            Level::Normal => s.level_normal,
-            Level::Best => s.level_best,
+        let name = match l {
+            Level::STORE => Some(s.level_none),
+            Level::FAST => Some(s.level_fast),
+            Level::NORMAL => Some(s.level_normal),
+            Level::BEST => Some(s.level_best),
+            _ => None,
+        };
+        match name {
+            Some(name) => format!("{l} \u{b7} {name}"),
+            None => l.to_string(),
         }
     }
     pub(crate) fn can_go_back(&self) -> bool {
@@ -2506,13 +2513,13 @@ mod compress_tests {
             controller.set_create_format(format);
             let output = format!("chosen.{}", format.extension());
             controller.state.output_name = output.clone();
-            controller.state.level = Level::Best;
+            controller.state.level = Level::BEST;
             controller.state.add_password = "fixture-password".into();
             for input in ["a.txt", "folder"] {
                 controller.dispatch(AppAction::PrepareCompress(vec![PathBuf::from(input)]));
                 assert_eq!(controller.state.format, format);
                 assert_eq!(controller.state.output_name, output);
-                assert_eq!(controller.state.level, Level::Best);
+                assert_eq!(controller.state.level, Level::BEST);
                 assert_eq!(controller.state.add_password, "fixture-password");
                 assert!(matches!(controller.compression_job(), Some(Job::Compress {
                     format: job_format, ..
@@ -2555,7 +2562,7 @@ mod compress_tests {
             inputs: vec![std::env::temp_dir().join("arca-close-test-input")],
             format: Format::Zip,
             codec: Codec::Deflate,
-            level: Level::Normal,
+            level: Level::NORMAL,
             password,
             hide_names: false,
         }
