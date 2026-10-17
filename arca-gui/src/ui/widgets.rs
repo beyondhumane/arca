@@ -342,8 +342,11 @@ pub(crate) fn stepper(ui: &mut Ui, shown: &str, can_dec: bool, can_inc: bool) ->
         .stroke(Stroke::new(1.0, hex(p.border)))
         .corner_radius(6)
         .show(ui, |ui| {
-            // Always minus, number, plus, even inside a right-to-left row.
-            ui.horizontal(|ui| {
+            // Always minus, number, plus: `horizontal` would follow a
+            // right-to-left parent and turn it round.
+            let want = egui::vec2(2.0 * (tall + 6.0) + tall + 10.0, tall);
+            let layout = egui::Layout::left_to_right(egui::Align::Center);
+            ui.allocate_ui_with_layout(want, layout, |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 let side = |ui: &mut Ui, label: &str, on: bool| {
                     ui.add_enabled(
