@@ -10,7 +10,7 @@ pub(crate) fn dialog_width(kind: ModalKind, window: f32) -> f32 {
         ModalKind::Settings => 1040.0,
         ModalKind::Shortcuts => 720.0,
         ModalKind::Search => 640.0,
-        ModalKind::Add => 600.0,
+        ModalKind::Add => 640.0,
         ModalKind::Conflict => 560.0,
         _ => 448.0,
     };
@@ -752,76 +752,212 @@ impl Shell {
             });
     }
 
+    /// The compress box, in the language of the settings pages: a header
+    /// with the count and size, cards for the name, the place, the format
+    /// and the password, and the content as a list with sizes.
     fn add_dialog(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
-        heading(ui, s.add_to_archive);
-        ui.add_space(6.0);
-        ui.label(s.output_name);
-        ui.add(
-            super::widgets::field(ui, &mut self.controller.state.output_name)
-                .desired_width(f32::INFINITY),
-        );
-        ui.add_space(6.0);
-        self.pickers(ui);
-        let format = self.controller.state.format;
-        if matches!(format, Format::Zip | Format::SevenZ) {
-            ui.add_space(6.0);
+        let inputs = self.controller.state.pending_inputs.clone();
+        let count = inputs.len();
+        let sizes: Vec<Option<u64>> = inputs
+            .iter()
+            .map(|path| {
+                std::fs::metadata(path)
+                    .ok()
+                    .filter(|m| m.is_file())
+                    .map(|m| m.len())
+            })
+            .collect();
+        let total: u64 = sizes.iter().flatten().sum();
+        ui.horizontal(|ui| {
+            ui.label(
+                super::theme::icon_text(icon::ARCHIVE)
+                    .size(30.0)
+                    .color(hex(p.focus)),
+            );
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                heading(ui, s.compress_title);
+                let summary = if total > 0 {
+                    format!("{count} {} · {}", s.items_word, crate::model::human(total))
+                } else {
+                    format!("{count} {}", s.items_word)
+                };
+                ui.label(RichText::new(summary).color(hex(p.muted)));
+            });
+        });
+        ui.add_space(12.0);
+
+        card(ui, s.output_name, None, false, |ui| {
             ui.add(
-                super::widgets::field(ui, &mut self.controller.state.add_password)
-                    .password(true)
-                    .hint_text(s.password_optional)
+                super::widgets::field(ui, &mut self.controller.state.output_name)
                     .desired_width(f32::INFINITY),
             );
-            if format == Format::SevenZ {
-                ui.checkbox(&mut self.controller.state.hide_names, s.hide_names);
+        });
+        let place = inputs
+            .first()
+            .and_then(|path| path.parent())
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_else(|| format!("/{}", self.controller.state.current_dir));
+        card(ui, s.save_in, Some(&place), true, |_ui| {});
+
+        let format = self.controller.state.format;
+        let formats = AppController::create_formats();
+        let labels: Vec<(&str, bool)> = formats.iter().map(|f| (f.label(), *f == format)).collect();
+        let mut pick = None;
+        card(ui, s.format, None, false, |ui| {
+            pick = segmented(ui, &labels)
+        });
+        if let Some(i) = pick {
+            if formats[i] != format {
+                self.controller.set_create_format(formats[i]);
+            }
+        }
+        let format = self.controller.state.format;
+        let is_zip = format == Format::Zip;
+        let is_lzma2 = matches!(format, Format::SevenZ | Format::TarXz | Format::Xz);
+        let codec = self.controller.state.codec;
+        let mut pick = None;
+        card(ui, s.compressor, None, false, |ui| {
+            if is_lzma2 {
+                ui.label(RichText::new("LZMA2").color(hex(p.muted)));
+            } else if format == Format::Rar {
+                ui.label(RichText::new("RAR").color(hex(p.muted)));
+            } else if is_zip {
+                let codecs = [Codec::Store, Codec::Deflate, Codec::Zstd];
+                let names: Vec<(&str, bool)> = codecs
+                    .iter()
+                    .map(|c| (self.controller.codec_name(*c), *c == codec))
+                    .collect();
+                pick = segmented(ui, &names).map(|i| codecs[i]);
+            } else {
+                ui.label(RichText::new(self.controller.codec_name(codec)).color(hex(p.muted)));
+            }
+        });
+        if let Some(codec) = pick {
+            self.controller.state.codec = codec;
+        }
+        let level = self.controller.state.level;
+        let levels = [Level::Store, Level::Fast, Level::Normal, Level::Best];
+        let names: Vec<(&str, bool)> = levels
+            .iter()
+            .map(|l| (self.controller.level_name(*l), *l == level))
+            .collect();
+        let mut pick = None;
+        card(ui, s.level, None, false, |ui| pick = segmented(ui, &names));
+        if let Some(i) = pick {
+            self.controller.state.level = levels[i];
+        }
+
+        if matches!(format, Format::Zip | Format::SevenZ) {
+            let show = self.add_show_password;
+            let mut toggle = false;
+            let mut hide_names = self.controller.state.hide_names;
+            let mut hide_changed = false;
+            card(
+                ui,
+                s.password_word,
+                Some(s.password_optional),
+                false,
+                |ui| {
+                    ui.horizontal(|ui| {
+                        let eye = if show { icon::EYE_SLASH } else { icon::EYE };
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            toggle = icon_button(ui, eye, s.show_password_word, true).clicked();
+                            ui.add(
+                                super::widgets::field(ui, &mut self.controller.state.add_password)
+                                    .password(!show)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
+                    });
+                    if format == Format::SevenZ {
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            hide_changed = switch(ui, &mut hide_names, s.hide_names).changed();
+                            ui.label(s.hide_names);
+                        });
+                    }
+                },
+            );
+            if toggle {
+                self.add_show_password = !show;
+            }
+            if hide_changed {
+                self.controller.state.hide_names = hide_names;
             }
         }
         if let Some(note) = self.controller.create_policy_note() {
             ui.label(RichText::new(note).small().color(hex(p.warning)));
+            ui.add_space(6.0);
         }
-        ui.add_space(8.0);
-        let count = self.controller.state.pending_inputs.len();
+
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{count} {}", s.items_word)).strong());
+            ui.label(RichText::new(s.content_word).strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_enabled(count > 0, egui::Button::new(s.remove_all))
-                    .clicked()
-                {
+                if secondary_button(ui, s.remove_all, count > 0).clicked() {
                     self.controller.state.pending_inputs.clear();
                 }
                 ui.menu_button(format!("{}  {}", icon::PLUS, s.add_word), |ui| {
-                    if ui.button(s.add_files_word).clicked() {
+                    if menu_entry(ui, icon::FILE_PLUS, s.add_files_word, "", true).clicked() {
                         self.begin_dialog(DialogKind::PickInputs { folders: false });
                     }
-                    if ui.button(s.add_folders_word).clicked() {
+                    if menu_entry(ui, icon::FOLDER_PLUS, s.add_folders_word, "", true).clicked() {
                         self.begin_dialog(DialogKind::PickInputs { folders: true });
                     }
                 });
             });
         });
+        ui.add_space(4.0);
         let mut remove = None;
         egui::Frame::new()
-            .fill(hex(p.background))
+            .fill(super::theme::alpha(p.background, 0.55))
+            .stroke(egui::Stroke::new(1.0, super::theme::alpha(p.border, 0.6)))
             .corner_radius(6)
-            .inner_margin(6)
+            .inner_margin(egui::Margin::symmetric(8, 6))
             .show(ui, |ui| {
-                ui.set_min_height(80.0);
                 ui.set_width(ui.available_width());
+                ui.set_min_height(96.0);
                 if count == 0 {
-                    ui.label(RichText::new(s.drop_inputs_here).color(hex(p.muted)));
+                    ui.add_space(30.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new(s.drop_inputs_here).color(hex(p.muted)));
+                    });
+                    return;
                 }
                 egui::ScrollArea::vertical()
-                    .max_height(160.0)
+                    .max_height(180.0)
                     .show(ui, |ui| {
-                        for (index, path) in self.controller.state.pending_inputs.iter().enumerate()
-                        {
+                        for (index, path) in inputs.iter().enumerate() {
                             ui.horizontal(|ui| {
-                                if icon_button(ui, icon::X, s.remove_input, true).clicked() {
-                                    remove = Some(index);
-                                }
-                                ui.add(egui::Label::new(path.display().to_string()).truncate());
+                                let is_dir = sizes[index].is_none() && path.is_dir();
+                                let glyph = if is_dir { icon::FOLDER } else { icon::FILE };
+                                ui.label(
+                                    super::theme::icon_text(glyph)
+                                        .size(15.0)
+                                        .color(hex(if is_dir { p.focus } else { p.muted })),
+                                );
+                                let name = path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| path.display().to_string());
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if icon_button(ui, icon::X, s.remove_input, true).clicked()
+                                        {
+                                            remove = Some(index);
+                                        }
+                                        let size = match sizes[index] {
+                                            Some(bytes) => crate::model::human(bytes),
+                                            None if is_dir => s.folder_word.to_string(),
+                                            None => String::new(),
+                                        };
+                                        ui.label(RichText::new(size).color(hex(p.muted)));
+                                        ui.add(egui::Label::new(name).truncate());
+                                    },
+                                );
                             });
                         }
                     });
@@ -829,10 +965,11 @@ impl Shell {
         if let Some(index) = remove {
             self.controller.state.pending_inputs.remove(index);
         }
+        ui.add_space(4.0);
         let mut start = false;
         let mut cancel = false;
         Self::footer_buttons(ui, |ui| {
-            start = primary_button(ui, s.start, count > 0).clicked();
+            start = primary_button(ui, s.compress_title, count > 0).clicked();
             cancel = secondary_button(ui, s.cancel, true).clicked();
         });
         if start {

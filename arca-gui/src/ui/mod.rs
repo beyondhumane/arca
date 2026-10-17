@@ -222,6 +222,8 @@ pub(crate) struct Shell {
     conflict_name: Option<(String, String)>,
     /// "Apply to all" in the conflict box.
     conflict_all: bool,
+    /// The password in the compress box shown in clear.
+    add_show_password: bool,
     anchor: Option<(egui::Id, egui::Pos2)>,
     search: Option<search::Search>,
     decorated: bool,
@@ -283,6 +285,7 @@ impl Shell {
             row_drop_hover: false,
             conflict_name: None,
             conflict_all: false,
+            add_show_password: false,
             anchor: None,
             search: None,
             decorated: system_title_bar(&settings_now),

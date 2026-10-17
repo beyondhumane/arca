@@ -29,7 +29,7 @@ fn dialogs_fit_compact_and_normal_viewports() {
             assert!(dialog_max_height(height) >= 160.);
         }
     }
-    assert_eq!(dialog_width(ModalKind::Add, NORMAL_SIZE.0), 600.);
+    assert_eq!(dialog_width(ModalKind::Add, NORMAL_SIZE.0), 640.);
     assert_eq!(dialog_width(ModalKind::Settings, 1200.), 1040.);
 }
 
