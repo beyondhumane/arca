@@ -841,34 +841,45 @@ impl Shell {
         }
 
         let format = self.controller.state.format;
-        let formats = AppController::create_formats();
-        let labels: Vec<(&str, bool)> = formats.iter().map(|f| (f.label(), *f == format)).collect();
-        let mut pick = None;
-        card(ui, s.format, None, false, |ui| {
-            pick = segmented(ui, &labels)
+        let mut chosen = format;
+        card(ui, s.format, None, true, |ui| {
+            egui::ComboBox::from_id_salt("compress-format")
+                .selected_text(format.label())
+                .width(200.0)
+                .show_ui(ui, |ui| {
+                    for candidate in AppController::create_formats() {
+                        ui.selectable_value(&mut chosen, candidate, candidate.label());
+                    }
+                });
         });
-        if let Some(i) = pick {
-            if formats[i] != format {
-                self.controller.set_create_format(formats[i]);
-            }
+        if chosen != format {
+            self.controller.set_create_format(chosen);
         }
         let format = self.controller.state.format;
         let is_zip = format == Format::Zip;
         let is_lzma2 = matches!(format, Format::SevenZ | Format::TarXz | Format::Xz);
         let codec = self.controller.state.codec;
         let mut pick = None;
-        card(ui, s.compressor, None, false, |ui| {
+        card(ui, s.col_method, None, true, |ui| {
             if is_lzma2 {
                 ui.label(RichText::new("LZMA2").color(hex(p.muted)));
             } else if format == Format::Rar {
                 ui.label(RichText::new("RAR").color(hex(p.muted)));
             } else if is_zip {
-                let codecs = [Codec::Store, Codec::Deflate, Codec::Zstd];
-                let names: Vec<(&str, bool)> = codecs
-                    .iter()
-                    .map(|c| (self.controller.codec_name(*c), *c == codec))
-                    .collect();
-                pick = segmented(ui, &names).map(|i| codecs[i]);
+                let mut chosen = codec;
+                egui::ComboBox::from_id_salt("compress-method")
+                    .selected_text(self.controller.codec_name(codec))
+                    .width(200.0)
+                    .show_ui(ui, |ui| {
+                        for candidate in [Codec::Store, Codec::Deflate, Codec::Zstd] {
+                            ui.selectable_value(
+                                &mut chosen,
+                                candidate,
+                                self.controller.codec_name(candidate),
+                            );
+                        }
+                    });
+                pick = (chosen != codec).then_some(chosen);
             } else {
                 ui.label(RichText::new(self.controller.codec_name(codec)).color(hex(p.muted)));
             }
