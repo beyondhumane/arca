@@ -12,7 +12,7 @@ use super::*;
 use crate::controller::disk::{disk_path, hidden_on_disk};
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
@@ -32,6 +32,8 @@ pub(crate) struct Hit {
     pub name: String,
     pub path: String,
     pub is_dir: bool,
+    /// Inside the open archive rather than on the disk.
+    pub archive: bool,
 }
 
 impl Hit {
@@ -71,20 +73,21 @@ impl Drop for Search {
 }
 
 impl Search {
-    pub(crate) fn over_archive(index: Vec<Hit>, scope: String) -> Self {
-        Self::new(index, None, scope)
-    }
-
-    pub(crate) fn over_disk(dir: &str, scope: String) -> Self {
+    /// The open archive's entries, if any, and everything under `roots` on
+    /// the disk as it is read.
+    pub(crate) fn over(index: Vec<Hit>, roots: Vec<PathBuf>, scope: String) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel();
-        let root = disk_path(dir);
         let halt = stop.clone();
         std::thread::Builder::new()
             .name("arca-search".into())
-            .spawn(move || walk(&root, &halt, |batch| tx.send(batch).is_ok()))
+            .spawn(move || {
+                for root in roots {
+                    walk(&root, &halt, |batch| tx.send(batch).is_ok());
+                }
+            })
             .ok();
-        let mut search = Self::new(Vec::new(), Some(rx), scope);
+        let mut search = Self::new(index, Some(rx), scope);
         search.stop = stop;
         search
     }
@@ -232,6 +235,7 @@ fn walk(root: &Path, halt: &AtomicBool, mut send: impl FnMut(Vec<Hit>) -> bool) 
                 name: leaf,
                 path: disk_name(&item.path(), is_dir),
                 is_dir,
+                archive: false,
             });
             total += 1;
             if batch.len() >= BATCH && !send(std::mem::take(&mut batch)) {
@@ -261,6 +265,7 @@ fn implied_folders(
                 name: name.clone(),
                 path: path.clone(),
                 is_dir: true,
+                archive: true,
             });
         }
         implied_folders(kid, &path, known, out);
@@ -280,17 +285,10 @@ impl Shell {
         }
         let s = self.controller.s();
         let state = &self.controller.state;
-        if self.controller.on_disk() {
-            let dir = state.current_dir.clone();
-            let scope = dir
-                .trim_end_matches('/')
-                .rsplit('/')
-                .next()
-                .filter(|leaf| !leaf.is_empty())
-                .map_or_else(|| s.computer_word.to_string(), str::to_string);
-            self.search = Some(Search::over_disk(&dir, scope));
-        } else if let Some(archive) = &state.archive {
-            let mut index: Vec<Hit> = state
+        let mut index: Vec<Hit> = Vec::new();
+        let mut scope = s.everywhere.to_string();
+        if let Some(archive) = &state.archive {
+            index = state
                 .entries
                 .iter()
                 .map(|entry| {
@@ -305,6 +303,7 @@ impl Shell {
                         name,
                         path,
                         is_dir: entry.is_dir,
+                        archive: true,
                     }
                 })
                 .filter(|hit| !hit.name.is_empty())
@@ -317,12 +316,21 @@ impl Shell {
                 .map(|hit| hit.path.clone())
                 .collect();
             implied_folders(&state.folders, "", &known, &mut index);
-            let scope = archive
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            self.search = Some(Search::over_archive(index, scope));
+            if let Some(name) = archive.file_name() {
+                scope = format!("{}, {scope}", name.to_string_lossy());
+            }
         }
+        // The whole machine, the way Strata does it: the home folder and
+        // every mounted volume, never just the folder being shown.
+        let mut roots: Vec<PathBuf> = crate::controller::disk::home_dir().into_iter().collect();
+        for place in self.controller.devices() {
+            if place.kind == crate::controller::disk::PlaceKind::Drive
+                && !roots.iter().any(|root| place.path.starts_with(root))
+            {
+                roots.push(place.path);
+            }
+        }
+        self.search = Some(Search::over(index, roots, scope));
     }
 
     pub(super) fn search_key(&mut self, key: egui::Key, modifiers: egui::Modifiers) -> bool {
@@ -350,12 +358,20 @@ impl Shell {
 
     fn take_pick(&mut self, pick: Pick) {
         self.search = None;
+        let archive = match &pick {
+            Pick::Open(hit) | Pick::Reveal(hit) => hit.archive,
+        };
         let (target, select) = match pick {
             Pick::Open(hit) if hit.is_dir => (hit.path.clone(), None),
             Pick::Open(hit) => (hit.parent(), Some(hit.path)),
             Pick::Reveal(hit) => (hit.parent(), Some(hit.path)),
         };
-        self.controller.go_to(target);
+        if archive || self.controller.on_disk() {
+            self.controller.go_to(target);
+        } else {
+            self.controller
+                .dispatch(AppAction::Browse(disk_path(&target)));
+        }
         let Some(path) = select else {
             return;
         };
@@ -579,6 +595,7 @@ mod tests {
             name,
             path: path.to_string(),
             is_dir,
+            archive: false,
         }
     }
 
