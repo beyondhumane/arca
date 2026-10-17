@@ -299,40 +299,6 @@ impl Shell {
                     self.toggle_search();
                 }
                 self.view_menu(ui, idle);
-                if let Some(release) = self.controller.state.update.clone() {
-                    // A short green pill with the version; the full sentence
-                    // is the tooltip, so that the row keeps its shape.
-                    let p = palette_of(ui.ctx());
-                    let mut job = egui::text::LayoutJob::default();
-                    job.append(
-                        icon::DOWNLOAD_SIMPLE,
-                        0.0,
-                        egui::TextFormat {
-                            font_id: super::theme::icon_font(15.0),
-                            color: hex(p.success),
-                            valign: egui::Align::Center,
-                            ..Default::default()
-                        },
-                    );
-                    job.append(
-                        &release.tag,
-                        6.0,
-                        egui::TextFormat {
-                            font_id: egui::TextStyle::Body.resolve(ui.style()),
-                            color: hex(p.success),
-                            valign: egui::Align::Center,
-                            ..Default::default()
-                        },
-                    );
-                    let label = fill(s.update_ready, &[("version", &release.tag)]);
-                    if ui
-                        .add(egui::Button::new(job).fill(super::theme::alpha(p.success, 0.12)))
-                        .on_hover_text(label)
-                        .clicked()
-                    {
-                        self.controller.start_update();
-                    }
-                }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     self.breadcrumbs(ui);
                 });
@@ -721,6 +687,46 @@ impl Shell {
         .on_hover_text(s.more_word);
     }
 
+    /// The new-version notice, in the status bar where it does not get in
+    /// the way: the download glyph and the whole sentence, in green.
+    fn update_notice(&mut self, ui: &mut egui::Ui) {
+        let Some(release) = self.controller.state.update.clone() else {
+            return;
+        };
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        let label = fill(s.update_ready, &[("version", &release.tag)]);
+        let mut job = egui::text::LayoutJob::default();
+        job.append(
+            icon::DOWNLOAD_SIMPLE,
+            0.0,
+            egui::TextFormat {
+                font_id: super::theme::icon_font(14.0),
+                color: hex(p.success),
+                valign: egui::Align::Center,
+                ..Default::default()
+            },
+        );
+        job.append(
+            &label,
+            6.0,
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(12.0),
+                color: hex(p.success),
+                valign: egui::Align::Center,
+                ..Default::default()
+            },
+        );
+        if ui
+            .add(egui::Button::new(job).frame(false))
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            self.controller.start_update();
+        }
+        ui.separator();
+    }
+
     fn footer(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
@@ -734,6 +740,7 @@ impl Shell {
             let tasks = self.shown_tasks().len();
             let running = self.controller.active_tasks().filter(|t| !t.quiet).count();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.update_notice(ui);
                 if tasks > 0 && !self.controller.state.one_shot {
                     let label = if running > 0 {
                         fill(s.running_count, &[("n", &running.to_string())])
