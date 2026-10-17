@@ -280,6 +280,13 @@ fn visuals(p: Palette, dark: bool) -> Visuals {
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, hex(p.text));
     v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
     v.widgets.inactive.bg_stroke = Stroke::NONE;
+    // Hover and press answer with a soft fill only; the outline egui draws
+    // around them belongs to keyboard focus, which the widgets draw.
+    v.widgets.hovered.bg_stroke = Stroke::NONE;
+    v.widgets.hovered.expansion = 0.0;
+    v.widgets.active.bg_stroke = Stroke::NONE;
+    v.widgets.active.expansion = 0.0;
+    v.widgets.open.bg_stroke = Stroke::NONE;
     v.widgets.hovered.weak_bg_fill = alpha(p.focus, 0.12);
     v.striped = false;
     v
