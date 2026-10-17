@@ -342,36 +342,40 @@ pub(crate) fn stepper(ui: &mut Ui, shown: &str, can_dec: bool, can_inc: bool) ->
         .stroke(Stroke::new(1.0, hex(p.border)))
         .corner_radius(6)
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            let side = |ui: &mut Ui, label: &str, on: bool| {
-                ui.add_enabled(
-                    on,
-                    egui::Button::new(RichText::new(label).size(15.0).color(hex(p.focus)))
-                        .frame(false)
-                        .min_size(egui::vec2(tall + 6.0, tall)),
-                )
-            };
-            if side(ui, "−", can_dec).clicked() {
-                step = Some(-1);
-            }
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(tall + 10.0, tall), Sense::hover());
-            ui.painter()
-                .vline(rect.left(), rect.y_range(), Stroke::new(1.0, hex(p.border)));
-            ui.painter().vline(
-                rect.right(),
-                rect.y_range(),
-                Stroke::new(1.0, hex(p.border)),
-            );
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                shown,
-                egui::TextStyle::Body.resolve(ui.style()),
-                hex(p.text),
-            );
-            if side(ui, "+", can_inc).clicked() {
-                step = Some(1);
-            }
+            // Always minus, number, plus, even inside a right-to-left row.
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let side = |ui: &mut Ui, label: &str, on: bool| {
+                    ui.add_enabled(
+                        on,
+                        egui::Button::new(RichText::new(label).size(15.0).color(hex(p.focus)))
+                            .frame(false)
+                            .min_size(egui::vec2(tall + 6.0, tall)),
+                    )
+                };
+                if side(ui, "−", can_dec).clicked() {
+                    step = Some(-1);
+                }
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(tall + 10.0, tall), Sense::hover());
+                ui.painter()
+                    .vline(rect.left(), rect.y_range(), Stroke::new(1.0, hex(p.border)));
+                ui.painter().vline(
+                    rect.right(),
+                    rect.y_range(),
+                    Stroke::new(1.0, hex(p.border)),
+                );
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    shown,
+                    egui::TextStyle::Body.resolve(ui.style()),
+                    hex(p.text),
+                );
+                if side(ui, "+", can_inc).clicked() {
+                    step = Some(1);
+                }
+            });
         });
     step
 }
