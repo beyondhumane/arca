@@ -69,7 +69,7 @@ fn conflict_actions_answer_every_supported_choice() {
             controller.receive();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        controller.dispatch(AppAction::AnswerConflict(answer));
+        controller.dispatch(AppAction::AnswerConflict(answer, None));
         assert_eq!(rx.recv().unwrap().unwrap(), answer);
         assert!(controller.conflict().is_none());
     }

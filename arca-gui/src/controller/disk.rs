@@ -3,7 +3,11 @@
 //! one more folder to step into.
 
 use super::*;
+use crate::archive_ops::{free_name, Answer};
 use arca_core::Entry;
+use std::collections::HashSet;
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 
 const ATTR_READ_ONLY: u8 = 0x01;
@@ -78,62 +82,135 @@ fn volume_of(path: &Path) -> Option<u64> {
     }))
 }
 
-/// Copies each picked file or folder under `dest`, keeping names. Files are
-/// counted first so the progress row has a total; the result is how many
-/// were copied, or the message for the one that could not be.
-fn copy_trees(
+/// The worker's side of the name question: it sends the destination and
+/// the source, waits for the window, and hands back the answer with the
+/// name typed for a Rename. The "all" answers stick for the rest of the run.
+/// The window's answer to a taken name, with the name typed for a Rename.
+type AskName<'a> = dyn Fn(&Path, &Path) -> (Answer, Option<String>) + 'a;
+
+fn disk_asker<'a>(
+    tx: &'a Sender<Message>,
+    replies: &'a std::sync::mpsc::Receiver<Answer>,
+    chosen: &'a Arc<Mutex<Option<String>>>,
+) -> impl Fn(&Path, &Path) -> (Answer, Option<String>) + 'a {
+    let sticky = std::cell::Cell::new(None::<Answer>);
+    move |to: &Path, from: &Path| {
+        if let Some(a) = sticky.get() {
+            return (a, None);
+        }
+        let question =
+            Message::ConflictBetween(to.display().to_string(), from.display().to_string());
+        if tx.send(question).is_err() {
+            return (Answer::Cancel, None);
+        }
+        let answer = replies.recv().unwrap_or(Answer::Cancel);
+        if matches!(
+            answer,
+            Answer::ReplaceAll | Answer::SkipAll | Answer::RenameAll | Answer::Cancel
+        ) {
+            sticky.set(Some(answer));
+        }
+        let name = chosen.lock().ok().and_then(|mut slot| slot.take());
+        (answer, name)
+    }
+}
+
+/// Moves or copies each picked file or folder under `dest`, keeping names
+/// unless one is taken and the window says otherwise. The result is how
+/// many were carried over, or the message for the one that could not be.
+fn transfer_trees(
     picked: &[(PathBuf, String)],
     dest: &Path,
+    copy: bool,
     notify: &dyn Fn(usize, usize, &str) -> bool,
+    ask: &AskName<'_>,
     s: &'static crate::i18n::Strings,
 ) -> Result<usize, String> {
     let cancelled = || arca_core::Error::Cancelled.to_string();
-    let mut files: Vec<(PathBuf, PathBuf)> = Vec::new();
-    let mut folders: Vec<PathBuf> = Vec::new();
-    for (path, leaf) in picked {
-        let mut stack = vec![(path.clone(), dest.join(leaf))];
-        while let Some((from, to)) = stack.pop() {
-            if !notify(0, files.len(), "") {
-                return Err(cancelled());
-            }
-            let meta = fs::symlink_metadata(&from).map_err(|_| cannot_copy(s, &from))?;
-            if meta.is_dir() {
-                folders.push(to.clone());
-                let items = fs::read_dir(&from).map_err(|_| cannot_copy(s, &from))?;
-                for item in items.flatten() {
-                    stack.push((item.path(), to.join(item.file_name())));
-                }
-            } else {
-                files.push((from, to));
-            }
-        }
-    }
-    for folder in &folders {
-        fs::create_dir_all(folder).map_err(|_| cannot_copy(s, folder))?;
-    }
-    let total = files.len();
-    for (done, (from, to)) in files.iter().enumerate() {
-        let name = from.file_name().map(|n| n.to_string_lossy().to_string());
-        if !notify(done, total, name.as_deref().unwrap_or("")) {
+    let total = picked.len();
+    let mut carried = 0;
+    let mut claimed: HashSet<PathBuf> = HashSet::new();
+    for (i, (from, leaf)) in picked.iter().enumerate() {
+        if !notify(i, total, leaf) {
             return Err(cancelled());
         }
-        if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent).map_err(|_| cannot_copy(s, parent))?;
+        let mut to = dest.join(leaf);
+        if to.symlink_metadata().is_ok() {
+            let (answer, name) = ask(&to, from);
+            match answer {
+                Answer::Cancel => return Err(cancelled()),
+                Answer::Skip | Answer::SkipAll => continue,
+                Answer::Rename | Answer::RenameAll => {
+                    to = match name.filter(|n| !n.is_empty() && !n.contains(['/', '\\'])) {
+                        Some(n) if answer == Answer::Rename => dest.join(n),
+                        _ => free_name(&to, &claimed),
+                    };
+                    if to.symlink_metadata().is_ok() {
+                        to = free_name(&to, &claimed);
+                    }
+                }
+                Answer::Replace | Answer::ReplaceAll => {
+                    let gone = if to.is_dir() {
+                        fs::remove_dir_all(&to)
+                    } else {
+                        fs::remove_file(&to)
+                    };
+                    gone.map_err(|_| could_not(s, copy, &to))?;
+                }
+            }
         }
-        fs::copy(from, to).map_err(|_| cannot_copy(s, from))?;
+        claimed.insert(to.clone());
+        if copy {
+            copy_tree(from, &to).map_err(|path| could_not(s, true, &path))?;
+        } else if fs::rename(from, &to).is_err() {
+            // Across volumes a rename cannot do it: copy, then take the
+            // original away once every file is over.
+            copy_tree(from, &to).map_err(|path| could_not(s, false, &path))?;
+            let gone = if from.is_dir() {
+                fs::remove_dir_all(from)
+            } else {
+                fs::remove_file(from)
+            };
+            gone.map_err(|_| could_not(s, false, from))?;
+        }
+        carried += 1;
     }
     if !notify(total, total, "") {
         return Err(cancelled());
     }
-    Ok(total)
+    Ok(carried)
 }
 
-fn cannot_copy(s: &'static crate::i18n::Strings, path: &Path) -> String {
+/// Copies a file, or a folder and everything under it, to `to`. The error
+/// is the path that could not be read or written.
+fn copy_tree(from: &Path, to: &Path) -> std::result::Result<(), PathBuf> {
+    let meta = fs::symlink_metadata(from).map_err(|_| from.to_path_buf())?;
+    if meta.is_dir() {
+        fs::create_dir_all(to).map_err(|_| to.to_path_buf())?;
+        let items = fs::read_dir(from).map_err(|_| from.to_path_buf())?;
+        for item in items.flatten() {
+            copy_tree(&item.path(), &to.join(item.file_name()))?;
+        }
+        Ok(())
+    } else {
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(|_| parent.to_path_buf())?;
+        }
+        fs::copy(from, to)
+            .map(|_| ())
+            .map_err(|_| from.to_path_buf())
+    }
+}
+
+fn could_not(s: &'static crate::i18n::Strings, copy: bool, path: &Path) -> String {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.display().to_string());
-    fill(s.cannot_copy, &[("name", &name)])
+    fill(
+        if copy { s.cannot_copy } else { s.cannot_move },
+        &[("name", &name)],
+    )
 }
 
 /// The path on disk behind a listing name, folder or file.
@@ -384,9 +461,21 @@ impl AppController {
     }
 
     /// Dragging rows onto a folder with a copy asked for, or across volumes.
-    /// The walk and the copying run as a task, with the usual progress row,
-    /// so a big folder does not hold the window.
     pub(crate) fn copy_on_disk(&mut self, roots: &[String], target: &str) {
+        self.transfer_on_disk(roots, target, true);
+    }
+
+    /// Dragging rows onto a folder on the disk: a rename on the same volume,
+    /// a copy and a delete across one.
+    pub(crate) fn move_on_disk(&mut self, roots: &[String], target: &str) {
+        self.transfer_on_disk(roots, target, false);
+    }
+
+    /// Moving or copying picked rows under `target` runs as a task with the
+    /// usual progress row. A name already taken there is put to the window
+    /// -- overwrite, skip, rename or stop -- the way Dolphin asks, and the
+    /// answer can stick for the rest of the run.
+    fn transfer_on_disk(&mut self, roots: &[String], target: &str, copy: bool) {
         let s = self.s();
         let into = disk_path(target);
         let mut picked: Vec<(PathBuf, String)> = Vec::new();
@@ -399,11 +488,6 @@ impl AppController {
             if parent == target || target.starts_with(&format!("{from}/")) {
                 continue;
             }
-            if into.join(leaf).symlink_metadata().is_ok() {
-                self.state.notice = fill(s.name_taken, &[("name", leaf)]);
-                self.state.error = true;
-                return;
-            }
             picked.push((disk_path(from), leaf.to_string()));
         }
         if picked.is_empty() {
@@ -415,15 +499,23 @@ impl AppController {
         };
         let sources: Vec<PathBuf> = picked.iter().map(|(path, _)| path.clone()).collect();
         let dest = into.clone();
-        let task = Task::new(
-            s.copying_files,
+        let rename_to: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let chosen = Arc::clone(&rename_to);
+        let verb = if copy {
+            s.copying_files
+        } else {
+            s.moving_files
+        };
+        let mut task = Task::new(
+            verb,
             subject,
-            Box::new(move |tx, _reply_rx, stop, hold| {
+            Box::new(move |tx, reply_rx, stop, hold| {
                 let notify = worker_notify(&tx, &stop, &hold);
-                let result = copy_trees(&picked, &dest, &notify, s);
+                let ask = disk_asker(&tx, &reply_rx, &chosen);
+                let result = transfer_trees(&picked, &dest, copy, &notify, &ask, s);
                 let _ = tx.send(match result {
                     Ok(count) => Message::Done(fill(
-                        s.copied_into,
+                        if copy { s.copied_into } else { s.moved_into },
                         &[
                             ("n", &count.to_string()),
                             ("dest", &dest.display().to_string()),
@@ -435,37 +527,9 @@ impl AppController {
         )
         .reading(sources)
         .filling([into]);
+        task.rename_to = rename_to;
+        task.stop_leaves_files = true;
         self.enqueue(task);
-    }
-
-    /// Dragging rows onto a folder on the disk. A rename on the same volume
-    /// is instant and leaves nothing half done; across volumes it fails, and
-    /// the notice says so rather than starting a copy nobody asked for.
-    pub(crate) fn move_on_disk(&mut self, roots: &[String], target: &str) {
-        let s = self.s();
-        let into = disk_path(target);
-        for root in roots {
-            let from = root.trim_end_matches('/');
-            let Some(leaf) = from.rsplit('/').next().filter(|leaf| !leaf.is_empty()) else {
-                continue;
-            };
-            let parent = from.rfind('/').map_or("", |cut| &from[..=cut]);
-            if parent == target || target.starts_with(&format!("{from}/")) {
-                continue;
-            }
-            let dest = into.join(leaf);
-            if dest.symlink_metadata().is_ok() {
-                self.state.notice = fill(s.name_taken, &[("name", leaf)]);
-                self.state.error = true;
-                break;
-            }
-            if fs::rename(disk_path(from), &dest).is_err() {
-                self.state.notice = fill(s.cannot_move, &[("name", leaf)]);
-                self.state.error = true;
-                break;
-            }
-        }
-        self.refresh_disk();
     }
 
     /// What a drag out of a disk folder carries: every picked file, and the

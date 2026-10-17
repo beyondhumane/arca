@@ -218,6 +218,10 @@ pub(crate) struct Shell {
     blank_drop: Option<(String, egui::Rect)>,
     /// A folder row is under the carried rows this frame.
     row_drop_hover: bool,
+    /// The new name typed in the conflict box, keyed by the path it is for.
+    conflict_name: Option<(String, String)>,
+    /// "Apply to all" in the conflict box.
+    conflict_all: bool,
     anchor: Option<(egui::Id, egui::Pos2)>,
     search: Option<search::Search>,
     decorated: bool,
@@ -277,6 +281,8 @@ impl Shell {
             pending_drop: None,
             blank_drop: None,
             row_drop_hover: false,
+            conflict_name: None,
+            conflict_all: false,
             anchor: None,
             search: None,
             decorated: system_title_bar(&settings_now),
@@ -451,7 +457,7 @@ impl Shell {
     fn cancel_modal(&mut self, kind: ModalKind) {
         match kind {
             ModalKind::Password => self.controller.dispatch(AppAction::CancelPassword),
-            ModalKind::Conflict => self.answer_conflict(Answer::Cancel),
+            ModalKind::Conflict => self.answer_conflict(Answer::Cancel, None),
             ModalKind::Delete => self.controller.dispatch(AppAction::ConfirmDelete(false)),
             ModalKind::Drop => self
                 .controller
@@ -465,8 +471,9 @@ impl Shell {
         }
     }
 
-    fn answer_conflict(&mut self, answer: Answer) {
-        self.controller.dispatch(AppAction::AnswerConflict(answer));
+    fn answer_conflict(&mut self, answer: Answer, name: Option<String>) {
+        self.controller
+            .dispatch(AppAction::AnswerConflict(answer, name));
     }
 
     fn background_blocked(&self) -> bool {

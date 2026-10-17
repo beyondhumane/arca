@@ -226,7 +226,7 @@ impl AppController {
                 self.state.settings.theme = theme;
                 self.state.settings.save();
             }
-            AppAction::AnswerConflict(answer) => self.answer_conflict(answer),
+            AppAction::AnswerConflict(answer, name) => self.answer_conflict(answer, name),
             AppAction::CancelPassword => self.cancel_password(),
             AppAction::SetPasswordInput(password) => self.state.password_input = password,
             AppAction::SubmitPassword(password) => self.submit_password(password),
@@ -1600,6 +1600,7 @@ impl AppController {
                 // The rest is what a task says, and tasks have channels of
                 // their own.
                 Message::Created(..)
+                | Message::ConflictBetween(..)
                 | Message::Conflict(..)
                 | Message::Done(..)
                 | Message::Failed(..)

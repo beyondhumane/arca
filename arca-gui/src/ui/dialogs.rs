@@ -304,44 +304,127 @@ impl Shell {
         }
     }
 
+    /// The name is taken where a file is going. Source and destination side
+    /// by side with size and date, a new name to type, and overwrite, skip,
+    /// rename or cancel, the way Dolphin asks; "apply to all" makes the
+    /// answer stick for the rest of the run.
     fn conflict_dialog(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
         let Some((_, path)) = self.controller.conflict() else {
             return;
         };
         let path = path.to_string();
-        heading(ui, s.conflict_title);
-        ui.label(format!("{} {path}", s.already_there));
-        let mut answer = None;
-        let rows = [
-            vec![
-                (s.rename, Answer::Rename, false),
-                (s.no, Answer::Skip, false),
-                (s.yes, Answer::Replace, true),
-            ],
-            vec![
-                (s.cancel, Answer::Cancel, false),
-                (s.rename_all, Answer::RenameAll, false),
-                (s.no_all, Answer::SkipAll, false),
-                (s.yes_all, Answer::ReplaceAll, false),
-            ],
-        ];
-        for row in rows {
-            Self::footer_buttons(ui, |ui| {
-                for (label, choice, primary) in row.into_iter().rev() {
-                    let clicked = if primary {
-                        primary_button(ui, label, true).clicked()
-                    } else {
-                        secondary_button(ui, label, true).clicked()
-                    };
-                    if clicked {
-                        answer = Some(choice);
-                    }
-                }
-            });
+        let from = self.controller.conflict_from().map(str::to_string);
+        let dest = std::path::Path::new(&path);
+        let leaf = dest
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        if self
+            .conflict_name
+            .as_ref()
+            .is_none_or(|(key, _)| key != &path)
+        {
+            self.conflict_name = Some((path.clone(), suggested_name(dest)));
         }
-        if let Some(answer) = answer {
-            self.answer_conflict(answer);
+        let p = palette_of(ui.ctx());
+        heading(ui, s.conflict_title);
+        ui.label(fill(s.will_overwrite, &[("name", &leaf)]));
+        ui.add_space(10.0);
+        let side = |ui: &mut egui::Ui, title: &str, path: Option<&str>| {
+            ui.label(RichText::new(title).strong().color(hex(p.muted)));
+            ui.add_space(4.0);
+            let Some(path) = path else {
+                ui.label(RichText::new(s.in_archive_word).color(hex(p.muted)));
+                return;
+            };
+            let file = std::path::Path::new(path);
+            let meta = std::fs::metadata(file).ok();
+            let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+            let glyph = if is_dir { icon::FOLDER } else { icon::FILE };
+            ui.horizontal(|ui| {
+                ui.label(
+                    super::theme::icon_text(glyph)
+                        .size(28.0)
+                        .color(hex(p.focus)),
+                );
+                ui.vertical(|ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(path).color(hex(p.muted)).size(11.0))
+                            .truncate(),
+                    );
+                    if let Some(meta) = &meta {
+                        if !is_dir {
+                            ui.label(format!(
+                                "{}: {}",
+                                s.col_size,
+                                crate::model::human(meta.len())
+                            ));
+                        }
+                        let mtime = meta
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs() as i64);
+                        ui.label(format!("{}: {}", s.col_modified, crate::model::when(mtime)));
+                    }
+                });
+            });
+        };
+        ui.columns(2, |cols| {
+            side(&mut cols[0], s.source_word, from.as_deref());
+            side(&mut cols[1], s.destination_word, Some(&path));
+        });
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.label(s.new_name);
+            if let Some((_, name)) = self.conflict_name.as_mut() {
+                let wide = field(ui, name).desired_width(f32::INFINITY);
+                ui.add(wide);
+            }
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            switch(ui, &mut self.conflict_all, s.apply_all);
+            ui.label(s.apply_all);
+        });
+        ui.add_space(8.0);
+        let all = self.conflict_all;
+        let typed = self
+            .conflict_name
+            .as_ref()
+            .map(|(_, name)| name.trim().to_string())
+            .filter(|name| !name.is_empty());
+        let mut answer = None;
+        Self::footer_buttons(ui, |ui| {
+            if primary_button(ui, s.overwrite_word, true).clicked() {
+                answer = Some((
+                    if all {
+                        Answer::ReplaceAll
+                    } else {
+                        Answer::Replace
+                    },
+                    None,
+                ));
+            }
+            if secondary_button(ui, s.no, true).clicked() {
+                answer = Some((if all { Answer::SkipAll } else { Answer::Skip }, None));
+            }
+            if secondary_button(ui, s.rename_button, typed.is_some() || all).clicked() {
+                answer = Some(if all {
+                    (Answer::RenameAll, None)
+                } else {
+                    (Answer::Rename, typed.clone())
+                });
+            }
+            if secondary_button(ui, s.cancel, true).clicked() {
+                answer = Some((Answer::Cancel, None));
+            }
+        });
+        if let Some((answer, name)) = answer {
+            self.conflict_name = None;
+            self.conflict_all = false;
+            self.answer_conflict(answer, name);
         }
     }
 
@@ -1704,4 +1787,24 @@ fn rwx(mode: u32) -> String {
             }
         })
         .collect()
+}
+
+/// "name (1).ext", or the next number that is free beside `taken`.
+fn suggested_name(taken: &std::path::Path) -> String {
+    let dir = taken
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    let stem = taken
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let ext = taken
+        .extension()
+        .map(|s| format!(".{}", s.to_string_lossy()))
+        .unwrap_or_default();
+    (1..10_000u32)
+        .map(|n| format!("{stem} ({n}){ext}"))
+        .find(|name| !dir.join(name).exists())
+        .unwrap_or(stem)
 }

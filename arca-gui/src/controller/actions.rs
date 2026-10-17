@@ -20,6 +20,8 @@ pub(crate) enum Message {
     // in a text to read, which is why it is not a `Done`.
     Downloaded(PathBuf),
     Conflict(String),
+    // A name already taken on disk: the destination, then what was coming.
+    ConflictBetween(String, String),
     Progress(usize, usize, String),
     Done(String),
     Failed(String),
@@ -88,7 +90,7 @@ pub(crate) enum AppAction {
     ToggleColumn(SortColumn),
     SetLanguage(Option<Lang>),
     SetTheme(ThemePreference),
-    AnswerConflict(Answer),
+    AnswerConflict(Answer, Option<String>),
     CancelPassword,
     SetPasswordInput(String),
     SubmitPassword(String),

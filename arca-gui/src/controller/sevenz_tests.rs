@@ -252,7 +252,7 @@ fn sevenz_creation_conflicts_preserve_the_original_and_open_the_renamed_output()
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         assert_eq!(fs::read(&out).unwrap(), b"original archive");
-        app.dispatch(AppAction::AnswerConflict(answer));
+        app.dispatch(AppAction::AnswerConflict(answer, None));
         settle(&mut app);
         assert_eq!(fs::read(&out).unwrap(), b"original archive");
         if answer == Answer::Rename {

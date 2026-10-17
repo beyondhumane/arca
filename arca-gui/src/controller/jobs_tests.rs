@@ -223,7 +223,7 @@ fn a_question_from_one_task_is_answered_to_that_task() {
     started.recv().unwrap();
     settle_until(&mut app, |app| app.conflict().is_some());
     assert_eq!(app.conflict(), Some((asking, "there.txt")));
-    app.answer_conflict(Answer::SkipAll);
+    app.answer_conflict(Answer::SkipAll, None);
     assert_eq!(answered_rx.recv().unwrap(), Answer::SkipAll);
     assert!(app.conflict().is_none());
     release.send(()).unwrap();
