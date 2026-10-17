@@ -482,9 +482,10 @@ impl AppController {
         let typed = self.state.output_name.trim();
         let name = if typed.is_empty() {
             format!("archive.{}", format.extension())
-        } else if typed
-            .to_ascii_lowercase()
-            .ends_with(&format!(".{}", format.extension()))
+        } else if !self.state.auto_extension
+            || typed
+                .to_ascii_lowercase()
+                .ends_with(&format!(".{}", format.extension()))
         {
             typed.to_string()
         } else {
@@ -501,7 +502,12 @@ impl AppController {
             && !self.state.add_password.is_empty())
         .then(|| self.state.add_password.clone());
         Some(Job::Compress {
-            out: first.parent().unwrap_or(Path::new("")).join(name),
+            out: self
+                .state
+                .output_dir
+                .clone()
+                .unwrap_or_else(|| first.parent().unwrap_or(Path::new("")).to_path_buf())
+                .join(name),
             inputs: self.state.pending_inputs.clone(),
             format,
             codec: self.state.codec,
@@ -589,6 +595,8 @@ impl AppController {
                 into_subfolder: false,
                 pending_inputs: Vec::new(),
                 output_name: String::new(),
+                output_dir: None,
+                auto_extension: true,
                 close_when_done: false,
                 one_shot: false,
                 title: String::new(),

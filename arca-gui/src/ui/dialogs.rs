@@ -789,18 +789,56 @@ impl Shell {
         });
         ui.add_space(12.0);
 
+        let ext = format!(".{}", self.controller.state.format.extension());
+        let auto_label = fill(s.auto_extension, &[("ext", &ext)]);
+        let mut auto = self.controller.state.auto_extension;
+        let mut auto_changed = false;
         card(ui, s.output_name, None, false, |ui| {
             ui.add(
                 super::widgets::field(ui, &mut self.controller.state.output_name)
                     .desired_width(f32::INFINITY),
             );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                auto_changed = switch(ui, &mut auto, &auto_label).changed();
+                ui.label(RichText::new(&auto_label).color(hex(p.muted)));
+            });
         });
-        let place = inputs
+        if auto_changed {
+            self.controller.state.auto_extension = auto;
+        }
+        let beside = inputs
             .first()
             .and_then(|path| path.parent())
             .map(|dir| dir.display().to_string())
             .unwrap_or_else(|| format!("/{}", self.controller.state.current_dir));
-        card(ui, s.save_in, Some(&place), true, |_ui| {});
+        let mut place = self
+            .controller
+            .state
+            .output_dir
+            .as_ref()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_else(|| beside.clone());
+        let mut browse = false;
+        let mut typed = false;
+        card(ui, s.save_in, None, false, |ui| {
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    browse = icon_button(ui, icon::FOLDER_OPEN, s.browse_word, true).clicked();
+                    typed = ui
+                        .add(super::widgets::field(ui, &mut place).desired_width(f32::INFINITY))
+                        .changed();
+                });
+            });
+        });
+        if typed {
+            let trimmed = place.trim();
+            self.controller.state.output_dir = (!trimmed.is_empty() && trimmed != beside)
+                .then(|| std::path::PathBuf::from(trimmed));
+        }
+        if browse {
+            self.begin_dialog(DialogKind::PickOutputDir);
+        }
 
         let format = self.controller.state.format;
         let formats = AppController::create_formats();
@@ -840,14 +878,25 @@ impl Shell {
         }
         let level = self.controller.state.level;
         let levels = [Level::Store, Level::Fast, Level::Normal, Level::Best];
-        let names: Vec<(&str, bool)> = levels
-            .iter()
-            .map(|l| (self.controller.level_name(*l), *l == level))
-            .collect();
-        let mut pick = None;
-        card(ui, s.level, None, false, |ui| pick = segmented(ui, &names));
-        if let Some(i) = pick {
-            self.controller.state.level = levels[i];
+        let mut at = levels.iter().position(|l| *l == level).unwrap_or(2) as f32;
+        let level_label = self.controller.level_name(level);
+        let mut moved = false;
+        card(ui, s.level, Some(level_label), true, |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.label(RichText::new(s.min_word).size(12.0).color(hex(p.muted)));
+                ui.spacing_mut().slider_width = 220.0;
+                moved = ui
+                    .add(
+                        egui::Slider::new(&mut at, 0.0..=3.0)
+                            .step_by(1.0)
+                            .show_value(false),
+                    )
+                    .changed();
+                ui.label(RichText::new(s.max_word).size(12.0).color(hex(p.muted)));
+            });
+        });
+        if moved {
+            self.controller.state.level = levels[(at.round() as usize).min(3)];
         }
 
         if matches!(format, Format::Zip | Format::SevenZ) {

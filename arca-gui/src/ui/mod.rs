@@ -34,6 +34,7 @@ const TICK: Duration = Duration::from_millis(100);
 enum DialogResult {
     Open(Option<PathBuf>),
     Inputs(Option<Vec<PathBuf>>),
+    OutputDir(Option<PathBuf>),
     Extract {
         only_checked: bool,
         destination: Option<PathBuf>,
@@ -713,7 +714,9 @@ impl Shell {
 
     fn begin_dialog(&mut self, kind: DialogKind) {
         let modal_allows = match (&kind, self.modal_kind()) {
-            (DialogKind::PickInputs { .. }, Some(ModalKind::Add)) => true,
+            (DialogKind::PickInputs { .. } | DialogKind::PickOutputDir, Some(ModalKind::Add)) => {
+                true
+            }
             (_, modal) => modal.is_none(),
         };
         if self.dialog.is_some() || self.controller.blocked() || !modal_allows {
@@ -746,6 +749,9 @@ impl Shell {
                 } else {
                     rfd::FileDialog::new().pick_files()
                 }),
+                DialogKind::PickOutputDir => {
+                    DialogResult::OutputDir(rfd::FileDialog::new().pick_folder())
+                }
                 DialogKind::Extract { only_checked } => DialogResult::Extract {
                     only_checked,
                     destination: rfd::FileDialog::new().pick_folder(),
@@ -782,6 +788,9 @@ impl Shell {
         self.dialog = None;
         match result {
             DialogResult::Open(Some(path)) => self.controller.dispatch(AppAction::Open(path)),
+            DialogResult::OutputDir(Some(dir)) => {
+                self.controller.state.output_dir = Some(dir);
+            }
             DialogResult::Inputs(Some(paths)) if !paths.is_empty() => {
                 self.controller.dispatch(AppAction::PrepareCompress(paths))
             }

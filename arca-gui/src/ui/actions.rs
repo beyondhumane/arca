@@ -329,6 +329,8 @@ pub(crate) enum DialogKind {
     PickInputs {
         folders: bool,
     },
+    /// The folder a new archive goes in.
+    PickOutputDir,
     Extract {
         only_checked: bool,
     },

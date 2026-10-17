@@ -38,6 +38,10 @@ pub(crate) struct AppState {
     pub(crate) into_subfolder: bool,
     pub(crate) pending_inputs: Vec<PathBuf>,
     pub(crate) output_name: String,
+    /// Where the new archive goes; beside the first input when unset.
+    pub(crate) output_dir: Option<PathBuf>,
+    /// Whether the format's extension is put on the name when it is missing.
+    pub(crate) auto_extension: bool,
     pub(crate) close_when_done: bool,
     // Whether this window was opened to do one job handed to it on the command
     // line, in which case finishing that job is the end of it. A window driven
