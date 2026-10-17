@@ -200,6 +200,7 @@ pub(crate) struct Shell {
     // Set when the pointer, not a navigation, made a pane active: the row
     // of panes then stays where it is instead of scrolling to it.
     pointer_focused: bool,
+    last_pane_count: usize,
     // The pane whose filter row is open, and what is typed in it.
     pane_filter: Option<(usize, String)>,
     device_label: Option<Volume>,
@@ -283,6 +284,7 @@ impl Shell {
             peek_seen: false,
             peek_loaded: None,
             pointer_focused: false,
+            last_pane_count: 0,
             pane_filter: None,
             device_label: None,
             device_format: None,

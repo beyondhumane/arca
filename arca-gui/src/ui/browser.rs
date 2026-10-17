@@ -632,8 +632,12 @@ impl Shell {
         // width and the row scrolls sideways, following the active one.
         let (first, width) = column_slots(panes, active, wanted, gap, room);
         let width = if first == 0 { width } else { wanted };
-        let follow = self.last_active_pane != Some(active) && !self.pointer_focused;
+        // A pane that just appeared is always brought into view; a focus
+        // change alone follows only when the keyboard made it.
+        let follow = (self.last_active_pane != Some(active) && !self.pointer_focused)
+            || self.last_pane_count != panes;
         self.last_active_pane = Some(active);
+        self.last_pane_count = panes;
         self.pointer_focused = false;
         let mut under_pointer = None;
         egui::ScrollArea::horizontal()
