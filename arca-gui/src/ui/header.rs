@@ -190,14 +190,7 @@ impl Shell {
         let p = palette_of(ui.ctx());
         let columns = self.controller.state.browser.columns;
         let flat = self.controller.state.settings.flat;
-        let current = if columns {
-            icon::COLUMNS
-        } else if flat {
-            icon::ROWS
-        } else {
-            icon::LIST
-        };
-        ui.menu_button(super::theme::icon_text(current).size(16.0), |ui| {
+        ui.menu_button(super::theme::icon_text(icon::LIST).size(16.0), |ui| {
             // A right-to-left row inside a menu would otherwise stretch the
             // menu across the whole window.
             ui.set_min_width(240.0);
@@ -205,7 +198,7 @@ impl Shell {
             group_label(ui, s.view_group);
             for (glyph, label, want_columns, want_flat) in [
                 (icon::COLUMNS, s.column_view, true, false),
-                (icon::LIST, s.details_view, false, false),
+                (icon::LIST_BULLETS, s.details_view, false, false),
                 (icon::ROWS, s.flat_view, false, true),
             ] {
                 let on = columns == want_columns && (want_columns || flat == want_flat);
