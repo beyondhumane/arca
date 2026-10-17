@@ -194,9 +194,14 @@ impl Shell {
                 self.search_dialog(ui);
                 return;
             }
+            let pinned = if kind == ModalKind::Add {
+                ui.spacing().interact_size.y + 20.0
+            } else {
+                0.0
+            };
             let shown = egui::ScrollArea::vertical()
-                .max_height(tallest)
-                .min_scrolled_height(wanted.max(64.0))
+                .max_height(tallest - pinned)
+                .min_scrolled_height((wanted - pinned).max(64.0))
                 .auto_shrink([false, true])
                 .show(ui, |ui| match kind {
                     ModalKind::Password => self.password_dialog(ui),
@@ -216,6 +221,9 @@ impl Shell {
                 });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(measured, shown.content_size.y));
+            if kind == ModalKind::Add {
+                self.add_footer(ui);
+            }
         });
         if response.should_close() && self.modal_kind() == Some(kind) {
             self.cancel_modal(kind);
@@ -1028,7 +1036,13 @@ impl Shell {
         if let Some(index) = remove {
             self.controller.state.pending_inputs.remove(index);
         }
-        ui.add_space(4.0);
+    }
+
+    /// The compress box's buttons, outside the scrolling part so that
+    /// they stay in reach however low the window is.
+    fn add_footer(&mut self, ui: &mut egui::Ui) {
+        let s = self.controller.s();
+        let count = self.controller.state.pending_inputs.len();
         let mut start = false;
         let mut cancel = false;
         Self::footer_buttons(ui, |ui| {
