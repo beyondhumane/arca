@@ -230,7 +230,7 @@ impl Shell {
             ui.separator();
             group_label(ui, s.text_size_title);
             let size = self.controller.state.settings.text_size;
-            let mut wanted = size;
+            let mut step = None;
             ui.horizontal(|ui| {
                 ui.add_space(6.0);
                 ui.label(
@@ -239,24 +239,16 @@ impl Shell {
                         .color(hex(p.focus)),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_enabled(size < TEXT_MOST, egui::Button::new("+"))
-                        .clicked()
-                    {
-                        wanted = size + 1.0;
-                    }
-                    ui.label(format!("{size:.0} px"));
-                    if ui
-                        .add_enabled(size > TEXT_LEAST, egui::Button::new("−"))
-                        .clicked()
-                    {
-                        wanted = size - 1.0;
-                    }
+                    step = stepper(
+                        ui,
+                        &format!("{size:.0}"),
+                        size > TEXT_LEAST,
+                        size < TEXT_MOST,
+                    );
                 });
             });
-            if wanted != size {
-                self.controller.state.settings.text_size = wanted.clamp(TEXT_LEAST, TEXT_MOST);
-                self.controller.state.settings.save();
+            if let Some(step) = step {
+                self.step_text_size(f32::from(step));
             }
             ui.separator();
             let hidden = self.controller.state.settings.show_hidden;

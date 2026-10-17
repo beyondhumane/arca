@@ -332,6 +332,50 @@ pub(crate) fn segmented(ui: &mut Ui, choices: &[(&str, bool)]) -> Option<usize> 
 }
 
 /// A key cap, as drawn in the shortcut sheet and the footer.
+/// `− 13 +` in one piece: returns -1 or +1 when a side is pressed.
+pub(crate) fn stepper(ui: &mut Ui, shown: &str, can_dec: bool, can_inc: bool) -> Option<i8> {
+    let p = palette_of(ui.ctx());
+    let mut step = None;
+    let tall = ui.spacing().interact_size.y;
+    egui::Frame::new()
+        .fill(hex(p.raised))
+        .stroke(Stroke::new(1.0, hex(p.border)))
+        .corner_radius(6)
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let side = |ui: &mut Ui, label: &str, on: bool| {
+                ui.add_enabled(
+                    on,
+                    egui::Button::new(RichText::new(label).size(15.0).color(hex(p.focus)))
+                        .frame(false)
+                        .min_size(egui::vec2(tall + 6.0, tall)),
+                )
+            };
+            if side(ui, "−", can_dec).clicked() {
+                step = Some(-1);
+            }
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(tall + 10.0, tall), Sense::hover());
+            ui.painter()
+                .vline(rect.left(), rect.y_range(), Stroke::new(1.0, hex(p.border)));
+            ui.painter().vline(
+                rect.right(),
+                rect.y_range(),
+                Stroke::new(1.0, hex(p.border)),
+            );
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                shown,
+                egui::TextStyle::Body.resolve(ui.style()),
+                hex(p.text),
+            );
+            if side(ui, "+", can_inc).clicked() {
+                step = Some(1);
+            }
+        });
+    step
+}
+
 pub(crate) fn kbd(ui: &mut Ui, keys: &str) {
     let p = palette_of(ui.ctx());
     egui::Frame::new()

@@ -1,7 +1,7 @@
 use super::theme::{hex, palette_of};
 use super::widgets::*;
 use super::*;
-use crate::settings::TitleBar;
+use crate::settings::{TitleBar, TEXT_LEAST, TEXT_MOST};
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
 
@@ -1249,16 +1249,20 @@ impl Shell {
             _ => None,
         };
         let size = self.controller.state.settings.text_size;
-        let mut size_pick = None;
-        card(ui, s.text_size_title, Some(s.text_size_hint), false, |ui| {
-            size_pick = segmented(
+        let mut size_step = None;
+        let hint = fill(
+            s.text_size_hint,
+            &[
+                ("least", &format!("{TEXT_LEAST:.0}")),
+                ("most", &format!("{TEXT_MOST:.0}")),
+            ],
+        );
+        card(ui, s.text_size_title, Some(&hint), true, |ui| {
+            size_step = stepper(
                 ui,
-                &[
-                    ("12", size == 12.0),
-                    ("13", size == 13.0),
-                    ("14", size == 14.0),
-                    ("15", size == 15.0),
-                ],
+                &format!("{size:.0}"),
+                size > TEXT_LEAST,
+                size < TEXT_MOST,
             );
         });
         ui.add_space(12.0);
@@ -1284,8 +1288,8 @@ impl Shell {
             settings.font = font;
             dirty = true;
         }
-        if let Some(i) = size_pick {
-            settings.text_size = 12.0 + i as f32;
+        if let Some(step) = size_step {
+            settings.text_size = (size + f32::from(step)).clamp(TEXT_LEAST, TEXT_MOST);
             dirty = true;
         }
         if motion_changed {

@@ -856,6 +856,21 @@ impl Shell {
     }
 
     /// Hands the keyboard back to the list, out of whatever field had it.
+    /// Nudge the text size by `step` points, or back to the default for 0.
+    pub(super) fn step_text_size(&mut self, step: f32) {
+        use crate::settings::{TEXT_DEFAULT, TEXT_LEAST, TEXT_MOST};
+        let settings = &mut self.controller.state.settings;
+        let next = if step == 0.0 {
+            TEXT_DEFAULT
+        } else {
+            (settings.text_size + step).clamp(TEXT_LEAST, TEXT_MOST)
+        };
+        if next != settings.text_size {
+            settings.text_size = next;
+            settings.save();
+        }
+    }
+
     fn release_focus(&self) {
         self.ctx.memory_mut(|memory| {
             if let Some(id) = memory.focused() {
@@ -965,6 +980,18 @@ impl Shell {
             self.filter_open = true;
             self.focus_filter = true;
             return;
+        }
+        if modifiers.command && !typing {
+            let step = match key {
+                egui::Key::Plus | egui::Key::Equals => Some(1.0),
+                egui::Key::Minus => Some(-1.0),
+                egui::Key::Num0 => Some(0.0),
+                _ => None,
+            };
+            if let Some(step) = step {
+                self.step_text_size(step);
+                return;
+            }
         }
         if let Some(shortcut) = shortcut_for(
             modifiers.command,

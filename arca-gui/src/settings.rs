@@ -65,8 +65,9 @@ impl Settings {
     }
 }
 
-pub(crate) const TEXT_LEAST: f32 = 11.0;
-pub(crate) const TEXT_MOST: f32 = 16.0;
+pub(crate) const TEXT_LEAST: f32 = 10.0;
+pub(crate) const TEXT_MOST: f32 = 20.0;
+pub(crate) const TEXT_DEFAULT: f32 = 13.0;
 
 fn bounded_width(width: f32, least: f32, most: f32) -> Option<f32> {
     width.is_finite().then(|| width.clamp(least, most))
@@ -162,7 +163,7 @@ impl Default for Settings {
             dark_theme: "Arca Midnight".into(),
             light_theme: "Arca Daylight".into(),
             font: FontChoice::Inter,
-            text_size: 13.0,
+            text_size: TEXT_DEFAULT,
             motion: true,
             title_bar: TitleBar::default(),
             density: Density::default(),
