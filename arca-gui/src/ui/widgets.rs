@@ -199,7 +199,7 @@ pub(crate) fn group_label(ui: &mut Ui, text: &str) {
         ui.add_space(8.0);
         ui.label(
             RichText::new(text.to_uppercase())
-                .size(10.5)
+                .size(theme::text_size(ui.style(), -2.5))
                 .strong()
                 .extra_letter_spacing(0.6)
                 .color(hex(p.muted)),
@@ -231,7 +231,9 @@ pub(crate) fn card(
                     if let Some(description) = description {
                         ui.add(
                             egui::Label::new(
-                                RichText::new(description).size(12.0).color(hex(p.muted)),
+                                RichText::new(description)
+                                    .size(theme::text_size(ui.style(), -1.0))
+                                    .color(hex(p.muted)),
                             )
                             .wrap(),
                         );
@@ -263,7 +265,7 @@ pub(crate) fn section_title(ui: &mut Ui, text: &str) {
     ui.add_space(6.0);
     ui.label(
         RichText::new(text.to_uppercase())
-            .size(11.0)
+            .size(theme::text_size(ui.style(), -2.0))
             .strong()
             .extra_letter_spacing(1.0)
             .color(hex(p.muted)),
@@ -349,7 +351,7 @@ pub(crate) fn segmented(ui: &mut Ui, choices: &[(&str, bool)]) -> Option<usize> 
                         rect.center(),
                         egui::Align2::CENTER_CENTER,
                         *label,
-                        egui::FontId::proportional(13.0),
+                        theme::text_font(ui.style(), 0.0),
                         if *on { hex(p.text) } else { hex(p.muted) },
                     );
                     let text = label.to_string();
@@ -426,7 +428,11 @@ pub(crate) fn kbd(ui: &mut Ui, keys: &str) {
         .corner_radius(4)
         .inner_margin(egui::Margin::symmetric(5, 1))
         .show(ui, |ui| {
-            ui.label(RichText::new(keys).monospace().size(11.0));
+            ui.label(
+                RichText::new(keys)
+                    .monospace()
+                    .size(theme::text_size(ui.style(), -2.0)),
+            );
         });
 }
 
@@ -483,7 +489,7 @@ pub(crate) fn nav_item(
     if !rail {
         let mut job = egui::text::LayoutJob::single_section(
             label.to_string(),
-            egui::TextFormat::simple(egui::FontId::proportional(13.0), visuals.text_color()),
+            egui::TextFormat::simple(theme::text_font(ui.style(), 0.0), visuals.text_color()),
         );
         job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 36.0);
         let galley = ui.painter().layout_job(job);

@@ -1,4 +1,4 @@
-use super::theme::{hex, palette_of};
+use super::theme::{hex, mono_font, palette_of, text_font, text_size};
 use super::widgets::*;
 use super::*;
 use crate::settings::{TitleBar, TEXT_LEAST, TEXT_MOST};
@@ -358,8 +358,12 @@ impl Shell {
                 );
                 ui.vertical(|ui| {
                     ui.add(
-                        egui::Label::new(RichText::new(path).color(hex(p.muted)).size(11.0))
-                            .truncate(),
+                        egui::Label::new(
+                            RichText::new(path)
+                                .color(hex(p.muted))
+                                .size(text_size(ui.style(), -2.0)),
+                        )
+                        .truncate(),
                     );
                     if let Some(meta) = &meta {
                         if !is_dir {
@@ -463,13 +467,21 @@ impl Shell {
             ui.add_space(6.0);
             ui.vertical(|ui| {
                 ui.add_space(2.0);
-                ui.label(RichText::new(&props.name).strong().size(16.0));
+                ui.label(
+                    RichText::new(&props.name)
+                        .strong()
+                        .size(text_size(ui.style(), 3.0)),
+                );
                 let kind = if props.is_dir {
                     s.folder_word
                 } else {
                     s.file_word
                 };
-                ui.label(RichText::new(kind).size(12.0).color(hex(p.muted)));
+                ui.label(
+                    RichText::new(kind)
+                        .size(text_size(ui.style(), -1.0))
+                        .color(hex(p.muted)),
+                );
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 if icon_button(ui, icon::X, s.close_word, true).clicked() {
@@ -529,7 +541,7 @@ impl Shell {
                     egui::vec2(110.0, 20.0),
                     egui::Label::new(
                         RichText::new(label.to_uppercase())
-                            .size(10.5)
+                            .size(text_size(ui.style(), -2.5))
                             .strong()
                             .extra_letter_spacing(0.8)
                             .color(hex(p.muted)),
@@ -545,7 +557,7 @@ impl Shell {
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(s.permissions_word.to_uppercase())
-                        .size(10.5)
+                        .size(text_size(ui.style(), -2.5))
                         .strong()
                         .extra_letter_spacing(0.8)
                         .color(hex(p.muted)),
@@ -554,7 +566,7 @@ impl Shell {
                     ui.label(
                         RichText::new(format!("{}   {mode:03o}", rwx(mode)))
                             .monospace()
-                            .size(12.0)
+                            .size(text_size(ui.style(), -1.0))
                             .color(hex(p.muted)),
                     );
                 });
@@ -570,7 +582,11 @@ impl Shell {
                         egui::vec2(80.0, 24.0),
                         egui::Label::new(who).halign(egui::Align::LEFT),
                     );
-                    ui.label(RichText::new(name).size(12.0).color(hex(p.muted)));
+                    ui.label(
+                        RichText::new(name)
+                            .size(text_size(ui.style(), -1.0))
+                            .color(hex(p.muted)),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         for (bit, letter) in [(1u32, "x"), (2, "w"), (4, "r")] {
                             let on = (mode >> shift) & bit != 0;
@@ -590,7 +606,7 @@ impl Shell {
                                 rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 if on { letter } else { "–" },
-                                egui::FontId::monospace(12.0),
+                                mono_font(ui.style(), -1.0),
                                 ink,
                             );
                         }
@@ -901,7 +917,11 @@ impl Shell {
         let mut moved = false;
         card(ui, s.level, Some(&level_label), true, |ui| {
             // The card lays inline controls out right to left.
-            ui.label(RichText::new(s.max_word).size(12.0).color(hex(p.muted)));
+            ui.label(
+                RichText::new(s.max_word)
+                    .size(text_size(ui.style(), -1.0))
+                    .color(hex(p.muted)),
+            );
             ui.spacing_mut().slider_width = 220.0;
             moved = ui
                 .add(
@@ -910,7 +930,11 @@ impl Shell {
                         .show_value(false),
                 )
                 .changed();
-            ui.label(RichText::new(s.min_word).size(12.0).color(hex(p.muted)));
+            ui.label(
+                RichText::new(s.min_word)
+                    .size(text_size(ui.style(), -1.0))
+                    .color(hex(p.muted)),
+            );
         });
         if moved {
             self.controller.state.level = Level::new(at as u8);
@@ -1088,7 +1112,7 @@ impl Shell {
                             s.update_versions,
                             &[("installed", installed), ("available", available)],
                         ))
-                        .size(12.0)
+                        .size(text_size(ui.style(), -1.0))
                         .color(hex(p.muted)),
                     );
                 });
@@ -1125,7 +1149,11 @@ impl Shell {
             self.controller.open_release_page();
         }
         ui.add_space(4.0);
-        ui.label(RichText::new(s.review_notes).size(12.0).color(hex(p.muted)));
+        ui.label(
+            RichText::new(s.review_notes)
+                .size(text_size(ui.style(), -1.0))
+                .color(hex(p.muted)),
+        );
         let label = s.download_update;
         let mut go = false;
         let mut cancel = false;
@@ -1693,7 +1721,7 @@ impl Shell {
                                 egui::pos2(rect.left() + 92.0, rect.center().y),
                                 egui::Align2::LEFT_CENTER,
                                 &t.name,
-                                egui::FontId::proportional(13.0),
+                                text_font(ui.style(), 0.0),
                                 hex(if active { p.focus } else { p.text }),
                             );
                             let kind = if t.dark { s.kind_dark } else { s.kind_light };
@@ -1701,7 +1729,7 @@ impl Shell {
                                 egui::pos2(rect.right() - 16.0, rect.center().y),
                                 egui::Align2::RIGHT_CENTER,
                                 kind.to_uppercase(),
-                                egui::FontId::proportional(10.5),
+                                text_font(ui.style(), -2.5),
                                 hex(p.muted),
                             );
                             if t.custom {
@@ -2268,7 +2296,11 @@ pub(crate) fn release_notes(ui: &mut egui::Ui, p: &theme::Palette, notes: &str) 
         if let Some(rest) = trimmed.strip_prefix('#') {
             let title = plain_markdown(rest.trim_start_matches('#').trim());
             ui.add_space(2.0);
-            ui.label(RichText::new(title).strong().size(14.0));
+            ui.label(
+                RichText::new(title)
+                    .strong()
+                    .size(text_size(ui.style(), 1.0)),
+            );
             continue;
         }
         bullet_or_text(ui, p, trimmed);

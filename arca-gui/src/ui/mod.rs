@@ -645,7 +645,7 @@ impl Shell {
                             ui.label(egui::RichText::new(name).color(theme::hex(p.text)));
                             ui.label(
                                 egui::RichText::new(badge)
-                                    .size(11.0)
+                                    .size(theme::text_size(ui.style(), -2.0))
                                     .color(theme::hex(p.muted)),
                             );
                         });
