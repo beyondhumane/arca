@@ -349,6 +349,17 @@ pub(crate) fn read_entry(
     Ok(())
 }
 
+fn listed_index(entry: &Entry, entries: &[Entry], kind: &str) -> arca_core::Result<usize> {
+    let index = usize::try_from(entry.offset)
+        .map_err(|_| arca_core::Error::Format(format!("invalid {kind} entry index")))?;
+    if entries.get(index).is_none_or(|e| e.name != entry.name) {
+        return Err(arca_core::Error::Format(format!(
+            "{kind} entry changed since listing"
+        )));
+    }
+    Ok(index)
+}
+
 pub(crate) fn extract_one(
     archive: &Path,
     entry: &Entry,
@@ -358,109 +369,91 @@ pub(crate) fn extract_one(
     let room = fs::canonicalize(std::env::temp_dir())?
         .join("Arca")
         .join(archive_stem(archive));
-    if container_of(archive) == Some(Container::Rar) {
-        let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
-        let index = usize::try_from(entry.offset)
-            .map_err(|_| arca_core::Error::Format("invalid RAR entry index".into()))?;
-        if a.entries().get(index).is_none_or(|e| e.name != entry.name) {
-            return Err(arca_core::Error::Format(
-                "RAR entry changed since listing".into(),
-            ));
-        }
-        let mut wanted = vec![false; a.entries().len()];
-        wanted[index] = true;
-        a.extract(&room, &wanted, password, notify, &|_| {
-            arca_rar::Conflict::Overwrite
-        })?;
-        return Ok(room.join(arca_core::safe_name(&entry.name)?));
-    }
-    if detect(archive) == Some(Format::Iso) {
-        let a = arca_iso::IsoArchive::open(archive)?;
-        let index = usize::try_from(entry.offset)
-            .map_err(|_| arca_core::Error::Format("invalid ISO entry index".into()))?;
-        if a.entries().get(index).is_none_or(|e| e.name != entry.name) {
-            return Err(arca_core::Error::Format(
-                "ISO entry changed since listing".into(),
-            ));
-        }
-        let mut wanted = vec![false; a.entries().len()];
-        wanted[index] = true;
-        a.extract(&room, &wanted, &|_, _, _| true, &|_| {
-            arca_iso::Conflict::Overwrite
-        })?;
-        return Ok(room.join(arca_core::safe_name(&entry.name)?));
-    }
-    let path = room.join(arca_core::safe_name(&entry.name)?);
-    if detect(archive) == Some(Format::SevenZ) {
-        let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
-        let index = usize::try_from(entry.offset)
-            .map_err(|_| arca_core::Error::Format("invalid entry index".into()))?;
-        if a.entries().get(index).is_none_or(|e| e.name != entry.name) {
-            return Err(arca_core::Error::Format(
-                "7z entry changed since listing".into(),
-            ));
-        }
-        let mut destination = arca_core::extraction::Destination::new(&room);
-        a.extract(
-            &[index],
-            &mut |_, e, reader| {
-                write_sevenz_entry(&mut destination, e, reader, &|_| Answer::Replace).map(|_| ())
-            },
-            &mut |p| notify(p.entries_done, p.entries_total, p.name),
-        )?;
-        return Ok(path);
-    }
-    if detect(archive) == Some(Format::Xz) {
-        let mut source = Paced::new(arca_xz::open(archive)?, &entry.name, notify);
-        let result = arca_core::extraction::Destination::new(&room).write_entry(
-            &entry.name,
-            false,
-            &mut source,
-            &mut |_| arca_core::extraction::Conflict::Overwrite,
-        );
-        source.check(result)?;
-        return Ok(path);
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported("unknown format".into()));
     };
     match format.container() {
-        Container::SevenZ | Container::Xz => unreachable!(),
-        Container::Rar | Container::Iso => return Err(format.read_only()),
+        Container::Rar => {
+            let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
+            let index = listed_index(entry, a.entries(), "RAR")?;
+            let mut wanted = vec![false; a.entries().len()];
+            wanted[index] = true;
+            a.extract(&room, &wanted, password, notify, &|_| {
+                arca_rar::Conflict::Overwrite
+            })?;
+            Ok(room.join(arca_core::safe_name(&entry.name)?))
+        }
+        Container::Iso => {
+            let a = arca_iso::IsoArchive::open(archive)?;
+            let index = listed_index(entry, a.entries(), "ISO")?;
+            let mut wanted = vec![false; a.entries().len()];
+            wanted[index] = true;
+            a.extract(&room, &wanted, &|_, _, _| true, &|_| {
+                arca_iso::Conflict::Overwrite
+            })?;
+            Ok(room.join(arca_core::safe_name(&entry.name)?))
+        }
+        Container::SevenZ => {
+            let path = room.join(arca_core::safe_name(&entry.name)?);
+            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let index = listed_index(entry, a.entries(), "7z")?;
+            let mut destination = arca_core::extraction::Destination::new(&room);
+            a.extract(
+                &[index],
+                &mut |_, e, reader| {
+                    write_sevenz_entry(&mut destination, e, reader, &|_| Answer::Replace)
+                        .map(|_| ())
+                },
+                &mut |p| notify(p.entries_done, p.entries_total, p.name),
+            )?;
+            Ok(path)
+        }
+        Container::Xz => {
+            let path = room.join(arca_core::safe_name(&entry.name)?);
+            let mut source = Paced::new(arca_xz::open(archive)?, &entry.name, notify);
+            let result = arca_core::extraction::Destination::new(&room).write_entry(
+                &entry.name,
+                false,
+                &mut source,
+                &mut |_| arca_core::extraction::Conflict::Overwrite,
+            );
+            source.check(result)?;
+            Ok(path)
+        }
         Container::Zip => {
+            let path = room.join(arca_core::safe_name(&entry.name)?);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
             let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
             unpack(&path, notify, (0, 1, &entry.name), |out| {
                 arca_zip::extract_entry_with(&mut source, entry, out, password)
             })?;
+            Ok(path)
         }
         Container::Tar | Container::TarGz | Container::TarXz => {
+            let path = room.join(arca_core::safe_name(&entry.name)?);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
             // A tar has no index, so the only way to one entry is through all
             // the ones before it.
             let mut r = TarReader::new(open_source(archive, format)?);
-            let mut found = false;
             while let Some(e) = r.next_entry()? {
                 if e.entry.name == entry.name && !e.entry.is_dir {
                     unpack(&path, notify, (0, 1, &entry.name), |mut out| {
                         r.copy_data(&e, &mut out)
                     })?;
-                    found = true;
-                    break;
+                    return Ok(path);
                 }
                 r.skip_data(&e)?;
             }
-            if !found {
-                return Err(arca_core::Error::Format(format!(
-                    "'{}' is not in the archive any more",
-                    entry.name
-                )));
-            }
+            Err(arca_core::Error::Format(format!(
+                "'{}' is not in the archive any more",
+                entry.name
+            )))
         }
     }
-    Ok(path)
 }
 
 // Whatever the desktop opens this kind of file with. The child is left to run
@@ -1363,5 +1356,41 @@ mod tests {
         assert_eq!(written, 3 * STEP);
         assert_eq!(fs::metadata(dest.join("big.bin")).unwrap().len(), 3 * STEP);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn listed(name: &str, offset: u64) -> Entry {
+        Entry {
+            raw_name: name.as_bytes().to_vec(),
+            utf8: true,
+            name: name.to_string(),
+            size: 0,
+            compressed_size: 0,
+            method: arca_core::Method::Store,
+            crc32: None,
+            is_dir: false,
+            mtime: None,
+            created: None,
+            accessed: None,
+            attributes: 0,
+            offset,
+            encrypted: false,
+            zipcrypto: false,
+        }
+    }
+
+    #[test]
+    fn an_entry_is_found_again_only_where_it_was_listed() {
+        let entries = [listed("a.txt", 0), listed("b.txt", 1)];
+        assert_eq!(
+            listed_index(&listed("b.txt", 1), &entries, "RAR").unwrap(),
+            1
+        );
+        for stale in [listed("c.txt", 1), listed("b.txt", 2)] {
+            let err = listed_index(&stale, &entries, "ISO").unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                arca_core::Error::Format("ISO entry changed since listing".into()).to_string()
+            );
+        }
     }
 }
