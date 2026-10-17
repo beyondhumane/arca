@@ -687,7 +687,15 @@ impl Shell {
                             choice = Some(Some(true));
                         }
                         ui.separator();
-                        if entry(ui, egui_phosphor::regular::X, s.cancel, "Esc", true).clicked() {
+                        if entry(
+                            ui,
+                            egui_phosphor::regular::X,
+                            s.cancel,
+                            &dialogs::shortcut_label("escape", s),
+                            true,
+                        )
+                        .clicked()
+                        {
                             choice = Some(None);
                         }
                     });
