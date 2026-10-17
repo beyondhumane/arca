@@ -2,6 +2,7 @@ mod actions;
 mod browser;
 mod dialogs;
 mod header;
+mod highlight;
 mod jobs;
 mod layout;
 mod pathbar;
@@ -197,6 +198,7 @@ pub(crate) struct Shell {
     jobs_open: bool,
     jobs_seen: TaskId,
     preview_password: String,
+    wrap_lines: bool,
     texture: Option<(u64, egui::TextureHandle)>,
     scroll_to_cursor: bool,
     width: f32,
@@ -265,6 +267,7 @@ impl Shell {
             jobs_open: false,
             jobs_seen: 0,
             preview_password: String::new(),
+            wrap_lines: false,
             texture: None,
             scroll_to_cursor: false,
             width: NORMAL_SIZE.0,
