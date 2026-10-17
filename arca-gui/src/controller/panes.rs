@@ -93,6 +93,16 @@ impl AppController {
     }
 
     pub(crate) fn activate_pane(&mut self, pane: usize) -> bool {
+        self.activate_pane_with(pane, true)
+    }
+
+    /// Focus following the pointer: the pane becomes the active one without
+    /// a history entry, since nothing was navigated to.
+    pub(crate) fn activate_pane_quietly(&mut self, pane: usize) -> bool {
+        self.activate_pane_with(pane, false)
+    }
+
+    fn activate_pane_with(&mut self, pane: usize, remember: bool) -> bool {
         if pane >= self.state.browser.panes.len() {
             return false;
         }
@@ -101,7 +111,9 @@ impl AppController {
             self.state.browser.active = pane;
             self.restore_active_pane();
             self.retain_visible_selection();
-            self.record_pane_history();
+            if remember {
+                self.record_pane_history();
+            }
         }
         true
     }

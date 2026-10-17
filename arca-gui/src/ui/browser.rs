@@ -495,6 +495,7 @@ impl Shell {
         let width = if first == 0 { width } else { wanted };
         let follow = self.last_active_pane != Some(active);
         self.last_active_pane = Some(active);
+        let mut under_pointer = None;
         egui::ScrollArea::horizontal()
             .id_salt("arca-columns")
             .auto_shrink(false)
@@ -524,10 +525,20 @@ impl Shell {
                         if follow && pane == active {
                             ui.scroll_to_rect(placed.response.rect, None);
                         }
+                        if ui.rect_contains_pointer(placed.response.rect) {
+                            under_pointer = Some(pane);
+                        }
                         ui.add(egui::Separator::default().spacing(1.0));
                     }
                 });
             });
+        // Focus follows the pointer, as on a tiling desktop, unless the
+        // keyboard spoke last.
+        if let Some(pane) = under_pointer {
+            if pane != self.controller.state.browser.active && self.pointer_may_focus() {
+                self.controller.activate_pane_quietly(pane);
+            }
+        }
         if let Some(action) = self.pane_action.take() {
             match action {
                 PaneAction::Close(pane) => self.controller.close_pane(pane),

@@ -188,6 +188,9 @@ pub(crate) struct Shell {
     pane_action: Option<PaneAction>,
     properties: Option<Props>,
     last_active_pane: Option<usize>,
+    // Whether the last thing the user did was press a key. While it was,
+    // the pointer resting on another pane does not steal the focus.
+    keyboard_drove: bool,
     name_value: String,
     focus_name: bool,
     rename_value: String,
@@ -257,6 +260,7 @@ impl Shell {
             pane_action: None,
             properties: None,
             last_active_pane: None,
+            keyboard_drove: false,
             name_value: String::new(),
             focus_name: false,
             rename_value: String::new(),
@@ -1226,6 +1230,9 @@ impl Shell {
     }
 
     fn input(&mut self, ctx: &egui::Context) {
+        if ctx.input(|input| input.pointer.delta() != egui::Vec2::ZERO) {
+            self.keyboard_drove = false;
+        }
         let events = ctx.input(|input| input.events.clone());
         for event in events {
             match event {
@@ -1307,6 +1314,48 @@ impl Shell {
         }
     }
 
+    /// Tab and Shift+Tab walk the panes; Left and Right step to the one
+    /// beside. Only with more than one pane, so that a single list keeps
+    /// the keys for whatever else wants them.
+    fn pane_key(&mut self, key: egui::Key, modifiers: egui::Modifiers) -> bool {
+        let browser = &self.controller.state.browser;
+        if !browser.columns || browser.panes.len() < 2 || modifiers.command || modifiers.alt {
+            return false;
+        }
+        let count = browser.panes.len();
+        let active = browser.active;
+        let target = match key {
+            egui::Key::Tab if modifiers.shift => Some((active + count - 1) % count),
+            egui::Key::Tab => Some((active + 1) % count),
+            egui::Key::ArrowLeft => active.checked_sub(1),
+            egui::Key::ArrowRight => (active + 1 < count).then_some(active + 1),
+            _ => None,
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        self.controller.activate_pane(target);
+        self.scroll_to_cursor = true;
+        self.release_focus();
+        true
+    }
+
+    /// Whether the pointer may move the focus between panes: it is not
+    /// pressing, dragging or carrying anything, and no menu, text field or
+    /// box is up.
+    fn pointer_may_focus(&self) -> bool {
+        let ctx = &self.ctx;
+        !self.keyboard_drove
+            && !ctx.any_popup_open()
+            && !ctx.egui_is_using_pointer()
+            && !ctx.input(|i| i.pointer.any_down())
+            && !self.typing()
+            && self.marquee.is_none()
+            && !self.carrying
+            && self.controller.state.renaming.is_none()
+            && self.modal_kind().is_none()
+    }
+
     fn key_down(&mut self, key: egui::Key, modifiers: egui::Modifiers) {
         if !modifiers.command && self.search_key(key, modifiers) {
             return;
@@ -1328,6 +1377,12 @@ impl Shell {
         }
         let name = key.name().to_ascii_lowercase();
         let typing = self.typing();
+        if !typing {
+            self.keyboard_drove = true;
+            if self.pane_key(key, modifiers) {
+                return;
+            }
+        }
         if modifiers.command && !modifiers.shift && key == egui::Key::F {
             self.filter_open = true;
             self.focus_filter = true;
