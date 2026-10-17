@@ -1,5 +1,5 @@
 ---
-description: Un archivador multiplataforma escrito en Rust seguro, con línea de comandos, ventana nativa y un núcleo compartido.
+description: Un explorador de archivos y archivador escrito en Rust seguro, con ventana de escritorio, línea de comandos y un núcleo compartido.
 group: Primeros pasos
 order: 1
 keywords: resumen qué por qué estado acerca de overview what why status about
@@ -7,7 +7,7 @@ keywords: resumen qué por qué estado acerca de overview what why status about
 
 # Introducción
 
-Arca es un archivador multiplataforma escrito en Rust. Crea y extrae archivos ZIP, 7z y TAR, además de flujos XZ, comprime con Deflate o Zstandard usando todos los núcleos de tu máquina, y cifra con AES-256. Funciona como un único binario de línea de comandos, una ventana de escritorio nativa o el menú contextual del Explorador de Windows.
+Arca es un explorador de archivos y un archivador en uno, escrito en Rust. Su ventana de escritorio recorre el disco como cualquier explorador y entra en archivos ZIP, 7z, TAR, RAR e ISO como si fueran carpetas; crea archivos ZIP, 7z, TAR y RAR y flujos XZ, comprime con Deflate o Zstandard usando todos los núcleos de tu máquina y cifra con AES-256. El mismo núcleo funciona como un único binario de línea de comandos y como menú contextual del Explorador de Windows.
 
 ## ¿Por qué otro archivador?
 
@@ -21,6 +21,7 @@ También es rápido. En la máquina donde se midió, Arca con Zstandard comprimi
 - **Velocidad:** compresión multihilo, extracción paralela de `.zip`, y un arranque en frío por debajo del milisegundo.
 - **Seguridad:** analizadores sin código unsafe, lecturas de cabecera acotadas y defensa contra Zip Slip en cada nombre de entrada.
 - **Cifrado:** WinZip AE-2 en ZIP; AES-256 en 7z con cabeceras cifradas opcionales. Consulta los [límites de integridad](encryption.md).
+- **Escritorio:** `arca-gui`, un explorador de archivos con paneles o detalles, filtros por panel, vista previa con resaltado de sintaxis, hex e imágenes, dispositivos con montar, formatear y etiquetar, y archivos comprimidos que se abren en el mismo sitio. Consulta [el espacio de trabajo de escritorio](desktop-app.md).
 - **Interfaces:** la línea de comandos `arca`, la ventana `arca-gui` y un menú del Explorador de Windows 11.
 - **Licencia:** Apache-2.0, libre para uso personal y comercial.
 

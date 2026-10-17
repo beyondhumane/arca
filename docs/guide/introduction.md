@@ -1,5 +1,5 @@
 ---
-description: A cross-platform archiver written in safe Rust, with a command line, a native window and one shared core.
+description: A file explorer and archiver written in safe Rust, with a desktop window, a command line and one shared core.
 group: Getting started
 order: 1
 keywords: overview what why status about
@@ -7,7 +7,7 @@ keywords: overview what why status about
 
 # Introduction
 
-Arca is a cross-platform archiver written in Rust. It creates and extracts ZIP, 7z and TAR archives, plus XZ streams, compresses with Deflate or Zstandard across every core of your machine, and encrypts with AES-256. It runs as a single command-line binary, a native desktop window, or the Windows Explorer context menu.
+Arca is a file explorer and an archiver in one, written in Rust. Its desktop window browses your disk like any explorer and steps into ZIP, 7z, TAR, RAR and ISO archives as if they were folders; it creates ZIP, 7z, TAR and RAR archives and XZ streams, compresses with Deflate or Zstandard across every core of your machine, and encrypts with AES-256. The same core runs as a single command-line binary and as the Windows Explorer context menu.
 
 ## Why another archiver?
 
@@ -21,6 +21,7 @@ It is also fast. On the machine it was measured on, Arca with Zstandard compress
 - **Speed:** multi-threaded compression, parallel extraction of `.zip`, and a sub-millisecond cold start.
 - **Safety:** unsafe-free parsers, bounded header reads and a Zip Slip defence on every entry name.
 - **Encryption:** ZIP WinZip AE-2; 7z AES-256 with optional encrypted headers. See [integrity limits](encryption.md).
+- **Desktop:** `arca-gui`, a file explorer with panes or details, per-pane filters, a preview with syntax highlighting, hex and images, devices with mount, format and label, and archives that open in place. See [the desktop workspace](desktop-app.md).
 - **Interfaces:** the `arca` command line, the `arca-gui` window and a Windows 11 Explorer menu.
 - **License:** Apache-2.0, free for personal and commercial use.
 

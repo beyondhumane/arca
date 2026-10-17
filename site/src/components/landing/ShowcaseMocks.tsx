@@ -1,29 +1,39 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, SVGProps } from 'react';
 import {
-  ArrowLeft,
-  ArrowRight,
+  ArrowDownUp,
   ArrowUp,
   Braces,
   Check,
   ChevronRight,
   Copy,
   Download,
+  Eye,
+  ExternalLink,
   FileArchive,
+  FileCode,
   FileImage,
   FileText,
   Film,
+  Filter,
   Folder,
   FolderOpen,
-  KeyRound,
-  Lock,
+  FolderPlus,
+  HardDrive,
+  Home,
+  Image as ImageIcon,
+  Info,
   Monitor,
+  Music,
+  Package,
   Pencil,
+  RotateCw,
   Scissors,
   Search,
   Settings2,
   Share2,
-  Type,
+  Trash2,
+  Usb,
   X,
 } from 'lucide-react';
 import { cn } from '@/utils/cn';
@@ -34,29 +44,39 @@ type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
 const COPY = {
   en: {
-    opened: (n: string) => `Opened ${n}/. Backspace goes up.`,
-    extractedOne: (n: string) => `Extracted ${n} to a temp folder and opened it`,
-    atTop: 'Already at the top of project-assets.zip',
-    encrypted: 'Encrypted',
-    nav: ['Back', 'Forward', 'Up one level'],
-    navHint: (l: string) => `${l}. Also Alt+← / Alt+→ and the mouse side buttons.`,
-    filterLabel: 'Filter entries',
-    filter: 'Filter',
-    removed: 'Password removed without recompressing',
-    applied: 'AES-256 applied without recompressing',
-    removePw: 'Remove password',
-    setPw: 'Set password…',
-    extracting: 'Extracting 9 entries…',
-    extracted: 'Extracted 9 entries to ~/Desktop/project-assets',
-    extractAll: 'Extract all',
-    cols: ['Name', 'Size', 'Packed', 'Method', 'Saved', 'Modified'],
-    rows: 'Entries in project-assets.zip. Arrow keys move, Space ticks, Enter opens.',
-    noMatch: (f: string) => `No entries match “${f}”.`,
-    ticked: (n: number, total: number) => `${n} of ${total} ticked`,
-    notEncrypted: 'Not encrypted',
+    crumbs: ['This computer', 'home', 'ana', 'Showcase'],
+    placesGroup: 'Places',
+    devicesGroup: 'Devices',
+    places: ['Home', 'Desktop', 'Documents', 'Downloads', 'Pictures'],
+    devices: ['This computer', 'Backup 64 GB'],
+    paneButtons: ['Reload', 'Up', 'Sort', 'Filter', 'Close pane'],
+    filterHint: (n: number) => `Filter ${n} items`,
+    items: (n: number) => `${n} items`,
+    entries: (n: number) => `${n} entries`,
+    tickedCount: (n: number) => `${n} ticked`,
+    selectFile: 'Select a file to preview',
+    preview: 'Preview',
+    archive: 'archive',
+    menuDisk: [
+      'New folder with selection', 'Open', 'Open with', 'Quick preview', 'Cut', 'Copy', 'Duplicate', 'Rename',
+      'Move to…', 'Copy to…', 'Compress…', 'Copy path', 'Copy name', 'Properties', 'Move to Trash', 'Permanently delete',
+    ],
+    menuArchive: ['Open', 'Extract selection', 'Extract here', 'Extract to…', 'Test', 'Copy path', 'Properties'],
+    compressing: (n: number) => `Compressing ${n} items into Showcase.zip…`,
+    compressed: 'Showcase.zip written · 4.9 MB · AES-256',
+    extracting: (n: string) => `Extracting ${n}…`,
+    extracted: (n: string) => `${n} extracted beside the archive`,
+    tested: (n: string) => `${n}: every CRC checks out`,
+    sketch: (l: string) => `${l} works in the window; this is a sketch.`,
+    openedNext: (n: string) => `${n} opened in the next pane`,
+    openedArchive: (n: string) => `${n} opened in place, like a folder`,
+    atTop: 'Already at the top of Showcase',
+    rows: 'Folders and files. Arrow keys move, Space ticks, Enter opens, Tab changes pane, right-click for the menu.',
+    menuFor: (n: string) => `Context menu for ${n}`,
     move: 'move',
     tick: 'tick',
-    all: 'all',
+    open: 'open',
+    pane: 'pane',
     menu: ['Open with Arca', 'Extract here', 'Extract to “photos-2026\\”'],
     window: 'Downloads · File Explorer',
     thisPc: 'This PC',
@@ -76,29 +96,39 @@ const COPY = {
     locale: 'en-US',
   },
   es: {
-    opened: (n: string) => `Abierta ${n}/. Retroceso sube un nivel.`,
-    extractedOne: (n: string) => `${n} extraído a una carpeta temporal y abierto`,
-    atTop: 'Ya estás en la raíz de project-assets.zip',
-    encrypted: 'Cifrado',
-    nav: ['Atrás', 'Adelante', 'Subir un nivel'],
-    navHint: (l: string) => `${l}. También con Alt+← / Alt+→ y los botones laterales del ratón.`,
-    filterLabel: 'Filtrar entradas',
-    filter: 'Filtrar',
-    removed: 'Contraseña quitada sin recomprimir',
-    applied: 'AES-256 aplicado sin recomprimir',
-    removePw: 'Quitar contraseña',
-    setPw: 'Poner contraseña…',
-    extracting: 'Extrayendo 9 entradas…',
-    extracted: '9 entradas extraídas en ~/Escritorio/project-assets',
-    extractAll: 'Extraer todo',
-    cols: ['Nombre', 'Tamaño', 'Comprimido', 'Método', 'Ahorro', 'Modificado'],
-    rows: 'Entradas de project-assets.zip. Las flechas mueven, Space marca, Enter abre.',
-    noMatch: (f: string) => `Ninguna entrada coincide con «${f}».`,
-    ticked: (n: number, total: number) => `${n} de ${total} marcadas`,
-    notEncrypted: 'Sin cifrar',
+    crumbs: ['Este equipo', 'home', 'ana', 'Showcase'],
+    placesGroup: 'Lugares',
+    devicesGroup: 'Dispositivos',
+    places: ['Inicio', 'Escritorio', 'Documentos', 'Descargas', 'Imágenes'],
+    devices: ['Este equipo', 'Backup 64 GB'],
+    paneButtons: ['Recargar', 'Subir', 'Ordenar', 'Filtrar', 'Cerrar panel'],
+    filterHint: (n: number) => `Filtrar ${n} elementos`,
+    items: (n: number) => `${n} elementos`,
+    entries: (n: number) => `${n} entradas`,
+    tickedCount: (n: number) => `${n} marcados`,
+    selectFile: 'Selecciona un archivo para verlo',
+    preview: 'Vista previa',
+    archive: 'archivo',
+    menuDisk: [
+      'Nueva carpeta con la selección', 'Abrir', 'Abrir con', 'Vista rápida', 'Cortar', 'Copiar', 'Duplicar', 'Renombrar',
+      'Mover a…', 'Copiar a…', 'Comprimir…', 'Copiar ruta', 'Copiar nombre', 'Propiedades', 'Mover a la papelera', 'Eliminar permanentemente',
+    ],
+    menuArchive: ['Abrir', 'Extraer selección', 'Extraer aquí', 'Extraer en…', 'Comprobar', 'Copiar ruta', 'Propiedades'],
+    compressing: (n: number) => `Comprimiendo ${n} elementos en Showcase.zip…`,
+    compressed: 'Showcase.zip creado · 4.9 MB · AES-256',
+    extracting: (n: string) => `Extrayendo ${n}…`,
+    extracted: (n: string) => `${n} extraído junto al archivo`,
+    tested: (n: string) => `${n}: todos los CRC correctos`,
+    sketch: (l: string) => `${l} funciona en la ventana; esto es un boceto.`,
+    openedNext: (n: string) => `${n} abierta en el panel de al lado`,
+    openedArchive: (n: string) => `${n} abierto en el sitio, como una carpeta`,
+    atTop: 'Ya estás en la raíz de Showcase',
+    rows: 'Carpetas y archivos. Las flechas mueven, Space marca, Enter abre, Tab cambia de panel, clic derecho para el menú.',
+    menuFor: (n: string) => `Menú contextual de ${n}`,
     move: 'mover',
     tick: 'marcar',
-    all: 'todo',
+    open: 'abrir',
+    pane: 'panel',
     menu: ['Abrir con Arca', 'Extraer aquí', 'Extraer en «photos-2026\\»'],
     window: 'Descargas · Explorador de archivos',
     thisPc: 'Este equipo',
@@ -122,34 +152,85 @@ const COPY = {
 /* ================================================================== */
 /*  Desktop window                                                     */
 /* ================================================================== */
-type Kind = 'folder' | 'image' | 'pdf' | 'video' | 'doc' | 'font' | 'data';
+type Kind = 'folder' | 'image' | 'audio' | 'video' | 'doc' | 'code' | 'data' | 'zip';
 
 const KIND_ICON: Record<Kind, { icon: IconType; cls: string }> = {
-  folder: { icon: Folder, cls: 'text-amber-300 fill-amber-300/20' },
+  folder: { icon: Folder, cls: 'text-brand-300' },
   image: { icon: FileImage, cls: 'text-sky-300' },
-  pdf: { icon: FileText, cls: 'text-rose-300' },
+  audio: { icon: Music, cls: 'text-violet-300' },
   video: { icon: Film, cls: 'text-violet-300' },
   doc: { icon: FileText, cls: 'text-slate-300' },
-  font: { icon: Type, cls: 'text-teal-300' },
+  code: { icon: FileCode, cls: 'text-teal-300' },
   data: { icon: Braces, cls: 'text-lime-300' },
+  zip: { icon: FileArchive, cls: 'text-amber-300' },
 };
 
-type Entry = { name: string; kind: Kind; size: string; packed: string; method: string; saved: string; modified: string };
+type Node = {
+  name: string;
+  kind: Kind;
+  size: string;
+  modified: string;
+  mime: string;
+  children?: Node[];
+  lines?: string[];
+};
 
-const ENTRIES: Entry[] = [
-  { name: 'icons', kind: 'folder', size: '—', packed: '—', method: '—', saved: '—', modified: '2026-09-14 09:12' },
-  { name: 'exports', kind: 'folder', size: '—', packed: '—', method: '—', saved: '—', modified: '2026-09-13 17:31' },
-  { name: 'brand-guidelines.pdf', kind: 'pdf', size: '12.4 MB', packed: '10.1 MB', method: 'deflate', saved: '19%', modified: '2026-09-12 16:40' },
-  { name: 'hero@2x.png', kind: 'image', size: '4.8 MB', packed: '4.7 MB', method: 'deflate', saved: '2%', modified: '2026-09-12 14:03' },
-  { name: 'logo.svg', kind: 'image', size: '18.2 KB', packed: '5.1 KB', method: 'deflate', saved: '72%', modified: '2026-09-11 11:27' },
-  { name: 'palette.json', kind: 'data', size: '2.4 KB', packed: '0.8 KB', method: 'deflate', saved: '67%', modified: '2026-09-10 18:55' },
-  { name: 'notes.md', kind: 'doc', size: '6.1 KB', packed: '2.3 KB', method: 'deflate', saved: '62%', modified: '2026-09-10 10:02' },
-  { name: 'teaser.mp4', kind: 'video', size: '88.3 MB', packed: '88.3 MB', method: 'store', saved: '0%', modified: '2026-09-09 21:18' },
-  { name: 'Geist-Variable.woff2', kind: 'font', size: '64.0 KB', packed: '63.7 KB', method: 'store', saved: '0%', modified: '2026-09-08 08:44' },
+const RUST = [
+  '//! Colour for the viewer’s text, one line at a time.',
+  '',
+  'use eframe::egui::{Color32, FontId};',
+  '',
+  '#[derive(Clone, Copy, PartialEq, Eq, Debug)]',
+  'pub(crate) enum Family {',
+  '    Shell,',
+  '    Rust,',
+  '    Python,',
+  '    Markdown,',
+  '    Plain,',
+  '}',
+  '',
+  'pub(crate) fn family_of(name: &str) -> Family {',
+  '    match name.rsplit_once(\'.\').map(|(_, ext)| ext) {',
+  '        Some("rs") => Family::Rust,',
+  '        Some("sh") => Family::Shell,',
+  '        Some("py") => Family::Python,',
+  '        Some("md") => Family::Markdown,',
+  '        _ => Family::Plain,',
+  '    }',
+  '}',
 ];
 
-const GRID_COLS =
-  'grid-cols-[28px_minmax(0,1fr)_72px] sm:grid-cols-[28px_minmax(0,1fr)_76px_76px_68px_52px] lg:grid-cols-[28px_minmax(0,1fr)_84px_84px_72px_56px_136px]';
+const NOTES = ['# Trip notes', '', '- Flights booked', '- Hotel: Lisbon, 3 nights', '- Pack the camera', '- Back up the photos before leaving'];
+
+const PHOTOS: Node[] = [
+  { name: 'IMG_0412.jpg', kind: 'image', size: '2.4 MB', modified: '2026-09-14 09:12', mime: 'image/jpeg' },
+  { name: 'IMG_0413.jpg', kind: 'image', size: '1.8 MB', modified: '2026-09-14 09:13', mime: 'image/jpeg' },
+  { name: 'IMG_0418.jpg', kind: 'image', size: '0.9 MB', modified: '2026-09-14 09:20', mime: 'image/jpeg' },
+];
+
+const PROJECTS: Node[] = [
+  { name: 'build.sh', kind: 'code', size: '3.4 KB', modified: '2026-10-02 18:40', mime: 'text/x-shellscript', lines: ['#!/usr/bin/env bash', 'set -euo pipefail', '', 'cargo build --release', 'cp target/release/arca-gui dist/'] },
+  { name: 'Cargo.toml', kind: 'data', size: '1.1 KB', modified: '2026-10-02 18:40', mime: 'text/x-toml', lines: ['[package]', 'name = "arca-gui"', 'edition = "2024"', '', '[dependencies]', 'eframe = "0.36"'] },
+  { name: 'main.rs', kind: 'code', size: '21.2 KB', modified: '2026-10-03 11:05', mime: 'text/x-rust', lines: RUST },
+];
+
+const ROOT: Node[] = [
+  { name: 'Backups', kind: 'folder', size: '—', modified: '2026-09-30 22:10', mime: 'inode/directory', children: [
+    { name: 'vault.7z', kind: 'zip', size: '812 MB', modified: '2026-09-30 22:10', mime: 'application/x-7z-compressed', children: PROJECTS },
+    { name: 'notes-2025.tar.gz', kind: 'zip', size: '48 KB', modified: '2026-01-02 09:00', mime: 'application/gzip', children: [] },
+  ] },
+  { name: 'Music', kind: 'folder', size: '—', modified: '2026-08-21 20:02', mime: 'inode/directory', children: [
+    { name: 'track-01.flac', kind: 'audio', size: '5.2 MB', modified: '2026-08-21 20:02', mime: 'audio/flac' },
+    { name: 'track-02.flac', kind: 'audio', size: '4.7 MB', modified: '2026-08-21 20:03', mime: 'audio/flac' },
+  ] },
+  { name: 'Photos', kind: 'folder', size: '—', modified: '2026-09-14 09:20', mime: 'inode/directory', children: PHOTOS },
+  { name: 'Projects', kind: 'folder', size: '—', modified: '2026-10-03 11:05', mime: 'inode/directory', children: PROJECTS },
+  { name: 'notes.md', kind: 'doc', size: '142 B', modified: '2026-10-01 08:14', mime: 'text/markdown', lines: NOTES },
+  { name: 'photos-2026.zip', kind: 'zip', size: '5.1 MB', modified: '2026-10-05 17:52', mime: 'application/zip', children: PHOTOS },
+  { name: 'projects-backup.tar.gz', kind: 'zip', size: '8.3 KB', modified: '2026-10-05 17:52', mime: 'application/gzip', children: PROJECTS },
+];
+
+const opensInPane = (n: Node) => n.kind === 'folder' || n.kind === 'zip';
 
 type Toast = { text: string; progress: number | null } | null;
 
@@ -188,293 +269,461 @@ function useToast() {
   return { toast, flash, run };
 }
 
+type Menu = { pane: number; node: Node; x: number; y: number } | null;
+
+const MENU_ICONS: IconType[] = [FolderPlus, ExternalLink, ExternalLink, Eye, Scissors, Copy, Copy, Pencil, FolderOpen, FolderOpen, Package, Share2, Share2, Info, Trash2, Trash2];
+const MENU_ARCHIVE_ICONS: IconType[] = [ExternalLink, Download, Download, Download, Check, Share2, Info];
+const MENU_BREAKS = new Set([1, 4, 8, 10, 11, 14]);
+const MENU_ARCHIVE_BREAKS = new Set([1, 5]);
+
 export function DesktopMock() {
-  const [filter, setFilter] = useState('');
-  const [cursor, setCursor] = useState(2);
-  const [ticked, setTicked] = useState<Set<string>>(() => new Set(['brand-guidelines.pdf', 'logo.svg']));
-  const [encrypted, setEncrypted] = useState(false);
-  const anchor = useRef(2);
-  const { toast, flash, run } = useToast();
   const tx = useCopy(COPY);
+  // The second pane shows what was picked in the first; `stack` is its path
+  // inside that folder or archive.
+  const [stack, setStack] = useState<Node[]>([ROOT[3]]);
+  const [active, setActive] = useState(1);
+  const [cursor, setCursor] = useState<[number, number]>([3, 2]);
+  const [ticked, setTicked] = useState<Set<string>>(() => new Set(['Projects/main.rs']));
+  const [filters, setFilters] = useState<[string | null, string | null]>([null, null]);
+  const [menu, setMenu] = useState<Menu>(null);
+  const { toast, flash, run } = useToast();
+  const frame = useRef<HTMLDivElement>(null);
 
-  const rows = useMemo(
-    () => ENTRIES.filter((e) => e.name.toLowerCase().includes(filter.trim().toLowerCase())),
-    [filter],
-  );
-  const safeCursor = rows.length === 0 ? -1 : Math.min(cursor, rows.length - 1);
+  const second = stack.length ? stack[stack.length - 1] : null;
+  const inArchive = stack.some((n) => n.kind === 'zip');
+  const lists: Node[][] = [ROOT, second?.children ?? []];
+  const rows = lists.map((list, pane) => {
+    const f = (filters[pane] ?? '').trim().toLowerCase();
+    return f ? list.filter((n) => n.name.toLowerCase().includes(f)) : list;
+  });
+  const panes = second ? 2 : 1;
+  const current = (pane: number) => rows[pane][Math.min(cursor[pane], rows[pane].length - 1)] ?? null;
+  const previewed = current(active);
+  const keyOf = (pane: number, n: Node) => (pane === 0 ? n.name : `${stack.map((s) => s.name).join('/')}/${n.name}`);
 
-  const toggle = (name: string) =>
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', close);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', close);
+    };
+  }, [menu]);
+
+  const setCursorAt = (pane: number, idx: number) =>
+    setCursor((c) => (pane === 0 ? [idx, c[1]] : [c[0], idx]));
+
+  const toggle = (key: string) =>
     setTicked((prev) => {
       const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
 
-  const open = (e: Entry) => {
-    if (e.kind === 'folder') flash(tx.opened(e.name));
-    else flash(tx.extractedOne(e.name));
+  const openNode = (pane: number, n: Node) => {
+    if (!opensInPane(n)) {
+      flash(tx.sketch(tx.menuDisk[1]));
+      return;
+    }
+    if (pane === 0) {
+      setStack([n]);
+      setCursor((c) => [c[0], 0]);
+      setActive(1);
+    } else {
+      setStack((s) => [...s, n]);
+      setCursor((c) => [c[0], 0]);
+    }
+    flash(n.kind === 'zip' ? tx.openedArchive(n.name) : tx.openedNext(n.name));
+  };
+
+  const up = () => {
+    if (stack.length > 1) {
+      setStack((s) => s.slice(0, -1));
+      setCursor((c) => [c[0], 0]);
+    } else if (stack.length === 1) {
+      setStack([]);
+      setActive(0);
+    } else {
+      flash(tx.atTop);
+    }
   };
 
   const onKeyDown = (ev: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (rows.length === 0) return;
-    const last = rows.length - 1;
-    const move = (to: number, extend = false) => {
-      const next = Math.max(0, Math.min(last, to));
-      if (extend) {
-        const from = Math.min(anchor.current, next);
-        const toIdx = Math.max(anchor.current, next);
-        setTicked((prev) => {
-          const s = new Set(prev);
-          for (let i = from; i <= toIdx; i++) s.add(rows[i].name);
-          return s;
-        });
-      } else {
-        anchor.current = next;
-      }
-      setCursor(next);
-    };
+    const list = rows[active];
+    const last = list.length - 1;
+    const idx = Math.min(cursor[active], last);
     switch (ev.key) {
       case 'ArrowDown':
         ev.preventDefault();
-        move(safeCursor + 1, ev.shiftKey);
+        setCursorAt(active, Math.min(last, idx + 1));
         break;
       case 'ArrowUp':
         ev.preventDefault();
-        move(safeCursor - 1, ev.shiftKey);
+        setCursorAt(active, Math.max(0, idx - 1));
         break;
-      case 'Home':
+      case 'ArrowRight':
         ev.preventDefault();
-        move(0);
+        if (panes > 1) setActive(1);
         break;
-      case 'End':
+      case 'ArrowLeft':
         ev.preventDefault();
-        move(last);
+        setActive(0);
         break;
-      case 'PageDown':
-        ev.preventDefault();
-        move(safeCursor + 5);
-        break;
-      case 'PageUp':
-        ev.preventDefault();
-        move(safeCursor - 5);
+      case 'Tab':
+        if (panes > 1) {
+          ev.preventDefault();
+          setActive((a) => (a + 1) % panes);
+        }
         break;
       case ' ':
         ev.preventDefault();
-        toggle(rows[safeCursor].name);
+        if (list[idx]) toggle(keyOf(active, list[idx]));
         break;
       case 'Enter':
         ev.preventDefault();
-        open(rows[safeCursor]);
+        if (list[idx]) openNode(active, list[idx]);
         break;
       case 'Backspace':
         ev.preventDefault();
-        flash(tx.atTop);
+        if (active === 1) up();
+        else flash(tx.atTop);
+        break;
+      case 'Escape':
+        setMenu(null);
         break;
       default:
         if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'a') {
           ev.preventDefault();
-          const all = rows.every((r) => ticked.has(r.name));
-          setTicked(all ? new Set() : new Set(rows.map((r) => r.name)));
-        } else if (ev.key.length === 1 && /[a-z0-9]/i.test(ev.key) && !ev.ctrlKey && !ev.metaKey) {
-          const k = ev.key.toLowerCase();
-          for (let step = 1; step <= rows.length; step++) {
-            const idx = (safeCursor + step) % rows.length;
-            if (rows[idx].name.toLowerCase().startsWith(k)) {
-              move(idx);
-              break;
-            }
-          }
+          const keys = list.map((n) => keyOf(active, n));
+          setTicked((prev) => {
+            const all = keys.every((k) => prev.has(k));
+            const next = new Set(prev);
+            keys.forEach((k) => (all ? next.delete(k) : next.add(k)));
+            return next;
+          });
         }
     }
   };
 
-  const onRowClick = (ev: ReactMouseEvent<HTMLDivElement>, idx: number) => {
-    const name = rows[idx].name;
-    if (ev.shiftKey) {
-      const from = Math.min(anchor.current, idx);
-      const to = Math.max(anchor.current, idx);
-      setTicked((prev) => {
-        const s = new Set(prev);
-        for (let i = from; i <= to; i++) s.add(rows[i].name);
-        return s;
-      });
-    } else if (ev.ctrlKey || ev.metaKey) {
-      toggle(name);
-      anchor.current = idx;
-    } else {
-      anchor.current = idx;
+  const onRowClick = (ev: ReactMouseEvent<HTMLDivElement>, pane: number, idx: number) => {
+    const n = rows[pane][idx];
+    setActive(pane);
+    setCursorAt(pane, idx);
+    if (ev.ctrlKey || ev.metaKey) {
+      toggle(keyOf(pane, n));
+      return;
     }
-    setCursor(idx);
+    if (pane === 0 && opensInPane(n)) openNode(0, n);
   };
 
-  const activeId = safeCursor >= 0 ? `arca-row-${safeCursor}` : undefined;
+  const onContextMenu = (ev: ReactMouseEvent<HTMLDivElement>, pane: number, idx: number) => {
+    ev.preventDefault();
+    const box = frame.current?.getBoundingClientRect();
+    if (!box) return;
+    setActive(pane);
+    setCursorAt(pane, idx);
+    setMenu({ pane, node: rows[pane][idx], x: ev.clientX - box.left, y: ev.clientY - box.top });
+  };
 
-  return (
-    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-ink-900/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
-      {/* Title bar */}
-      <div className="flex items-center gap-3 border-b border-white/[0.06] bg-white/[0.025] px-4 py-2.5">
-        <div className="flex gap-2" aria-hidden="true">
-          <span className="size-3 rounded-full bg-[#ff5f57]/90" />
-          <span className="size-3 rounded-full bg-[#febc2e]/90" />
-          <span className="size-3 rounded-full bg-[#28c840]/90" />
-        </div>
-        <div className="mx-auto flex items-center gap-2 text-xs text-slate-400">
-          <LogoMark className="size-4" />
-          project-assets.zip — Arca
-          {encrypted && <Lock className="size-3 text-emerald-400" aria-label={tx.encrypted} />}
-        </div>
-        <div className="w-[52px]" aria-hidden="true" />
-      </div>
+  const tickedIn = (pane: number) => rows[pane].filter((n) => ticked.has(keyOf(pane, n))).length;
 
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.06] px-3 py-2.5">
-        <div className="flex items-center gap-0.5">
-          {[
-            { icon: ArrowLeft, label: tx.nav[0], disabled: false },
-            { icon: ArrowRight, label: tx.nav[1], disabled: true },
-            { icon: ArrowUp, label: tx.nav[2], disabled: false },
-          ].map(({ icon: Icon, label, disabled }) => (
-            <button
-              key={label}
-              type="button"
-              aria-label={label}
-              disabled={disabled}
-              onClick={() => flash(tx.navHint(label))}
-              className="inline-flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
-            >
-              <Icon className="size-4" />
-            </button>
-          ))}
-        </div>
-        <div className="hidden min-w-0 items-center gap-1.5 text-xs text-slate-400 md:flex">
-          <FileArchive className="size-3.5 text-brand-300" />
-          project-assets.zip
-          <ChevronRight className="size-3 text-slate-600" />
-          <span className="text-slate-200">design</span>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <label className="relative">
-            <span className="sr-only">{tx.filterLabel}</span>
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-500" />
+  const act = (label: string, index: number) => {
+    const n = menu?.node;
+    setMenu(null);
+    if (!n) return;
+    if (!inArchive || menu?.pane === 0) {
+      if (index === 1) openNode(menu?.pane ?? 0, n);
+      else if (index === 10) run(tx.compressing(Math.max(1, tickedIn(menu?.pane ?? 0))), tx.compressed);
+      else flash(tx.sketch(label));
+    } else if (index === 0) openNode(1, n);
+    else if (index >= 1 && index <= 3) run(tx.extracting(n.name), tx.extracted(n.name));
+    else if (index === 4) run(tx.tested(n.name), tx.tested(n.name), 900);
+    else flash(tx.sketch(label));
+  };
+
+  const menuItems = menu && (inArchive && menu.pane === 1 ? tx.menuArchive : tx.menuDisk);
+  const menuIcons = menu && (inArchive && menu.pane === 1 ? MENU_ARCHIVE_ICONS : MENU_ICONS);
+  const menuBreaks = menu && (inArchive && menu.pane === 1 ? MENU_ARCHIVE_BREAKS : MENU_BREAKS);
+
+  const paneHeader = (pane: number, title: string) => (
+    <div className="flex h-9 items-center gap-0.5 border-b border-white/[0.06] px-2">
+      <span className={cn('mr-auto truncate pl-1 text-xs', active === pane ? 'text-white' : 'text-slate-400')}>{title}</span>
+      {[
+        { icon: RotateCw, label: tx.paneButtons[0], onClick: () => flash(tx.sketch(tx.paneButtons[0])) },
+        { icon: ArrowUp, label: tx.paneButtons[1], onClick: () => (pane === 1 ? up() : flash(tx.atTop)) },
+        { icon: ArrowDownUp, label: tx.paneButtons[2], onClick: () => flash(tx.sketch(tx.paneButtons[2])) },
+        {
+          icon: Filter,
+          label: tx.paneButtons[3],
+          onClick: () =>
+            setFilters((f) => {
+              const next: [string | null, string | null] = [...f];
+              next[pane] = next[pane] === null ? '' : null;
+              return next;
+            }),
+          on: filters[pane] !== null,
+        },
+        ...(pane === 1 ? [{ icon: X, label: tx.paneButtons[4], onClick: () => { setStack([]); setActive(0); } }] : []),
+      ].map(({ icon: Icon, label, onClick, on }) => (
+        <button
+          key={label}
+          type="button"
+          aria-label={label}
+          aria-pressed={on}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            onClick();
+          }}
+          className={cn(
+            'inline-flex size-7 items-center justify-center rounded-md transition hover:bg-white/[0.06] hover:text-white',
+            on ? 'bg-brand-500/15 text-brand-300' : 'text-slate-500',
+          )}
+        >
+          <Icon className="size-3.5" />
+        </button>
+      ))}
+    </div>
+  );
+
+  const paneBody = (pane: number) => {
+    const list = rows[pane];
+    const idx = Math.min(cursor[pane], list.length - 1);
+    return (
+      <div className="flex-1 overflow-y-auto py-1 thin-scrollbar">
+        {filters[pane] !== null && (
+          <label className="mx-2 mb-1 flex items-center gap-2 rounded-md border border-white/10 bg-black/30 px-2">
+            <Filter className="size-3 text-slate-500" />
             <input
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder={tx.filter}
-              className="h-8 w-28 rounded-lg border border-white/10 bg-black/30 pl-8 pr-2 text-xs text-slate-200 transition placeholder:text-slate-600 focus:border-brand-400/50 focus:outline-none sm:w-40"
+              autoFocus
+              value={filters[pane] ?? ''}
+              onChange={(e) => setFilters((f) => (pane === 0 ? [e.target.value, f[1]] : [f[0], e.target.value]))}
+              onKeyDown={(e) => e.stopPropagation()}
+              placeholder={tx.filterHint(lists[pane].length)}
+              aria-label={tx.filterHint(lists[pane].length)}
+              className="h-7 w-full bg-transparent text-xs text-slate-200 outline-none placeholder:text-slate-600"
             />
           </label>
-          <button
-            type="button"
-            onClick={() => {
-              setEncrypted((v) => !v);
-              flash(encrypted ? tx.removed : tx.applied);
-            }}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
-          >
-            {encrypted ? <Lock className="size-3.5 text-emerald-400" /> : <KeyRound className="size-3.5" />}
-            <span className="hidden sm:inline">{encrypted ? tx.removePw : tx.setPw}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => run(tx.extracting, tx.extracted)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-linear-to-r from-brand-300 to-brand-500 px-3 text-xs font-medium text-ink-950 shadow-[0_6px_20px_-8px_rgba(47,107,255,0.8)] transition hover:brightness-110 active:scale-95"
-          >
-            <Download className="size-3.5" />
-            {tx.extractAll}
-          </button>
-        </div>
-      </div>
-
-      {/* Header */}
-      <div
-        aria-hidden="true"
-        className={cn('grid items-center gap-3 border-b border-white/[0.06] px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-slate-500', GRID_COLS)}
-      >
-        <span />
-        <span>{tx.cols[0]}</span>
-        <span className="text-right">{tx.cols[1]}</span>
-        <span className="hidden text-right sm:block">{tx.cols[2]}</span>
-        <span className="hidden sm:block">{tx.cols[3]}</span>
-        <span className="hidden text-right sm:block">{tx.cols[4]}</span>
-        <span className="hidden lg:block">{tx.cols[5]}</span>
-      </div>
-
-      {/* Rows */}
-      <div
-        role="listbox"
-        aria-label={tx.rows}
-        aria-multiselectable="true"
-        aria-activedescendant={activeId}
-        tabIndex={0}
-        onKeyDown={onKeyDown}
-        className="h-[318px] overflow-y-auto outline-none thin-scrollbar focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400/50"
-      >
-        {rows.length === 0 && (
-          <div className="flex h-full items-center justify-center text-sm text-slate-500">{tx.noMatch(filter)}</div>
         )}
-        {rows.map((e, i) => {
-          const { icon: Icon, cls } = KIND_ICON[e.kind];
-          const isTicked = ticked.has(e.name);
-          const isCursor = i === safeCursor;
+        {list.map((n, i) => {
+          const { icon: Icon, cls } = KIND_ICON[n.kind];
+          const isTicked = ticked.has(keyOf(pane, n));
+          const isCursor = i === idx;
+          const isOpen = pane === 0 && stack[0]?.name === n.name;
           return (
             <div
-              key={e.name}
-              id={`arca-row-${i}`}
+              key={n.name}
+              id={`arca-${pane}-${i}`}
               role="option"
               aria-selected={isTicked}
-              onClick={(ev) => onRowClick(ev, i)}
-              onDoubleClick={() => open(e)}
+              onClick={(ev) => onRowClick(ev, pane, i)}
+              onDoubleClick={() => openNode(pane, n)}
+              onContextMenu={(ev) => onContextMenu(ev, pane, i)}
               className={cn(
-                'grid cursor-pointer select-none items-center gap-3 px-4 py-2 text-[13px] transition-colors duration-150',
-                GRID_COLS,
-                isCursor ? 'bg-brand-500/[0.09] shadow-[inset_2px_0_0_#5FAEFF]' : 'hover:bg-white/[0.035]',
+                'mx-1 flex h-7 cursor-pointer select-none items-center gap-2 rounded-md px-2 text-[13px] transition-colors duration-150',
+                isCursor && active === pane
+                  ? 'bg-brand-500/[0.14] text-white ring-1 ring-inset ring-brand-400/60'
+                  : isOpen || isTicked
+                    ? 'bg-white/[0.05] text-slate-100'
+                    : 'text-slate-300 hover:bg-white/[0.035]',
               )}
             >
               <span
                 role="presentation"
                 onClick={(ev) => {
                   ev.stopPropagation();
-                  toggle(e.name);
-                  setCursor(i);
-                  anchor.current = i;
+                  toggle(keyOf(pane, n));
+                  setActive(pane);
+                  setCursorAt(pane, i);
                 }}
                 className={cn(
-                  'flex size-4 items-center justify-center rounded border transition-all duration-200',
-                  isTicked ? 'border-brand-400 bg-brand-400 text-ink-950' : 'border-white/20 bg-transparent',
+                  'flex size-3.5 shrink-0 items-center justify-center rounded-sm border transition-all duration-200',
+                  isTicked ? 'border-brand-400 bg-brand-400 text-ink-950' : 'border-white/15',
                 )}
               >
-                {isTicked && <Check className="size-3" strokeWidth={3} />}
+                {isTicked && <Check className="size-2.5" strokeWidth={3} />}
               </span>
-              <span className="flex min-w-0 items-center gap-2.5">
-                <Icon className={cn('size-4 shrink-0', cls)} />
-                <span className={cn('truncate', isCursor ? 'text-white' : 'text-slate-200')}>{e.name}</span>
-              </span>
-              <span className="text-right font-mono text-xs tabular-nums text-slate-400">{e.size}</span>
-              <span className="hidden text-right font-mono text-xs tabular-nums text-slate-500 sm:block">{e.packed}</span>
-              <span className="hidden font-mono text-xs text-slate-500 sm:block">{e.method}</span>
-              <span className={cn('hidden text-right font-mono text-xs tabular-nums sm:block', e.saved !== '0%' && e.saved !== '—' ? 'text-emerald-400/90' : 'text-slate-600')}>
-                {e.saved}
-              </span>
-              <span className="hidden font-mono text-xs text-slate-500 lg:block">{e.modified}</span>
+              <Icon className={cn('size-4 shrink-0', cls)} />
+              <span className="min-w-0 flex-1 truncate">{n.name}</span>
+              {n.kind !== 'folder' && <span className="hidden font-mono text-[11px] tabular-nums text-slate-500 sm:inline">{n.size}</span>}
+              {opensInPane(n) && <ChevronRight className="size-3.5 shrink-0 text-slate-600" />}
             </div>
           );
         })}
+      </div>
+    );
+  };
+
+  const PreviewIcon = previewed ? KIND_ICON[previewed.kind].icon : Eye;
+  const previewCls = previewed ? KIND_ICON[previewed.kind].cls : 'text-slate-500';
+  const title = second ? [...tx.crumbs, ...stack.map((n) => n.name)] : tx.crumbs;
+  const visible = rows[active].length;
+
+  return (
+    <div
+      ref={frame}
+      className="relative overflow-hidden rounded-2xl border border-white/10 bg-ink-900/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
+    >
+      {/* Title bar with breadcrumbs */}
+      <div className="flex h-10 items-center gap-2 border-b border-white/[0.06] bg-white/[0.025] px-3 text-xs text-slate-400">
+        <LogoMark className="size-4 shrink-0" />
+        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+          {title.map((crumb, i) => (
+            <span key={`${crumb}-${i}`} className="flex items-center gap-1">
+              {i > 0 && <ChevronRight className="size-3 shrink-0 text-slate-600" />}
+              <span className={cn('truncate', i === title.length - 1 ? 'text-white' : '')}>{crumb}</span>
+            </span>
+          ))}
+          {inArchive && <span className="ml-1 rounded bg-amber-300/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-200">{tx.archive}</span>}
+        </div>
+        <div className="ml-auto flex items-center gap-0.5 text-slate-500" aria-hidden="true">
+          <span className="inline-flex size-7 items-center justify-center"><Search className="size-3.5" /></span>
+          <span className="inline-flex size-7 items-center justify-center"><Settings2 className="size-3.5" /></span>
+        </div>
+      </div>
+
+      <div className="flex h-[400px]">
+        {/* Sidebar */}
+        <aside className="hidden w-44 shrink-0 flex-col gap-4 border-r border-white/[0.06] bg-white/[0.015] p-3 text-[12px] md:flex" aria-hidden="true">
+          <div>
+            <div className="mb-1.5 px-2 text-[10px] font-medium uppercase tracking-wider text-slate-500">{tx.placesGroup}</div>
+            {[Home, Monitor, FileText, Download, ImageIcon].map((Icon, i) => (
+              <div key={tx.places[i]} className={cn('flex h-7 items-center gap-2 rounded-md px-2', i === 0 ? 'bg-brand-500/[0.12] text-white' : 'text-slate-400')}>
+                <Icon className="size-3.5" />
+                {tx.places[i]}
+              </div>
+            ))}
+          </div>
+          <div>
+            <div className="mb-1.5 px-2 text-[10px] font-medium uppercase tracking-wider text-slate-500">{tx.devicesGroup}</div>
+            {[HardDrive, Usb].map((Icon, i) => (
+              <div key={tx.devices[i]} className="flex h-7 items-center gap-2 rounded-md px-2 text-slate-400">
+                <Icon className="size-3.5" />
+                {tx.devices[i]}
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        {/* Panes */}
+        <div
+          role="listbox"
+          aria-label={tx.rows}
+          aria-multiselectable="true"
+          aria-activedescendant={current(active) ? `arca-${active}-${Math.min(cursor[active], rows[active].length - 1)}` : undefined}
+          tabIndex={0}
+          onKeyDown={onKeyDown}
+          className="flex min-w-0 flex-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400/50"
+        >
+          <div
+            className={cn('flex min-w-0 flex-col border-r border-white/[0.06]', panes > 1 ? 'w-1/2' : 'flex-1')}
+            onPointerEnter={() => setActive(0)}
+          >
+            {paneHeader(0, tx.crumbs[3])}
+            {paneBody(0)}
+          </div>
+          {second && (
+            <div className="flex min-w-0 w-1/2 flex-col" onPointerEnter={() => setActive(1)}>
+              {paneHeader(1, second.name)}
+              {paneBody(1)}
+            </div>
+          )}
+        </div>
+
+        {/* Preview */}
+        <aside className="hidden w-[300px] shrink-0 flex-col border-l border-white/[0.06] lg:flex" aria-label={tx.preview}>
+          <div className="flex items-start gap-2.5 border-b border-white/[0.06] px-3 py-2.5">
+            <PreviewIcon className={cn('mt-0.5 size-5 shrink-0', previewCls)} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[13px] text-white">{previewed ? previewed.name : tx.preview}</div>
+              <div className="truncate text-[11px] text-slate-500">
+                {previewed
+                  ? previewed.kind === 'folder' || previewed.kind === 'zip'
+                    ? `${previewed.kind === 'zip' ? tx.entries(previewed.children?.length ?? 0) : tx.items(previewed.children?.length ?? 0)} · ${previewed.modified} · ${previewed.mime}`
+                    : `${previewed.size} · ${previewed.modified} · ${previewed.mime}`
+                  : tx.selectFile}
+              </div>
+            </div>
+            <span className="inline-flex size-6 items-center justify-center text-slate-500" aria-hidden="true"><X className="size-3.5" /></span>
+          </div>
+          <div className="flex-1 overflow-hidden p-3 font-mono text-[11px] leading-5 text-slate-300">
+            {previewed?.lines ? (
+              previewed.lines.map((line, i) => (
+                <div key={i} className="flex gap-3 whitespace-pre">
+                  <span className="w-5 shrink-0 select-none text-right text-slate-600">{i + 1}</span>
+                  <span className={cn('truncate', line.startsWith('//') || line.startsWith('#!') ? 'italic text-slate-500' : line.startsWith('#') || line.startsWith('[') ? 'text-brand-300' : line.startsWith('- ') ? 'text-slate-200' : '')}>
+                    {line}
+                  </span>
+                </div>
+              ))
+            ) : previewed?.kind === 'image' ? (
+              <div className="flex h-full items-center justify-center rounded-lg bg-linear-to-br from-sky-400/30 via-brand-500/20 to-amber-300/30 text-slate-400">
+                <ImageIcon className="size-8" />
+              </div>
+            ) : previewed ? (
+              <div className="pt-2 text-slate-500">
+                {previewed.children?.map((c) => (
+                  <div key={c.name} className="flex items-center gap-2 py-0.5">
+                    <ChevronRight className="size-3" />
+                    {c.name}
+                  </div>
+                ))}
+                {previewed.kind === 'audio' && <span>{previewed.mime}</span>}
+              </div>
+            ) : null}
+          </div>
+        </aside>
       </div>
 
       {/* Status bar */}
       <div className="flex items-center justify-between gap-3 border-t border-white/[0.06] px-4 py-2 text-[11px] text-slate-500">
         <span>
-          {tx.ticked(ticked.size, ENTRIES.length)}
+          {tx.items(visible)} · {tx.tickedCount(ticked.size)}
         </span>
-        <span className="hidden md:inline">{encrypted ? 'AES-256 · WinZip AE-2' : tx.notEncrypted} · 105.6 MB → 103.2 MB</span>
         <span className="hidden items-center gap-1.5 sm:inline-flex">
           <Kbd className="h-5 min-w-5 text-[10px]">↑</Kbd>
           <Kbd className="h-5 min-w-5 text-[10px]">↓</Kbd> {tx.move}
           <Kbd className="ml-1 h-5 text-[10px]">Space</Kbd> {tx.tick}
-          <Kbd className="ml-1 h-5 text-[10px]">Ctrl A</Kbd> {tx.all}
+          <Kbd className="ml-1 h-5 text-[10px]">Enter</Kbd> {tx.open}
+          <Kbd className="ml-1 h-5 text-[10px]">Tab</Kbd> {tx.pane}
         </span>
       </div>
+
+      {/* Context menu */}
+      {menu && menuItems && menuIcons && menuBreaks && (
+        <div
+          role="menu"
+          aria-label={tx.menuFor(menu.node.name)}
+          onPointerDown={(ev) => ev.stopPropagation()}
+          style={{ left: Math.min(menu.x, (frame.current?.clientWidth ?? 600) - 236), top: Math.min(menu.y, (frame.current?.clientHeight ?? 480) - 24 * menuItems.length - 60) }}
+          className="glass-dark absolute z-10 w-[228px] rounded-xl p-1 text-[12px] text-slate-200 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.9)]"
+        >
+          {menuItems.map((label, i) => {
+            const Icon = menuIcons[i];
+            const danger = !inArchive && i >= 14;
+            return (
+              <div key={label}>
+                {menuBreaks.has(i) && i > 0 && <div className="my-1 h-px bg-white/[0.08]" />}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => act(label, i)}
+                  className={cn(
+                    'flex h-6 w-full items-center gap-2 rounded-md px-2 text-left transition hover:bg-white/[0.07]',
+                    danger ? 'text-rose-300' : '',
+                  )}
+                >
+                  <Icon className="size-3.5 shrink-0 opacity-80" />
+                  <span className="flex-1 truncate">{label}</span>
+                  {label === tx.menuDisk[2] && !inArchive && <ChevronRight className="size-3 text-slate-500" />}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Toast */}
       <div
@@ -488,7 +737,7 @@ export function DesktopMock() {
         {toast && (
           <div className="glass-dark rounded-xl px-4 py-3 text-xs text-slate-200 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.9)]">
             <div className="flex items-center gap-2">
-              {toast.progress === null ? <Check className="size-3.5 shrink-0 text-emerald-400" /> : <Download className="size-3.5 shrink-0 text-brand-300" />}
+              {toast.progress === null ? <Check className="size-3.5 shrink-0 text-emerald-400" /> : <Package className="size-3.5 shrink-0 text-brand-300" />}
               <span className="truncate">{toast.text}</span>
             </div>
             {toast.progress !== null && (

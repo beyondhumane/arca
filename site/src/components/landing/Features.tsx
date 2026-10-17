@@ -32,8 +32,8 @@ const COPY = {
     notes: ['The default. Links libzstd (C) for the fastest Zstandard.', 'No C toolchain needed. Builds for any target Rust supports.'],
     copyBuild: (l: string) => `Copy ${l} build command`,
     eyebrow: 'Features',
-    title: ['An archiver built for ', 'speed', ' and hostile input.'],
-    description: 'A small binary for the terminal and a native window for everyone else, both on the same core.',
+    title: ['A file explorer and archiver built for ', 'speed', ' and hostile input.'],
+    description: 'One window to browse, compress and extract, a small binary for the terminal, both on the same core.',
     cards: [
       ['Multi-threaded', 'Every core, on demand', 'Compression and extraction use every core. A .zip indexes its entries, so each thread opens its own entry and shares nothing with the others. Pick a thread count to see it scale.'],
       ['Memory-safe', 'Safe by construction', 'Container parsers forbid unsafe code. Malformed input becomes an error, and Zip Slip paths are refused before a byte is written.'],
@@ -69,8 +69,8 @@ const COPY = {
     notes: ['El predeterminado. Enlaza libzstd (C) para el Zstandard más rápido.', 'Sin toolchain de C. Compila para cualquier destino que admita Rust.'],
     copyBuild: (l: string) => `Copiar el comando de compilación ${l}`,
     eyebrow: 'Funciones',
-    title: ['Un archivador hecho para la ', 'velocidad', ' y la entrada hostil.'],
-    description: 'Un binario pequeño para la terminal y una ventana nativa para todos los demás, sobre el mismo núcleo.',
+    title: ['Un explorador de archivos y archivador hecho para la ', 'velocidad', ' y la entrada hostil.'],
+    description: 'Una ventana para explorar, comprimir y extraer, un binario pequeño para la terminal, sobre el mismo núcleo.',
     cards: [
       ['Multihilo', 'Todos los núcleos, cuando quieras', 'Comprimir y extraer usan todos los núcleos. Un .zip indexa sus entradas, así que cada hilo abre la suya y no comparte nada con los demás. Elige un número de hilos para ver cómo escala.'],
       ['Seguridad de memoria', 'Seguro por construcción', 'Los analizadores de contenedores prohíben el código unsafe. Una entrada malformada se convierte en un error, y las rutas Zip Slip se rechazan antes de escribir un byte.'],
