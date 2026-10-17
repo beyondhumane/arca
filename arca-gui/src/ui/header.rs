@@ -187,7 +187,7 @@ impl Shell {
 
     /// One menu for how the list looks: the view, the preview panel, how
     /// tall the rows are, the text size and hidden files.
-    fn view_menu(&mut self, ui: &mut egui::Ui, idle: bool) {
+    fn view_menu(&mut self, ui: &mut egui::Ui) {
         use crate::settings::{BrowserView, Density, TEXT_LEAST, TEXT_MOST};
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
@@ -221,7 +221,7 @@ impl Shell {
                 } else {
                     columns && view == want
                 };
-                if pick_entry(ui, glyph, label, on).clicked() && !on && idle {
+                if pick_entry(ui, glyph, label, on).clicked() && !on {
                     self.switch_view(want, want_flat);
                 }
             }
@@ -316,7 +316,7 @@ impl Shell {
                 {
                     self.toggle_search();
                 }
-                self.view_menu(ui, idle);
+                self.view_menu(ui);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     self.breadcrumbs(ui);
                 });
