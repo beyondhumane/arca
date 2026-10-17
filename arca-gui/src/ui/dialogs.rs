@@ -378,8 +378,10 @@ impl Shell {
             (s.location_word, location),
             (s.col_size, size),
         ];
+        // The footer's "items" is lower case; a row label leads with a capital.
+        let items_label = capitalised(s.items_word);
         if props.is_dir {
-            rows.push((s.items_word, items));
+            rows.push((&items_label, items));
         }
         if let Some(when) = props.modified {
             rows.push((s.col_modified, stamp(when)));
@@ -1547,4 +1549,12 @@ fn stamp(when: std::time::SystemTime) -> String {
         rest / 3600,
         (rest % 3600) / 60
     )
+}
+
+fn capitalised(word: &str) -> String {
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
