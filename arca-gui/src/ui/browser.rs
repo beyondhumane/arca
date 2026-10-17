@@ -747,7 +747,6 @@ impl Shell {
 
     fn row_menu(&mut self, ui: &mut egui::Ui, row: Option<&Row>, index: usize) {
         let s = self.controller.s();
-        let p = palette_of(ui.ctx());
         let idle = self.background_idle();
         let writable = self.controller.writable();
         let on_disk = self.controller.on_disk();
@@ -786,13 +785,7 @@ impl Shell {
                     RowAction::Copy | RowAction::Cut => self.can_copy_files() || row.is_some(),
                     _ => true,
                 };
-            if ui
-                .add_enabled(
-                    enabled,
-                    egui::Button::new(label).shortcut_text(RichText::new(keys).color(hex(p.muted))),
-                )
-                .clicked()
-            {
+            if menu_entry(ui, action.glyph(), &label, keys, enabled).clicked() {
                 if row.is_none() {
                     self.controller.dispatch(AppAction::ClearSelection);
                 }

@@ -1,8 +1,7 @@
-use super::theme::{hex, palette_of};
 use super::widgets::*;
 use super::*;
 use crate::tree::Folder;
-use eframe::egui::{self, RichText};
+use eframe::egui;
 use egui_phosphor::regular as icon;
 
 pub(crate) fn place_glyph(kind: PlaceKind) -> &'static str {
@@ -127,7 +126,6 @@ impl Shell {
 
     fn archive_tree(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
-        let p = palette_of(ui.ctx());
         group_label(ui, s.archive_folders);
         let root = self
             .controller
@@ -154,7 +152,6 @@ impl Shell {
                 .as_ref()
                 .filter(|_| self.renaming_in_tree)
                 .map(|(path, _)| path.clone()),
-            muted: hex(p.muted),
         };
         let mut rename = RenameField {
             value: &mut self.rename_value,
@@ -195,7 +192,6 @@ struct TreeContext<'a> {
     on_disk: bool,
     current: &'a str,
     renaming: Option<String>,
-    muted: egui::Color32,
 }
 
 struct RenameField<'a> {
@@ -268,13 +264,7 @@ fn tree(
                     }
                     first = false;
                     let (text, keys) = action.label(context.s);
-                    if ui
-                        .add(
-                            egui::Button::new(text)
-                                .shortcut_text(RichText::new(keys).color(context.muted)),
-                        )
-                        .clicked()
-                    {
+                    if menu_entry(ui, action.glyph(), text, keys, true).clicked() {
                         *event = Some(TreeEvent::Action(action, id.clone()));
                     }
                 }

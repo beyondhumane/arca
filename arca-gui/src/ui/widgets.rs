@@ -37,6 +37,53 @@ pub(crate) fn icon_toggle(
 }
 
 /// The blue call to action of a dialog.
+/// A context-menu entry: glyph, label and the shortcut at the far end. The
+/// glyph comes from the icon font, so it is laid out as its own section
+/// rather than relying on the text font to carry it.
+pub(crate) fn menu_entry(
+    ui: &mut Ui,
+    glyph: &str,
+    label: &str,
+    keys: &str,
+    enabled: bool,
+) -> Response {
+    let p = palette_of(ui.ctx());
+    let (ink, body) = {
+        let style = ui.style();
+        let ink = if enabled {
+            style.visuals.text_color()
+        } else {
+            style.visuals.weak_text_color()
+        };
+        (ink, egui::TextStyle::Body.resolve(style))
+    };
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        glyph,
+        0.0,
+        egui::TextFormat {
+            font_id: theme::icon_font(15.0),
+            color: if enabled { hex(p.muted) } else { ink },
+            valign: egui::Align::Center,
+            ..Default::default()
+        },
+    );
+    job.append(
+        label,
+        9.0,
+        egui::TextFormat {
+            font_id: body,
+            color: ink,
+            valign: egui::Align::Center,
+            ..Default::default()
+        },
+    );
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(job).shortcut_text(egui::RichText::new(keys).color(hex(p.muted))),
+    )
+}
+
 pub(crate) fn primary_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     ui.scope(|ui| {
         let (rest, hover) = if ui.style().visuals.dark_mode {

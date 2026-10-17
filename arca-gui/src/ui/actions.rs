@@ -123,6 +123,30 @@ impl RowAction {
         }
     }
 
+    /// The Phosphor glyph drawn in front of the menu entry.
+    pub(crate) fn glyph(self) -> &'static str {
+        use egui_phosphor::regular as icon;
+        match self {
+            RowAction::Open => icon::ARROW_SQUARE_OUT,
+            RowAction::ExtractSelection | RowAction::ExtractAll => icon::EXPORT,
+            RowAction::ExtractHere => icon::DOWNLOAD_SIMPLE,
+            RowAction::TestSelection | RowAction::TestArchive => icon::CHECK_CIRCLE,
+            RowAction::View => icon::EYE,
+            RowAction::Rename => icon::PENCIL_SIMPLE,
+            RowAction::Delete => icon::TRASH,
+            RowAction::Copy => icon::COPY,
+            RowAction::Cut => icon::SCISSORS,
+            RowAction::Paste => icon::CLIPBOARD,
+            RowAction::CopyNames => icon::CLIPBOARD_TEXT,
+            RowAction::SelectAll => icon::SELECTION_ALL,
+            RowAction::NewFolder => icon::FOLDER_PLUS,
+            RowAction::Compress => icon::PACKAGE,
+            RowAction::CopyPath => icon::LINK,
+            RowAction::Pin => icon::PUSH_PIN,
+            RowAction::OpenArchive => icon::FOLDER_OPEN,
+        }
+    }
+
     /// Whether a rule goes above this one. Looking at an entry, changing it,
     /// moving it through the clipboard and working on the selection are four
     /// different things, and twelve entries in one run is a wall.
