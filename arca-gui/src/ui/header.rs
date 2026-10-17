@@ -201,13 +201,7 @@ impl Shell {
             group_label(ui, s.view_group);
             let view = self.controller.state.settings.browser_view;
             for (glyph, label, want, want_flat) in [
-                (icon::COLUMNS, s.column_view, BrowserView::Columns, false),
-                (
-                    icon::SQUARE_SPLIT_HORIZONTAL,
-                    s.panes_view,
-                    BrowserView::Panes,
-                    false,
-                ),
+                (icon::COLUMNS, s.panes_view, BrowserView::Panes, false),
                 (
                     icon::LIST_BULLETS,
                     s.details_view,
@@ -402,7 +396,7 @@ impl Shell {
 
     /// The funnel button: opens the filter row with the field focused, or
     /// closes it and lets everything show again.
-    fn toggle_filter(&mut self) {
+    pub(super) fn toggle_filter(&mut self) {
         if self.filter_open || !self.controller.state.filter.is_empty() {
             self.close_filter();
         } else {

@@ -17,11 +17,12 @@ const DIRECTORY_MOST: f32 = 560.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum BrowserView {
+    /// Side-by-side panes. With `peek_folders` on, picking a folder opens
+    /// it in the pane beside, Miller-column style; off, each pane browses
+    /// on its own.
     #[default]
-    Columns,
-    Details,
-    /// Side-by-side panes that each browse on their own.
     Panes,
+    Details,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -102,6 +103,8 @@ pub(crate) struct Settings {
     pub(crate) density: Density,
     pub(crate) columns: Columns,
     pub(crate) browser_view: BrowserView,
+    // Panes: a folder picked in one pane opens in the next.
+    pub(crate) peek_folders: bool,
     pub(crate) sidebar_collapsed: bool,
     pub(crate) preview_visible: bool,
     pub(crate) preview_width: f32,
@@ -174,6 +177,7 @@ impl Default for Settings {
             density: Density::default(),
             columns: Columns::default(),
             browser_view: BrowserView::default(),
+            peek_folders: false,
             sidebar_collapsed: false,
             preview_visible: true,
             preview_width: PREVIEW_WIDE,
@@ -241,9 +245,14 @@ impl Settings {
                 ("title_bar", "custom") => s.title_bar = TitleBar::Custom,
                 ("density", "compact") => s.density = Density::Compact,
                 ("density", "airy") => s.density = Density::Airy,
-                ("browser_view", "columns") => s.browser_view = BrowserView::Columns,
+                // The old Columns view is Panes with peeking on.
+                ("browser_view", "columns") => {
+                    s.browser_view = BrowserView::Panes;
+                    s.peek_folders = true;
+                }
                 ("browser_view", "details") => s.browser_view = BrowserView::Details,
                 ("browser_view", "panes") => s.browser_view = BrowserView::Panes,
+                ("peek_folders", v) => s.peek_folders = v == "yes",
                 ("sidebar_collapsed", "yes") => s.sidebar_collapsed = true,
                 ("sidebar_collapsed", "no") => s.sidebar_collapsed = false,
                 ("preview_visible", "yes") => s.preview_visible = true,
@@ -384,7 +393,6 @@ impl Settings {
         };
         let yes = |b: bool| if b { "yes" } else { "no" };
         let browser_view = match (self.flat, self.browser_view) {
-            (false, BrowserView::Columns) => "columns",
             (false, BrowserView::Panes) => "panes",
             _ => "details",
         };
@@ -404,6 +412,7 @@ impl Settings {
         out.push_str(&format!("theme = {theme}\n"));
         out.push_str(&format!("flat = {}\n", yes(self.flat)));
         out.push_str(&format!("browser_view = {browser_view}\n"));
+        out.push_str(&format!("peek_folders = {}\n", yes(self.peek_folders)));
         out.push_str(&format!("folders = {}\n", yes(self.folders)));
         out.push_str(&format!(
             "sidebar_collapsed = {}\n",
@@ -473,10 +482,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_use_columns_and_visible_expanded_panels() {
+    fn defaults_use_panes_and_visible_expanded_panels() {
         let s = Settings::parse("");
-        assert_eq!(BrowserView::default(), BrowserView::Columns);
-        assert_eq!(s.browser_view, BrowserView::Columns);
+        assert_eq!(BrowserView::default(), BrowserView::Panes);
+        assert_eq!(s.browser_view, BrowserView::Panes);
         assert!(!s.flat);
         assert!(s.folders);
         assert!(!s.sidebar_collapsed);
@@ -555,14 +564,22 @@ mod tests {
         assert_eq!(Settings::parse(&s.text()).text(), s.text());
         assert_eq!(
             Settings::parse("flat = no").browser_view,
-            BrowserView::Columns
+            BrowserView::Panes
         );
         assert!(Settings::parse("tree = no").folders);
+        assert!(!s.peek_folders);
+        let old = Settings::parse("browser_view = columns");
+        assert_eq!(old.browser_view, BrowserView::Panes);
+        assert!(old.peek_folders);
+        assert!(old
+            .text()
+            .contains("browser_view = panes\npeek_folders = yes\n"));
+        assert!(!Settings::parse("browser_view = panes\npeek_folders = no").peek_folders);
     }
 
     #[test]
     fn layout_preferences_round_trip_independently() {
-        for browser_view in [BrowserView::Columns, BrowserView::Details] {
+        for browser_view in [BrowserView::Panes, BrowserView::Details] {
             for flat in [false, true] {
                 for folders in [false, true] {
                     for sidebar_collapsed in [false, true] {
@@ -623,7 +640,7 @@ mod tests {
                 let expected = if flat == "yes" || view == "details" {
                     BrowserView::Details
                 } else {
-                    BrowserView::Columns
+                    BrowserView::Panes
                 };
                 assert_eq!(forward.browser_view, expected);
                 assert_eq!(forward.flat, flat == "yes");

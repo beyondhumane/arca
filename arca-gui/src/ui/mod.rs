@@ -185,7 +185,7 @@ pub(crate) struct Shell {
     focus_filter: bool,
     filter_open: bool,
     marquee: Option<Marquee>,
-    pane_to_close: Option<usize>,
+    pane_action: Option<PaneAction>,
     properties: Option<Props>,
     last_active_pane: Option<usize>,
     name_value: String,
@@ -239,7 +239,7 @@ impl Shell {
         let columns = view != crate::settings::BrowserView::Details;
         let flat = controller.state.settings.flat;
         controller.transition_browser_view(columns, flat);
-        controller.set_free_panes(view == crate::settings::BrowserView::Panes);
+        controller.set_free_panes(!controller.state.settings.peek_folders);
         apply_startup(&mut controller, startup);
         let library = themes::all();
         theme::install(ctx, &controller.state.settings, &library);
@@ -254,7 +254,7 @@ impl Shell {
             focus_filter: false,
             filter_open: false,
             marquee: None,
-            pane_to_close: None,
+            pane_action: None,
             properties: None,
             last_active_pane: None,
             name_value: String::new(),
@@ -1128,11 +1128,18 @@ impl Shell {
         self.controller.dispatch(AppAction::Paste);
     }
 
+    fn set_peek_folders(&mut self, on: bool) {
+        self.controller.state.settings.peek_folders = on;
+        self.controller.set_free_panes(!on);
+        self.controller.state.settings.save();
+    }
+
     fn switch_view(&mut self, view: crate::settings::BrowserView, flat: bool) {
         use crate::settings::BrowserView;
         let columns = view != BrowserView::Details;
         self.controller.transition_browser_view(columns, flat);
-        self.controller.set_free_panes(view == BrowserView::Panes);
+        self.controller
+            .set_free_panes(!self.controller.state.settings.peek_folders);
         self.controller.state.settings.browser_view =
             if columns { view } else { BrowserView::Details };
         if flat {

@@ -253,6 +253,16 @@ pub(crate) enum SettingsSection {
     About,
 }
 
+/// A pane header button, acted on once the panes are drawn: some of these
+/// rebuild the pane list, which must not happen under the loop drawing it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum PaneAction {
+    Close(usize),
+    Reload(usize),
+    Up(usize),
+    Filter(usize),
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModalKind {
     Password,

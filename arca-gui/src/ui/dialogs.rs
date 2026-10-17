@@ -1421,24 +1421,30 @@ impl Shell {
 
     fn settings_views(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
-        let columns =
-            self.controller.state.settings.browser_view == crate::settings::BrowserView::Columns;
+        let panes =
+            self.controller.state.settings.browser_view == crate::settings::BrowserView::Panes;
         card(
             ui,
             s.default_view,
             Some(s.view_hint),
             false,
-            |ui| match segmented(ui, &[(s.column_view, columns), (s.details_view, !columns)]) {
-                Some(0) if !columns => {
-                    self.switch_view(crate::settings::BrowserView::Columns, false)
-                }
-                Some(1) if columns => self.switch_view(
+            |ui| match segmented(ui, &[(s.panes_view, panes), (s.details_view, !panes)]) {
+                Some(0) if !panes => self.switch_view(crate::settings::BrowserView::Panes, false),
+                Some(1) if panes => self.switch_view(
                     crate::settings::BrowserView::Details,
                     self.controller.state.settings.flat,
                 ),
                 _ => {}
             },
         );
+        let mut peek = self.controller.state.settings.peek_folders;
+        let mut peek_changed = false;
+        card(ui, s.peek_folders, Some(s.peek_hint), true, |ui| {
+            peek_changed = switch(ui, &mut peek, s.peek_folders).changed();
+        });
+        if peek_changed {
+            self.set_peek_folders(peek);
+        }
         for (label, hint, pick) in [
             (
                 s.show_preview_panel,

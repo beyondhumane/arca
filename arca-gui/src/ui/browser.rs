@@ -528,8 +528,25 @@ impl Shell {
                     }
                 });
             });
-        if let Some(pane) = self.pane_to_close.take() {
-            self.controller.close_pane(pane);
+        if let Some(action) = self.pane_action.take() {
+            match action {
+                PaneAction::Close(pane) => self.controller.close_pane(pane),
+                PaneAction::Reload(pane) => {
+                    if self.controller.activate_pane(pane) {
+                        self.controller.dispatch(AppAction::Refresh);
+                    }
+                }
+                PaneAction::Up(pane) => {
+                    if self.controller.activate_pane(pane) && self.controller.can_go_up() {
+                        self.controller.dispatch(AppAction::Up);
+                    }
+                }
+                PaneAction::Filter(pane) => {
+                    if self.controller.activate_pane(pane) {
+                        self.toggle_filter();
+                    }
+                }
+            }
         }
     }
 
@@ -550,6 +567,9 @@ impl Shell {
         let directory = data.directory.clone();
         let order = data.order;
         let closable = browser.free && browser.panes.len() > 1;
+        let can_go_up = !directory.is_empty() || self.controller.on_disk();
+        let filtering = !data.filter.is_empty() || (active && self.filter_open);
+        let buttons = 28.0 * if closable { 5.0 } else { 4.0 };
         let header = ui.horizontal(|ui| {
             let title = directory
                 .trim_end_matches('/')
@@ -561,7 +581,7 @@ impl Shell {
             let color = if active { p.text } else { p.muted };
             ui.add_space(8.0);
             ui.allocate_ui_with_layout(
-                egui::vec2(width - if closable { 70.0 } else { 48.0 }, 26.0),
+                egui::vec2((width - buttons - 16.0).max(40.0), 28.0),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.add(
@@ -570,43 +590,51 @@ impl Shell {
                     )
                 },
             );
-            ui.menu_button(
-                super::theme::icon_text(icon::SORT_ASCENDING).color(hex(p.muted)),
-                |ui| {
-                    ui.set_min_width(180.0);
-                    for (column, glyph) in [
-                        (SortColumn::Name, icon::TEXT_AA),
-                        (SortColumn::Size, icon::HARD_DRIVES),
-                        (SortColumn::Modified, icon::CLOCK),
-                        (SortColumn::Type, icon::TAG),
-                    ] {
-                        let label = if column == SortColumn::Name {
-                            s.col_name
-                        } else {
-                            Columns::label(column, s)
-                        };
-                        let on = order.0 == column;
-                        if sort_entry(ui, glyph, label, on, order.1).clicked() {
-                            let ascending = if on { !order.1 } else { true };
-                            self.controller.set_pane_order(pane, (column, ascending));
-                        }
-                    }
-                },
-            )
-            .response
-            .on_hover_text(s.sort_word);
-            if closable {
-                let cross = egui::Button::new(
-                    super::theme::icon_text(icon::X)
-                        .size(12.0)
-                        .color(hex(p.muted)),
-                )
-                .frame(false)
-                .min_size(Vec2::splat(20.0));
-                if ui.add(cross).on_hover_text(s.close_pane).clicked() {
-                    self.pane_to_close = Some(pane);
+            // Hugging the right edge, so they line up from pane to pane
+            // however short the names are.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.add_space(4.0);
+                if closable && icon_button(ui, icon::X, s.close_pane, true).clicked() {
+                    self.pane_action = Some(PaneAction::Close(pane));
                 }
-            }
+                if icon_toggle(ui, icon::FUNNEL, s.find_word, true, filtering).clicked() {
+                    self.pane_action = Some(PaneAction::Filter(pane));
+                }
+                ui.menu_button(
+                    super::theme::icon_text(icon::SORT_ASCENDING)
+                        .size(16.0)
+                        .color(hex(p.muted)),
+                    |ui| {
+                        ui.set_min_width(180.0);
+                        for (column, glyph) in [
+                            (SortColumn::Name, icon::TEXT_AA),
+                            (SortColumn::Size, icon::HARD_DRIVES),
+                            (SortColumn::Modified, icon::CLOCK),
+                            (SortColumn::Type, icon::TAG),
+                        ] {
+                            let label = if column == SortColumn::Name {
+                                s.col_name
+                            } else {
+                                Columns::label(column, s)
+                            };
+                            let on = order.0 == column;
+                            if sort_entry(ui, glyph, label, on, order.1).clicked() {
+                                let ascending = if on { !order.1 } else { true };
+                                self.controller.set_pane_order(pane, (column, ascending));
+                            }
+                        }
+                    },
+                )
+                .response
+                .on_hover_text(s.sort_word);
+                if icon_button(ui, icon::ARROW_UP, s.up, can_go_up).clicked() {
+                    self.pane_action = Some(PaneAction::Up(pane));
+                }
+                if icon_button(ui, icon::ARROW_CLOCKWISE, s.reload_word, true).clicked() {
+                    self.pane_action = Some(PaneAction::Reload(pane));
+                }
+            });
         });
         let rect = header.response.rect;
         let span = egui::Rangef::new(rect.left(), rect.left() + width);
