@@ -113,6 +113,9 @@ impl Shell {
                         .show(ui, |ui| self.jobs_body(ui, true));
                 } else {
                     if browsing {
+                        // No gap between the row above and the list's
+                        // header: they read as one bar.
+                        ui.spacing_mut().item_spacing.y = 0.0;
                         self.nav_row(ui);
                         region(ui, egui::accesskit::Role::Region, s.archive_contents);
                     }
