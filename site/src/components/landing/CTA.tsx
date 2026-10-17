@@ -1,6 +1,6 @@
 import { ArrowRight, BookOpen, Download } from 'lucide-react';
 import { cn } from '@/utils/cn';
-import { CLONE_CMD, DOWNLOADS, RELEASE_URL, VERSION } from '@/lib/site';
+import { CLONE_CMD, DOWNLOADS, PACKAGES, RELEASE_URL, VERSION } from '@/lib/site';
 import type { Platform } from '@/lib/site';
 import { Accent, ButtonLink, Container, CopyButton, Reveal } from '../ui';
 import { DownloadButton, PLATFORM_ICONS, useRecommendedDownload } from '../download';
@@ -15,6 +15,7 @@ const COPY = {
     download: (f: string) => `Download ${f}`,
     yours: 'Your system',
     details: { windows: 'Installer · x86_64', macos: 'Apple silicon · arm64', 'macos-intel': 'Intel · x86_64', linux: 'x86_64' },
+    also: 'Also on the release',
     copyBuild: 'Copy build-from-source command',
     rust: 'Needs Rust 1.95+.',
     notes: 'Release notes & checksums',
@@ -26,6 +27,7 @@ const COPY = {
     download: (f: string) => `Descargar ${f}`,
     yours: 'Tu sistema',
     details: { windows: 'Instalador · x86_64', macos: 'Apple silicon · arm64', 'macos-intel': 'Intel · x86_64', linux: 'x86_64' },
+    also: 'También en la release',
     copyBuild: 'Copiar el comando para compilar',
     rust: 'Requiere Rust 1.95 o superior.',
     notes: 'Notas de la versión y sumas',
@@ -101,6 +103,21 @@ export function CTA() {
                   </a>
                 );
               })}
+            </div>
+
+            <div className="relative mx-auto mt-5 flex max-w-5xl flex-wrap items-center justify-center gap-x-2 gap-y-2 text-xs">
+              <span className="mr-1 text-slate-500">{t.also}:</span>
+              {PACKAGES.map((d) => (
+                <a
+                  key={d.file}
+                  href={d.url}
+                  aria-label={t.download(d.file)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-slate-300 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white"
+                >
+                  {d.label}
+                  {d.size && <span className="tabular-nums text-slate-500">{d.size}</span>}
+                </a>
+              ))}
             </div>
 
             <div className="relative mx-auto mt-6 max-w-3xl">
