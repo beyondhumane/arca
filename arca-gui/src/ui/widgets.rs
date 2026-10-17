@@ -443,10 +443,12 @@ pub(crate) fn nav_item(
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 30.0), Sense::click());
     let visuals = ui.style().interact_selectable(&response, selected);
     if response.dnd_hover_payload::<super::DraggedRows>().is_some() {
+        ui.painter()
+            .rect_filled(rect, 6, theme::alpha(p.focus, 0.18));
         ui.painter().rect_stroke(
             rect,
             6,
-            Stroke::new(1.5, hex(p.spark)),
+            Stroke::new(1.5, hex(p.focus)),
             egui::StrokeKind::Inside,
         );
     }

@@ -86,8 +86,15 @@ fn paint_row_back(
         );
     }
     if response.dnd_hover_payload::<DraggedRows>().is_some() {
-        painter.rect_stroke(rect, 4, Stroke::new(2.0, hex(p.spark)), StrokeKind::Inside);
+        painter.rect_filled(rect, 4, alpha(p.focus, 0.18));
+        painter.rect_stroke(rect, 4, Stroke::new(1.5, hex(p.focus)), StrokeKind::Inside);
     }
+}
+
+/// Whether the row is one of those being carried, so it can fade while it is.
+fn carried(ctx: &egui::Context, path: &str) -> bool {
+    egui::DragAndDrop::payload::<DraggedRows>(ctx)
+        .is_some_and(|rows| rows.0.iter().any(|root| root == path))
 }
 
 fn paint_name(ui: &egui::Ui, rect: Rect, row: &Row, look: &RowLook, p: Palette) {
@@ -429,7 +436,8 @@ impl Shell {
                                 checked: self.controller.is_checked(row),
                                 cursor: self.controller.state.cursor == Some(index),
                                 open: false,
-                                cut: self.controller.state.cut_names.contains(&row.path),
+                                cut: self.controller.state.cut_names.contains(&row.path)
+                                    || carried(ui.ctx(), &row.path),
                             };
                             paint_row_back(ui, rect, &response, &look, p);
                             let mut x = rect.left();
@@ -652,7 +660,8 @@ impl Shell {
                     checked,
                     cursor: active && cursor == Some(index),
                     open: next.as_deref() == Some(row.path.as_str()),
-                    cut: self.controller.state.cut_names.contains(&row.path),
+                    cut: self.controller.state.cut_names.contains(&row.path)
+                        || carried(ui.ctx(), &row.path),
                 };
                 paint_row_back(ui, rect, &response, &look, p);
                 if self.renaming_here(row) && active {
@@ -842,9 +851,12 @@ impl Shell {
             self.carrying = true;
         }
         if row.is_dir && !row.up {
+            if response.dnd_hover_payload::<DraggedRows>().is_some() {
+                self.row_drop_hover = true;
+            }
             if let Some(payload) = response.dnd_release_payload::<DraggedRows>() {
-                if idle && self.controller.can_drop() && !payload.0.contains(&row.path) {
-                    self.controller.move_into(&payload.0, &row.path);
+                if !payload.0.contains(&row.path) {
+                    self.drop_rows(payload.0.clone(), row.path.clone());
                 }
             }
         }
@@ -1009,6 +1021,24 @@ impl Shell {
         }
         if response.drag_stopped() {
             self.marquee = None;
+        }
+        // Carried rows over the blank are for the folder this list shows.
+        // The blank sits behind the rows, so the drop is settled once every
+        // row has had its turn, in `settle_blank_drop`.
+        if response.dnd_hover_payload::<DraggedRows>().is_some() {
+            let target = match pane {
+                Some(pane) => self
+                    .controller
+                    .state
+                    .browser
+                    .panes
+                    .get(pane)
+                    .map(|pane| pane.directory.clone()),
+                None => Some(self.controller.state.current_dir.clone()),
+            };
+            if let Some(target) = target {
+                self.blank_drop = Some((target, clip));
+            }
         }
         if let Some(marquee) = &self.marquee {
             let p = palette_of(&response.ctx);

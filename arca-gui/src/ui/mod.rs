@@ -46,6 +46,13 @@ enum DialogResult {
 #[derive(Clone)]
 pub(crate) struct DraggedRows(pub Vec<String>);
 
+/// A drop that is waiting for the user to say move or copy.
+pub(crate) struct PendingDrop {
+    pub(crate) roots: Vec<String>,
+    pub(crate) target: String,
+    pub(crate) at: egui::Pos2,
+}
+
 fn look_of(s: &Settings) -> String {
     format!(
         "{:?}|{}|{}|{:?}|{}|{}",
@@ -205,6 +212,12 @@ pub(crate) struct Shell {
     theme_filter: usize,
     theme_draft: Option<themes::Theme>,
     carrying: bool,
+    /// A drop waiting on the Move / Copy / Cancel menu.
+    pending_drop: Option<PendingDrop>,
+    /// The blank of a list under carried rows this frame: its folder and rect.
+    blank_drop: Option<(String, egui::Rect)>,
+    /// A folder row is under the carried rows this frame.
+    row_drop_hover: bool,
     anchor: Option<(egui::Id, egui::Pos2)>,
     search: Option<search::Search>,
     decorated: bool,
@@ -261,6 +274,9 @@ impl Shell {
             theme_filter: 0,
             theme_draft: None,
             carrying: false,
+            pending_drop: None,
+            blank_drop: None,
+            row_drop_hover: false,
             anchor: None,
             search: None,
             decorated: system_title_bar(&settings_now),
@@ -455,6 +471,185 @@ impl Shell {
 
     fn background_blocked(&self) -> bool {
         !background_event_allowed(self.modal_kind().is_some(), self.dialog.is_some())
+    }
+
+    /// Rows let go over a folder. Ctrl copies and Shift moves whatever the
+    /// default would be; otherwise a drop moves within a volume and copies
+    /// across one, as the Finder and the Explorer do. With "ask when
+    /// dropping" on, a small menu asks instead. Inside an archive there is
+    /// only moving.
+    pub(crate) fn drop_rows(&mut self, roots: Vec<String>, target: String) {
+        if roots.is_empty() || !self.controller.can_drop() || !self.background_idle() {
+            return;
+        }
+        if !self.controller.on_disk() {
+            self.controller.move_into(&roots, &target);
+            return;
+        }
+        let (modifiers, at) = self.ctx.input(|i| {
+            (
+                i.modifiers,
+                i.pointer.interact_pos().or_else(|| i.pointer.latest_pos()),
+            )
+        });
+        if modifiers.ctrl {
+            self.controller.copy_on_disk(&roots, &target);
+        } else if modifiers.shift {
+            self.controller.move_into(&roots, &target);
+        } else if self.controller.state.settings.ask_on_drop {
+            self.pending_drop = Some(PendingDrop {
+                roots,
+                target,
+                at: at.unwrap_or_default(),
+            });
+        } else if self.controller.same_volume(&roots, &target) {
+            self.controller.move_into(&roots, &target);
+        } else {
+            self.controller.copy_on_disk(&roots, &target);
+        }
+    }
+
+    /// A drop on the blank of a list goes into the folder it shows, but only
+    /// once every row has had its turn: the blank sits behind the rows and
+    /// would otherwise take drops meant for a folder row.
+    fn settle_blank_drop(&mut self, ctx: &egui::Context) {
+        let row_hover = std::mem::take(&mut self.row_drop_hover);
+        let Some((target, rect)) = self.blank_drop.take() else {
+            return;
+        };
+        if row_hover {
+            return;
+        }
+        let p = theme::palette_of(ctx);
+        ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("arca-blank-drop"),
+        ))
+        .rect_stroke(
+            rect.shrink(1.0),
+            6,
+            egui::Stroke::new(1.5, theme::hex(p.focus)),
+            egui::StrokeKind::Inside,
+        );
+        if ctx.input(|i| i.pointer.any_released()) {
+            if let Some(payload) = egui::DragAndDrop::take_payload::<DraggedRows>(ctx) {
+                self.drop_rows(payload.0.clone(), target);
+            }
+        }
+    }
+
+    /// The shadow that follows the pointer while rows are carried: icon,
+    /// name (or a count) and what letting go would do.
+    fn drag_shadow(&self, ctx: &egui::Context) {
+        let Some(payload) = egui::DragAndDrop::payload::<DraggedRows>(ctx) else {
+            return;
+        };
+        let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else {
+            return;
+        };
+        let s = self.controller.s();
+        let p = theme::palette_of(ctx);
+        let first = payload.0.first().cloned().unwrap_or_default();
+        let is_dir = first.ends_with('/');
+        let leaf = first.trim_end_matches('/');
+        let leaf = leaf.rsplit('/').next().unwrap_or(leaf);
+        let name = if payload.0.len() > 1 {
+            fill(s.items_carried, &[("n", &payload.0.len().to_string())])
+        } else {
+            leaf.to_string()
+        };
+        let glyph = if is_dir {
+            egui_phosphor::regular::FOLDER
+        } else {
+            egui_phosphor::regular::FILE
+        };
+        let copying =
+            self.controller.on_disk() && ctx.input(|i| i.modifiers.ctrl && !i.modifiers.shift);
+        let badge = if copying { s.copy_badge } else { s.move_badge };
+        egui::Area::new(egui::Id::new("arca-drag-shadow"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(pos + egui::vec2(14.0, 10.0))
+            .interactable(false)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(theme::alpha(p.raised, 0.94))
+                    .stroke(egui::Stroke::new(1.0, theme::alpha(p.focus, 0.6)))
+                    .corner_radius(8)
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                theme::icon_text(glyph)
+                                    .size(16.0)
+                                    .color(theme::hex(p.focus)),
+                            );
+                            ui.label(egui::RichText::new(name).color(theme::hex(p.text)));
+                            ui.label(
+                                egui::RichText::new(badge)
+                                    .size(11.0)
+                                    .color(theme::hex(p.muted)),
+                            );
+                        });
+                    });
+            });
+    }
+
+    /// The Move here / Copy here / Cancel menu after a drop, when asked for.
+    fn drop_menu(&mut self, ctx: &egui::Context) {
+        let Some(pending) = self.pending_drop.as_ref() else {
+            return;
+        };
+        let at = pending.at;
+        let s = self.controller.s();
+        let mut choice: Option<Option<bool>> = None;
+        let area = egui::Area::new(egui::Id::new("arca-drop-menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(at)
+            .show(ctx, |ui| {
+                egui::Frame::menu(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(180.0);
+                    let entry = widgets::menu_entry;
+                    if entry(
+                        ui,
+                        egui_phosphor::regular::ARROW_RIGHT,
+                        s.move_here,
+                        "",
+                        true,
+                    )
+                    .clicked()
+                    {
+                        choice = Some(Some(false));
+                    }
+                    if entry(ui, egui_phosphor::regular::COPY, s.copy_here, "", true).clicked() {
+                        choice = Some(Some(true));
+                    }
+                    ui.separator();
+                    if entry(ui, egui_phosphor::regular::X, s.cancel, "Esc", true).clicked() {
+                        choice = Some(None);
+                    }
+                });
+            });
+        let away = ctx.input(|i| {
+            i.key_pressed(egui::Key::Escape)
+                || (i.pointer.any_pressed()
+                    && i.pointer
+                        .interact_pos()
+                        .is_some_and(|pos| !area.response.rect.contains(pos)))
+        });
+        if away {
+            choice = Some(None);
+        }
+        if let Some(choice) = choice {
+            let pending = self.pending_drop.take();
+            if let (Some(copy), Some(pending)) = (choice, pending) {
+                if copy {
+                    self.controller
+                        .copy_on_disk(&pending.roots, &pending.target);
+                } else {
+                    self.controller.move_into(&pending.roots, &pending.target);
+                }
+            }
+        }
     }
 
     fn background_idle(&self) -> bool {
@@ -1355,6 +1550,10 @@ impl eframe::App for Shell {
         if !only_form {
             self.workspace(ui);
         }
+        // After the lists, so every row has had its say about a drop.
+        self.settle_blank_drop(&ctx);
+        self.drag_shadow(&ctx);
+        self.drop_menu(&ctx);
         self.jobs(&ctx);
         self.dialogs(&ctx);
         self.window_chrome(&ctx);

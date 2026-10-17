@@ -79,9 +79,9 @@ impl Shell {
                             browse = Some(place.path.clone());
                         }
                         if let Some(payload) = response.dnd_release_payload::<DraggedRows>() {
-                            if self.controller.on_disk() && self.background_idle() {
+                            if self.controller.on_disk() {
                                 let target = crate::controller::disk::disk_dir(&place.path);
-                                self.controller.move_on_disk(&payload.0, &target);
+                                self.drop_rows(payload.0.clone(), target);
                             }
                         }
                         let is_computer = place.kind == PlaceKind::Computer;
@@ -258,11 +258,7 @@ impl Shell {
                 self.controller.dispatch(AppAction::Navigate(path));
             }
             Some(TreeEvent::Action(action, path)) => self.folder_action(action, &path),
-            Some(TreeEvent::Drop(roots, target))
-                if self.controller.can_drop() && self.background_idle() =>
-            {
-                self.controller.move_into(&roots, &target);
-            }
+            Some(TreeEvent::Drop(roots, target)) => self.drop_rows(roots, target),
             _ => {}
         }
     }

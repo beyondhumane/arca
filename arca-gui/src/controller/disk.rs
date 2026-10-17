@@ -61,6 +61,81 @@ pub(crate) fn disk_dir(path: &Path) -> String {
     }
 }
 
+#[cfg(unix)]
+fn volume_of(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    fs::symlink_metadata(path).ok().map(|meta| meta.dev())
+}
+
+/// The drive letter stands for the volume. A junction onto another drive
+/// gets through, and comes out as a failed rename with a notice.
+#[cfg(not(unix))]
+fn volume_of(path: &Path) -> Option<u64> {
+    let first = path.components().next()?;
+    let text = first.as_os_str().to_string_lossy().to_lowercase();
+    Some(text.bytes().fold(0u64, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(u64::from(byte))
+    }))
+}
+
+/// Copies each picked file or folder under `dest`, keeping names. Files are
+/// counted first so the progress row has a total; the result is how many
+/// were copied, or the message for the one that could not be.
+fn copy_trees(
+    picked: &[(PathBuf, String)],
+    dest: &Path,
+    notify: &dyn Fn(usize, usize, &str) -> bool,
+    s: &'static crate::i18n::Strings,
+) -> Result<usize, String> {
+    let cancelled = || arca_core::Error::Cancelled.to_string();
+    let mut files: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut folders: Vec<PathBuf> = Vec::new();
+    for (path, leaf) in picked {
+        let mut stack = vec![(path.clone(), dest.join(leaf))];
+        while let Some((from, to)) = stack.pop() {
+            if !notify(0, files.len(), "") {
+                return Err(cancelled());
+            }
+            let meta = fs::symlink_metadata(&from).map_err(|_| cannot_copy(s, &from))?;
+            if meta.is_dir() {
+                folders.push(to.clone());
+                let items = fs::read_dir(&from).map_err(|_| cannot_copy(s, &from))?;
+                for item in items.flatten() {
+                    stack.push((item.path(), to.join(item.file_name())));
+                }
+            } else {
+                files.push((from, to));
+            }
+        }
+    }
+    for folder in &folders {
+        fs::create_dir_all(folder).map_err(|_| cannot_copy(s, folder))?;
+    }
+    let total = files.len();
+    for (done, (from, to)) in files.iter().enumerate() {
+        let name = from.file_name().map(|n| n.to_string_lossy().to_string());
+        if !notify(done, total, name.as_deref().unwrap_or("")) {
+            return Err(cancelled());
+        }
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(|_| cannot_copy(s, parent))?;
+        }
+        fs::copy(from, to).map_err(|_| cannot_copy(s, from))?;
+    }
+    if !notify(total, total, "") {
+        return Err(cancelled());
+    }
+    Ok(total)
+}
+
+fn cannot_copy(s: &'static crate::i18n::Strings, path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string());
+    fill(s.cannot_copy, &[("name", &name)])
+}
+
 /// The path on disk behind a listing name, folder or file.
 pub(crate) fn disk_path(name: &str) -> PathBuf {
     let name = name.trim_end_matches('/');
@@ -297,6 +372,70 @@ impl AppController {
     /// zip takes a rewrite, and the disk takes a rename.
     pub(crate) fn can_drop(&self) -> bool {
         self.writable() || self.on_disk()
+    }
+
+    /// Whether every carried root sits on the same volume as the target, so
+    /// that a move is a rename and not a copy followed by a delete.
+    pub(crate) fn same_volume(&self, roots: &[String], target: &str) -> bool {
+        let into = volume_of(&disk_path(target));
+        roots
+            .iter()
+            .all(|root| volume_of(&disk_path(root.trim_end_matches('/'))) == into)
+    }
+
+    /// Dragging rows onto a folder with a copy asked for, or across volumes.
+    /// The walk and the copying run as a task, with the usual progress row,
+    /// so a big folder does not hold the window.
+    pub(crate) fn copy_on_disk(&mut self, roots: &[String], target: &str) {
+        let s = self.s();
+        let into = disk_path(target);
+        let mut picked: Vec<(PathBuf, String)> = Vec::new();
+        for root in roots {
+            let from = root.trim_end_matches('/');
+            let Some(leaf) = from.rsplit('/').next().filter(|leaf| !leaf.is_empty()) else {
+                continue;
+            };
+            let parent = from.rfind('/').map_or("", |cut| &from[..=cut]);
+            if parent == target || target.starts_with(&format!("{from}/")) {
+                continue;
+            }
+            if into.join(leaf).symlink_metadata().is_ok() {
+                self.state.notice = fill(s.name_taken, &[("name", leaf)]);
+                self.state.error = true;
+                return;
+            }
+            picked.push((disk_path(from), leaf.to_string()));
+        }
+        if picked.is_empty() {
+            return;
+        }
+        let subject = match picked.as_slice() {
+            [(_, leaf)] => leaf.clone(),
+            many => fill(s.items_carried, &[("n", &many.len().to_string())]),
+        };
+        let sources: Vec<PathBuf> = picked.iter().map(|(path, _)| path.clone()).collect();
+        let dest = into.clone();
+        let task = Task::new(
+            s.copying_files,
+            subject,
+            Box::new(move |tx, _reply_rx, stop, hold| {
+                let notify = worker_notify(&tx, &stop, &hold);
+                let result = copy_trees(&picked, &dest, &notify, s);
+                let _ = tx.send(match result {
+                    Ok(count) => Message::Done(fill(
+                        s.copied_into,
+                        &[
+                            ("n", &count.to_string()),
+                            ("dest", &dest.display().to_string()),
+                        ],
+                    )),
+                    Err(e) => Message::Failed(e),
+                });
+            }),
+        )
+        .reading(sources)
+        .filling([into]);
+        self.enqueue(task);
     }
 
     /// Dragging rows onto a folder on the disk. A rename on the same volume

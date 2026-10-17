@@ -530,9 +530,7 @@ impl Shell {
             self.controller.dispatch(AppAction::Navigate(path));
         }
         if let Some((roots, target)) = dropped {
-            if self.controller.can_drop() && self.background_idle() {
-                self.controller.move_into(&roots, &target);
-            }
+            self.drop_rows(roots, target);
         }
     }
 

@@ -1540,6 +1540,21 @@ impl Shell {
         }
         ui.add_space(12.0);
         section_title(ui, s.preferences_section);
+        let mut ask = self.controller.state.settings.ask_on_drop;
+        let mut ask_changed = false;
+        card(
+            ui,
+            s.ask_on_drop_title,
+            Some(s.ask_on_drop_hint),
+            true,
+            |ui| {
+                ask_changed = switch(ui, &mut ask, s.ask_on_drop_title).changed();
+            },
+        );
+        if ask_changed {
+            self.controller.state.settings.ask_on_drop = ask;
+            self.controller.state.settings.save();
+        }
         let mut on = self.controller.state.settings.updates;
         let mut toggled = false;
         card(ui, s.check_updates, Some(s.updates_hint), true, |ui| {

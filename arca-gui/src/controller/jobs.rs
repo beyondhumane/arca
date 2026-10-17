@@ -448,6 +448,9 @@ impl AppController {
         }
         if settled {
             self.schedule();
+            if self.on_disk() {
+                self.refresh_disk();
+            }
             if !self.state.entries.is_empty() && self.state.notice.is_empty() {
                 self.state.notice = self.summary();
             }

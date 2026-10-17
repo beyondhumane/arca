@@ -96,6 +96,8 @@ pub(crate) struct Settings {
     pub(crate) font: FontChoice,
     pub(crate) text_size: f32,
     pub(crate) motion: bool,
+    /// Offer Move / Copy / Cancel every time rows are dropped on a folder.
+    pub(crate) ask_on_drop: bool,
     pub(crate) title_bar: TitleBar,
     pub(crate) density: Density,
     pub(crate) columns: Columns,
@@ -167,6 +169,7 @@ impl Default for Settings {
             font: FontChoice::Inter,
             text_size: TEXT_DEFAULT,
             motion: true,
+            ask_on_drop: false,
             title_bar: TitleBar::default(),
             density: Density::default(),
             columns: Columns::default(),
@@ -233,6 +236,7 @@ impl Settings {
                     }
                 }
                 ("motion", v) => s.motion = v != "no",
+                ("ask_on_drop", v) => s.ask_on_drop = v == "yes",
                 ("title_bar", "system") => s.title_bar = TitleBar::System,
                 ("title_bar", "custom") => s.title_bar = TitleBar::Custom,
                 ("density", "compact") => s.density = Density::Compact,
@@ -424,6 +428,7 @@ impl Settings {
         out.push_str(&format!("font = {font}\n"));
         out.push_str(&format!("text_size = {}\n", self.text_size));
         out.push_str(&format!("motion = {}\n", yes(self.motion)));
+        out.push_str(&format!("ask_on_drop = {}\n", yes(self.ask_on_drop)));
         out.push_str(match self.title_bar {
             TitleBar::System => "title_bar = system\n",
             TitleBar::Custom => "title_bar = custom\n",
