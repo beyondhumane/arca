@@ -27,7 +27,7 @@ pub(super) fn create(
     }
     let options = CreateOptions {
         level: if codec == CodecArg::Store {
-            Level::Store
+            Level::STORE
         } else {
             level
         },

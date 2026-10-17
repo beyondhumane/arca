@@ -30,12 +30,12 @@ const COPY = {
     tabs: ['Terminal', 'Desktop app', 'Explorer'],
     captions: [
       'Six commands, four one-letter aliases, one line of output.',
-      'Try it: click the list, then use ↑ ↓, Space, Ctrl+A, the filter box or Extract all.',
+      'Try it: click a folder, open photos-2026.zip like a folder, right-click a row for Compress or Extract; ↑ ↓, Space and Tab work too.',
       'Windows 11’s modern menu and the classic one. Right-click an archive to extract it. Try it.',
     ],
     eyebrow: 'Product',
     title: ['One core, ', 'three', ' ways in.'],
-    description: 'Script it from the terminal, browse it in a native window, or never leave File Explorer.',
+    description: 'Browse and pack in one window, script it from the terminal, or never leave File Explorer.',
     ways: 'Ways to use Arca',
   },
   es: {
@@ -53,12 +53,12 @@ const COPY = {
     tabs: ['Terminal', 'Aplicación', 'Explorador'],
     captions: [
       'Seis comandos, cuatro alias de una letra, una línea de salida.',
-      'Pruébalo: haz clic en la lista y usa ↑ ↓, Space, Ctrl+A, el filtro o Extraer todo.',
+      'Pruébalo: haz clic en una carpeta, abre photos-2026.zip como una carpeta, clic derecho en una fila para Comprimir o Extraer; ↑ ↓, Space y Tab también funcionan.',
       'El menú moderno de Windows 11 y el clásico. Haz clic derecho en un archivo para extraerlo. Pruébalo.',
     ],
     eyebrow: 'Producto',
     title: ['Un núcleo, ', 'tres', ' formas de usarlo.'],
-    description: 'Úsalo desde la terminal, navega en una ventana nativa o no salgas del Explorador de archivos.',
+    description: 'Explora y comprime en una ventana, úsalo desde la terminal o no salgas del Explorador de archivos.',
     ways: 'Formas de usar Arca',
   },
 };

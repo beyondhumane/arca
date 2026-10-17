@@ -17,10 +17,60 @@ const DIRECTORY_MOST: f32 = 560.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum BrowserView {
+    /// Side-by-side panes. With `next_pane` on, picking a folder opens
+    /// it in the pane beside, Miller-column style; off, each pane browses
+    /// on its own.
     #[default]
-    Columns,
+    Panes,
     Details,
 }
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FontChoice {
+    #[default]
+    Inter,
+    Sora,
+    Mono,
+    Ubuntu,
+    File(String),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Channel {
+    #[default]
+    Stable,
+    Preview,
+}
+
+/// Who draws the strip above the toolbar: the window system, or Arca itself
+/// with the window buttons folded into its own toolbar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum TitleBar {
+    System,
+    #[default]
+    Custom,
+}
+
+/// How tall the rows of the list are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Density {
+    #[default]
+    Compact,
+    Airy,
+}
+
+impl Settings {
+    pub(crate) fn row_height(&self) -> f32 {
+        match self.density {
+            Density::Compact => 24.0,
+            Density::Airy => 30.0,
+        }
+    }
+}
+
+pub(crate) const TEXT_LEAST: f32 = 10.0;
+pub(crate) const TEXT_MOST: f32 = 20.0;
+pub(crate) const TEXT_DEFAULT: f32 = 13.0;
 
 fn bounded_width(width: f32, least: f32, most: f32) -> Option<f32> {
     width.is_finite().then(|| width.clamp(least, most))
@@ -42,14 +92,29 @@ pub(crate) fn config_file() -> Option<PathBuf> {
 pub(crate) struct Settings {
     pub(crate) lang: Option<Lang>,
     pub(crate) theme: ThemePreference,
+    pub(crate) dark_theme: String,
+    pub(crate) light_theme: String,
+    pub(crate) font: FontChoice,
+    pub(crate) text_size: f32,
+    pub(crate) motion: bool,
+    /// Offer Move / Copy / Cancel every time rows are dropped on a folder.
+    pub(crate) ask_on_drop: bool,
+    pub(crate) title_bar: TitleBar,
+    pub(crate) density: Density,
     pub(crate) columns: Columns,
     pub(crate) browser_view: BrowserView,
-    pub(crate) sidebar_collapsed: bool,
+    // Panes: a folder picked in one pane opens in the next.
+    pub(crate) next_pane: bool,
+    // Resting the pointer on a folder shows a card with what it holds.
+    pub(crate) folder_peek: bool,
+    // The pane under the pointer is the active one.
+    pub(crate) pointer_focus: bool,
     pub(crate) preview_visible: bool,
     pub(crate) preview_width: f32,
     pub(crate) directory_width: f32,
     // Whether to ask, once at startup, if there is a newer Arca.
     pub(crate) updates: bool,
+    pub(crate) channel: Channel,
     // Every file in the archive at once, instead of one folder at a time.
     pub(crate) flat: bool,
     // El panel de carpetas del archivo, a la izquierda.
@@ -105,13 +170,24 @@ impl Default for Settings {
         Settings {
             lang: None,
             theme: ThemePreference::Dark,
+            dark_theme: "Arca Midnight".into(),
+            light_theme: "Arca Daylight".into(),
+            font: FontChoice::Inter,
+            text_size: TEXT_DEFAULT,
+            motion: true,
+            ask_on_drop: false,
+            title_bar: TitleBar::default(),
+            density: Density::default(),
             columns: Columns::default(),
             browser_view: BrowserView::default(),
-            sidebar_collapsed: false,
+            next_pane: false,
+            folder_peek: false,
+            pointer_focus: true,
             preview_visible: true,
             preview_width: PREVIEW_WIDE,
             directory_width: DIRECTORY_WIDE,
             updates: true,
+            channel: Channel::Stable,
             flat: false,
             folders: true,
             page: arca_zip::pages::Page::default(),
@@ -153,10 +229,38 @@ impl Settings {
                 ("theme", "light") => s.theme = ThemePreference::Light,
                 ("theme", "dark") => s.theme = ThemePreference::Dark,
                 ("theme", _) => s.theme = ThemePreference::System,
-                ("browser_view", "columns") => s.browser_view = BrowserView::Columns,
+                ("dark_theme", v) if !v.is_empty() => s.dark_theme = v.to_string(),
+                ("light_theme", v) if !v.is_empty() => s.light_theme = v.to_string(),
+                ("font", "inter") => s.font = FontChoice::Inter,
+                ("font", "sora") => s.font = FontChoice::Sora,
+                ("font", "mono") => s.font = FontChoice::Mono,
+                ("font", "ubuntu") => s.font = FontChoice::Ubuntu,
+                ("font", v) if !v.is_empty() => s.font = FontChoice::File(v.to_string()),
+                ("text_size", v) => {
+                    if let Ok(size) = v.parse::<f32>() {
+                        if size.is_finite() {
+                            s.text_size = size.clamp(TEXT_LEAST, TEXT_MOST);
+                        }
+                    }
+                }
+                ("motion", v) => s.motion = v != "no",
+                ("ask_on_drop", v) => s.ask_on_drop = v == "yes",
+                ("title_bar", "system") => s.title_bar = TitleBar::System,
+                ("title_bar", "custom") => s.title_bar = TitleBar::Custom,
+                ("density", "compact") => s.density = Density::Compact,
+                ("density", "airy") => s.density = Density::Airy,
+                // The old Columns view is Panes with peeking on.
+                ("browser_view", "columns") => {
+                    s.browser_view = BrowserView::Panes;
+                    s.next_pane = true;
+                }
                 ("browser_view", "details") => s.browser_view = BrowserView::Details,
-                ("sidebar_collapsed", "yes") => s.sidebar_collapsed = true,
-                ("sidebar_collapsed", "no") => s.sidebar_collapsed = false,
+                ("browser_view", "panes") => s.browser_view = BrowserView::Panes,
+                ("next_pane", v) => s.next_pane = v == "yes",
+                ("folder_peek", v) => s.folder_peek = v == "yes",
+                ("pointer_focus", v) => s.pointer_focus = v != "no",
+                // Older files chose the icon rail by hand; the window width decides now.
+                ("sidebar_collapsed", _) => {}
                 ("preview_visible", "yes") => s.preview_visible = true,
                 ("preview_visible", "no") => s.preview_visible = false,
                 ("preview_width", v) => {
@@ -180,6 +284,13 @@ impl Settings {
                 ("flat", v) => s.flat = v == "yes",
                 ("folders", v) => s.folders = v == "yes",
                 ("updates", v) => s.updates = v != "no",
+                ("channel", v) => {
+                    s.channel = if v == "preview" {
+                        Channel::Preview
+                    } else {
+                        Channel::Stable
+                    }
+                }
                 ("page", v) => {
                     if let Some(p) = arca_zip::pages::Page::from_code(v) {
                         s.page = p;
@@ -288,7 +399,7 @@ impl Settings {
         };
         let yes = |b: bool| if b { "yes" } else { "no" };
         let browser_view = match (self.flat, self.browser_view) {
-            (false, BrowserView::Columns) => "columns",
+            (false, BrowserView::Panes) => "panes",
             _ => "details",
         };
         let preview_width =
@@ -307,11 +418,10 @@ impl Settings {
         out.push_str(&format!("theme = {theme}\n"));
         out.push_str(&format!("flat = {}\n", yes(self.flat)));
         out.push_str(&format!("browser_view = {browser_view}\n"));
+        out.push_str(&format!("next_pane = {}\n", yes(self.next_pane)));
+        out.push_str(&format!("folder_peek = {}\n", yes(self.folder_peek)));
+        out.push_str(&format!("pointer_focus = {}\n", yes(self.pointer_focus)));
         out.push_str(&format!("folders = {}\n", yes(self.folders)));
-        out.push_str(&format!(
-            "sidebar_collapsed = {}\n",
-            yes(self.sidebar_collapsed)
-        ));
         out.push_str(&format!(
             "preview_visible = {}\n",
             yes(self.preview_visible)
@@ -319,6 +429,31 @@ impl Settings {
         out.push_str(&format!("preview_width = {preview_width:.1}\n"));
         out.push_str(&format!("directory_width = {directory_width:.1}\n"));
         out.push_str(&format!("updates = {}\n", yes(self.updates)));
+        out.push_str(&format!("dark_theme = {}\n", self.dark_theme));
+        out.push_str(&format!("light_theme = {}\n", self.light_theme));
+        let font = match &self.font {
+            FontChoice::Inter => "inter",
+            FontChoice::Sora => "sora",
+            FontChoice::Mono => "mono",
+            FontChoice::Ubuntu => "ubuntu",
+            FontChoice::File(path) => path,
+        };
+        out.push_str(&format!("font = {font}\n"));
+        out.push_str(&format!("text_size = {}\n", self.text_size));
+        out.push_str(&format!("motion = {}\n", yes(self.motion)));
+        out.push_str(&format!("ask_on_drop = {}\n", yes(self.ask_on_drop)));
+        out.push_str(match self.title_bar {
+            TitleBar::System => "title_bar = system\n",
+            TitleBar::Custom => "title_bar = custom\n",
+        });
+        out.push_str(match self.density {
+            Density::Compact => "density = compact\n",
+            Density::Airy => "density = airy\n",
+        });
+        out.push_str(match self.channel {
+            Channel::Stable => "channel = stable\n",
+            Channel::Preview => "channel = preview\n",
+        });
         out.push_str(&format!("page = {}\n", self.page.code()));
         out.push_str(&format!("columns = {}\n", columns.join(",")));
         out.push_str(&format!("widths = {}\n", widths.join(",")));
@@ -351,18 +486,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_use_columns_and_visible_expanded_panels() {
+    fn defaults_use_panes_and_visible_expanded_panels() {
         let s = Settings::parse("");
-        assert_eq!(BrowserView::default(), BrowserView::Columns);
-        assert_eq!(s.browser_view, BrowserView::Columns);
+        assert_eq!(BrowserView::default(), BrowserView::Panes);
+        assert_eq!(s.browser_view, BrowserView::Panes);
         assert!(!s.flat);
         assert!(s.folders);
-        assert!(!s.sidebar_collapsed);
         assert_eq!(s.sidebar, 200.0);
         assert!(s.preview_visible);
         assert_eq!(s.preview_width, 440.0);
         assert_eq!(s.directory_width, 280.0);
         assert_eq!(s.text(), Settings::default().text());
+    }
+
+    #[test]
+    fn the_look_is_kept_and_odd_values_are_tamed() {
+        let s = Settings::parse(
+            "dark_theme = Nord\nlight_theme = Gruvbox Light\nfont = mono\ntext_size = 99\nmotion = no\n",
+        );
+        assert_eq!(s.dark_theme, "Nord");
+        assert_eq!(s.font, FontChoice::Mono);
+        assert_eq!(s.text_size, TEXT_MOST);
+        assert!(!s.motion);
+        assert_eq!(s.title_bar, TitleBar::Custom);
+        let bar = Settings::parse("title_bar = system\n");
+        assert_eq!(bar.title_bar, TitleBar::System);
+        assert!(bar.text().contains("title_bar = system\n"));
+        assert_eq!(bar.density, Density::Compact);
+        let airy = Settings::parse("density = airy\n");
+        assert_eq!(airy.row_height(), 30.0);
+        assert!(airy.text().contains("density = airy\n"));
+        assert_eq!(Settings::parse(&s.text()).light_theme, "Gruvbox Light");
+        let f = Settings::parse("font = /usr/share/fonts/a b.ttf\ntext_size = NaN\n");
+        assert_eq!(f.font, FontChoice::File("/usr/share/fonts/a b.ttf".into()));
+        assert_eq!(f.text_size, 13.0);
+        assert_eq!(Settings::parse(&f.text()).font, f.font);
+    }
+
+    #[test]
+    fn the_update_channel_is_kept_and_defaults_to_stable() {
+        assert_eq!(Settings::parse("").channel, Channel::Stable);
+        let s = Settings::parse("channel = preview\n");
+        assert_eq!(s.channel, Channel::Preview);
+        assert!(s.text().contains("channel = preview\n"));
+        assert_eq!(
+            Settings::parse("channel = nightly\n").channel,
+            Channel::Stable
+        );
     }
 
     #[test]
@@ -390,30 +560,40 @@ mod tests {
         assert_eq!(s.window, Some([-100.0, 34.0, 1000.0, 700.0]));
         assert_eq!(s.recent, ["C:\\one.zip", "D:\\two, with=punctuation.zip"]);
         assert_eq!(s.browser_view, BrowserView::Details);
-        assert!(!s.sidebar_collapsed);
         assert!(s.preview_visible);
         assert_eq!(s.preview_width, 440.0);
         assert_eq!(s.directory_width, 280.0);
         assert_eq!(Settings::parse(&s.text()).text(), s.text());
         assert_eq!(
             Settings::parse("flat = no").browser_view,
-            BrowserView::Columns
+            BrowserView::Panes
         );
         assert!(Settings::parse("tree = no").folders);
+        assert!(!s.next_pane);
+        let old = Settings::parse("browser_view = columns");
+        assert_eq!(old.browser_view, BrowserView::Panes);
+        assert!(old.next_pane);
+        assert!(old
+            .text()
+            .contains("browser_view = panes\nnext_pane = yes\n"));
+        assert!(!Settings::parse("browser_view = panes\nnext_pane = no").next_pane);
+        assert!(!s.folder_peek);
+        assert!(Settings::parse("folder_peek = yes").folder_peek);
+        assert!(s.pointer_focus);
+        assert!(!Settings::parse("pointer_focus = no").pointer_focus);
     }
 
     #[test]
     fn layout_preferences_round_trip_independently() {
-        for browser_view in [BrowserView::Columns, BrowserView::Details] {
+        for browser_view in [BrowserView::Panes, BrowserView::Details] {
             for flat in [false, true] {
                 for folders in [false, true] {
-                    for sidebar_collapsed in [false, true] {
+                    {
                         for preview_visible in [false, true] {
                             let s = Settings {
                                 browser_view,
                                 flat,
                                 folders,
-                                sidebar_collapsed,
                                 preview_visible,
                                 sidebar: 257.5,
                                 preview_width: 512.5,
@@ -432,7 +612,6 @@ mod tests {
                             );
                             assert_eq!(after.flat, flat);
                             assert_eq!(after.folders, folders);
-                            assert_eq!(after.sidebar_collapsed, sidebar_collapsed);
                             assert_eq!(after.preview_visible, preview_visible);
                             assert_eq!(after.sidebar, 257.5);
                             assert_eq!(after.preview_width, 512.5);
@@ -452,7 +631,6 @@ mod tests {
                 let lines = [
                     format!("browser_view = {view}"),
                     format!("flat = {flat}"),
-                    "sidebar_collapsed = yes".into(),
                     "folders = no".into(),
                     "sidebar = 300".into(),
                     "preview_visible = no".into(),
@@ -465,7 +643,7 @@ mod tests {
                 let expected = if flat == "yes" || view == "details" {
                     BrowserView::Details
                 } else {
-                    BrowserView::Columns
+                    BrowserView::Panes
                 };
                 assert_eq!(forward.browser_view, expected);
                 assert_eq!(forward.flat, flat == "yes");

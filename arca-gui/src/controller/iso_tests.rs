@@ -87,7 +87,7 @@ fn iso_mutation_jobs_are_rejected_before_touching_the_image() {
             inputs: vec![],
             dir: String::new(),
             codec: Codec::Store,
-            level: Level::Store,
+            level: Level::STORE,
             password: None,
         },
     ];

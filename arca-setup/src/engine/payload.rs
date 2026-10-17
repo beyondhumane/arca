@@ -49,7 +49,7 @@ mod tests {
         let mut writer = arca_zip::ZipWriter::new(&mut buffer);
         for (name, data) in files {
             writer
-                .add(name, *data, Codec::Deflate, Level::Fast, None)
+                .add(name, *data, Codec::Deflate, Level::FAST, None)
                 .unwrap();
         }
         writer.finish().unwrap();

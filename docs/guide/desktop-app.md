@@ -1,53 +1,45 @@
 ---
-description: Browse archives like folders in a fast, keyboard-friendly native window.
+description: A file explorer that opens archives in place, with panes, preview, devices and one right-click to compress or extract.
 group: Desktop
 order: 8
-keywords: gui window arca-gui desktop app gpui accessibility nvda narrator
+keywords: gui window arca-gui desktop app egui file explorer panes preview devices accessibility nvda narrator
 ---
 
 # The desktop workspace
 
-`arca-gui` browses the disk and archives in a native GPUI window. The title bar keeps the Arca branding and window controls; one navigation band contains history, breadcrumbs, view selection, filtering, extraction, testing and the **More** menu.
+`arca-gui` is a file explorer and an archiver in the same window. It starts in the folder you left it in, shows the disk the way any explorer does, and opens an archive in place when you double-click it, with the same panes, filters, preview and context menus. The top band holds history, breadcrumbs (click their empty part, the pencil or press **Ctrl+L** to type a path), the filter, the **View** menu, search (**Ctrl+K**), settings and the **More** menu.
 
 ## Browsing the disk
 
-Started without an archive, the window shows the folder it was last in (or your home folder) as a normal file explorer. Folders open in the same Columns or Details views used for archives; each folder is read when you enter it, not ahead of time. The sidebar lists **Places** (home and the standard user folders), **Pinned** folders and **Devices** (the mounted volumes, or the drives on Windows). Click one to jump there; right-click a folder row and choose **Pin to sidebar** to keep it at hand, and right-click a pinned entry to unpin it. **More > View > Show hidden files** toggles dot files and hidden entries.
+The sidebar lists **Places** (home and the standard user folders), **Pinned** folders, **Devices** and **Recent** archives. Devices come from the system's volume list: removable drives, volumes mounted under `/media`, `/run/media` or `/mnt`, and volumes with a file system that are not mounted yet; on Windows, the drive letters. Clicking an unmounted volume mounts it first. Right-click a volume for **Mount** or **Unmount**, **Format…** (after a warning; ext4, exFAT, FAT or NTFS, with an optional label) and **Set label…**; on Linux these go through UDisks, so the desktop may ask for your password. **More > View > Show hidden files** toggles dot files.
 
-Double-clicking an archive in a supported format (`.zip`, `.7z`, `.tar`, `.iso` and the ZIP containers) opens it in place: the breadcrumbs, tree and panes switch to its contents and the usual archive actions become available. **Up** or **Backspace** at the archive root, or the **Close archive** button, returns to the folder it came from with the cursor on the archive. Other files open with the system application; the preview panel shows local files the same way it shows archive entries.
+Right-click a file or folder for the full menu: **New folder with selection**, **Open**, **Open with** (the applications that accept that type), **Quick preview**, **Cut**, **Copy**, **Paste**, **Duplicate**, **Rename**, **Move to…**, **Copy to…**, **Compress**, **Copy path**, **Copy name**, **Select all**, **New folder**, **Pin to sidebar**, **Properties**, **Move to Trash** (**Delete**) and **Permanently delete** (**Shift+Delete**, after confirmation). Drag rows onto a folder or onto another pane to move them.
 
-On the disk, **Compress** uses the ticked rows as its input, **Copy path** puts absolute paths on the clipboard, and the archive-only actions (extract, test, rename, delete, paste, new folder) stay off. The last folder visited, the pinned folders and the hidden-files preference are remembered between sessions.
+Double-clicking an archive (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.xz`, `.rar`, `.iso` and the ZIP containers) opens it in place. Inside, the menu offers **Extract selection**, **Extract here**, **Extract all** and **Test**, plus **Rename**, **Delete**, **New folder** and **Paste** in a ZIP; a password is asked for when the archive needs one. **Up** or **Backspace** at the root, or **Close archive**, return to the folder with the cursor on the archive. Other files open with the system application.
 
-## Navigation and layout
+## Panes, details and the sidebar
 
-**Open** and **Create** are in the sidebar, alongside recent archives and, when an archive is open, its folder tree. The sidebar button cycles between expanded, icon rail and hidden. Drag the divider to resize the expanded sidebar. **More > View** also controls its visibility.
+The **Panes** view (the default) puts one folder in each vertical pane. Each pane has its own header with **Reload**, **Up**, **Sort**, **Filter** and **Close**, and its own cursor, selection, scrolling, filter and sort order. Three settings in **Settings > Views** (also in the **View** menu) decide how panes behave:
 
-The default **Columns** view keeps a directory in each vertical pane. Click a folder to open its child pane; ancestors remain to the left. Choosing another folder replaces only the descendants. Each pane retains its own cursor, selection, scrolling, filter and sort order. Click or focus a pane before working on its contents. Drag pane dividers to resize them, and scroll horizontally to reach ancestors. The active pane is revealed when navigation changes it.
+- **Open folders in the next pane** (`next_pane`, off by default): on, selecting a folder opens it in the pane to the right and the ancestors stay to the left, Miller-column style; off, each pane navigates on its own and **Open in a new pane** in the context menu adds one.
+- **Peek into folders on hover** (`folder_peek`, off by default): resting the pointer on a folder row shows a card with its first entries without opening it.
+- **Focus follows the pointer** (`pointer_focus`, on by default): the pane under the pointer is the active one, so the path bar, filter, shortcuts and actions act on it, without a click and without moving the panes. Any key hands control to the keyboard until the pointer moves again; **Tab**, **Shift+Tab**, **←** and **→** walk the panes. The row of panes scrolls only when navigation opens a pane out of view, with its scrollbar, or with **Shift+wheel**.
 
-Breadcrumbs navigate to the archive root or a parent folder. A menu exposes middle segments when the path is too long. The tree and breadcrumbs follow the active pane. Back/forward buttons and **Alt+Left/Right** use the same history.
+**Details** is a sortable table; right-click its header to choose the columns. **Flat view** lists everything under the current folder without the hierarchy. **Filter** (**Ctrl+F**) belongs to the pane in Panes and to the whole list in Details.
 
-**Details** retains the sortable metadata table. Right-click its header to choose metadata columns. **More > View > Flat view** switches to Details and lists entries without the folder hierarchy. Switching views keeps the location and selection that remains valid.
+The sidebar button shows or hides the sidebar; when the window leaves too little room for the folders beside it, the sidebar shrinks to a column of icons on its own and comes back when there is room again. Drag the dividers to resize the sidebar, the panes and the preview; every width is remembered.
 
-Layout choices and widths are remembered. Narrow windows temporarily reduce the sidebar to a rail and suspend the preview before squeezing the browser; widening restores the preferred panels.
+## Selection and actions
 
-## Selection and archive actions
-
-- Click a file to select it; Ctrl+click toggles and Shift+click selects a range. Use these modifiers to select folders without opening them in Columns.
-- **Space** toggles the cursor row; **Ctrl+A** selects visible rows. Selection commands operate only in the active pane. The parent row in Details is never a command target.
-- Right-click a row for extraction, preview, rename, delete and other applicable actions. Right-click empty pane space for destination actions.
-- Drag entries onto a folder or directory pane to move them within a writable ZIP. Drop external files onto a directory to add them. The target highlights during a drag.
-- New-folder dialogs and paste menus name their destination. ZIP mutations are serialized; existing RAR/CBR archives remain read-only.
-- File clipboard copy/cut/paste and drag-out retain their existing Windows integration. **Ctrl+Shift+C** copies names as text.
-- **More** includes selection tools, password changes, verification, undo, settings and shortcut help.
-
-Double-clicking a file, or pressing **Enter** on it, explicitly extracts it to a temporary location and opens it with the system application. Previewing does not do this.
+- Click selects, **Ctrl+click** toggles, **Shift+click** selects a range, **Space** toggles the cursor row and **Ctrl+A** selects the visible rows of the active pane.
+- **Compress** opens the compress box: archive name with automatic extension, destination folder, format (ZIP, TAR, TAR.GZ, TAR.XZ, 7z, XZ or RAR), method, a 0–9 level slider, an optional AES-256 password (with hidden names in 7z) and the list of what goes in.
+- **Extract…** (**Ctrl+E**) asks where to unpack; **Extract here** (**Alt+W**) unpacks beside the archive.
+- **Properties** shows size, dates, type, permissions and what a folder contains.
+- **More** includes selection tools, password changes, verification, settings, the shortcut list and **Check for updates**; a new version opens a dialog with its release notes and installs itself from inside the app.
 
 ## Integrated preview
 
-The right panel follows the active file cursor. **F3** enables preview; its close button hides it and returns focus. The footer can show it again. Drag its divider to change its remembered width.
-
-The panel shows the filename, size, date and type, with unavailable metadata labelled explicitly. Text uses a monospaced, line-numbered list; hexadecimal and supported-image views are available in the same panel. Images fit the panel.
-
-Loading, empty, password-required, wrong-password, unsupported, oversized and error states are shown in place. Reads, text preparation and image decoding run in a bounded background worker, independently of mutation jobs. Navigation or selection changes invalidate old results. Passwords and preview contents are not written to settings.
+The right panel (**F3**) follows the cursor: a header with the type icon, name, size, date and MIME type, and buttons to open the file with the system application, switch between **Text**, **Hex** and **Image**, toggle line wrapping and close. Text comes with line numbers and syntax highlighting for shell, Rust, C-like languages, Python, JavaScript and TypeScript, JSON, TOML, YAML, INI, HTML and XML, CSS and Markdown; only the visible lines are laid out, so large files stay fluid. Hex shows offsets in the gutter and images fit the panel. Loading, password and error states are shown in place; passwords and preview contents are never written to settings.
 
 ## Passwords
 

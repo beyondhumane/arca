@@ -86,6 +86,17 @@ struct PreviewContent {
 }
 
 impl AppController {
+    /// The previewed file is on disk: hand it to whatever the system opens
+    /// it with.
+    pub(crate) fn open_preview_with_system(&mut self) {
+        let Some(index) = self.state.preview.index else {
+            return;
+        };
+        if self.on_disk() {
+            self.open_disk_entry(index);
+        }
+    }
+
     pub(crate) fn request_preview(&mut self, index: usize) {
         self.request_preview_with_password(index, self.state.archive_password.clone());
     }
@@ -538,7 +549,7 @@ mod tests {
                     name,
                     bytes,
                     arca_core::Codec::Store,
-                    arca_core::Level::Store,
+                    arca_core::Level::STORE,
                     None,
                     password,
                 )
@@ -980,7 +991,7 @@ mod tests {
                     inputs: vec![],
                     dir: String::new(),
                     codec: Codec::Store,
-                    level: Level::Store,
+                    level: Level::STORE,
                     password: None,
                 },
             ] {

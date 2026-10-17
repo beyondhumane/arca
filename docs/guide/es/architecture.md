@@ -64,7 +64,7 @@ match ZipArchive::open(file) {
 | `sevenz-rust2` 0.23.0 / `lzma-rust2` 0.21.0 | 7z/AES y LZMA Apache-2.0; parser reforzado, optimización unsafe de LZMA desactivada |
 | `rayon` | El pool de hilos detrás de la compresión y extracción en paralelo |
 | `clap` | Análisis de línea de comandos |
-| GPUI | El framework de UI acelerado por GPU detrás de la ventana |
+| `eframe` / `egui` | El framework de UI de modo inmediato detrás de la ventana, pintada con OpenGL mediante Glow |
 
 ## Límites de 7z
 
@@ -92,8 +92,6 @@ cargo tree -p arca-7z -e features -i lzma-rust2
 ```
 
 Los dos primeros no deben contener los nativos `zstd-sys` ni `bzip2-sys`.
-La GUI incluye `libbz2-rs-sys` por la descompresión HTTP de GPUI: pese al nombre,
-es una implementación Rust sin compilación C, no el decodificador Bzip2 de 7z.
 LZMA debe activar `std`/`encoder`, nunca `optimization`. El workspace mantiene
 Rust 1.95 y edición 2021; cada dependencia elige su edición. Consulta el
 [diseño aceptado](https://github.com/beyondhumane/arca/blob/main/docs/plans/7z-format.md)
@@ -116,4 +114,4 @@ panic = "abort"
 strip = true
 ```
 
-Las dependencias se optimizan incluso en builds de depuración: el motor de maquetación de GPUI, el shaper de texto y el rasterizador rehacen su trabajo en cada fotograma, y con `opt-level = 0` eso se nota como tirones al arrastrar. El código propio de Arca compila en el nivel 1, lo que mantiene el depurador útil.
+Las dependencias se optimizan incluso en builds de depuración: egui maqueta, da forma al texto y tesela toda la ventana en cada fotograma que pinta, y con `opt-level = 0` eso se nota como tirones al arrastrar. El código propio de Arca compila en el nivel 1, lo que mantiene el depurador útil.

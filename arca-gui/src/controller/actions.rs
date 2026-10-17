@@ -20,6 +20,8 @@ pub(crate) enum Message {
     // in a text to read, which is why it is not a `Done`.
     Downloaded(PathBuf),
     Conflict(String),
+    // A name already taken on disk: the destination, then what was coming.
+    ConflictBetween(String, String),
     Progress(usize, usize, String),
     Done(String),
     Failed(String),
@@ -88,7 +90,7 @@ pub(crate) enum AppAction {
     ToggleColumn(SortColumn),
     SetLanguage(Option<Lang>),
     SetTheme(ThemePreference),
-    AnswerConflict(Answer),
+    AnswerConflict(Answer, Option<String>),
     CancelPassword,
     SetPasswordInput(String),
     SubmitPassword(String),
@@ -176,7 +178,7 @@ pub(crate) enum Look {
 /// quietly extracted it.
 pub(crate) struct Viewed {
     pub(crate) name: String,
-    // Shared rather than owned outright: the picture view hands these to GPUI
+    // Shared rather than owned outright: the picture view hands these to egui
     // on every frame, and a file of thirty megabytes copied sixty times a
     // second is two gigabytes a second of nothing.
     pub(crate) bytes: std::sync::Arc<[u8]>,
@@ -326,6 +328,15 @@ pub(crate) fn subject_of(job: &Job) -> String {
 /// itself is sent instead.
 pub(crate) const RELEASES_API: &str =
     "https://api.github.com/repos/beyondhumane/arca/releases/latest";
+/// The version this copy says it is. A preview build is told its own name,
+/// with the preview number, by the release workflow.
+pub(crate) const VERSION: &str = match option_env!("ARCA_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
+pub(crate) const RELEASES_PREVIEW_API: &str =
+    "https://api.github.com/repos/beyondhumane/arca/releases?per_page=1";
 pub(crate) const RELEASES_PAGE: &str = "https://github.com/beyondhumane/arca/releases/latest";
 
 /// As much installer as is ever going to arrive. A reply longer than this is
@@ -335,8 +346,12 @@ pub(crate) const INSTALLER_LIMIT: usize = 64 * 1024 * 1024;
 #[derive(Clone)]
 pub(crate) struct Release {
     pub(crate) tag: String,
+    /// The file for this machine: the Windows installer, the AppImage, or
+    /// the tar.gz with the two binaries.
     pub(crate) installer: Option<String>,
     pub(crate) sums: Option<String>,
+    /// The release notes, as written on GitHub: Markdown, or nothing.
+    pub(crate) notes: String,
 }
 
 /// Reads the announcement.
@@ -350,8 +365,7 @@ pub(crate) struct Release {
 /// `SHA256SUMS.txt` is called that because we named it.
 pub(crate) fn release_of(reply: &str) -> Option<Release> {
     let tag = tag_of(reply)?;
-    let mut installer = None;
-    let mut sums = None;
+    let mut urls = Vec::new();
     for piece in reply.split("\"browser_download_url\"").skip(1) {
         let Some(open) = piece.find('"').and_then(|c| piece.get(c + 1..)) else {
             continue;
@@ -362,20 +376,118 @@ pub(crate) fn release_of(reply: &str) -> Option<Release> {
         let url = &open[..close];
         // Only ours, and only over the wire we trust. A reply that names some
         // other place is not one to go and fetch an executable from.
-        if !url.starts_with("https://github.com/beyondhumane/arca/releases/download/") {
-            continue;
-        }
-        if url.ends_with("/SHA256SUMS.txt") {
-            sums = Some(url.to_string());
-        } else if url.ends_with("-x86_64.exe") && url.contains("/arca-setup-") {
-            installer = Some(url.to_string());
+        if url.starts_with("https://github.com/beyondhumane/arca/releases/download/") {
+            urls.push(url.to_string());
         }
     }
+    let sums = urls
+        .iter()
+        .find(|url| url.ends_with("/SHA256SUMS.txt"))
+        .cloned();
+    let installer = asset_for(
+        &urls,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        std::env::var_os("APPIMAGE").is_some(),
+    );
     Some(Release {
         tag,
         installer,
         sums,
+        notes: notes_of(reply).unwrap_or_default(),
     })
+}
+
+/// The release file that replaces this copy: the installer on Windows, the
+/// AppImage for a copy running as one, and the tar.gz with the binaries for
+/// the rest of Linux and for macOS. Named by what they end in, because we
+/// named them.
+pub(crate) fn asset_for(urls: &[String], os: &str, arch: &str, appimage: bool) -> Option<String> {
+    let arch = match arch {
+        "aarch64" | "arm64" => "arm64",
+        _ => "x86_64",
+    };
+    let suffix = match os {
+        "windows" => "-x86_64.exe".to_string(),
+        "linux" if appimage => format!("-linux-{arch}.AppImage"),
+        "linux" => format!("-linux-{arch}.tar.gz"),
+        "macos" => format!("-macos-{arch}.tar.gz"),
+        _ => return None,
+    };
+    urls.iter()
+        .find(|url| url.ends_with(&suffix) && (os != "windows" || url.contains("/arca-setup-")))
+        .cloned()
+}
+
+/// The release notes out of the announcement: the `body` string, unescaped.
+///
+/// The key is looked for with its colon so that a `body` inside the notes
+/// themselves cannot be mistaken for it, and the value is read the way JSON
+/// writes strings: up to the first quote that is not escaped, with the
+/// escapes undone. Windows line ends become plain ones.
+pub(crate) fn notes_of(reply: &str) -> Option<String> {
+    let mut from = 0;
+    loop {
+        let at = reply[from..].find("\"body\"")? + from;
+        let after = reply[at + 6..].trim_start();
+        if let Some(rest) = after.strip_prefix(':') {
+            let rest = rest.trim_start();
+            if rest.starts_with("null") {
+                return None;
+            }
+            let value = rest.strip_prefix('"')?;
+            return Some(unescape_json(value).replace("\r\n", "\n"));
+        }
+        from = at + 6;
+    }
+}
+
+/// The text of a JSON string, read up to its closing quote.
+pub(crate) fn unescape_json(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => break,
+            '\\' => match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some('b') | Some('f') => {}
+                Some('u') => {
+                    let code = (0..4).filter_map(|_| chars.next()).collect::<String>();
+                    let Some(unit) = u32::from_str_radix(&code, 16).ok() else {
+                        continue;
+                    };
+                    // A surrogate pair is two escapes; the second follows at once.
+                    if (0xD800..0xDC00).contains(&unit) {
+                        let mut rest = chars.clone();
+                        if rest.next() == Some('\\') && rest.next() == Some('u') {
+                            let low = (0..4).filter_map(|_| rest.next()).collect::<String>();
+                            if let Ok(low) = u32::from_str_radix(&low, 16) {
+                                if (0xDC00..0xE000).contains(&low) {
+                                    let joined = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
+                                    if let Some(ch) = char::from_u32(joined) {
+                                        out.push(ch);
+                                    }
+                                    chars = rest;
+                                    continue;
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    if let Some(ch) = char::from_u32(unit) {
+                        out.push(ch);
+                    }
+                }
+                Some(other) => out.push(other),
+                None => break,
+            },
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// The line for `name` in a `sha256sum` listing, as raw bytes.
@@ -397,19 +509,6 @@ pub(crate) fn sum_for(listing: &str, name: &str) -> Option<[u8; 32]> {
         return Some(out);
     }
     None
-}
-
-/// Whether this copy of Arca was put here by the installer.
-///
-/// Inno Setup leaves its uninstaller in the folder it installed to, so that
-/// file being next to the program is the program saying how it got there. A
-/// copy unpacked from the .zip has no uninstaller and nothing to update: for
-/// that one the only honest offer is the page.
-pub(crate) fn installed_by_setup() -> bool {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|d| d.join("unins000.exe")))
-        .is_some_and(|u| u.exists())
 }
 
 /// Pulls the release's name out of what the announcement page answered.
@@ -442,14 +541,14 @@ pub(crate) fn tag_of(reply: &str) -> Option<String> {
 /// anything that is not a version at all answers no: silence is the right
 /// behaviour for an announcement nobody can read.
 pub(crate) fn newer(running: &str, latest: &str) -> bool {
-    pub(crate) fn parts(v: &str) -> Option<(Vec<u32>, bool)> {
+    pub(crate) fn parts(v: &str) -> Option<(Vec<u32>, Option<&str>)> {
         let v = v.trim().trim_start_matches(['v', 'V']);
         if v.is_empty() {
             return None;
         }
         let (numbers, tail) = match v.find(['-', '+']) {
-            Some(cut) => (&v[..cut], true),
-            None => (v, false),
+            Some(cut) => (&v[..cut], Some(&v[cut + 1..])),
+            None => (v, None),
         };
         let mut out = Vec::new();
         for piece in numbers.split('.') {
@@ -471,8 +570,20 @@ pub(crate) fn newer(running: &str, latest: &str) -> bool {
             return b > a;
         }
     }
-    // The same numbers: the one without a suffix is the finished one.
-    mine_tail && !theirs_tail
+    // The same numbers: the one without a suffix is the finished one, and two
+    // previews of it go by the number at the end of each.
+    match (mine_tail, theirs_tail) {
+        (Some(_), None) => true,
+        (Some(a), Some(b)) => {
+            let rank = |t: &str| {
+                t.split(['.', '-'])
+                    .map(|p| p.parse::<u32>().map_err(|_| p.to_string()))
+                    .collect::<Vec<_>>()
+            };
+            rank(b) > rank(a)
+        }
+        _ => false,
+    }
 }
 
 /// A name in the one spelling the window works in.
@@ -560,4 +671,78 @@ pub(crate) fn wheel_speed(away: f32) -> f32 {
         return 0.0;
     }
     (past * past / 12.0).min(4000.0) * away.signum()
+}
+
+#[cfg(test)]
+mod release_tests {
+    use super::*;
+
+    const REPLY: &str = r#"{
+  "url": "https://api.github.com/repos/beyondhumane/arca/releases/1",
+  "tag_name": "v0.9.0",
+  "author": { "login": "x", "html_url": "https://github.com/x" },
+  "assets": [
+    { "name": "SHA256SUMS.txt", "browser_download_url": "https://github.com/beyondhumane/arca/releases/download/v0.9.0/SHA256SUMS.txt" },
+    { "name": "arca-setup-0.9.0-x86_64.exe", "browser_download_url": "https://github.com/beyondhumane/arca/releases/download/v0.9.0/arca-setup-0.9.0-x86_64.exe" }
+  ],
+  "body": "<!-- generated -->\r\n## What's Changed\r\n* feat: a \"quoted\" thing \\ by @x in https://github.com/o/r/pull/1\r\n* caf\u00e9 \ud83d\ude00\r\n"
+}"#;
+
+    #[test]
+    fn the_release_carries_its_notes_unescaped() {
+        let release = release_of(REPLY).expect("release");
+        assert_eq!(release.tag, "v0.9.0");
+        assert!(release.sums.is_some());
+        let urls: Vec<String> = [
+            "SHA256SUMS.txt",
+            "arca-setup-0.9.0-x86_64.exe",
+            "arca-v0.9.0-windows-x86_64.zip",
+            "arca-v0.9.0-linux-x86_64.tar.gz",
+            "arca-v0.9.0-linux-arm64.AppImage",
+            "arca-v0.9.0-macos-arm64.tar.gz",
+        ]
+        .iter()
+        .map(|n| format!("https://github.com/beyondhumane/arca/releases/download/v0.9.0/{n}"))
+        .collect();
+        let pick = |os, arch, app| {
+            asset_for(&urls, os, arch, app).map(|u| u.rsplit('/').next().unwrap().to_string())
+        };
+        assert_eq!(
+            pick("windows", "x86_64", false).as_deref(),
+            Some("arca-setup-0.9.0-x86_64.exe")
+        );
+        assert_eq!(
+            pick("linux", "x86_64", false).as_deref(),
+            Some("arca-v0.9.0-linux-x86_64.tar.gz")
+        );
+        assert_eq!(
+            pick("linux", "aarch64", true).as_deref(),
+            Some("arca-v0.9.0-linux-arm64.AppImage")
+        );
+        assert_eq!(
+            pick("macos", "aarch64", false).as_deref(),
+            Some("arca-v0.9.0-macos-arm64.tar.gz")
+        );
+        assert_eq!(pick("macos", "x86_64", false), None);
+        assert_eq!(pick("freebsd", "x86_64", false), None);
+        assert_eq!(
+            release.notes,
+            "<!-- generated -->\n## What's Changed\n* feat: a \"quoted\" thing \\ by @x in https://github.com/o/r/pull/1\n* café 😀\n"
+        );
+    }
+
+    #[test]
+    fn a_release_without_notes_has_none() {
+        let reply = r#"{"tag_name": "v1.0.0", "body": null, "assets": []}"#;
+        assert_eq!(notes_of(reply), None);
+        assert_eq!(release_of(reply).map(|r| r.notes), Some(String::new()));
+        let reply = r#"{"tag_name": "v1.0.0", "assets": [{"body_html": "x"}]}"#;
+        assert_eq!(notes_of(reply), None);
+    }
+
+    #[test]
+    fn unescaping_stops_at_the_closing_quote() {
+        assert_eq!(unescape_json(r#"a\tb\n", "next": 1"#), "a\tb\n");
+        assert_eq!(unescape_json(r#"\u0041\/"#), "A/");
+    }
 }

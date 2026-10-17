@@ -1,5 +1,5 @@
 use super::{create_limits as limits, reader, CreateOptions, Progress, RarArchive, Source};
-use arca_core::{Error, Format, Level, Result};
+use arca_core::{Error, Format, Result};
 use rars::rar50::{
     write_streaming_archive_with_progress, ArchiveEntry, ArchiveExtras, FilterPolicy, WriterOptions,
 };
@@ -128,12 +128,8 @@ fn write(
     resources: &WriterResources,
     reporter: &Reporter<'_>,
 ) -> rars::Result<()> {
-    let level = match options.level {
-        Level::Store => 0,
-        Level::Fast => 1,
-        Level::Normal => 3,
-        Level::Best => 5,
-    };
+    // RAR has six levels where Arca has ten.
+    let level = [0, 1, 1, 2, 2, 3, 3, 4, 4, 5][usize::from(options.level.get())];
     let writer_options = WriterOptions::new(ArchiveVersion::Rar50, FeatureSet::store_only())
         .with_compression_level(level);
     let extras = ArchiveExtras::default().with_filter_policy(FilterPolicy::None);

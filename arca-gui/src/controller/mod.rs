@@ -1,8 +1,10 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
-mod disk;
-pub(crate) use disk::{disk_dir, disk_path, DiskState, Origin, Place, PlaceKind};
+pub(crate) mod disk;
+#[cfg(test)]
+use disk::disk_dir;
+pub(crate) use disk::{disk_path, DiskState, Origin, PlaceKind};
 pub(crate) use jobs::{Task, TaskId, TaskStatus};
 #[cfg(test)]
 mod container_tests;
@@ -23,9 +25,9 @@ mod state;
 #[cfg(test)]
 mod xz_tests;
 pub(crate) use actions::*;
-pub(crate) use panes::{BrowserState, DirectoryPane};
+pub(crate) use panes::BrowserState;
 pub(crate) use preview::{PreviewState, PreviewStatus};
-pub(crate) use state::AppState;
+pub(crate) use state::{AppState, UpdateCheck};
 
 use crate::archive_ops::*;
 use crate::model::*;
@@ -47,6 +49,9 @@ use std::time::Instant;
 
 pub(crate) struct AppController {
     pub(crate) state: AppState,
+    pub(crate) volumes: Vec<disk::Volume>,
+    volumes_at: Option<std::time::Instant>,
+    volume_job: Option<disk::DeviceJob>,
 }
 
 fn rename_destination(path: &str, name: &str) -> String {
@@ -224,7 +229,7 @@ impl AppController {
                 self.state.settings.theme = theme;
                 self.state.settings.save();
             }
-            AppAction::AnswerConflict(answer) => self.answer_conflict(answer),
+            AppAction::AnswerConflict(answer, name) => self.answer_conflict(answer, name),
             AppAction::CancelPassword => self.cancel_password(),
             AppAction::SetPasswordInput(password) => self.state.password_input = password,
             AppAction::SubmitPassword(password) => self.submit_password(password),
@@ -480,9 +485,10 @@ impl AppController {
         let typed = self.state.output_name.trim();
         let name = if typed.is_empty() {
             format!("archive.{}", format.extension())
-        } else if typed
-            .to_ascii_lowercase()
-            .ends_with(&format!(".{}", format.extension()))
+        } else if !self.state.auto_extension
+            || typed
+                .to_ascii_lowercase()
+                .ends_with(&format!(".{}", format.extension()))
         {
             typed.to_string()
         } else {
@@ -499,7 +505,12 @@ impl AppController {
             && !self.state.add_password.is_empty())
         .then(|| self.state.add_password.clone());
         Some(Job::Compress {
-            out: first.parent().unwrap_or(Path::new("")).join(name),
+            out: self
+                .state
+                .output_dir
+                .clone()
+                .unwrap_or_else(|| first.parent().unwrap_or(Path::new("")).to_path_buf())
+                .join(name),
             inputs: self.state.pending_inputs.clone(),
             format,
             codec: self.state.codec,
@@ -525,7 +536,7 @@ impl AppController {
         self.snapshot_active_pane();
     }
     pub(crate) fn request_delete(&mut self) {
-        if !self.writable() {
+        if !self.can_change() {
             self.state.notice = self.cannot_change(Some(self.state.format));
             self.state.error = true;
             return;
@@ -544,6 +555,9 @@ impl AppController {
                         names,
                         password: self.state.archive_password.clone(),
                     });
+                } else if self.on_disk() {
+                    let roots = self.selected_roots();
+                    self.remove_on_disk(&roots, false);
                 }
             }
         }
@@ -564,6 +578,9 @@ impl AppController {
 
     pub(crate) fn new(settings: Settings) -> Self {
         AppController {
+            volumes: Vec::new(),
+            volumes_at: None,
+            volume_job: None,
             state: AppState {
                 view: View::Browse,
                 settings,
@@ -583,10 +600,12 @@ impl AppController {
                 started: None,
                 format: Format::Zip,
                 codec: Codec::Deflate,
-                level: Level::Normal,
+                level: Level::NORMAL,
                 into_subfolder: false,
                 pending_inputs: Vec::new(),
                 output_name: String::new(),
+                output_dir: None,
+                auto_extension: true,
                 close_when_done: false,
                 one_shot: false,
                 title: String::new(),
@@ -618,6 +637,7 @@ impl AppController {
                 undo: None,
                 update: None,
                 update_rx: None,
+                update_check: UpdateCheck::Idle,
                 asked_about_updates: false,
                 subject: String::new(),
                 overlay: false,
@@ -630,6 +650,7 @@ impl AppController {
                 cut_armed: None,
                 cut_pending: None,
                 show_shortcuts: false,
+                show_update: false,
                 quiet: false,
                 browser: BrowserState::default(),
                 preview: PreviewState::default(),
@@ -648,7 +669,11 @@ impl AppController {
             return format!(
                 "{} {} · {} {}",
                 rows.len(),
-                s.items_word,
+                if rows.len() == 1 {
+                    s.item_word
+                } else {
+                    s.items_word
+                },
                 human(raw),
                 s.in_folder
             );
@@ -906,46 +931,76 @@ impl AppController {
         if self.state.asked_about_updates || !self.state.settings.updates {
             return;
         }
+        self.check_for_updates();
+    }
+
+    // The same question, asked now because somebody pressed the button.
+    pub(crate) fn check_for_updates(&mut self) {
+        if self.state.update_rx.is_some() {
+            return;
+        }
         self.state.asked_about_updates = true;
-        let (tx, rx) = channel::<Release>();
+        self.state.update_check = UpdateCheck::Checking;
+        let (tx, rx) = channel::<Result<Option<Release>, ()>>();
         self.state.update_rx = Some(rx);
-        let running = env!("CARGO_PKG_VERSION").to_string();
+        let api = match self.state.settings.channel {
+            crate::settings::Channel::Stable => RELEASES_API,
+            crate::settings::Channel::Preview => RELEASES_PREVIEW_API,
+        };
+        let running = VERSION.to_string();
         std::thread::spawn(move || {
             // GitHub turns away anything that does not name itself, and naming
             // the program and its version is what a user agent is for. Nothing
             // else is sent: no machine, no user, no archive.
             let agent = format!("Arca/{running}");
-            let Some(reply) = arca_net::get(RELEASES_API, &agent) else {
+            let Some(reply) = arca_net::get(api, &agent) else {
+                let _ = tx.send(Err(()));
                 return;
             };
-            if let Some(release) = release_of(&reply) {
-                if newer(&running, &release.tag) {
-                    let _ = tx.send(release);
-                }
-            }
+            let answer = release_of(&reply)
+                .ok_or(())
+                .map(|release| newer(&running, &release.tag).then_some(release));
+            let _ = tx.send(answer);
         });
     }
 
-    // Takes the new version, if this copy is one that can replace itself.
-    //
-    // A copy put here by the installer updates itself. One unpacked from the
-    // .zip is loose files in a folder somebody chose, and there is nothing to
-    // update: for that one the only honest offer is the page.
+    // Takes the new version: gets the file for this machine, checks it
+    // against the published sums and puts it in place.
     pub(crate) fn start_update(&mut self) {
         match self.state.update.clone() {
             Some(Release {
                 tag,
                 installer: Some(installer),
                 sums: Some(sums),
-            }) if installed_by_setup() => self.run_job(Job::Update {
+                ..
+            }) => self.run_job(Job::Update {
                 tag,
                 installer,
                 sums,
             }),
             _ => {
-                let _ = launch_with_system(Path::new(RELEASES_PAGE));
+                self.state.notice = self.s().update_failed.to_string();
+                self.state.error = true;
             }
         }
+    }
+
+    pub(crate) fn open_release_page(&self) {
+        let url = match &self.state.update {
+            Some(release)
+                if release
+                    .tag
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) =>
+            {
+                format!(
+                    "https://github.com/beyondhumane/arca/releases/tag/{}",
+                    release.tag
+                )
+            }
+            _ => RELEASES_PAGE.to_string(),
+        };
+        let _ = launch_with_system(Path::new(&url));
     }
 
     // Moves what was being carried into `target`, which is a folder's path or
@@ -955,6 +1010,10 @@ impl AppController {
     // front of it, and a rename is a rewrite of the whole archive: doing them
     // one at a time would rewrite it once per file.
     pub(crate) fn move_into(&mut self, roots: &[String], target: &str) {
+        if self.on_disk() {
+            self.move_on_disk(roots, target);
+            return;
+        }
         let Some(archive) = self.state.archive.clone() else {
             return;
         };
@@ -1154,6 +1213,24 @@ impl AppController {
     // fast as a drag of one file.
     #[cfg(windows)]
     pub(crate) fn drag_out(&mut self) {
+        if self.on_disk() {
+            let picked = self.disk_drag_items();
+            if picked.is_empty() {
+                return;
+            }
+            let items: Vec<arca_drag::Item> = picked
+                .iter()
+                .map(|(_, name, size, mtime)| arca_drag::Item {
+                    name: name.clone(),
+                    size: *size,
+                    mtime: *mtime,
+                })
+                .collect();
+            let paths: Vec<PathBuf> = picked.into_iter().map(|(path, ..)| path).collect();
+            let deliver = Box::new(move |i: usize| paths.get(i).cloned());
+            let _ = arca_drag::drag(items, deliver, false);
+            return;
+        }
         let Some(archive) = self.state.archive.clone() else {
             return;
         };
@@ -1217,13 +1294,20 @@ impl AppController {
     // What is picked, named the way it should land where it is dropped: the
     // folder on screen is the base, so dragging a folder out puts that folder
     // down rather than scattering what was inside it.
-    pub(crate) fn level_name(&self, l: Level) -> &'static str {
+    /// The level as the box shows it: the number, with its name when it is
+    /// one of the four named ones.
+    pub(crate) fn level_name(&self, l: Level) -> String {
         let s = self.s();
-        match l {
-            Level::Store => s.level_none,
-            Level::Fast => s.level_fast,
-            Level::Normal => s.level_normal,
-            Level::Best => s.level_best,
+        let name = match l {
+            Level::STORE => Some(s.level_none),
+            Level::FAST => Some(s.level_fast),
+            Level::NORMAL => Some(s.level_normal),
+            Level::BEST => Some(s.level_best),
+            _ => None,
+        };
+        match name {
+            Some(name) => format!("{l} \u{b7} {name}"),
+            None => l.to_string(),
         }
     }
     pub(crate) fn can_go_back(&self) -> bool {
@@ -1426,9 +1510,25 @@ impl AppController {
         // The answer about a newer version, if it ever came. Its own channel,
         // because it is not a job and must not make the window look busy.
         if let Some(rx) = &self.state.update_rx {
-            if let Ok(release) = rx.try_recv() {
-                self.state.update = Some(release);
-                self.state.update_rx = None;
+            match rx.try_recv() {
+                Ok(Ok(found)) => {
+                    self.state.update_check = if found.is_some() {
+                        UpdateCheck::Found
+                    } else {
+                        UpdateCheck::Current
+                    };
+                    // The box with the notes comes up once, when a newer
+                    // version is first heard of; after that the status bar
+                    // keeps the offer.
+                    self.state.show_update = found.is_some();
+                    self.state.update = found;
+                    self.state.update_rx = None;
+                }
+                Ok(Err(())) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.state.update_check = UpdateCheck::Failed;
+                    self.state.update_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }
         let mut close = false;
@@ -1528,6 +1628,7 @@ impl AppController {
                 // The rest is what a task says, and tasks have channels of
                 // their own.
                 Message::Created(..)
+                | Message::ConflictBetween(..)
                 | Message::Conflict(..)
                 | Message::Done(..)
                 | Message::Failed(..)
@@ -1599,7 +1700,7 @@ impl AppController {
         )
     }
 
-    fn rows_for(
+    pub(crate) fn rows_for(
         &self,
         directory: &str,
         filter: &str,
@@ -1734,6 +1835,9 @@ impl AppController {
         }
         let to = rename_destination(path, name);
         let Some(archive) = self.state.archive.clone() else {
+            if self.on_disk() {
+                self.rename_on_disk(path, &to);
+            }
             return;
         };
         self.run_job(Job::Rename {
@@ -2425,13 +2529,13 @@ mod compress_tests {
             controller.set_create_format(format);
             let output = format!("chosen.{}", format.extension());
             controller.state.output_name = output.clone();
-            controller.state.level = Level::Best;
+            controller.state.level = Level::BEST;
             controller.state.add_password = "fixture-password".into();
             for input in ["a.txt", "folder"] {
                 controller.dispatch(AppAction::PrepareCompress(vec![PathBuf::from(input)]));
                 assert_eq!(controller.state.format, format);
                 assert_eq!(controller.state.output_name, output);
-                assert_eq!(controller.state.level, Level::Best);
+                assert_eq!(controller.state.level, Level::BEST);
                 assert_eq!(controller.state.add_password, "fixture-password");
                 assert!(matches!(controller.compression_job(), Some(Job::Compress {
                     format: job_format, ..
@@ -2474,7 +2578,7 @@ mod compress_tests {
             inputs: vec![std::env::temp_dir().join("arca-close-test-input")],
             format: Format::Zip,
             codec: Codec::Deflate,
-            level: Level::Normal,
+            level: Level::NORMAL,
             password,
             hide_names: false,
         }

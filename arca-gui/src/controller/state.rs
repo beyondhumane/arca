@@ -38,6 +38,10 @@ pub(crate) struct AppState {
     pub(crate) into_subfolder: bool,
     pub(crate) pending_inputs: Vec<PathBuf>,
     pub(crate) output_name: String,
+    /// Where the new archive goes; beside the first input when unset.
+    pub(crate) output_dir: Option<PathBuf>,
+    /// Whether the format's extension is put on the name when it is missing.
+    pub(crate) auto_extension: bool,
     pub(crate) close_when_done: bool,
     // Whether this window was opened to do one job handed to it on the command
     // line, in which case finishing that job is the end of it. A window driven
@@ -98,7 +102,8 @@ pub(crate) struct AppState {
     // rather than a job, because something nobody asked for must not make the
     // window look busy.
     pub(crate) update: Option<Release>,
-    pub(crate) update_rx: Option<std::sync::mpsc::Receiver<Release>>,
+    pub(crate) update_rx: Option<std::sync::mpsc::Receiver<Result<Option<Release>, ()>>>,
+    pub(crate) update_check: UpdateCheck,
     pub(crate) asked_about_updates: bool,
     // What the job is being done to, beside the verb in the title.
     pub(crate) subject: String,
@@ -142,8 +147,20 @@ pub(crate) struct AppState {
     pub(crate) cut_armed: Option<(super::TaskId, Cut)>,
     pub(crate) cut_pending: Option<Cut>,
     pub(crate) show_shortcuts: bool,
+    // The box announcing a newer version, with its notes.
+    pub(crate) show_update: bool,
     // Set for work that says nothing while it runs. Copying to the clipboard is
     // the only such job: it is over before a bar has finished appearing, and a
     // bar that flashes past says less than nothing.
     pub(crate) quiet: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum UpdateCheck {
+    #[default]
+    Idle,
+    Checking,
+    Current,
+    Found,
+    Failed,
 }

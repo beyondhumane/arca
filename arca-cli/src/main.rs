@@ -35,9 +35,9 @@ enum Cmd {
         out: PathBuf,
         #[arg(required = true, help = "Files or directories to include")]
         inputs: Vec<PathBuf>,
-        #[arg(short, long, value_enum, default_value_t = LevelArg::Normal,
-              help = "Compression level")]
-        level: LevelArg,
+        #[arg(short, long, default_value = "normal", value_parser = clap::value_parser!(Level),
+              help = "Compression level: 0-9, or store, fast, normal, best")]
+        level: Level,
         #[arg(short, long, value_enum, default_value_t = CodecArg::Auto,
               help = "Compressor. 'auto' uses deflate in .zip, LZMA2 in .7z and the RAR compressor in .rar, which accepts only auto or store")]
         codec: CodecArg,
@@ -144,25 +144,6 @@ enum OnConflict {
     Rename,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
-enum LevelArg {
-    Store,
-    Fast,
-    Normal,
-    Best,
-}
-
-impl From<LevelArg> for Level {
-    fn from(n: LevelArg) -> Level {
-        match n {
-            LevelArg::Store => Level::Store,
-            LevelArg::Fast => Level::Fast,
-            LevelArg::Normal => Level::Normal,
-            LevelArg::Best => Level::Best,
-        }
-    }
-}
-
 fn detect(p: &Path) -> Result<Format> {
     Format::detect(p).ok_or_else(|| unrecognized(p))
 }
@@ -248,7 +229,7 @@ fn run(cli: Cli) -> Result<()> {
         } => create(
             &out,
             &inputs,
-            level.into(),
+            level,
             codec,
             threads,
             password.as_deref(),

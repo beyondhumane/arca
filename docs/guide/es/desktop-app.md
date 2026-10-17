@@ -1,53 +1,45 @@
 ---
-description: Navega por archivos comprimidos como si fueran carpetas, en una ventana nativa rápida y pensada para el teclado.
+description: Un explorador de archivos que abre los comprimidos en el mismo sitio, con paneles, vista previa, dispositivos y un clic derecho para comprimir o extraer.
 group: Escritorio
 order: 8
-keywords: interfaz gráfica ventana arca-gui escritorio aplicación accesibilidad gui window arca-gui desktop app gpui accessibility nvda narrator
+keywords: interfaz gráfica ventana arca-gui escritorio aplicación explorador paneles vista previa dispositivos accesibilidad gui window desktop app egui file explorer panes preview devices accessibility nvda narrator
 ---
 
 # El espacio de trabajo de escritorio
 
-`arca-gui` permite explorar el disco y los archivos comprimidos en una ventana nativa GPUI. La barra de título conserva la marca y los controles de ventana de Arca; una sola banda de navegación reúne historial, ruta, vistas, filtro, extracción, comprobación y el menú **Más**.
+`arca-gui` es un explorador de archivos y un archivador en la misma ventana. Arranca en la carpeta donde lo dejaste, muestra el disco como cualquier explorador y abre un archivo comprimido en el mismo sitio al hacer doble clic, con los mismos paneles, filtros, vista previa y menús contextuales. La banda superior reúne el historial, la ruta (haz clic en su parte vacía, en el lápiz o pulsa **Ctrl+L** para escribirla), el filtro, el menú **Vista**, la búsqueda (**Ctrl+K**), los ajustes y el menú **Más**.
 
 ## Explorar el disco
 
-Al arrancar sin un archivo, la ventana muestra la última carpeta visitada (o la carpeta personal) como un explorador de archivos normal. Las carpetas se abren en las mismas vistas Columnas o Detalles que los archivos comprimidos; cada carpeta se lee al entrar en ella, no por adelantado. La barra lateral enumera **Lugares** (la carpeta personal y las carpetas de usuario habituales), las carpetas **Fijadas** y los **Dispositivos** (los volúmenes montados, o las unidades en Windows). Haz clic en uno para saltar allí; haz clic derecho en una fila de carpeta y elige **Fijar en la barra lateral** para tenerla a mano, y clic derecho sobre una entrada fijada para quitarla. **Más > Vista > Mostrar archivos ocultos** alterna los archivos ocultos.
+La barra lateral enumera **Lugares** (la carpeta personal y las carpetas de usuario habituales), las carpetas **Fijadas**, los **Dispositivos** y los archivos **Recientes**. Los dispositivos salen de la lista de volúmenes del sistema: unidades extraíbles, volúmenes montados bajo `/media`, `/run/media` o `/mnt`, y volúmenes con sistema de archivos que aún no están montados; en Windows, las letras de unidad. Un clic sobre un volumen sin montar lo monta primero. Con clic derecho sobre un volumen tienes **Montar** o **Desmontar**, **Formatear…** (tras un aviso; ext4, exFAT, FAT o NTFS, con etiqueta opcional) y **Poner etiqueta…**; en Linux pasan por UDisks, así que el escritorio puede pedirte la contraseña. **Más > Vista > Mostrar archivos ocultos** alterna los archivos ocultos.
 
-Hacer doble clic en un archivo de un formato compatible (`.zip`, `.7z`, `.tar`, `.iso` y los contenedores ZIP) lo abre en el mismo sitio: la ruta, el árbol y los paneles pasan a su contenido y las acciones habituales de archivo quedan disponibles. **Arriba** o **Retroceso** en la raíz del archivo, o el botón **Cerrar archivo**, vuelven a la carpeta de origen con el cursor sobre el archivo. Los demás archivos se abren con la aplicación del sistema; la vista previa muestra los archivos locales igual que las entradas de un archivo comprimido.
+Clic derecho sobre un archivo o carpeta para el menú completo: **Nueva carpeta con la selección**, **Abrir**, **Abrir con** (las aplicaciones que aceptan ese tipo), **Vista rápida**, **Cortar**, **Copiar**, **Pegar**, **Duplicar**, **Renombrar**, **Mover a…**, **Copiar a…**, **Comprimir**, **Copiar ruta**, **Copiar nombre**, **Seleccionar todo**, **Nueva carpeta**, **Fijar en la barra lateral**, **Propiedades**, **Mover a la papelera** (**Supr**) y **Eliminar permanentemente** (**Mayús+Supr**, con confirmación). Arrastra filas sobre una carpeta o sobre otro panel para moverlas.
 
-En el disco, **Comprimir** usa las filas marcadas como entrada, **Copiar ruta** pone las rutas absolutas en el portapapeles y las acciones exclusivas de archivo (extraer, comprobar, renombrar, eliminar, pegar, nueva carpeta) permanecen desactivadas. La última carpeta visitada, las carpetas fijadas y la preferencia de archivos ocultos se recuerdan entre sesiones.
+Hacer doble clic en un archivo comprimido (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.xz`, `.rar`, `.iso` y los contenedores ZIP) lo abre en el mismo sitio. Dentro, el menú ofrece **Extraer selección**, **Extraer aquí**, **Extraer todo** y **Comprobar**, además de **Renombrar**, **Eliminar**, **Nueva carpeta** y **Pegar** en un ZIP; la contraseña se pide cuando el archivo la necesita. **Arriba** o **Retroceso** en la raíz, o **Cerrar archivo**, vuelven a la carpeta con el cursor sobre el archivo. Los demás archivos se abren con la aplicación del sistema.
 
-## Navegación y distribución
+## Paneles, detalles y barra lateral
 
-**Abrir** y **Crear** están en la barra lateral, junto a los archivos recientes y, cuando hay un archivo abierto, su árbol de carpetas. El botón lateral alterna entre panel ampliado, columna de iconos y oculto. Arrastra el divisor para ajustar su ancho. **Más > Vista** también permite ocultarlo.
+La vista **Paneles** (la predeterminada) pone una carpeta en cada panel vertical. Cada panel tiene su propia cabecera con **Recargar**, **Subir**, **Ordenar**, **Filtrar** y **Cerrar**, y su propio cursor, selección, desplazamiento, filtro y orden. Tres ajustes en **Ajustes > Vistas** (también en el menú **Vista**) deciden cómo se comportan:
 
-La vista predeterminada **Columnas** mantiene un directorio en cada panel vertical. Haz clic en una carpeta para abrir su panel hijo; los antecesores permanecen a la izquierda. Elegir otra carpeta sustituye solo los descendientes. Cada panel conserva su propio cursor, selección, desplazamiento, filtro y orden. Haz clic o lleva el foco al panel antes de operar sobre él. Arrastra los divisores para ajustar el ancho y desplázate horizontalmente para volver a los antecesores. La navegación deja a la vista el panel activo.
+- **Abrir las carpetas en el panel de al lado** (`next_pane`, desactivado por defecto): activado, seleccionar una carpeta la abre en el panel de la derecha y los antecesores quedan a la izquierda, al estilo de columnas Miller; desactivado, cada panel navega por su cuenta y **Abrir en un panel nuevo** del menú contextual añade uno.
+- **Asomarse a las carpetas al pasar el ratón** (`folder_peek`, desactivado por defecto): dejar el puntero sobre una fila de carpeta muestra una tarjeta con sus primeras entradas sin abrirla.
+- **El foco sigue al puntero** (`pointer_focus`, activado por defecto): el panel bajo el puntero es el activo, de modo que la barra de ruta, el filtro, los atajos y las acciones actúan sobre él, sin clic y sin mover los paneles. Cualquier tecla pasa el mando al teclado hasta que el puntero vuelve a moverse; **Tab**, **Mayús+Tab**, **←** y **→** recorren los paneles. La fila de paneles solo se desplaza cuando la navegación abre un panel fuera de la vista, con su barra de desplazamiento o con **Mayús+rueda**.
 
-La ruta permite ir a la raíz del archivo o a una carpeta superior. Un menú contiene los segmentos intermedios cuando no caben. El árbol y la ruta siguen al panel activo. Los botones de atrás/adelante y **Alt+Izquierda/Derecha** comparten el historial.
+**Detalles** es una tabla ordenable; clic derecho en su cabecera para elegir las columnas. **Lista plana** enumera todo lo que hay bajo la carpeta actual sin jerarquía. El **Filtro** (**Ctrl+F**) pertenece al panel en Paneles y a toda la lista en Detalles.
 
-**Detalles** conserva la tabla de metadatos ordenable. Haz clic derecho en su cabecera para elegir las columnas. **Más > Vista > Vista plana** pasa a Detalles y muestra las entradas sin jerarquía. Cambiar de vista mantiene la ubicación y la selección que siga siendo válida.
+El botón de la barra lateral la muestra u oculta; cuando la ventana deja poco sitio para las carpetas de al lado, la barra se reduce sola a una columna de iconos y vuelve cuando hay espacio. Arrastra los divisores para ajustar la barra lateral, los paneles y la vista previa; todos los anchos se recuerdan.
 
-Se recuerdan las preferencias y los anchos. Al estrechar la ventana, la barra lateral se reduce temporalmente a iconos y la vista previa se suspende antes de apretar el explorador. Al ampliarla se recuperan los paneles preferidos.
+## Selección y acciones
 
-## Selección y operaciones
-
-- Haz clic en un archivo para seleccionarlo; Ctrl+clic alterna su selección y Mayús+clic selecciona un intervalo. Usa estos modificadores para seleccionar carpetas sin abrirlas en Columnas.
-- **Espacio** alterna la fila del cursor; **Ctrl+A** selecciona las filas visibles. Las operaciones de selección solo afectan al panel activo. La fila de carpeta superior de Detalles nunca es un destino de esas operaciones.
-- Haz clic derecho en una fila para extraer, previsualizar, renombrar, eliminar y ver otras acciones aplicables. El espacio vacío del panel ofrece acciones sobre ese directorio.
-- Arrastra entradas a una carpeta o panel de directorio para moverlas dentro de un ZIP modificable. Suelta archivos externos sobre un directorio para añadirlos. El destino se resalta durante el arrastre.
-- El diálogo de nueva carpeta y los menús de pegado indican el destino. Las modificaciones ZIP se ejecutan de una en una; los RAR/CBR existentes siguen siendo de solo lectura.
-- Copiar, cortar, pegar archivos y arrastrarlos fuera conservan la integración existente con Windows. **Ctrl+Mayús+C** copia los nombres como texto.
-- **Más** reúne selección, cambios de contraseña, verificación, deshacer, ajustes y ayuda de atajos.
-
-Hacer doble clic en un archivo, o pulsar **Intro** sobre él, lo extrae explícitamente a una ubicación temporal y lo abre con la aplicación del sistema. La vista previa no hace esto.
+- Un clic selecciona, **Ctrl+clic** alterna, **Mayús+clic** selecciona un rango, **Espacio** alterna la fila del cursor y **Ctrl+A** selecciona las filas visibles del panel activo.
+- **Comprimir** abre el cuadro de compresión: nombre del archivo con extensión automática, carpeta de destino, formato (ZIP, TAR, TAR.GZ, TAR.XZ, 7z, XZ o RAR), método, un deslizador de nivel 0–9, contraseña AES-256 opcional (con nombres ocultos en 7z) y la lista de lo que entra.
+- **Extraer…** (**Ctrl+E**) pregunta dónde; **Extraer aquí** (**Alt+W**) descomprime junto al archivo.
+- **Propiedades** muestra tamaño, fechas, tipo, permisos y el contenido de una carpeta.
+- **Más** incluye herramientas de selección, cambio de contraseña, comprobación, ajustes, la lista de atajos y **Buscar actualizaciones**; una versión nueva abre un cuadro con sus notas y se instala desde la propia aplicación.
 
 ## Vista previa integrada
 
-El panel derecho sigue al cursor del archivo activo. **F3** activa la vista previa; el botón de cierre la oculta y devuelve el foco. El pie permite mostrarla de nuevo. Arrastra su divisor para cambiar el ancho recordado.
-
-El panel muestra nombre, tamaño, fecha y tipo, e indica expresamente los metadatos no disponibles. El texto usa una lista monoespaciada con números de línea; las vistas hexadecimal y de imágenes compatibles comparten el panel. Las imágenes se ajustan a él.
-
-Los estados de carga, vacío, contraseña necesaria, contraseña incorrecta, formato no compatible, tamaño excesivo y error aparecen en el propio panel. La lectura, preparación de texto y decodificación de imágenes se ejecutan en segundo plano con límites, independientemente de las operaciones de modificación. Cambiar la navegación o selección invalida los resultados anteriores. Las contraseñas y el contenido no se guardan en los ajustes.
+El panel derecho (**F3**) sigue al cursor: una cabecera con el icono del tipo, el nombre, el tamaño, la fecha y el tipo MIME, y botones para abrir el archivo con la aplicación del sistema, cambiar entre **Texto**, **Hex** e **Imagen**, ajustar las líneas y cerrar. El texto lleva números de línea y resaltado de sintaxis para shell, Rust, lenguajes tipo C, Python, JavaScript y TypeScript, JSON, TOML, YAML, INI, HTML y XML, CSS y Markdown; solo se maquetan las líneas visibles, así que los archivos grandes siguen fluidos. Hex muestra los desplazamientos en el margen y las imágenes se ajustan al panel. Los estados de carga, contraseña y error se muestran en el sitio; las contraseñas y el contenido de la vista previa nunca se escriben en los ajustes.
 
 ## Contraseñas
 

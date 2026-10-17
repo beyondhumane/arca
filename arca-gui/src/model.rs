@@ -1,4 +1,4 @@
-//! Pure application model, settings, and projections shared by the controller and GPUI.
+//! Pure application model, settings, and projections shared by the controller and the egui view.
 
 use crate::i18n::Strings;
 use crate::tree::Row;

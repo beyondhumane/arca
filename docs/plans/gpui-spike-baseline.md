@@ -1,6 +1,6 @@
 # G0/G1 GPUI spike baseline
 
-Status: isolated spike; `arca-gui` already uses GPUI and GPUI Kit.
+Status: historical. `arca-gui` used GPUI and GPUI Kit until it moved back to egui (see `migration-to-egui.md`).
 
 ## G0 frozen
 
