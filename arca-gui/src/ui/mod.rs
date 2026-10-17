@@ -59,6 +59,7 @@ pub(crate) struct Shell {
     dialog: Option<Receiver<DialogResult>>,
     filter_value: String,
     focus_filter: bool,
+    filter_open: bool,
     name_value: String,
     focus_name: bool,
     rename_value: String,
@@ -109,6 +110,7 @@ impl Shell {
             ctx: ctx.clone(),
             dialog: None,
             focus_filter: false,
+            filter_open: false,
             name_value: String::new(),
             focus_name: false,
             rename_value: String::new(),
@@ -936,6 +938,7 @@ impl Shell {
         let name = key.name().to_ascii_lowercase();
         let typing = self.typing();
         if modifiers.command && !modifiers.shift && key == egui::Key::F {
+            self.filter_open = true;
             self.focus_filter = true;
             return;
         }

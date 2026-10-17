@@ -328,12 +328,44 @@ impl Shell {
                 self.controller.dispatch(AppAction::Up);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.filter(ui);
+                let filtering = !self.controller.state.filter.is_empty();
+                let on = self.filter_open || filtering;
+                if icon_toggle(ui, icon::FUNNEL, s.find_word, true, on)
+                    .on_hover_text(format!("{}  (Ctrl+F)", s.find_word))
+                    .clicked()
+                {
+                    self.toggle_filter();
+                }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     self.breadcrumbs(ui);
                 });
             });
         });
+        if self.filter_open || !self.controller.state.filter.is_empty() {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| self.filter(ui));
+        }
+    }
+
+    /// The funnel button: opens the filter row with the field focused, or
+    /// closes it and lets everything show again.
+    fn toggle_filter(&mut self) {
+        if self.filter_open || !self.controller.state.filter.is_empty() {
+            self.close_filter();
+        } else {
+            self.filter_open = true;
+            self.focus_filter = true;
+        }
+    }
+
+    fn close_filter(&mut self) {
+        self.filter_open = false;
+        self.filter_value.clear();
+        if !self.controller.state.filter.is_empty() {
+            self.controller
+                .dispatch(AppAction::SetFilter(String::new()));
+        }
+        self.release_focus();
     }
 
     fn filter(&mut self, ui: &mut egui::Ui) {
@@ -343,23 +375,31 @@ impl Shell {
         if !focused && self.controller.state.filter != self.filter_value {
             self.filter_value = self.controller.state.filter.clone();
         }
+        let p = palette_of(ui.ctx());
+        ui.add_space(4.0);
+        ui.label(
+            super::theme::icon_text(icon::FUNNEL)
+                .size(15.0)
+                .color(hex(p.focus)),
+        );
+        let total = self.controller.folder_total();
+        let hint = fill(s.filter_items, &[("count", &total.to_string())]);
         let response = ui.add(
             egui::TextEdit::singleline(&mut self.filter_value)
                 .id(id)
-                .hint_text(format!("{}  {}", icon::MAGNIFYING_GLASS, s.find_word))
-                .desired_width(if self.width < 900.0 { 150.0 } else { 220.0 }),
+                .hint_text(hint)
+                .frame(egui::Frame::NONE)
+                .desired_width(ui.available_width()),
         );
         if self.focus_filter {
             response.request_focus();
             self.focus_filter = false;
         }
-        let cleared = response.lost_focus()
-            && ui.input(|i| i.key_pressed(egui::Key::Escape))
-            && !self.filter_value.is_empty();
-        if cleared {
-            self.filter_value.clear();
+        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.close_filter();
+            return;
         }
-        if response.changed() || cleared {
+        if response.changed() {
             self.controller
                 .dispatch(AppAction::SetFilter(self.filter_value.clone()));
         }
