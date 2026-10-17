@@ -235,7 +235,16 @@ impl Shell {
             .iter()
             .map(|column| {
                 if *column == SortColumn::Name {
-                    width_of(*column).max(available - others).max(NAME_LEAST)
+                    // Name fills what the others leave until somebody pulls
+                    // on it; after that its own width holds, so it can be
+                    // made narrower too.
+                    let stored = width_of(*column);
+                    let fill = if stored == NAME_WIDE {
+                        available - others
+                    } else {
+                        0.0
+                    };
+                    stored.max(fill).max(NAME_LEAST)
                 } else {
                     width_of(*column)
                 }

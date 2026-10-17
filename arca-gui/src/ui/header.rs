@@ -310,9 +310,8 @@ impl Shell {
                     self.controller.state.show_settings = true;
                 }
                 let browsing = archive || self.controller.on_disk();
-                if icon_button(ui, icon::MAGNIFYING_GLASS, s.search_word, idle && browsing)
-                    .on_hover_text(format!("{}  (Ctrl+K)", s.search_word))
-                    .clicked()
+                let search_tip = format!("{}  (Ctrl+K)", s.search_word);
+                if icon_button(ui, icon::MAGNIFYING_GLASS, &search_tip, idle && browsing).clicked()
                 {
                     self.toggle_search();
                 }
@@ -370,10 +369,8 @@ impl Shell {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let filtering = !self.controller.state.filter.is_empty();
                         let on = self.filter_open || filtering;
-                        if icon_toggle(ui, icon::FUNNEL, s.find_word, true, on)
-                            .on_hover_text(format!("{}  (Ctrl+F)", s.find_word))
-                            .clicked()
-                        {
+                        let find_tip = format!("{}  (Ctrl+F)", s.find_word);
+                        if icon_toggle(ui, icon::FUNNEL, &find_tip, true, on).clicked() {
                             self.toggle_filter();
                         }
                     });
