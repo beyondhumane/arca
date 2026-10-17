@@ -824,7 +824,7 @@ impl Shell {
             .first()
             .and_then(|path| path.parent())
             .map(|dir| dir.display().to_string())
-            .unwrap_or_else(|| format!("/{}", self.controller.state.current_dir));
+            .unwrap_or_else(|| format!("/{}", self.controller.state.active_pane().directory));
         let mut place = self
             .controller
             .state
@@ -1160,7 +1160,7 @@ impl Shell {
         };
         heading(ui, title);
         let description = if kind == ModalKind::NewFolder {
-            format!("{hint}: /{}", self.controller.state.current_dir)
+            format!("{hint}: /{}", self.controller.state.active_pane().directory)
         } else if kind == ModalKind::Label {
             let device = self.device_label.as_ref().map(|v| v.device.clone());
             format!("{hint} · {}", device.unwrap_or_default())

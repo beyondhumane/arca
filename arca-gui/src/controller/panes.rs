@@ -4,7 +4,7 @@ use super::*;
 pub(crate) struct DirectoryPane {
     pub(crate) directory: String,
     pub(crate) cursor: Option<usize>,
-    pub(crate) selected: HashSet<usize>,
+    pub(crate) checked: Vec<bool>,
     pub(crate) scroll_offset: f32,
     pub(crate) filter: String,
     pub(crate) order: (SortColumn, bool),
@@ -15,11 +15,15 @@ impl DirectoryPane {
         Self {
             directory,
             cursor: None,
-            selected: HashSet::new(),
+            checked: Vec::new(),
             scroll_offset: 0.0,
             filter: String::new(),
             order: (SortColumn::Name, true),
         }
+    }
+
+    pub(crate) fn is_checked(&self, index: usize) -> bool {
+        self.checked.get(index).copied().unwrap_or(false)
     }
 }
 
@@ -43,33 +47,22 @@ impl Default for BrowserState {
     }
 }
 
-impl AppController {
-    // Legacy shell fields are authoritative only for the active pane. Inactive
-    // selections never flow into archive commands until explicitly activated.
-    pub(crate) fn snapshot_active_pane(&mut self) {
-        let pane = &mut self.state.browser.panes[self.state.browser.active];
-        pane.directory = self.state.current_dir.clone();
-        pane.cursor = self.state.cursor;
-        pane.filter = self.state.filter.clone();
-        pane.order = self.state.order;
-        pane.selected = self
-            .state
-            .checked
-            .iter()
-            .enumerate()
-            .filter_map(|(i, on)| (*on && i < self.state.entries.len()).then_some(i))
-            .collect();
+impl AppState {
+    pub(crate) fn active_pane(&self) -> &DirectoryPane {
+        &self.browser.panes[self.browser.active]
     }
 
-    fn restore_active_pane(&mut self) {
-        let pane = &self.state.browser.panes[self.state.browser.active];
-        self.state.current_dir = pane.directory.clone();
-        self.state.cursor = pane.cursor;
-        self.state.filter = pane.filter.clone();
-        self.state.order = pane.order;
-        self.state.checked = (0..self.state.entries.len())
-            .map(|i| pane.selected.contains(&i))
-            .collect();
+    pub(crate) fn active_pane_mut(&mut self) -> &mut DirectoryPane {
+        &mut self.browser.panes[self.browser.active]
+    }
+}
+
+impl AppController {
+    // Selections of inactive panes never flow into archive commands until
+    // the pane is activated, which sizes its selection to the entries.
+    fn pane_switched(&mut self) {
+        let entries = self.state.entries.len();
+        self.state.active_pane_mut().checked.resize(entries, false);
         self.state.last_click = None;
         self.state.renaming = None;
         self.cancel_preview();
@@ -106,10 +99,9 @@ impl AppController {
         if pane >= self.state.browser.panes.len() {
             return false;
         }
-        self.snapshot_active_pane();
         if self.state.browser.active != pane {
             self.state.browser.active = pane;
-            self.restore_active_pane();
+            self.pane_switched();
             self.retain_visible_selection();
             if remember {
                 self.record_pane_history();
@@ -127,14 +119,11 @@ impl AppController {
     }
 
     pub(crate) fn pane_is_checked(&self, pane: usize, row: &Row) -> bool {
-        if pane == self.state.browser.active {
-            return self.is_checked(row);
-        }
         self.state
             .browser
             .panes
             .get(pane)
-            .is_some_and(|pane| self.row_is_checked(row, |i| pane.selected.contains(&i)))
+            .is_some_and(|pane| self.row_is_checked(row, |i| pane.is_checked(i)))
     }
 
     pub(crate) fn enter_folder_from_pane(&mut self, pane: usize, path: &str) -> bool {
@@ -158,7 +147,6 @@ impl AppController {
             self.navigate_in_place(path);
             return;
         }
-        self.snapshot_active_pane();
         self.load_disk_ancestors(&normalized_dir(&path));
         let path = nearest_existing_dir(&self.state.entries, &path);
         let mut directories = vec![String::new()];
@@ -182,25 +170,23 @@ impl AppController {
             .panes
             .extend(directories.into_iter().skip(common).map(DirectoryPane::new));
         self.state.browser.active = self.state.browser.panes.len() - 1;
-        self.restore_active_pane();
+        self.pane_switched();
         self.retain_visible_selection();
     }
 
     /// In free panes, going somewhere moves only the active pane there.
     fn navigate_in_place(&mut self, path: String) {
-        self.snapshot_active_pane();
         self.load_disk_ancestors(&normalized_dir(&path));
         let path = nearest_existing_dir(&self.state.entries, &path);
         let active = self.state.browser.active;
         self.state.browser.panes[active] = DirectoryPane::new(path);
-        self.restore_active_pane();
+        self.pane_switched();
         self.retain_visible_selection();
     }
 
     /// Opens `path` in a new pane right after the active one.
     pub(crate) fn open_in_pane(&mut self, path: &str) {
         let path = normalized_dir(path);
-        self.snapshot_active_pane();
         self.load_disk_ancestors(&path);
         let path = nearest_existing_dir(&self.state.entries, &path);
         let at = self.state.browser.active + 1;
@@ -209,7 +195,7 @@ impl AppController {
             .panes
             .insert(at, DirectoryPane::new(path));
         self.state.browser.active = at;
-        self.restore_active_pane();
+        self.pane_switched();
         self.retain_visible_selection();
         self.record_pane_history();
     }
@@ -219,7 +205,6 @@ impl AppController {
         if count <= 1 || pane >= count {
             return;
         }
-        self.snapshot_active_pane();
         self.state.browser.panes.remove(pane);
         let active = self.state.browser.active;
         self.state.browser.active = if active > pane {
@@ -227,7 +212,7 @@ impl AppController {
         } else {
             active.min(count - 2)
         };
-        self.restore_active_pane();
+        self.pane_switched();
         self.retain_visible_selection();
         self.record_pane_history();
     }
@@ -243,24 +228,26 @@ impl AppController {
     }
 
     pub(crate) fn record_pane_history(&mut self) {
-        if self.state.history.get(self.state.here) != Some(&self.state.current_dir) {
+        if self.state.history.get(self.state.here) != Some(&self.state.active_pane().directory) {
             self.state.history.truncate(self.state.here + 1);
-            self.state.history.push(self.state.current_dir.clone());
+            self.state
+                .history
+                .push(self.state.active_pane().directory.clone());
             self.state.here = self.state.history.len() - 1;
         }
     }
 
     pub(crate) fn reset_browser_panes(&mut self) {
-        let directory = self.state.current_dir.clone();
+        let directory = self.state.active_pane().directory.clone();
         let columns = self.state.browser.columns;
         let free = self.state.browser.free;
         self.state.browser = BrowserState::default();
         self.state.browser.columns = columns;
         self.state.browser.free = free;
-        self.state.current_dir.clear();
-        self.state.filter.clear();
-        self.state.checked = vec![false; self.state.entries.len()];
-        self.state.cursor = None;
+        self.state.active_pane_mut().directory.clear();
+        self.state.active_pane_mut().filter.clear();
+        self.state.active_pane_mut().checked = vec![false; self.state.entries.len()];
+        self.state.active_pane_mut().cursor = None;
         self.navigate_panes(directory);
     }
 
@@ -269,11 +256,10 @@ impl AppController {
             return;
         }
         let cursor = self.cursor_path();
-        self.state.filter = filter;
+        self.state.active_pane_mut().filter = filter;
         self.restore_cursor_path(cursor);
         self.retain_visible_selection();
         self.cancel_preview();
-        self.snapshot_active_pane();
     }
 
     pub(crate) fn set_pane_order(&mut self, pane: usize, order: (SortColumn, bool)) {
@@ -281,9 +267,8 @@ impl AppController {
             return;
         }
         let cursor = self.cursor_path();
-        self.state.order = order;
+        self.state.active_pane_mut().order = order;
         self.restore_cursor_path(cursor);
-        self.snapshot_active_pane();
     }
 
     pub(crate) fn set_pane_cursor(&mut self, pane: usize, cursor: Option<usize>) {
@@ -291,11 +276,10 @@ impl AppController {
             return;
         }
         let cursor = cursor.filter(|i| *i < self.visible_rows().len());
-        if self.state.cursor != cursor {
+        if self.state.active_pane().cursor != cursor {
             self.cancel_preview();
         }
-        self.state.cursor = cursor;
-        self.snapshot_active_pane();
+        self.state.active_pane_mut().cursor = cursor;
     }
 
     pub(crate) fn set_pane_scroll(&mut self, pane: usize, offset: f32) {
@@ -309,7 +293,6 @@ impl AppController {
     }
 
     pub(crate) fn transition_browser_view(&mut self, columns: bool, flat: bool) {
-        self.snapshot_active_pane();
         let cursors: Vec<_> = self
             .state
             .browser
@@ -327,23 +310,20 @@ impl AppController {
             let cursor =
                 path.and_then(|path| self.pane_rows(pane).iter().position(|row| row.path == path));
             self.state.browser.panes[pane].cursor = cursor;
-            if pane == self.state.browser.active {
-                self.state.cursor = cursor;
-            }
         }
         self.retain_visible_selection();
         self.cancel_preview();
-        self.snapshot_active_pane();
     }
 
     fn cursor_path(&self) -> Option<String> {
         self.state
+            .active_pane()
             .cursor
             .and_then(|i| self.visible_rows().get(i).map(|r| r.path.clone()))
     }
 
     fn restore_cursor_path(&mut self, path: Option<String>) {
-        self.state.cursor =
+        self.state.active_pane_mut().cursor =
             path.and_then(|path| self.visible_rows().iter().position(|r| r.path == path));
     }
 
@@ -359,10 +339,9 @@ impl AppController {
                 }
             }
         }
-        for (i, on) in self.state.checked.iter_mut().enumerate() {
+        for (i, on) in self.state.active_pane_mut().checked.iter_mut().enumerate() {
             *on &= valid.contains(&i);
         }
-        self.snapshot_active_pane();
     }
 }
 
@@ -402,7 +381,7 @@ mod tests {
         .into_iter()
         .map(entry)
         .collect();
-        c.state.checked = vec![false; c.state.entries.len()];
+        c.state.active_pane_mut().checked = vec![false; c.state.entries.len()];
         c.transition_browser_view(true, false);
         c
     }
@@ -430,7 +409,7 @@ mod tests {
                 .into_iter()
                 .find(|r| r.path == "a/")
                 .unwrap();
-            c.state.checked[1] = true;
+            c.state.active_pane_mut().checked[1] = true;
             assert!(!c.pane_is_checked(0, &folder));
             c.go_to("a/".into());
             assert!(!c.pane_is_checked(0, &folder));
@@ -451,28 +430,28 @@ mod tests {
     }
 
     #[test]
-    fn select_only_replaces_the_selection_and_updates_the_pane() {
+    fn select_only_replaces_the_selection_in_the_pane() {
         let mut c = controller();
         let rows = c.visible_rows();
         let file = rows.iter().find(|r| r.path == "root.txt").unwrap().clone();
         let folder = rows.iter().find(|r| r.path == "a/").unwrap().clone();
-        c.state.checked[0] = true;
+        c.state.active_pane_mut().checked[0] = true;
         c.select_only(&folder);
-        assert_eq!(c.state.checked, [false, true, true, true, true]);
         assert_eq!(
-            c.state.browser.panes[0].selected,
-            HashSet::from([1, 2, 3, 4])
+            c.state.browser.panes[0].checked,
+            [false, true, true, true, true]
         );
         c.select_only(&file);
-        assert_eq!(c.state.checked, [true, false, false, false, false]);
-        assert_eq!(c.state.browser.panes[0].selected, HashSet::from([0]));
+        assert_eq!(
+            c.state.browser.panes[0].checked,
+            [true, false, false, false, false]
+        );
         let hidden = Row {
             path: "elsewhere.txt".into(),
             ..file
         };
         c.select_only(&hidden);
-        assert!(c.state.checked.iter().all(|on| !on));
-        assert!(c.state.browser.panes[0].selected.is_empty());
+        assert!(c.state.browser.panes[0].checked.iter().all(|on| !on));
     }
 
     #[test]
@@ -491,11 +470,12 @@ mod tests {
     }
 
     #[test]
-    fn pane_activation_snapshots_legacy_fields_and_targets_only_active_selection() {
+    fn pane_activation_restores_pane_state_and_targets_only_active_selection() {
         let mut c = controller();
-        c.state.checked[0] = true;
-        c.state.cursor = c.visible_rows().iter().position(|r| r.path == "root.txt");
-        let root_cursor = c.state.cursor;
+        c.state.active_pane_mut().checked[0] = true;
+        c.state.active_pane_mut().cursor =
+            c.visible_rows().iter().position(|r| r.path == "root.txt");
+        let root_cursor = c.state.active_pane().cursor;
         c.set_pane_scroll(0, 42.0);
         c.go_to("a/b/".into());
         assert!(c.selected_names().is_empty());
@@ -512,15 +492,17 @@ mod tests {
         assert_eq!(c.selected_roots(), ["a/b/middle.txt"]);
         assert!(c.activate_pane(0));
         assert_eq!(c.selected_names(), ["root.txt"]);
-        assert_eq!(c.state.cursor, root_cursor);
+        assert_eq!(c.state.active_pane().cursor, root_cursor);
         assert_eq!(c.state.browser.panes[0].scroll_offset, 42.0);
-        assert!(c.state.filter.is_empty());
+        assert!(c.state.active_pane().filter.is_empty());
         assert!(c.activate_pane(2));
         assert_eq!(c.selected_names(), ["a/b/middle.txt"]);
-        assert_eq!(c.state.filter, "middle");
-        assert!(c.state.order.0 == SortColumn::Size && !c.state.order.1);
+        assert_eq!(c.state.active_pane().filter, "middle");
+        assert!(
+            c.state.active_pane().order.0 == SortColumn::Size && !c.state.active_pane().order.1
+        );
         assert_eq!(c.state.browser.panes[2].scroll_offset, 96.0);
-        assert_eq!(c.state.cursor, Some(0));
+        assert_eq!(c.state.active_pane().cursor, Some(0));
     }
 
     #[test]
@@ -533,7 +515,7 @@ mod tests {
         let active = c.selected_roots();
         assert_eq!(c.pane_selected_roots(0), roots);
         assert_eq!(c.selected_roots(), active);
-        assert_eq!(c.state.current_dir, "a/b/");
+        assert_eq!(c.state.active_pane().directory, "a/b/");
         assert!(c.pane_selected_roots(usize::MAX).is_empty());
         assert!(c.activate_pane(0));
         assert_eq!(c.selected_roots(), roots);
@@ -562,26 +544,26 @@ mod tests {
         c.go_to("a/".into());
         c.go_to("a/b/".into());
         c.go_back();
-        assert_eq!(c.state.current_dir, "a/");
+        assert_eq!(c.state.active_pane().directory, "a/");
         c.go_forward();
-        assert_eq!(c.state.current_dir, "a/b/");
+        assert_eq!(c.state.active_pane().directory, "a/b/");
         c.go_to("a/b/c/".into());
         c.select_all_visible();
         c.set_pane_cursor(3, Some(0));
         assert_eq!(c.selected_roots(), ["a/b/c/deep.txt"]);
         c.transition_browser_view(false, false);
-        assert_eq!(c.state.cursor, Some(1));
+        assert_eq!(c.state.active_pane().cursor, Some(1));
         assert_eq!(c.selected_names(), ["a/b/c/deep.txt"]);
         let up = c.visible_rows()[0].clone();
         c.set_checked(&up, true);
         assert_eq!(c.selected_names(), ["a/b/c/deep.txt"]);
         c.transition_browser_view(false, true);
-        assert_eq!(c.state.current_dir, "a/b/c/");
+        assert_eq!(c.state.active_pane().directory, "a/b/c/");
         assert_eq!(c.visible_rows().len(), 5);
         c.select_all_visible();
         c.transition_browser_view(true, false);
         assert_eq!(c.selected_names(), ["a/b/c/deep.txt"]);
-        assert_eq!(c.state.cursor, Some(0));
+        assert_eq!(c.state.active_pane().cursor, Some(0));
     }
 
     #[test]
@@ -599,7 +581,7 @@ mod tests {
         c.set_checked(&root, true);
         assert!(c.selected_names().is_empty());
         c.set_pane_cursor(2, Some(999));
-        assert_eq!(c.state.cursor, None);
+        assert_eq!(c.state.active_pane().cursor, None);
         c.set_pane_scroll(2, f32::NAN);
         assert_eq!(c.state.browser.panes[2].scroll_offset, 0.0);
     }
@@ -618,8 +600,8 @@ mod tests {
             .browser
             .panes
             .iter()
-            .all(|p| p.selected.is_empty() && p.cursor.is_none()));
-        assert_eq!(c.state.checked, [false]);
+            .all(|p| !p.checked.contains(&true) && p.cursor.is_none()));
+        assert_eq!(c.state.active_pane().checked, [false]);
     }
 
     #[test]
@@ -627,7 +609,7 @@ mod tests {
         let mut c = controller();
         c.go_to("a/other/".into());
         c.pick_folder("a/b/");
-        assert_eq!(c.state.current_dir, "a/");
+        assert_eq!(c.state.active_pane().directory, "a/");
         assert_eq!(c.selected_roots(), ["a/b"]);
     }
 
@@ -640,7 +622,7 @@ mod tests {
         c.activate_pane(1);
         c.transition_browser_view(false, false);
         c.activate_pane(2);
-        assert_eq!(c.state.cursor, Some(2));
+        assert_eq!(c.state.active_pane().cursor, Some(2));
         assert_eq!(c.visible_rows()[2].path, "a/b/middle.txt");
         assert_eq!(c.opened_descendant(usize::MAX), None);
     }

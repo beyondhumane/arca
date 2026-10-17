@@ -163,10 +163,10 @@ impl AppController {
         let mut changed = false;
         if self.state.preview.context.as_ref().is_some_and(|c| {
             c.archive != self.state.archive
-                || c.directory != self.state.current_dir
-                || c.cursor != self.state.cursor
-                || c.checked != self.state.checked
-                || c.filter != self.state.filter
+                || c.directory != self.state.active_pane().directory
+                || c.cursor != self.state.active_pane().cursor
+                || c.checked != self.state.active_pane().checked
+                || c.filter != self.state.active_pane().filter
         }) {
             self.cancel_preview();
             changed = true;
@@ -214,10 +214,10 @@ impl AppController {
     fn preview_context(&self) -> PreviewContext {
         PreviewContext {
             archive: self.state.archive.clone(),
-            directory: self.state.current_dir.clone(),
-            cursor: self.state.cursor,
-            checked: self.state.checked.clone(),
-            filter: self.state.filter.clone(),
+            directory: self.state.active_pane().directory.clone(),
+            cursor: self.state.active_pane().cursor,
+            checked: self.state.active_pane().checked.clone(),
+            filter: self.state.active_pane().filter.clone(),
         }
     }
 
@@ -563,7 +563,7 @@ mod tests {
             let mut c = AppController::new(Settings::default());
             c.state.archive = Some(self.0.clone());
             c.state.entries = list_entries(&self.0, None, &|_, _, _| true).unwrap().0;
-            c.state.checked = vec![false; c.state.entries.len()];
+            c.state.active_pane_mut().checked = vec![false; c.state.entries.len()];
             c
         }
     }
@@ -639,12 +639,15 @@ mod tests {
             c.transition_browser_view(columns, flat);
             let cursor = c.visible_rows().iter().position(|r| r.entry == Some(0));
             c.set_pane_cursor(0, cursor);
-            c.state.checked[0] = true;
+            c.state.active_pane_mut().checked[0] = true;
             c.view_entry(1);
-            let row = &c.visible_rows()[c.state.cursor.unwrap()];
+            let row = &c.visible_rows()[c.state.active_pane().cursor.unwrap()];
             assert_eq!(row.entry, Some(1));
             assert_eq!(c.state.preview.index, row.entry);
-            assert_eq!(c.state.browser.panes[0].cursor, c.state.cursor);
+            assert_eq!(
+                c.state.browser.panes[0].cursor,
+                c.state.active_pane().cursor
+            );
             assert_eq!(c.selected_names(), ["first.txt"]);
             settle(&mut c);
             assert_eq!(c.state.viewing.as_ref().unwrap().name, "second.txt");
@@ -681,9 +684,9 @@ mod tests {
             let generation = c.state.preview.generation;
             match mutation {
                 0 => c.go_to(String::new()),
-                1 => c.state.checked[0] = true,
-                2 => c.state.cursor = Some(1),
-                3 => c.state.filter = "second".into(),
+                1 => c.state.active_pane_mut().checked[0] = true,
+                2 => c.state.active_pane_mut().cursor = Some(1),
+                3 => c.state.active_pane_mut().filter = "second".into(),
                 4 => c.cancel_preview(),
                 5 => c.reset_browser_panes(),
                 _ => c.state.archive = Some(PathBuf::from("other.zip")),
@@ -945,7 +948,7 @@ mod tests {
             assert!(Instant::now() < deadline, "refresh did not finish");
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(c.state.current_dir, "nested/deep/");
+        assert_eq!(c.state.active_pane().directory, "nested/deep/");
         assert_eq!(c.state.browser.panes.len(), 3);
         assert!(c.selected_names().is_empty());
         assert!(c.state.viewing.is_none());

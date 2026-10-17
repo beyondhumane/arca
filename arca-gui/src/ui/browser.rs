@@ -344,11 +344,11 @@ impl Shell {
         let state = &self.controller.state;
         let text = if state.archive.is_some()
             && state.entries.is_empty()
-            && state.filter.trim().is_empty()
+            && state.active_pane().filter.trim().is_empty()
         {
             s.empty_archive
         } else {
-            empty_state_aria_label(state.error, &state.filter, s)
+            empty_state_aria_label(state.error, &state.active_pane().filter, s)
         };
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
@@ -397,7 +397,7 @@ impl Shell {
             })
             .collect();
         let total: f32 = widths.iter().sum();
-        let order = self.controller.state.order;
+        let order = self.controller.state.active_pane().order;
         let current_dir = self.controller.row_root().to_string();
         egui::ScrollArea::horizontal()
             .id_salt("details-across")
@@ -549,7 +549,7 @@ impl Shell {
                         .id_salt(area_salt)
                         .auto_shrink(false);
                     if std::mem::take(&mut self.scroll_to_cursor) {
-                        if let Some(cursor) = self.controller.state.cursor {
+                        if let Some(cursor) = self.controller.state.active_pane().cursor {
                             let id = ui.make_persistent_id(area_salt);
                             let offset = egui::scroll_area::State::load(ui.ctx(), id)
                                 .map_or(0.0, |state| state.offset.y);
@@ -573,7 +573,7 @@ impl Shell {
                             );
                             let look = RowLook {
                                 checked: self.controller.is_checked(row),
-                                cursor: self.controller.state.cursor == Some(index),
+                                cursor: self.controller.state.active_pane().cursor == Some(index),
                                 open: false,
                                 cut: self.controller.state.cut_names.contains(&row.path)
                                     || carried(ui.ctx(), &row.path),
@@ -709,7 +709,7 @@ impl Shell {
         let active = browser.active == pane;
         let data = &browser.panes[pane];
         let cursor = if active {
-            self.controller.state.cursor
+            self.controller.state.active_pane().cursor
         } else {
             data.cursor
         };
@@ -1112,7 +1112,7 @@ impl Shell {
         let idle = self.background_idle();
         let writable = self.controller.can_change();
         let on_disk = self.controller.on_disk();
-        let current_dir = self.controller.state.current_dir.clone();
+        let current_dir = self.controller.state.active_pane().directory.clone();
         let actions: &[RowAction] = if row.is_some() {
             &RowAction::ALL
         } else {
@@ -1291,9 +1291,9 @@ impl Shell {
                     self.controller.dispatch(AppAction::ClearSelection);
                 }
                 let base = if keep {
-                    self.controller.state.checked.clone()
+                    self.controller.state.active_pane().checked.clone()
                 } else {
-                    vec![false; self.controller.state.checked.len()]
+                    vec![false; self.controller.state.active_pane().checked.len()]
                 };
                 self.marquee = Some(Marquee {
                     from,
@@ -1325,7 +1325,7 @@ impl Shell {
                     .panes
                     .get(pane)
                     .map(|pane| pane.directory.clone()),
-                None => Some(self.controller.state.current_dir.clone()),
+                None => Some(self.controller.state.active_pane().directory.clone()),
             };
             if let Some(target) = target {
                 self.blank_drop = Some((target, clip));

@@ -364,7 +364,7 @@ fn rar_selected_extraction_retries_without_writing_and_resumes_only_the_selectio
         .iter()
         .position(|e| e.name == "folder/second.txt")
         .unwrap();
-    controller.state.checked[index] = true;
+    controller.state.active_pane_mut().checked[index] = true;
     controller.start_extract_to(true, dest.clone());
     assert!(matches!(
         controller.state.waiting_on_password,

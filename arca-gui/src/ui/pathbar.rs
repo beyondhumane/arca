@@ -84,7 +84,7 @@ pub(crate) fn matching(names: &[String], stem: &str, hidden: bool) -> Vec<String
 
 impl Shell {
     fn shown_path(&self) -> String {
-        let dir = &self.controller.state.current_dir;
+        let dir = &self.controller.state.active_pane().directory;
         if self.controller.on_disk() {
             let mut text = disk_path(dir).display().to_string();
             if !text.is_empty() && !text.ends_with(['/', '\\']) {

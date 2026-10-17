@@ -378,7 +378,7 @@ impl Shell {
                         .unwrap_or_default();
                     ui.label(RichText::new(here).strong().color(hex(p.link)));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let filtering = !self.controller.state.filter.is_empty();
+                        let filtering = !self.controller.state.active_pane().filter.is_empty();
                         let panes = self.panes_view();
                         let active = self.controller.state.browser.active;
                         let on = if panes {
@@ -399,7 +399,7 @@ impl Shell {
                     });
                 });
                 let wanted = !self.panes_view()
-                    && (self.filter_open || !self.controller.state.filter.is_empty());
+                    && (self.filter_open || !self.controller.state.active_pane().filter.is_empty());
                 let open = ui
                     .ctx()
                     .animate_bool(egui::Id::new("arca-filter-open"), wanted);
@@ -427,7 +427,7 @@ impl Shell {
     /// The funnel button: opens the filter row with the field focused, or
     /// closes it and lets everything show again.
     pub(super) fn toggle_filter(&mut self) {
-        if self.filter_open || !self.controller.state.filter.is_empty() {
+        if self.filter_open || !self.controller.state.active_pane().filter.is_empty() {
             self.close_filter();
         } else {
             self.filter_open = true;
@@ -438,7 +438,7 @@ impl Shell {
     fn close_filter(&mut self) {
         self.filter_open = false;
         self.filter_value.clear();
-        if !self.controller.state.filter.is_empty() {
+        if !self.controller.state.active_pane().filter.is_empty() {
             self.controller
                 .dispatch(AppAction::SetFilter(String::new()));
         }
@@ -449,8 +449,8 @@ impl Shell {
         let s = self.controller.s();
         let id = egui::Id::new(FILTER_ID);
         let focused = ui.memory(|m| m.has_focus(id));
-        if !focused && self.controller.state.filter != self.filter_value {
-            self.filter_value = self.controller.state.filter.clone();
+        if !focused && self.controller.state.active_pane().filter != self.filter_value {
+            self.filter_value = self.controller.state.active_pane().filter.clone();
         }
         let p = palette_of(ui.ctx());
         ui.add_space(4.0);

@@ -774,7 +774,7 @@ impl AppController {
 
     pub(crate) fn create_disk_folder(&mut self, name: &str) -> Option<String> {
         let s = self.s();
-        let dir = format!("{}{name}/", self.state.current_dir);
+        let dir = format!("{}{name}/", self.state.active_pane().directory);
         let path = disk_path(&dir);
         if path.exists() {
             self.state.notice = fill(s.name_taken, &[("name", name)]);
@@ -810,7 +810,7 @@ impl AppController {
                 .unwrap_or_default(),
             many => fill(s.items_carried, &[("n", &many.len().to_string())]),
         };
-        let here = disk_path(&self.state.current_dir);
+        let here = disk_path(&self.state.active_pane().directory);
         let sources = picked.clone();
         let task = Task::new(
             if trash {
@@ -870,7 +870,7 @@ impl AppController {
                 .unwrap_or_default(),
             many => fill(s.items_carried, &[("n", &many.len().to_string())]),
         };
-        let here = disk_path(&self.state.current_dir);
+        let here = disk_path(&self.state.active_pane().directory);
         let sources = picked.clone();
         let task = Task::new(
             s.duplicating_files,
@@ -1066,7 +1066,7 @@ impl AppController {
 
     pub(crate) fn folder_total(&self) -> usize {
         if self.on_disk() {
-            children_of(&self.state.entries, &self.state.current_dir).len()
+            children_of(&self.state.entries, &self.state.active_pane().directory).len()
         } else {
             self.state.entries.len()
         }
@@ -1078,12 +1078,12 @@ impl AppController {
     }
 
     pub(crate) fn can_go_up(&self) -> bool {
-        !self.state.current_dir.is_empty() || self.can_close_archive()
+        !self.state.active_pane().directory.is_empty() || self.can_close_archive()
     }
 
     pub(crate) fn go_up(&mut self) {
-        if !self.state.current_dir.is_empty() {
-            self.go_to(parent_of(&self.state.current_dir));
+        if !self.state.active_pane().directory.is_empty() {
+            self.go_to(parent_of(&self.state.active_pane().directory));
         } else if self.can_close_archive() {
             self.close_archive();
         }
@@ -1116,8 +1116,8 @@ impl AppController {
         self.state.archive = None;
         self.state.origin = None;
         self.state.entries.clear();
-        self.state.checked.clear();
-        self.state.cursor = None;
+        self.state.active_pane_mut().checked.clear();
+        self.state.active_pane_mut().cursor = None;
         self.state.folders = tree::folders_of(&[]);
         self.state.history.clear();
         self.state.here = 0;
@@ -1136,7 +1136,7 @@ impl AppController {
         };
         // The panes still point into the archive that was open; rebuilding
         // them from that path would try to read it off the disk.
-        self.state.current_dir.clear();
+        self.state.active_pane_mut().directory.clear();
         self.reset_browser_panes();
         self.navigate_panes(dir);
         self.record_pane_history();
@@ -1149,7 +1149,8 @@ impl AppController {
         }
         let leaf = self
             .state
-            .current_dir
+            .active_pane()
+            .directory
             .trim_end_matches('/')
             .rsplit('/')
             .next()
@@ -1196,7 +1197,8 @@ impl AppController {
                 disk.loaded.insert(ancestor);
             }
         }
-        self.state.checked.resize(self.state.entries.len(), false);
+        let entries = self.state.entries.len();
+        self.state.active_pane_mut().checked.resize(entries, false);
     }
 
     /// Reads the folders being shown again, for a disk that changed under
@@ -1205,16 +1207,17 @@ impl AppController {
         if !self.on_disk() {
             return;
         }
-        self.snapshot_active_pane();
-        let dir = self.state.current_dir.clone();
+        let dir = self.state.active_pane().directory.clone();
         let remembered: Vec<(Vec<String>, Option<String>)> = (0..self.state.browser.panes.len())
             .map(|pane| {
                 let rows = self.pane_rows(pane);
                 let state = &self.state.browser.panes[pane];
                 let selected = state
-                    .selected
+                    .checked
                     .iter()
-                    .filter_map(|i| self.state.entries.get(*i))
+                    .enumerate()
+                    .filter(|(_, on)| **on)
+                    .filter_map(|(i, _)| self.state.entries.get(i))
                     .map(|entry| entry.name.clone())
                     .collect();
                 let cursor = state
@@ -1225,7 +1228,7 @@ impl AppController {
             })
             .collect();
         self.state.entries.clear();
-        self.state.checked.clear();
+        self.state.active_pane_mut().checked.clear();
         self.state.disk = Some(DiskState::default());
         self.load_disk_ancestors(&dir);
         let by_name: HashMap<String, usize> = self
@@ -1235,20 +1238,17 @@ impl AppController {
             .enumerate()
             .map(|(i, entry)| (entry.name.clone(), i))
             .collect();
+        let entries = self.state.entries.len();
         for (pane, (selected, cursor)) in remembered.into_iter().enumerate() {
             let rows = self.pane_rows(pane);
-            let state = &mut self.state.browser.panes[pane];
-            state.selected = selected
+            let picked: HashSet<usize> = selected
                 .iter()
                 .filter_map(|name| by_name.get(name).copied())
                 .collect();
+            let state = &mut self.state.browser.panes[pane];
+            state.checked = (0..entries).map(|i| picked.contains(&i)).collect();
             state.cursor = cursor.and_then(|path| rows.iter().position(|row| row.path == path));
         }
-        let active = &self.state.browser.panes[self.state.browser.active];
-        self.state.cursor = active.cursor;
-        self.state.checked = (0..self.state.entries.len())
-            .map(|i| active.selected.contains(&i))
-            .collect();
         self.navigate_panes(dir);
     }
 
@@ -1256,7 +1256,7 @@ impl AppController {
         if !self.on_disk() {
             return;
         }
-        let path = disk_path(&self.state.current_dir);
+        let path = disk_path(&self.state.active_pane().directory);
         let text = (!path.as_os_str().is_empty()).then(|| path.to_string_lossy().to_string());
         if self.state.settings.last_folder != text {
             self.state.settings.last_folder = text;
@@ -1278,7 +1278,7 @@ impl AppController {
         }
         if detect(&path).is_some() {
             let origin = Origin {
-                directory: self.state.current_dir.clone(),
+                directory: self.state.active_pane().directory.clone(),
                 path: entry.name.clone(),
             };
             self.open(path);
