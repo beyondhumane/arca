@@ -247,19 +247,6 @@ pub(crate) fn check_access(
     }
 }
 
-// The icon the desktop shows for this kind of file, kept as a texture per
-// extension. Without the cache a listing of 1513 entries would ask the shell
-// 1513 times a frame; with it, once per kind for the life of the window.
-//
-// A `None` in the map is a remembered failure, so a kind the system has no
-// answer for is not asked about again every frame.
-// What the desktop calls this kind of file, cached by extension the way the
-// icons are: the answer is the same for every .txt in the archive, and asking
-// the shell fifteen hundred times for it would be fifteen hundred round trips
-// to another thread while the list is being drawn.
-// A folder of its own per archive, so two archives holding a file with the same
-// name do not overwrite each other's copy. safe_name is what keeps an entry
-// called "../../evil" from landing outside it.
 /// Where the version before the last change is kept, so it can be put back.
 pub(crate) fn undo_path(archive: &Path) -> PathBuf {
     let mut name = archive.as_os_str().to_os_string();
@@ -496,9 +483,6 @@ pub(crate) fn launch_with_system(path: &Path) -> arca_core::Result<()> {
     Ok(())
 }
 
-// A button with a picture on it, and a word next to the picture when the button
-// is one of the ones worth naming. egui supplies the button surface;
-// icons and labels remain separate so each can be styled independently.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Answer {
     Replace,
@@ -1108,10 +1092,6 @@ fn collect_sources(
     Ok(v)
 }
 
-/// Cuando se escribio por ultima vez un fichero, en segundos desde 1970.
-///
-/// Cero cuando el sistema no lo dice, que es lo que un zip entiende por dejar
-/// ese hueco vacio de todas formas.
 fn mtime_of(m: &fs::Metadata) -> i64 {
     m.modified()
         .ok()
@@ -1197,14 +1177,6 @@ pub(crate) fn compress(
             )?;
         }
         Container::Rar | Container::Iso => return Err(format.read_only()),
-        // Cada entrada de un zip se comprime por su cuenta, asi que esto entrega
-        // la lista entera y deja que corra en todos los nucleos. Es la misma
-        // llamada que hace la linea de ordenes: hay una, no dos.
-        //
-        // Ademas de repartir, ese camino usa libdeflate, que el de escribir
-        // entrada a entrada no. Medido sobre 952 MB: 28,3 s y 841,6 MB haciendolo
-        // uno detras de otro, 20,1 s y 835,8 MB por aqui. Menos tiempo y menos
-        // tamano por el mismo trabajo.
         Container::Zip => {
             let mut sources = Vec::with_capacity(files.len());
             for (path, name) in &files {
@@ -1214,10 +1186,6 @@ pub(crate) fn compress(
                     path: path.clone(),
                     name: name.clone(),
                     size: meta.len(),
-                    // La fecha que tenia el fichero. Escribiendo entrada a
-                    // entrada iba un `None` aqui y todo lo que salia de la
-                    // ventana se guardaba sin fecha, cosa que la consola nunca
-                    // hizo.
                     mtime: mtime_of(&meta),
                     codec,
                     level,

@@ -85,8 +85,7 @@ pub(crate) struct AppState {
     pub(crate) history: Vec<String>,
     pub(crate) here: usize,
     // The row the keyboard is on. Everything the arrows, Enter and Space do
-    // hangs off this, and there was no such thing before: the table had
-    // checkboxes but no cursor. None means nothing is focused yet.
+    // hangs off this. None means nothing is focused yet.
     pub(crate) cursor: Option<usize>,
     // The entry being renamed and what has been typed into it so far. Held by
     // path rather than by row number so that sorting or filtering underneath a
@@ -125,7 +124,6 @@ pub(crate) struct AppState {
     // Set while the box that picks a group by name is up: true to add what
     // matches to the selection, false to take it away.
     pub(crate) picking_group: Option<bool>,
-    // Set while the wheel is being used to walk the list up and down.
     // The last row a left click landed on, and when. What tells a second click
     // on the same row from the first one of a new pair.
     pub(crate) last_click: Option<(usize, f64)>,
