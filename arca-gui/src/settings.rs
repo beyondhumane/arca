@@ -109,7 +109,6 @@ pub(crate) struct Settings {
     pub(crate) folder_peek: bool,
     // The pane under the pointer is the active one.
     pub(crate) pointer_focus: bool,
-    pub(crate) sidebar_collapsed: bool,
     pub(crate) preview_visible: bool,
     pub(crate) preview_width: f32,
     pub(crate) directory_width: f32,
@@ -184,7 +183,6 @@ impl Default for Settings {
             next_pane: false,
             folder_peek: false,
             pointer_focus: true,
-            sidebar_collapsed: false,
             preview_visible: true,
             preview_width: PREVIEW_WIDE,
             directory_width: DIRECTORY_WIDE,
@@ -261,8 +259,8 @@ impl Settings {
                 ("next_pane", v) => s.next_pane = v == "yes",
                 ("folder_peek", v) => s.folder_peek = v == "yes",
                 ("pointer_focus", v) => s.pointer_focus = v != "no",
-                ("sidebar_collapsed", "yes") => s.sidebar_collapsed = true,
-                ("sidebar_collapsed", "no") => s.sidebar_collapsed = false,
+                // Older files chose the icon rail by hand; the window width decides now.
+                ("sidebar_collapsed", _) => {}
                 ("preview_visible", "yes") => s.preview_visible = true,
                 ("preview_visible", "no") => s.preview_visible = false,
                 ("preview_width", v) => {
@@ -425,10 +423,6 @@ impl Settings {
         out.push_str(&format!("pointer_focus = {}\n", yes(self.pointer_focus)));
         out.push_str(&format!("folders = {}\n", yes(self.folders)));
         out.push_str(&format!(
-            "sidebar_collapsed = {}\n",
-            yes(self.sidebar_collapsed)
-        ));
-        out.push_str(&format!(
             "preview_visible = {}\n",
             yes(self.preview_visible)
         ));
@@ -498,7 +492,6 @@ mod tests {
         assert_eq!(s.browser_view, BrowserView::Panes);
         assert!(!s.flat);
         assert!(s.folders);
-        assert!(!s.sidebar_collapsed);
         assert_eq!(s.sidebar, 200.0);
         assert!(s.preview_visible);
         assert_eq!(s.preview_width, 440.0);
@@ -567,7 +560,6 @@ mod tests {
         assert_eq!(s.window, Some([-100.0, 34.0, 1000.0, 700.0]));
         assert_eq!(s.recent, ["C:\\one.zip", "D:\\two, with=punctuation.zip"]);
         assert_eq!(s.browser_view, BrowserView::Details);
-        assert!(!s.sidebar_collapsed);
         assert!(s.preview_visible);
         assert_eq!(s.preview_width, 440.0);
         assert_eq!(s.directory_width, 280.0);
@@ -596,13 +588,12 @@ mod tests {
         for browser_view in [BrowserView::Panes, BrowserView::Details] {
             for flat in [false, true] {
                 for folders in [false, true] {
-                    for sidebar_collapsed in [false, true] {
+                    {
                         for preview_visible in [false, true] {
                             let s = Settings {
                                 browser_view,
                                 flat,
                                 folders,
-                                sidebar_collapsed,
                                 preview_visible,
                                 sidebar: 257.5,
                                 preview_width: 512.5,
@@ -621,7 +612,6 @@ mod tests {
                             );
                             assert_eq!(after.flat, flat);
                             assert_eq!(after.folders, folders);
-                            assert_eq!(after.sidebar_collapsed, sidebar_collapsed);
                             assert_eq!(after.preview_visible, preview_visible);
                             assert_eq!(after.sidebar, 257.5);
                             assert_eq!(after.preview_width, 512.5);
@@ -641,7 +631,6 @@ mod tests {
                 let lines = [
                     format!("browser_view = {view}"),
                     format!("flat = {flat}"),
-                    "sidebar_collapsed = yes".into(),
                     "folders = no".into(),
                     "sidebar = 300".into(),
                     "preview_visible = no".into(),

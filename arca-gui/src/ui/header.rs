@@ -1,4 +1,4 @@
-use super::layout::{breadcrumb_indices, cycle_sidebar, decide};
+use super::layout::{breadcrumb_indices, decide, toggle_sidebar};
 use super::theme::{hex, palette_of};
 use super::widgets::*;
 use super::*;
@@ -307,7 +307,7 @@ impl Shell {
         }
         ui.horizontal(|ui| {
             if icon_button(ui, icon::SIDEBAR_SIMPLE, s.folder_tree, true).clicked() {
-                cycle_sidebar(&mut self.controller.state.settings);
+                toggle_sidebar(&mut self.controller.state.settings);
                 self.controller.state.settings.save();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

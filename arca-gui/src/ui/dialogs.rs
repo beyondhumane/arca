@@ -136,12 +136,7 @@ pub(crate) fn section_words(section: SettingsSection, s: &'static Strings) -> Ve
             s.title_bar_title,
             s.motion_title,
         ],
-        SettingsSection::Views => vec![
-            s.default_view,
-            s.show_preview_panel,
-            s.show_folder_tree,
-            s.icon_sidebar,
-        ],
+        SettingsSection::Views => vec![s.default_view, s.show_preview_panel, s.show_folder_tree],
         SettingsSection::Updates => vec![
             s.check_updates,
             s.update_status,
@@ -1471,9 +1466,6 @@ impl Shell {
             ),
             (s.show_folder_tree, s.tree_hint, |settings| {
                 &mut settings.folders
-            }),
-            (s.icon_sidebar, s.rail_hint, |settings| {
-                &mut settings.sidebar_collapsed
             }),
         ] {
             card(ui, label, Some(hint), true, |ui| {
