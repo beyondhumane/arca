@@ -107,6 +107,8 @@ pub(crate) struct Settings {
     pub(crate) next_pane: bool,
     // Resting the pointer on a folder shows a card with what it holds.
     pub(crate) folder_peek: bool,
+    // The pane under the pointer is the active one.
+    pub(crate) pointer_focus: bool,
     pub(crate) sidebar_collapsed: bool,
     pub(crate) preview_visible: bool,
     pub(crate) preview_width: f32,
@@ -181,6 +183,7 @@ impl Default for Settings {
             browser_view: BrowserView::default(),
             next_pane: false,
             folder_peek: false,
+            pointer_focus: true,
             sidebar_collapsed: false,
             preview_visible: true,
             preview_width: PREVIEW_WIDE,
@@ -257,6 +260,7 @@ impl Settings {
                 ("browser_view", "panes") => s.browser_view = BrowserView::Panes,
                 ("next_pane", v) => s.next_pane = v == "yes",
                 ("folder_peek", v) => s.folder_peek = v == "yes",
+                ("pointer_focus", v) => s.pointer_focus = v != "no",
                 ("sidebar_collapsed", "yes") => s.sidebar_collapsed = true,
                 ("sidebar_collapsed", "no") => s.sidebar_collapsed = false,
                 ("preview_visible", "yes") => s.preview_visible = true,
@@ -418,6 +422,7 @@ impl Settings {
         out.push_str(&format!("browser_view = {browser_view}\n"));
         out.push_str(&format!("next_pane = {}\n", yes(self.next_pane)));
         out.push_str(&format!("folder_peek = {}\n", yes(self.folder_peek)));
+        out.push_str(&format!("pointer_focus = {}\n", yes(self.pointer_focus)));
         out.push_str(&format!("folders = {}\n", yes(self.folders)));
         out.push_str(&format!(
             "sidebar_collapsed = {}\n",
@@ -582,6 +587,8 @@ mod tests {
         assert!(!Settings::parse("browser_view = panes\nnext_pane = no").next_pane);
         assert!(!s.folder_peek);
         assert!(Settings::parse("folder_peek = yes").folder_peek);
+        assert!(s.pointer_focus);
+        assert!(!Settings::parse("pointer_focus = no").pointer_focus);
     }
 
     #[test]

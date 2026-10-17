@@ -196,6 +196,11 @@ pub(crate) struct Shell {
     peek: Option<(String, egui::Rect, f64)>,
     peek_seen: bool,
     peek_loaded: Option<String>,
+    // Set when the pointer, not a navigation, made a pane active: the row
+    // of panes then stays where it is instead of scrolling to it.
+    pointer_focused: bool,
+    // The pane whose filter row is open, and what is typed in it.
+    pane_filter: Option<(usize, String)>,
     name_value: String,
     focus_name: bool,
     rename_value: String,
@@ -269,6 +274,8 @@ impl Shell {
             peek: None,
             peek_seen: false,
             peek_loaded: None,
+            pointer_focused: false,
+            pane_filter: None,
             name_value: String::new(),
             focus_name: false,
             rename_value: String::new(),
@@ -1353,7 +1360,8 @@ impl Shell {
     /// box is up.
     fn pointer_may_focus(&self) -> bool {
         let ctx = &self.ctx;
-        !self.keyboard_drove
+        self.controller.state.settings.pointer_focus
+            && !self.keyboard_drove
             && !ctx.any_popup_open()
             && !ctx.egui_is_using_pointer()
             && !ctx.input(|i| i.pointer.any_down())
@@ -1392,8 +1400,12 @@ impl Shell {
             }
         }
         if modifiers.command && !modifiers.shift && key == egui::Key::F {
-            self.filter_open = true;
-            self.focus_filter = true;
+            if self.panes_view() {
+                self.open_pane_filter(self.controller.state.browser.active);
+            } else {
+                self.filter_open = true;
+                self.focus_filter = true;
+            }
             return;
         }
         if modifiers.command && !typing {

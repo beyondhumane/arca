@@ -1,6 +1,7 @@
 use super::theme::{alpha, hex, palette_of, Palette};
 use super::widgets::*;
 use super::*;
+use crate::settings::BrowserView;
 use crate::tree::Kind;
 use eframe::egui::{self, Align2, FontId, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};
 use egui_phosphor::regular as icon;
@@ -170,6 +171,36 @@ impl Shell {
 
     /// Strata's folder peeking: a card with the folder's name and the
     /// first of what it holds, for a pointer that has rested on its row.
+    pub(super) fn panes_view(&self) -> bool {
+        self.controller.state.settings.browser_view == BrowserView::Panes
+    }
+
+    /// The pane's funnel button (or Ctrl+F in the Panes view): opens the
+    /// filter row of that pane with the field focused, or closes it and
+    /// lets everything show again.
+    pub(super) fn toggle_pane_filter(&mut self, pane: usize) {
+        match &self.pane_filter {
+            Some((open, _)) if *open == pane => {
+                self.controller.set_pane_filter(pane, String::new());
+                self.pane_filter = None;
+            }
+            _ => self.open_pane_filter(pane),
+        }
+    }
+
+    pub(super) fn open_pane_filter(&mut self, pane: usize) {
+        let typed = self
+            .controller
+            .state
+            .browser
+            .panes
+            .get(pane)
+            .map(|p| p.filter.clone())
+            .unwrap_or_default();
+        self.pane_filter = Some((pane, typed));
+        self.focus_filter = true;
+    }
+
     fn peek_card(&mut self, ui: &mut egui::Ui) {
         const REST: f64 = 0.45;
         const SHOWN: usize = 8;
@@ -601,8 +632,9 @@ impl Shell {
         // width and the row scrolls sideways, following the active one.
         let (first, width) = column_slots(panes, active, wanted, gap, room);
         let width = if first == 0 { width } else { wanted };
-        let follow = self.last_active_pane != Some(active);
+        let follow = self.last_active_pane != Some(active) && !self.pointer_focused;
         self.last_active_pane = Some(active);
+        self.pointer_focused = false;
         let mut under_pointer = None;
         egui::ScrollArea::horizontal()
             .id_salt("arca-columns")
@@ -645,6 +677,7 @@ impl Shell {
         if let Some(pane) = under_pointer {
             if pane != self.controller.state.browser.active && self.pointer_may_focus() {
                 self.controller.activate_pane_quietly(pane);
+                self.pointer_focused = true;
             }
         }
         if let Some(action) = self.pane_action.take() {
@@ -660,11 +693,7 @@ impl Shell {
                         self.controller.dispatch(AppAction::Up);
                     }
                 }
-                PaneAction::Filter(pane) => {
-                    if self.controller.activate_pane(pane) {
-                        self.toggle_filter();
-                    }
-                }
+                PaneAction::Filter(pane) => self.toggle_pane_filter(pane),
             }
         }
     }
@@ -672,7 +701,6 @@ impl Shell {
     fn pane(&mut self, ui: &mut egui::Ui, pane: usize, width: f32) {
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
-        let rows = self.controller.pane_rows(pane);
         let browser = &self.controller.state.browser;
         let active = browser.active == pane;
         let data = &browser.panes[pane];
@@ -685,9 +713,13 @@ impl Shell {
         let remembered = data.scroll_offset;
         let directory = data.directory.clone();
         let order = data.order;
-        let closable = browser.free && browser.panes.len() > 1;
+        let closable = browser.panes.len() > 1;
         let can_go_up = !directory.is_empty() || self.controller.on_disk();
-        let filtering = !data.filter.is_empty() || (active && self.filter_open);
+        let filtering = !data.filter.is_empty()
+            || self
+                .pane_filter
+                .as_ref()
+                .is_some_and(|(open, _)| *open == pane);
         let buttons = 28.0 * if closable { 5.0 } else { 4.0 };
         let header = ui.horizontal(|ui| {
             let title = directory
@@ -767,6 +799,48 @@ impl Shell {
                 .hline(span, rect.top() + 1.0, egui::Stroke::new(2.0, hex(p.focus)));
         }
         ui.add_space(2.0);
+        if self
+            .pane_filter
+            .as_ref()
+            .is_some_and(|(open, _)| *open == pane)
+        {
+            let total = self.controller.pane_rows(pane).len();
+            let hint = fill(s.filter_pane, &[("count", &total.to_string())]);
+            let mut typed = self
+                .pane_filter
+                .as_ref()
+                .map(|(_, t)| t.clone())
+                .unwrap_or_default();
+            let mut changed = false;
+            let mut closed = false;
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                ui.label(
+                    super::theme::icon_text(icon::FUNNEL)
+                        .size(14.0)
+                        .color(hex(p.muted)),
+                );
+                let field = ui.add(
+                    super::widgets::field(ui, &mut typed)
+                        .hint_text(hint)
+                        .desired_width(width - 60.0),
+                );
+                if std::mem::take(&mut self.focus_filter) {
+                    field.request_focus();
+                }
+                changed = field.changed();
+                closed = field.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape));
+            });
+            if changed {
+                self.pane_filter = Some((pane, typed.clone()));
+                self.controller.set_pane_filter(pane, typed);
+            }
+            if closed {
+                self.controller.set_pane_filter(pane, String::new());
+                self.pane_filter = None;
+            }
+        }
+        let rows = self.controller.pane_rows(pane);
         if rows.is_empty() {
             ui.label(RichText::new(s.empty_folder).color(hex(p.muted)));
             self.empty_space(ui, Some(pane));

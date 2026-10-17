@@ -1450,6 +1450,19 @@ impl Shell {
                 self.controller.state.settings.save();
             }
         });
+        let mut pointer_focus = self.controller.state.settings.pointer_focus;
+        card(
+            ui,
+            s.pointer_focus,
+            Some(s.pointer_focus_hint),
+            true,
+            |ui| {
+                if switch(ui, &mut pointer_focus, s.pointer_focus).changed() {
+                    self.controller.state.settings.pointer_focus = pointer_focus;
+                    self.controller.state.settings.save();
+                }
+            },
+        );
         for (label, hint, pick) in [
             (
                 s.show_preview_panel,

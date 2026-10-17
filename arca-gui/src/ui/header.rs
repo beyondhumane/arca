@@ -225,6 +225,22 @@ impl Shell {
                 self.controller.state.settings.save();
             }
             ui.separator();
+            group_label(ui, s.panes_view);
+            let next_pane = self.controller.state.settings.next_pane;
+            if pick_entry(ui, icon::COLUMNS, s.next_pane, next_pane).clicked() {
+                self.set_next_pane(!next_pane);
+            }
+            let folder_peek = self.controller.state.settings.folder_peek;
+            if pick_entry(ui, icon::FOLDER_OPEN, s.folder_peek, folder_peek).clicked() {
+                self.controller.state.settings.folder_peek = !folder_peek;
+                self.controller.state.settings.save();
+            }
+            let pointer_focus = self.controller.state.settings.pointer_focus;
+            if pick_entry(ui, icon::CURSOR, s.pointer_focus, pointer_focus).clicked() {
+                self.controller.state.settings.pointer_focus = !pointer_focus;
+                self.controller.state.settings.save();
+            }
+            ui.separator();
             group_label(ui, s.density_title);
             let density = self.controller.state.settings.density;
             for (glyph, label, want) in [
@@ -362,14 +378,26 @@ impl Shell {
                     ui.label(RichText::new(here).strong().color(hex(p.link)));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let filtering = !self.controller.state.filter.is_empty();
-                        let on = self.filter_open || filtering;
+                        let panes = self.panes_view();
+                        let active = self.controller.state.browser.active;
+                        let on = if panes {
+                            filtering
+                                || self.pane_filter.as_ref().is_some_and(|(o, _)| *o == active)
+                        } else {
+                            self.filter_open || filtering
+                        };
                         let find_tip = format!("{}  (Ctrl+F)", s.find_word);
                         if icon_toggle(ui, icon::FUNNEL, &find_tip, true, on).clicked() {
-                            self.toggle_filter();
+                            if panes {
+                                self.toggle_pane_filter(active);
+                            } else {
+                                self.toggle_filter();
+                            }
                         }
                     });
                 });
-                let wanted = self.filter_open || !self.controller.state.filter.is_empty();
+                let wanted = !self.panes_view()
+                    && (self.filter_open || !self.controller.state.filter.is_empty());
                 let open = ui
                     .ctx()
                     .animate_bool(egui::Id::new("arca-filter-open"), wanted);
