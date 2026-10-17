@@ -1110,7 +1110,7 @@ impl Shell {
     fn row_menu(&mut self, ui: &mut egui::Ui, row: Option<&Row>, index: usize) {
         let s = self.controller.s();
         let idle = self.background_idle();
-        let writable = self.controller.writable();
+        let writable = self.controller.can_change();
         let on_disk = self.controller.on_disk();
         let current_dir = self.controller.state.current_dir.clone();
         let actions: &[RowAction] = if row.is_some() {
@@ -1126,11 +1126,11 @@ impl Shell {
             {
                 continue;
             }
-            if !action.offered()
+            if !action.offered(on_disk)
                 || !action.shown(on_disk)
                 || (action.writable_only() && !writable)
                 || row.is_some_and(|row| {
-                    (row.is_dir && action == RowAction::View)
+                    (row.is_dir && matches!(action, RowAction::View | RowAction::OpenWith))
                         || (!row.is_dir && action == RowAction::Pin)
                 })
             {
@@ -1141,11 +1141,26 @@ impl Shell {
             }
             first = false;
             let (label, keys) = action.label(s);
-            let label = if row.is_none() && action == RowAction::Compress {
-                s.compress
-            } else {
-                label
+            let label = match action {
+                RowAction::Compress if row.is_none() => s.compress,
+                RowAction::View if on_disk => s.quick_preview,
+                RowAction::Delete if on_disk => s.delete_forever,
+                RowAction::CopyNames if on_disk => s.copy_name,
+                _ => label,
             };
+            let keys = if on_disk && action == RowAction::Delete {
+                "Mayús+Supr"
+            } else {
+                keys
+            };
+            if action == RowAction::OpenWith {
+                if let Some(path) = row.map(|row| crate::controller::disk::disk_path(&row.path)) {
+                    if self.open_with_menu(ui, &path, idle) {
+                        first = false;
+                    }
+                    continue;
+                }
+            }
             let pin_target = (action == RowAction::Pin).then(|| {
                 row.map_or_else(
                     || crate::controller::disk::disk_path(&current_dir),
@@ -1175,6 +1190,38 @@ impl Shell {
                 self.row_action(action, index);
             }
         }
+    }
+
+    /// "Open with" as a submenu of the applications that take this kind of
+    /// file; on Windows the system's own chooser does the job, so the entry
+    /// is plain.
+    fn open_with_menu(&mut self, ui: &mut egui::Ui, path: &std::path::Path, enabled: bool) -> bool {
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        if cfg!(windows) {
+            if menu_entry(ui, icon::APP_WINDOW, s.open_with, "", enabled).clicked() {
+                self.controller.open_with(path, None);
+            }
+            return true;
+        }
+        let apps = crate::controller::disk::apps_for(path);
+        let label = egui::RichText::new(format!("{}  {}", icon::APP_WINDOW, s.open_with))
+            .family(egui::FontFamily::Proportional);
+        ui.add_enabled_ui(enabled, |ui| {
+            ui.menu_button(label, |ui| {
+                ui.set_min_width(200.0);
+                if apps.is_empty() {
+                    ui.label(RichText::new(s.no_opener).color(hex(p.muted)));
+                }
+                for app in &apps {
+                    if menu_entry(ui, icon::APP_WINDOW, &app.name, "", true).clicked() {
+                        self.controller.open_with(path, Some(app));
+                        ui.close();
+                    }
+                }
+            });
+        });
+        true
     }
 
     fn empty_space(&mut self, ui: &mut egui::Ui, pane: Option<usize>) {

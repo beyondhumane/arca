@@ -4,48 +4,60 @@ use std::path::PathBuf;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RowAction {
+    NewFolderWith,
     Open,
     OpenInPane,
+    OpenWith,
     ExtractSelection,
     ExtractHere,
     TestSelection,
     View,
-    Rename,
-    Delete,
-    Copy,
     Cut,
+    Copy,
     Paste,
+    Duplicate,
+    Rename,
+    MoveTo,
+    CopyTo,
+    Compress,
+    CopyPath,
     CopyNames,
     SelectAll,
     NewFolder,
-    Compress,
-    CopyPath,
     Pin,
-    OpenArchive,
+    Properties,
+    Trash,
+    Delete,
     ExtractAll,
     TestArchive,
 }
 
 impl RowAction {
-    pub(crate) const ALL: [RowAction; 20] = [
+    pub(crate) const ALL: [RowAction; 26] = [
+        RowAction::NewFolderWith,
         RowAction::Open,
         RowAction::OpenInPane,
+        RowAction::OpenWith,
         RowAction::ExtractSelection,
         RowAction::ExtractHere,
         RowAction::TestSelection,
         RowAction::View,
-        RowAction::Rename,
-        RowAction::Delete,
-        RowAction::Copy,
         RowAction::Cut,
+        RowAction::Copy,
         RowAction::Paste,
+        RowAction::Duplicate,
+        RowAction::Rename,
+        RowAction::MoveTo,
+        RowAction::CopyTo,
+        RowAction::Compress,
+        RowAction::CopyPath,
         RowAction::CopyNames,
         RowAction::SelectAll,
         RowAction::NewFolder,
-        RowAction::Compress,
-        RowAction::CopyPath,
         RowAction::Pin,
-        RowAction::OpenArchive,
+        RowAction::Properties,
+        RowAction::Trash,
+        RowAction::Delete,
         RowAction::ExtractAll,
         RowAction::TestArchive,
     ];
@@ -53,15 +65,14 @@ impl RowAction {
     /// What the menu offers where there is no row under the pointer: the
     /// space under the last one is the folder itself, not an entry.
     /// The menu over the empty part of the list also carries what the
-    /// toolbar used to: opening another archive, compressing, extracting
-    /// and testing the whole thing.
+    /// toolbar used to: compressing, extracting and testing the whole thing.
     pub(crate) const EMPTY_SPACE: [RowAction; 8] = [
         RowAction::NewFolder,
         RowAction::Paste,
         RowAction::SelectAll,
         RowAction::Pin,
-        RowAction::OpenArchive,
         RowAction::Compress,
+        RowAction::Properties,
         RowAction::ExtractAll,
         RowAction::TestArchive,
     ];
@@ -76,7 +87,6 @@ impl RowAction {
                 | RowAction::Paste
                 | RowAction::SelectAll
                 | RowAction::NewFolder
-                | RowAction::OpenArchive
                 | RowAction::ExtractAll
                 | RowAction::TestArchive
         )
@@ -118,6 +128,13 @@ impl RowAction {
     pub(crate) fn label(self, s: &'static Strings) -> (&'static str, &'static str) {
         match self {
             RowAction::Open => (s.open_word, "Enter"),
+            RowAction::OpenWith => (s.open_with, ""),
+            RowAction::NewFolderWith => (s.new_folder_with, ""),
+            RowAction::Duplicate => (s.duplicate_word, "Ctrl+D"),
+            RowAction::MoveTo => (s.move_to, ""),
+            RowAction::CopyTo => (s.copy_to, ""),
+            RowAction::Properties => (s.properties_word, ""),
+            RowAction::Trash => (s.trash_word, "Supr"),
             RowAction::OpenInPane => (s.open_in_pane, ""),
             RowAction::ExtractSelection => (s.extract_selected, ""),
             RowAction::ExtractHere => (s.extract_here, "Alt+W"),
@@ -134,7 +151,6 @@ impl RowAction {
             RowAction::Compress => (s.compress_selection, "Ctrl+N"),
             RowAction::CopyPath => (s.copy_path, ""),
             RowAction::Pin => (s.pin_word, ""),
-            RowAction::OpenArchive => (s.open_archive, "Ctrl+O"),
             RowAction::ExtractAll => (s.extract_all, "Ctrl+E"),
             RowAction::TestArchive => (s.test_word, "Ctrl+T"),
         }
@@ -145,13 +161,20 @@ impl RowAction {
         use egui_phosphor::regular as icon;
         match self {
             RowAction::Open => icon::ARROW_SQUARE_OUT,
+            RowAction::OpenWith => icon::APP_WINDOW,
+            RowAction::NewFolderWith => icon::FOLDER_SIMPLE_PLUS,
+            RowAction::Duplicate => icon::COPY_SIMPLE,
+            RowAction::MoveTo => icon::ARROW_ELBOW_RIGHT,
+            RowAction::CopyTo => icon::FOLDER_NOTCH_PLUS,
+            RowAction::Properties => icon::INFO,
+            RowAction::Trash => icon::TRASH_SIMPLE,
             RowAction::OpenInPane => icon::COLUMNS_PLUS_RIGHT,
             RowAction::ExtractSelection | RowAction::ExtractAll => icon::EXPORT,
             RowAction::ExtractHere => icon::DOWNLOAD_SIMPLE,
             RowAction::TestSelection | RowAction::TestArchive => icon::CHECK_CIRCLE,
             RowAction::View => icon::EYE,
             RowAction::Rename => icon::PENCIL_SIMPLE,
-            RowAction::Delete => icon::TRASH,
+            RowAction::Delete => icon::FILE_X,
             RowAction::Copy => icon::COPY,
             RowAction::Cut => icon::SCISSORS,
             RowAction::Paste => icon::CLIPBOARD,
@@ -161,7 +184,6 @@ impl RowAction {
             RowAction::Compress => icon::PACKAGE,
             RowAction::CopyPath => icon::LINK,
             RowAction::Pin => icon::PUSH_PIN,
-            RowAction::OpenArchive => icon::FOLDER_OPEN,
         }
     }
 
@@ -171,11 +193,15 @@ impl RowAction {
     pub(crate) fn starts_group(self) -> bool {
         matches!(
             self,
-            RowAction::Rename
-                | RowAction::Copy
-                | RowAction::CopyNames
+            RowAction::Open
+                | RowAction::Cut
+                | RowAction::MoveTo
+                | RowAction::Compress
+                | RowAction::CopyPath
+                | RowAction::Properties
+                | RowAction::Trash
                 | RowAction::NewFolder
-                | RowAction::OpenArchive
+                | RowAction::ExtractAll
         )
     }
 
@@ -185,12 +211,24 @@ impl RowAction {
     pub(crate) fn writable_only(self) -> bool {
         matches!(
             self,
-            Self::Rename | Self::Delete | Self::Cut | Self::Paste | Self::NewFolder
+            Self::Rename
+                | Self::Delete
+                | Self::Cut
+                | Self::Paste
+                | Self::NewFolder
+                | Self::NewFolderWith
+                | Self::Duplicate
+                | Self::MoveTo
+                | Self::Trash
         )
     }
 
-    pub(crate) fn offered(self) -> bool {
-        !matches!(self, RowAction::Copy | RowAction::Cut | RowAction::Paste) || clipboard::AVAILABLE
+    /// On the disk the shell keeps its own list of what was cut or copied,
+    /// so the three are always there.
+    pub(crate) fn offered(self, on_disk: bool) -> bool {
+        !matches!(self, RowAction::Copy | RowAction::Cut | RowAction::Paste)
+            || on_disk
+            || clipboard::AVAILABLE
     }
 
     /// Whether the entry makes sense where the list is showing: the disk has
@@ -202,17 +240,23 @@ impl RowAction {
                 Self::ExtractSelection
                     | Self::ExtractHere
                     | Self::TestSelection
-                    | Self::Rename
-                    | Self::Delete
-                    | Self::Copy
-                    | Self::Cut
-                    | Self::Paste
-                    | Self::NewFolder
                     | Self::ExtractAll
                     | Self::TestArchive
-            )
+            ) && (!matches!(self, Self::OpenWith) || cfg!(any(target_os = "linux", windows)))
         } else {
-            !matches!(self, Self::Compress | Self::CopyPath | Self::Pin)
+            !matches!(
+                self,
+                Self::Compress
+                    | Self::CopyPath
+                    | Self::Pin
+                    | Self::OpenWith
+                    | Self::NewFolderWith
+                    | Self::Duplicate
+                    | Self::MoveTo
+                    | Self::CopyTo
+                    | Self::Properties
+                    | Self::Trash
+            )
         }
     }
 }

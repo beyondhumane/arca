@@ -533,7 +533,7 @@ impl AppController {
         self.snapshot_active_pane();
     }
     pub(crate) fn request_delete(&mut self) {
-        if !self.writable() {
+        if !self.can_change() {
             self.state.notice = self.cannot_change(Some(self.state.format));
             self.state.error = true;
             return;
@@ -552,6 +552,9 @@ impl AppController {
                         names,
                         password: self.state.archive_password.clone(),
                     });
+                } else if self.on_disk() {
+                    let roots = self.selected_roots();
+                    self.remove_on_disk(&roots, false);
                 }
             }
         }
@@ -1826,6 +1829,9 @@ impl AppController {
         }
         let to = rename_destination(path, name);
         let Some(archive) = self.state.archive.clone() else {
+            if self.on_disk() {
+                self.rename_on_disk(path, &to);
+            }
             return;
         };
         self.run_job(Job::Rename {

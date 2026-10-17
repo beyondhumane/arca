@@ -445,6 +445,195 @@ impl AppController {
         self.state.archive.is_none() && self.state.disk.is_some()
     }
 
+    /// Whether what is shown can be renamed, removed or added to: a zip, or
+    /// a folder on the disk.
+    pub(crate) fn can_change(&self) -> bool {
+        self.writable() || self.on_disk()
+    }
+
+    pub(crate) fn rename_on_disk(&mut self, from: &str, to: &str) {
+        let s = self.s();
+        let (a, b) = (disk_path(from), disk_path(to));
+        if b.exists() {
+            let name = b
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            self.state.notice = fill(s.name_taken, &[("name", &name)]);
+            self.state.error = true;
+            return;
+        }
+        match fs::rename(&a, &b) {
+            Ok(()) => {
+                self.state.notice.clear();
+                self.state.error = false;
+                self.refresh_disk();
+            }
+            Err(e) => {
+                self.state.notice = e.to_string();
+                self.state.error = true;
+            }
+        }
+    }
+
+    pub(crate) fn create_disk_folder(&mut self, name: &str) -> Option<String> {
+        let s = self.s();
+        let dir = format!("{}{name}/", self.state.current_dir);
+        let path = disk_path(&dir);
+        if path.exists() {
+            self.state.notice = fill(s.name_taken, &[("name", name)]);
+            self.state.error = true;
+            return None;
+        }
+        match fs::create_dir(&path) {
+            Ok(()) => {
+                self.state.notice.clear();
+                self.state.error = false;
+                self.refresh_disk();
+                Some(dir)
+            }
+            Err(e) => {
+                self.state.notice = e.to_string();
+                self.state.error = true;
+                None
+            }
+        }
+    }
+
+    /// Removes what is picked, for good or into the Trash, as a task.
+    pub(crate) fn remove_on_disk(&mut self, roots: &[String], trash: bool) {
+        let s = self.s();
+        let picked: Vec<PathBuf> = roots.iter().map(|root| disk_path(root)).collect();
+        if picked.is_empty() {
+            return;
+        }
+        let subject = match picked.as_slice() {
+            [one] => one
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            many => fill(s.items_carried, &[("n", &many.len().to_string())]),
+        };
+        let here = disk_path(&self.state.current_dir);
+        let sources = picked.clone();
+        let task = Task::new(
+            if trash {
+                s.trashing_files
+            } else {
+                s.deleting_files
+            },
+            subject,
+            Box::new(move |tx, _reply_rx, stop, hold| {
+                let notify = worker_notify(&tx, &stop, &hold);
+                let mut count = 0;
+                for (i, path) in picked.iter().enumerate() {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if !notify(i, picked.len(), &name) {
+                        let _ = tx.send(Message::Failed(arca_core::Error::Cancelled.to_string()));
+                        return;
+                    }
+                    let gone = if trash {
+                        trash_item(path)
+                    } else {
+                        remove_item(path).map_err(|e| e.to_string())
+                    };
+                    if gone.is_err() {
+                        let word = if trash {
+                            s.could_not_trash
+                        } else {
+                            s.could_not_remove
+                        };
+                        let _ = tx.send(Message::Failed(fill(word, &[("name", &name)])));
+                        return;
+                    }
+                    count += 1;
+                }
+                let word = if trash { s.trashed_n } else { s.removed_n };
+                let _ = tx.send(Message::Done(fill(word, &[("n", &count.to_string())])));
+            }),
+        )
+        .reading(sources)
+        .filling([here]);
+        self.enqueue(task);
+    }
+
+    /// Copies what is picked next to itself as "name copy", "name copy 2"…
+    pub(crate) fn duplicate_on_disk(&mut self, roots: &[String]) {
+        let s = self.s();
+        let picked: Vec<PathBuf> = roots.iter().map(|root| disk_path(root)).collect();
+        if picked.is_empty() {
+            return;
+        }
+        let subject = match picked.as_slice() {
+            [one] => one
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            many => fill(s.items_carried, &[("n", &many.len().to_string())]),
+        };
+        let here = disk_path(&self.state.current_dir);
+        let sources = picked.clone();
+        let task = Task::new(
+            s.duplicating_files,
+            subject,
+            Box::new(move |tx, _reply_rx, stop, hold| {
+                let notify = worker_notify(&tx, &stop, &hold);
+                let mut count = 0;
+                for (i, path) in picked.iter().enumerate() {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if !notify(i, picked.len(), &name) {
+                        let _ = tx.send(Message::Failed(arca_core::Error::Cancelled.to_string()));
+                        return;
+                    }
+                    let Some(to) = duplicate_target(path) else {
+                        continue;
+                    };
+                    if copy_tree(path, &to).is_err() {
+                        let _ = tx.send(Message::Failed(could_not(s, true, path)));
+                        return;
+                    }
+                    count += 1;
+                }
+                let _ = tx.send(Message::Done(fill(
+                    s.duplicated_n,
+                    &[("n", &count.to_string())],
+                )));
+            }),
+        )
+        .reading(sources)
+        .filling([here]);
+        self.enqueue(task);
+    }
+
+    /// Hands the file to a given application, or to the system's chooser.
+    pub(crate) fn open_with(&mut self, path: &Path, app: Option<&DesktopApp>) {
+        let s = self.s();
+        let result = match app {
+            Some(app) => app.launch(path),
+            None => open_with_chooser(path),
+        };
+        match result {
+            Ok(()) => {
+                self.state.notice.clear();
+                self.state.error = false;
+            }
+            Err(e) => {
+                self.state.notice = if e.is_empty() {
+                    s.no_opener.to_string()
+                } else {
+                    e
+                };
+                self.state.error = true;
+            }
+        }
+    }
+
     /// Whether rows dragged inside the window can land on a folder here: a
     /// zip takes a rewrite, and the disk takes a rename.
     pub(crate) fn can_drop(&self) -> bool {
@@ -974,4 +1163,369 @@ impl AppController {
         self.state.settings.save();
         self.refresh_disk();
     }
+}
+
+fn remove_item(path: &Path) -> std::io::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    if meta.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+}
+
+/// "name copy", "name copy 2"… beside the original, keeping the extension of
+/// a file where it is.
+pub(crate) fn duplicate_target(path: &Path) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    let leaf = path.file_name()?.to_string_lossy().into_owned();
+    let (stem, ext) = if path.is_dir() {
+        (leaf.clone(), String::new())
+    } else {
+        match leaf.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+            _ => (leaf.clone(), String::new()),
+        }
+    };
+    (1..10_000)
+        .map(|n| {
+            let name = if n == 1 {
+                format!("{stem} copy{ext}")
+            } else {
+                format!("{stem} copy {n}{ext}")
+            };
+            parent.join(name)
+        })
+        .find(|candidate| !candidate.exists())
+}
+
+/// Moves a file or folder to the Trash the way the desktop does it.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(crate) fn trash_item(path: &Path) -> Result<(), String> {
+    let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| home_dir().map(|h| h.join(".local/share")))
+        .ok_or_else(|| "no home".to_string())?;
+    let trash = data.join("Trash");
+    let (files, info) = (trash.join("files"), trash.join("info"));
+    fs::create_dir_all(&files).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&info).map_err(|e| e.to_string())?;
+    let leaf = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (target, sheet) = (1..10_000)
+        .map(|n| {
+            let name = if n == 1 {
+                leaf.clone()
+            } else {
+                format!("{leaf}.{n}")
+            };
+            (files.join(&name), info.join(format!("{name}.trashinfo")))
+        })
+        .find(|(a, b)| !a.exists() && !b.exists())
+        .ok_or_else(|| "trash is full of this name".to_string())?;
+    let encoded: String = path
+        .to_string_lossy()
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect();
+    let when = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let stamp = iso_utc(when);
+    fs::write(
+        &sheet,
+        format!("[Trash Info]\nPath={encoded}\nDeletionDate={stamp}\n"),
+    )
+    .map_err(|e| e.to_string())?;
+    if fs::rename(&path, &target).is_ok() {
+        return Ok(());
+    }
+    let _ = fs::remove_file(&sheet);
+    // Another volume: let the desktop's own tool work out that trash.
+    let out = std::process::Command::new("gio")
+        .arg("trash")
+        .arg(&path)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn trash_item(path: &Path) -> Result<(), String> {
+    let script = format!(
+        "tell application \"Finder\" to delete POSIX file \"{}\"",
+        path.display()
+            .to_string()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+    );
+    let out = std::process::Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn trash_item(path: &Path) -> Result<(), String> {
+    let what = if path.is_dir() {
+        "DeleteDirectory"
+    } else {
+        "DeleteFile"
+    };
+    let script = format!(
+        "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::{what}('{}', 'OnlyErrorDialogs', 'SendToRecycleBin')",
+        path.display().to_string().replace('\'', "''")
+    );
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// An application from a .desktop file that takes a kind of file.
+#[derive(Clone, Debug)]
+pub(crate) struct DesktopApp {
+    pub(crate) name: String,
+    pub(crate) exec: String,
+    pub(crate) terminal: bool,
+}
+
+impl DesktopApp {
+    pub(crate) fn launch(&self, path: &Path) -> Result<(), String> {
+        let file = path.display().to_string();
+        let mut argv: Vec<String> = Vec::new();
+        let mut placed = false;
+        for word in split_exec(&self.exec) {
+            match word.as_str() {
+                "%f" | "%F" | "%u" | "%U" => {
+                    argv.push(file.clone());
+                    placed = true;
+                }
+                w if w.starts_with('%') && w.len() == 2 => {}
+                _ => argv.push(word),
+            }
+        }
+        if !placed {
+            argv.push(file);
+        }
+        let Some((program, rest)) = argv.split_first() else {
+            return Err(String::new());
+        };
+        let mut command = if self.terminal {
+            let mut c = std::process::Command::new("xdg-terminal-exec");
+            c.args(&argv);
+            c
+        } else {
+            let mut c = std::process::Command::new(program);
+            c.args(rest);
+            c
+        };
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Splits an Exec= line on spaces, honouring double quotes.
+fn split_exec(exec: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quoted = false;
+    let mut chars = exec.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => quoted = !quoted,
+            '\\' if quoted => {
+                if let Some(next) = chars.next() {
+                    word.push(next);
+                }
+            }
+            ' ' if !quoted => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            other => word.push(other),
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
+/// The applications on this desktop that declare the file's MIME type,
+/// read from the .desktop files in the XDG data directories.
+#[cfg(target_os = "linux")]
+pub(crate) fn apps_for(path: &Path) -> Vec<DesktopApp> {
+    let mime = std::process::Command::new("xdg-mime")
+        .args(["query", "filetype"])
+        .arg(path)
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap_or_default();
+    if mime.is_empty() {
+        return Vec::new();
+    }
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(home) = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| home_dir().map(|h| h.join(".local/share")))
+    {
+        dirs.push(home.join("applications"));
+    }
+    let system = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".to_string());
+    dirs.extend(
+        system
+            .split(':')
+            .map(|d| PathBuf::from(d).join("applications")),
+    );
+    let mut seen = HashSet::new();
+    let mut apps = Vec::new();
+    for dir in dirs {
+        let Ok(items) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for item in items.flatten() {
+            let file = item.path();
+            if file.extension().and_then(|e| e.to_str()) != Some("desktop") {
+                continue;
+            }
+            let id = item.file_name();
+            if !seen.insert(id) {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(&file) else {
+                continue;
+            };
+            if let Some(app) = desktop_app(&text, &mime) {
+                apps.push(app);
+            }
+        }
+    }
+    apps.sort_by_key(|a| a.name.to_lowercase());
+    apps.dedup_by(|a, b| a.name == b.name && a.exec == b.exec);
+    apps
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn apps_for(_path: &Path) -> Vec<DesktopApp> {
+    Vec::new()
+}
+
+/// The entry of a .desktop file if it is shown and takes the MIME type.
+pub(crate) fn desktop_app(text: &str, mime: &str) -> Option<DesktopApp> {
+    let mut name = None;
+    let mut exec = None;
+    let mut terminal = false;
+    let mut takes = false;
+    let mut in_entry = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        if !in_entry {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "Name" => name = Some(value.trim().to_string()),
+            "Exec" => exec = Some(value.trim().to_string()),
+            "Terminal" => terminal = value.trim() == "true",
+            "NoDisplay" | "Hidden" if value.trim() == "true" => return None,
+            "Type" if value.trim() != "Application" => return None,
+            "MimeType" => {
+                let family = mime.split_once('/').map(|(f, _)| format!("{f}/*"));
+                takes = value
+                    .split(';')
+                    .map(str::trim)
+                    .any(|m| m == mime || family.as_deref() == Some(m));
+            }
+            _ => {}
+        }
+    }
+    if !takes {
+        return None;
+    }
+    Some(DesktopApp {
+        name: name?,
+        exec: exec?,
+        terminal,
+    })
+}
+
+#[cfg(windows)]
+fn open_with_chooser(path: &Path) -> Result<(), String> {
+    std::process::Command::new("rundll32.exe")
+        .arg("shell32.dll,OpenAs_RunDLL")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(windows))]
+fn open_with_chooser(_path: &Path) -> Result<(), String> {
+    Err(String::new())
+}
+
+/// "2026-10-16T19:27:00" for a Unix time, the shape .trashinfo wants.
+fn iso_utc(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let rest = secs.rem_euclid(86_400);
+    // Civil-from-days (Howard Hinnant).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}",
+        rest / 3600,
+        rest % 3600 / 60,
+        rest % 60
+    )
 }

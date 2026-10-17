@@ -323,14 +323,14 @@ fn tree(
             response.context_menu(|ui| {
                 let mut first = true;
                 for action in RowAction::ALL {
-                    if !action.offered()
+                    if !action.offered(context.on_disk)
                         || !action.shown(context.on_disk)
                         || matches!(
                             action,
                             RowAction::View
                                 | RowAction::OpenInPane
                                 | RowAction::Pin
-                                | RowAction::OpenArchive
+                                | RowAction::OpenWith
                                 | RowAction::ExtractAll
                                 | RowAction::TestArchive
                         )

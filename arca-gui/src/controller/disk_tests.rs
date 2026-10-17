@@ -238,9 +238,13 @@ fn archive_only_actions_stay_off_while_browsing_the_disk() {
     for row in rows.iter().filter(|row| !row.up) {
         app.set_checked(row, true);
     }
+    // Removing from the disk asks first, like removing from a zip, and
+    // nothing goes until the answer is yes.
     app.request_delete();
+    assert!(app.state.confirm_delete.is_some());
+    assert!(!app.state.error);
+    app.confirm_delete(false);
     assert!(app.state.confirm_delete.is_none());
-    assert!(app.state.error);
     assert!(std::fs::metadata(room.path("top.txt")).is_ok());
 }
 
@@ -347,5 +351,35 @@ fn a_remembered_flat_view_does_not_apply_on_disk() {
     assert_eq!(
         names(&app),
         vec!["deeper".to_string(), "note.txt".to_string()]
+    );
+}
+
+#[test]
+fn a_duplicate_sits_beside_the_original_with_copy_in_its_name() {
+    let room = populated();
+    let first = duplicate_target(&room.path("top.txt")).unwrap();
+    assert_eq!(first, room.path("top copy.txt"));
+    std::fs::write(&first, b"x").unwrap();
+    assert_eq!(
+        duplicate_target(&room.path("top.txt")).unwrap(),
+        room.path("top copy 2.txt")
+    );
+    assert_eq!(
+        duplicate_target(&room.path("nested")).unwrap(),
+        room.path("nested copy")
+    );
+}
+
+#[test]
+fn a_desktop_file_is_an_opener_when_it_names_the_mime_type() {
+    let text = "[Desktop Entry]\nType=Application\nName=Pad\nExec=pad %U\nMimeType=text/plain;text/x-log;\n";
+    let app = desktop_app(text, "text/x-log").unwrap();
+    assert_eq!((app.name.as_str(), app.exec.as_str()), ("Pad", "pad %U"));
+    assert!(desktop_app(text, "image/png").is_none());
+    let hidden = "[Desktop Entry]\nType=Application\nName=Pad\nExec=pad\nMimeType=text/plain;\nNoDisplay=true\n";
+    assert!(desktop_app(hidden, "text/plain").is_none());
+    assert_eq!(
+        split_exec("\"/opt/my app/bin\" --open %f"),
+        vec!["/opt/my app/bin", "--open", "%f"]
     );
 }

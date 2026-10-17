@@ -201,6 +201,11 @@ pub(crate) struct Shell {
     pointer_focused: bool,
     // The pane whose filter row is open, and what is typed in it.
     pane_filter: Option<(usize, String)>,
+    // What was cut or copied on the disk, as roots, and whether it was cut.
+    disk_clip: Option<(Vec<String>, bool)>,
+    // The roots to move into the folder being named, for "New folder with
+    // selection".
+    new_folder_with: Option<Vec<String>>,
     name_value: String,
     focus_name: bool,
     rename_value: String,
@@ -276,6 +281,8 @@ impl Shell {
             peek_loaded: None,
             pointer_focused: false,
             pane_filter: None,
+            disk_clip: None,
+            new_folder_with: None,
             name_value: String::new(),
             focus_name: false,
             rename_value: String::new(),
@@ -714,6 +721,9 @@ impl Shell {
     }
 
     fn can_copy_files(&self) -> bool {
+        if self.controller.on_disk() {
+            return self.background_idle() && self.selected_count() > 0;
+        }
         clipboard_action_allowed(
             clipboard::AVAILABLE,
             self.background_idle(),
@@ -724,6 +734,9 @@ impl Shell {
     }
 
     fn can_paste_files(&self) -> bool {
+        if self.controller.on_disk() {
+            return self.background_idle() && self.disk_clip.is_some();
+        }
         clipboard_action_allowed(
             clipboard::AVAILABLE,
             self.background_idle(),
@@ -881,7 +894,7 @@ impl Shell {
     }
 
     fn begin_rename(&mut self, path: &str, in_tree: bool) {
-        if !self.controller.writable() {
+        if !self.controller.can_change() {
             return;
         }
         let trimmed = path.trim_end_matches('/');
@@ -914,7 +927,21 @@ impl Shell {
         match kind {
             ModalKind::NewFolder => {
                 let Some(archive) = self.controller.state.archive.clone() else {
+                    let carried = self.new_folder_with.take();
                     self.close_name();
+                    if !self.controller.on_disk() {
+                        return;
+                    }
+                    if name.is_empty() || name.contains('/') || name.contains('\\') {
+                        self.controller.state.notice = s.bad_name.to_string();
+                        self.controller.state.error = true;
+                        return;
+                    }
+                    if let Some(dir) = self.controller.create_disk_folder(&name) {
+                        if let Some(roots) = carried.filter(|roots| !roots.is_empty()) {
+                            self.controller.move_on_disk(&roots, &dir);
+                        }
+                    }
                     return;
                 };
                 if name.is_empty() || name.contains('/') || name.contains('\\') {
@@ -978,7 +1005,7 @@ impl Shell {
         if !self.background_idle() {
             return;
         }
-        if action.writable_only() && !self.controller.writable() {
+        if action.writable_only() && !self.controller.can_change() {
             return;
         }
         if !action.shown(self.controller.on_disk()) {
@@ -1027,6 +1054,49 @@ impl Shell {
                 }
             }
             RowAction::Delete => self.controller.dispatch(AppAction::RequestDelete),
+            RowAction::Trash => {
+                let roots = self.controller.selected_roots();
+                self.controller.remove_on_disk(&roots, true);
+            }
+            RowAction::Duplicate => {
+                let roots = self.controller.selected_roots();
+                self.controller.duplicate_on_disk(&roots);
+            }
+            RowAction::MoveTo | RowAction::CopyTo => {
+                let roots = self.controller.selected_roots();
+                if roots.is_empty() {
+                    return;
+                }
+                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                    let target = crate::controller::disk::disk_dir(&dir);
+                    if action == RowAction::MoveTo {
+                        self.controller.move_on_disk(&roots, &target);
+                    } else {
+                        self.controller.copy_on_disk(&roots, &target);
+                    }
+                }
+            }
+            RowAction::OpenWith => {
+                if let Some(row) = row.filter(|row| !row.is_dir) {
+                    self.controller.open_with(&disk_path(&row.path), None);
+                }
+            }
+            RowAction::NewFolderWith => {
+                let roots = self.controller.selected_roots();
+                if roots.is_empty() {
+                    return;
+                }
+                self.new_folder_with = Some(roots);
+                self.overflow_action(OverflowAction::NewFolder);
+            }
+            RowAction::Properties => {
+                let path = match row {
+                    Some(row) if !row.up => disk_path(&row.path),
+                    _ => disk_path(&self.controller.state.current_dir),
+                };
+                let pinned = self.controller.is_pinned(&path);
+                self.properties = Some(inspect(&path, pinned));
+            }
             RowAction::Copy => self.dispatch_clipboard(false),
             RowAction::Cut => self.dispatch_clipboard(true),
             RowAction::Paste => self.dispatch_paste(),
@@ -1037,7 +1107,6 @@ impl Shell {
                 let inputs = self.controller.selected_disk_paths();
                 self.controller.dispatch(AppAction::PrepareCompress(inputs));
             }
-            RowAction::OpenArchive => self.begin_dialog(DialogKind::Open),
             RowAction::ExtractAll => self.begin_dialog(DialogKind::Extract {
                 only_checked: false,
             }),
@@ -1113,6 +1182,13 @@ impl Shell {
         if self.typing() || !self.background_idle() {
             return;
         }
+        if self.controller.on_disk() {
+            let roots = self.controller.selected_roots();
+            if !roots.is_empty() {
+                self.disk_clip = Some((roots, cut));
+            }
+            return;
+        }
         if self.controller.state.archive.is_none() || self.selected_count() == 0 {
             return;
         }
@@ -1133,6 +1209,19 @@ impl Shell {
 
     fn dispatch_paste(&mut self) {
         if self.typing() || !self.background_idle() {
+            return;
+        }
+        if self.controller.on_disk() {
+            let Some((roots, cut)) = self.disk_clip.clone() else {
+                return;
+            };
+            let target = self.controller.state.current_dir.clone();
+            if cut {
+                self.controller.move_on_disk(&roots, &target);
+                self.disk_clip = None;
+            } else {
+                self.controller.copy_on_disk(&roots, &target);
+            }
             return;
         }
         if self.controller.state.archive.is_none() {
@@ -1513,8 +1602,13 @@ impl Shell {
     }
 
     fn list_key(&mut self, key: &str, modifiers: egui::Modifiers) {
-        if key == "delete" && self.background_idle() && self.controller.writable() {
-            self.controller.dispatch(AppAction::RequestDelete);
+        if key == "delete" && self.background_idle() && self.controller.can_change() {
+            if self.controller.on_disk() && !modifiers.shift {
+                let roots = self.controller.selected_roots();
+                self.controller.remove_on_disk(&roots, true);
+            } else {
+                self.controller.dispatch(AppAction::RequestDelete);
+            }
             return;
         }
         let rows = self.controller.visible_rows();

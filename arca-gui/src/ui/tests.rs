@@ -147,7 +147,8 @@ fn read_only_archives_never_offer_mutation_actions() {
 fn the_row_menu_only_offers_the_clipboard_where_there_is_one() {
     // A menu entry that can never do anything is worse than no entry, so
     // copy, cut and paste are left out rather than greyed out.
-    let offered: Vec<bool> = RowAction::ALL.iter().map(|a| a.offered()).collect();
+    let offered: Vec<bool> = RowAction::ALL.iter().map(|a| a.offered(false)).collect();
+    assert!(RowAction::ALL.iter().all(|a| a.offered(true)));
     for action in [RowAction::Copy, RowAction::Cut, RowAction::Paste] {
         assert_eq!(offered[action as usize], clipboard::AVAILABLE);
     }
@@ -171,12 +172,18 @@ fn the_menu_under_the_last_row_asks_for_nothing_that_needs_a_row() {
                 | RowAction::Paste
                 | RowAction::SelectAll
                 | RowAction::Pin
-                | RowAction::OpenArchive
+                | RowAction::Properties
                 | RowAction::Compress
                 | RowAction::ExtractAll
                 | RowAction::TestArchive
         ));
-        assert!(action.about_the_place() || matches!(action, RowAction::Compress | RowAction::Pin));
+        assert!(
+            action.about_the_place()
+                || matches!(
+                    action,
+                    RowAction::Compress | RowAction::Pin | RowAction::Properties
+                )
+        );
     }
     // Making a folder is the reason the menu exists, and it is the one
     // entry the row menu must not repeat.
