@@ -179,7 +179,7 @@ fn sevenz_cancellation_does_not_prepare_output() {
             &[room.path("source")],
             Format::SevenZ,
             Codec::Deflate,
-            Level::Normal,
+            Level::NORMAL,
             &|_, _, _| false,
             (None, false)
         ),
@@ -237,7 +237,7 @@ fn sevenz_creation_levels_and_options_are_forwarded_without_zip_codes() {
     let room = Room::new();
     let input = room.path("a.txt");
     fs::write(&input, b"example contents").unwrap();
-    for level in [Level::Store, Level::Fast, Level::Normal, Level::Best] {
+    for level in [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST] {
         let out = room.path("created.7z");
         compress(
             &out,
@@ -252,7 +252,7 @@ fn sevenz_creation_levels_and_options_are_forwarded_without_zip_codes() {
         let entries = list_entries(&out, None, &|_, _, _| true).unwrap().0;
         assert_eq!(
             entries[0].method,
-            if level == Level::Store {
+            if level == Level::STORE {
                 arca_core::Method::Store
             } else {
                 arca_core::Method::Lzma2
@@ -265,7 +265,7 @@ fn sevenz_creation_levels_and_options_are_forwarded_without_zip_codes() {
         &[input],
         Format::SevenZ,
         Codec::Deflate,
-        Level::Normal,
+        Level::NORMAL,
         &|_, _, _| true,
         (None, true)
     )
@@ -283,7 +283,7 @@ fn sevenz_creation_from_current_directory_preserves_children_and_empty_directori
                 &[PathBuf::from(input)],
                 Format::SevenZ,
                 Codec::Store,
-                Level::Store,
+                Level::STORE,
                 &|_, _, _| true,
                 (None, false),
             )
@@ -425,7 +425,7 @@ fn sevenz_creation_rejects_symlinks_instead_of_silently_omitting_sources() {
         &[input],
         Format::SevenZ,
         Codec::Deflate,
-        Level::Normal,
+        Level::NORMAL,
         &|_, _, _| true,
         (None, false)
     )
@@ -472,7 +472,7 @@ fn sevenz_cancelled_file_preserves_target_and_removes_staging_file() {
         &[input],
         Format::SevenZ,
         Codec::Store,
-        Level::Store,
+        Level::STORE,
         &|_, _, _| true,
         (None, false),
     )

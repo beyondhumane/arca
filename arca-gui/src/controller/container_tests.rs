@@ -22,7 +22,7 @@ fn container(dir: &Path, name: &str) -> PathBuf {
         size: 20,
         mtime: 0,
         codec: Codec::Store,
-        level: Level::Store,
+        level: Level::STORE,
     }];
     arca_zip::create_zip(&archive, &files, 1, None, &|_, _, _| true).unwrap();
     archive
@@ -94,7 +94,7 @@ fn zip_container_mutation_jobs_are_rejected_before_touching_the_archive() {
             inputs: vec![],
             dir: String::new(),
             codec: Codec::Store,
-            level: Level::Store,
+            level: Level::STORE,
             password: None,
         },
     ];

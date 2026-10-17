@@ -7,7 +7,7 @@
 
 ### Pack faster. Unpack safer.
 
-A cross-platform archiver in Rust. ZIP, 7z, TAR and RAR, parallel Zstandard, AES-256, and safe-Rust archive parsers.
+A file explorer and archiver in one window, written in Rust. Browse your disk, step into ZIP, 7z, TAR and RAR archives as if they were folders, and compress with parallel Zstandard and AES-256 behind safe-Rust parsers.
 
 [![CI](https://github.com/beyondhumane/arca/actions/workflows/ci.yml/badge.svg)](https://github.com/beyondhumane/arca/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/beyondhumane/arca?color=0066FF)](https://github.com/beyondhumane/arca/releases/latest) [![License](https://img.shields.io/badge/license-Apache--2.0-FF8A3D)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.95%2B-0E1628)](Cargo.toml)
 
@@ -15,7 +15,7 @@ A cross-platform archiver in Rust. ZIP, 7z, TAR and RAR, parallel Zstandard, AES
 
 <br>
 
-<img src="docs/images/landing.webp" alt="The Arca website" width="900">
+<img src="docs/images/desktop.webp" alt="The Arca window: sidebar with places and devices, two folder panes and the preview of a Rust file" width="900">
 
 </div>
 
@@ -29,6 +29,7 @@ A cross-platform archiver in Rust. ZIP, 7z, TAR and RAR, parallel Zstandard, AES
 | **Speed** | Multi-threaded compression, parallel `.zip` extraction, sub-millisecond start |
 | **Safety** | `#![forbid(unsafe_code)]` parsers, bounded header reads, Zip Slip defence |
 | **Encryption** | ZIP AES-256 (WinZip AE-2); 7z AES-256 with optional hidden names. [Limits](docs/guide/encryption.md) |
+| **Desktop** | `arca-gui`: a file explorer that opens archives in place. Panes or details view, per-pane filters, preview with syntax highlighting, hex and images, folder peeking, pointer focus, devices with mount/format/label, Strata-style context menus, in-app updates |
 | **Interfaces** | `arca` command line, `arca-gui` desktop window, Windows 11 Explorer menu |
 | **Platforms** | Windows, macOS (Apple silicon and Intel), Linux |
 
@@ -41,6 +42,10 @@ cargo build --release          # binaries in target/release/
 ```
 
 Details, checksums and the pure-Rust build are in [Installation](docs/guide/installation.md).
+
+## The window
+
+`arca-gui` starts in the folder you left it in and behaves like any file explorer: places, pinned folders and devices in the sidebar, folders in side-by-side panes or a details table, a preview panel that shows text with syntax highlighting, hex dumps and images. Double-click an archive and it opens in place, with the same panes, filters and preview; **Compress** on any selection and **Extract** on any archive, with or without a password, are one right-click away. Read more in [The desktop workspace](docs/guide/desktop-app.md).
 
 ## Quick start
 

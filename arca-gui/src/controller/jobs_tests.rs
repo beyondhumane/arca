@@ -223,7 +223,7 @@ fn a_question_from_one_task_is_answered_to_that_task() {
     started.recv().unwrap();
     settle_until(&mut app, |app| app.conflict().is_some());
     assert_eq!(app.conflict(), Some((asking, "there.txt")));
-    app.answer_conflict(Answer::SkipAll);
+    app.answer_conflict(Answer::SkipAll, None);
     assert_eq!(answered_rx.recv().unwrap(), Answer::SkipAll);
     assert!(app.conflict().is_none());
     release.send(()).unwrap();
@@ -243,7 +243,7 @@ fn two_real_extractions_finish_with_their_own_results() {
         &[second_dir],
         Format::Zip,
         Codec::Deflate,
-        Level::Normal,
+        Level::NORMAL,
         &|_, _, _| true,
         (None, false),
     )
@@ -430,4 +430,60 @@ fn a_worker_that_dies_without_a_word_fails_its_row() {
     assert_eq!(status(&app, next), TaskStatus::Running);
     release.send(()).unwrap();
     settle(&mut app);
+}
+
+#[test]
+fn an_update_check_that_ends_without_an_answer_stops_being_waited_for() {
+    let mut app = AppController::new(Settings::default());
+    let (tx, rx) = channel();
+    app.state.update_rx = Some(rx);
+    app.receive();
+    assert!(app.state.update_rx.is_some());
+    drop::<Sender<Result<Option<Release>, ()>>>(tx);
+    app.receive();
+    assert!(app.state.update_rx.is_none());
+    assert!(app.state.update.is_none());
+}
+
+#[test]
+fn an_edit_can_still_be_undone_after_the_archive_is_read_again() {
+    let room = Room::new();
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("a.txt"), b"first contents").unwrap();
+    fs::write(source.join("b.txt"), b"second contents").unwrap();
+    let archive = room.path("edit.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.open_with_password(archive.clone(), None);
+    settle(&mut app);
+    let before = app.state.entries.len();
+    let name = app
+        .state
+        .entries
+        .iter()
+        .find(|entry| entry.name.ends_with("a.txt"))
+        .unwrap()
+        .name
+        .clone();
+    app.run_job(Job::Delete {
+        archive: archive.clone(),
+        names: vec![name],
+        password: None,
+    });
+    settle(&mut app);
+    assert_eq!(app.state.entries.len(), before - 1);
+    assert!(app.state.undo.is_some());
+    app.undo_last();
+    settle(&mut app);
+    assert_eq!(app.state.entries.len(), before);
 }

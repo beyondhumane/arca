@@ -4,7 +4,7 @@ Status: **stages 1 and 2 written, stage 2 half tested.** The new installer exist
 
 ## What exists today
 
-`arca-setup` is a workspace crate with a 720 × 420 GPUI window that follows the "Monolito fluido" proposal: welcome, customize, installing, done and error, in Spanish and English depending on the system language, with Sora and Inter embedded and all artwork in vector form. Behind it sits an engine that ports what `arca.iss` did.
+`arca-setup` is a workspace crate with a 720 × 420 egui window (eframe over OpenGL) that follows the "Monolito fluido" proposal: welcome, customize, installing, done and error, in Spanish and English depending on the system language, with Sora and Inter embedded and all artwork in vector form. Behind it sits an engine that ports what `arca.iss` did.
 
 | Screen | What it does |
 | --- | --- |
@@ -86,8 +86,8 @@ It must also **adopt an existing Inno installation**: same `AppId` (`{7C4E0E4A-6
 
 ## Decisions already made
 
-- **GPUI, not another stack.** It is the one the project already builds and packages; it shares dependencies with `arca-gui` and the CI cache.
-- **SVG with GPUI's `resvg`.** The symbol, the logo and the backgrounds are vector. Each SVG carries an intrinsic size of about 1.5 times its on-screen size, because GPUI rasterizes at double size: much larger and the sampling produces jagged edges.
+- **egui, not another stack.** It is the one `arca-gui` uses since the move back from GPUI (see `migration-to-egui.md`); both crates share eframe and the CI cache.
+- **SVG through `egui_extras` (`resvg`).** The symbol, the logo and the backgrounds are vector. Each SVG carries an intrinsic size of about 1.5 times its on-screen size, so the texture `egui_extras` rasterizes is scaled down rather than up and the edges stay smooth.
 - **Backgrounds without blur filters.** Each `feGaussianBlur` forced a whole canvas to be rasterized, and the screen took seconds to paint the background.
 - **Sora and Inter embedded.** Sora SemiBold (headings, buttons, emphasis) and Inter Regular (body), both under the OFL, which ships in `arca-setup/assets/fonts`. If they fail to load, the installer falls back to the system font.
 - **The tagline is outlined**, extracted from Sora's glyphs, so the logo looks the same without the font installed.

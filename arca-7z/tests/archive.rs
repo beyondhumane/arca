@@ -195,10 +195,10 @@ fn empty_and_unicode_roundtrip_all_levels_and_password_modes() {
         },
     ];
     for (level, password, hide_names) in [
-        (Level::Store, None, false),
-        (Level::Fast, None, false),
-        (Level::Normal, Some("p\u{00e4}ss\u{1f511}"), false),
-        (Level::Best, Some("p\u{00e4}ss\u{1f511}"), true),
+        (Level::STORE, None, false),
+        (Level::FAST, None, false),
+        (Level::NORMAL, Some("p\u{00e4}ss\u{1f511}"), false),
+        (Level::BEST, Some("p\u{00e4}ss\u{1f511}"), true),
     ] {
         let path = temp.path().join("out.7z");
         create_7z(

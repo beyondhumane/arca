@@ -1556,7 +1556,7 @@ fn rewrite(
                 .duration_since(std::time::UNIX_EPOCH)
                 .ok()
                 .map(|d| d.as_secs() as i64);
-            w.add_with_password(&a.name, io::empty(), Codec::Store, Level::Store, now, None)?;
+            w.add_with_password(&a.name, io::empty(), Codec::Store, Level::STORE, now, None)?;
             continue;
         };
         let meta = std::fs::metadata(from)?;
@@ -1913,18 +1913,18 @@ mod tests {
 
     #[test]
     fn round_trip_deflate() {
-        round_trip(Codec::Deflate, Level::Normal);
+        round_trip(Codec::Deflate, Level::NORMAL);
     }
 
     #[cfg(feature = "codecs-native")]
     #[test]
     fn round_trip_zstd() {
-        round_trip(Codec::Zstd, Level::Normal);
+        round_trip(Codec::Zstd, Level::NORMAL);
     }
 
     #[test]
     fn round_trip_store() {
-        round_trip(Codec::Store, Level::Store);
+        round_trip(Codec::Store, Level::STORE);
     }
 
     /// Whoever deflated the block, zlib has to be able to read it back.
@@ -1946,7 +1946,7 @@ mod tests {
             noise.extend_from_slice(&x.to_le_bytes());
         }
         let inputs: [&[u8]; 4] = [b"", b"a", &plain, &noise];
-        for level in [Level::Store, Level::Fast, Level::Normal, Level::Best] {
+        for level in [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST] {
             for want in inputs {
                 let packed = deflate_block(want, level).unwrap();
                 let mut got = Vec::new();
@@ -1965,7 +1965,7 @@ mod tests {
             "a.txt",
             &b"content original"[..],
             Codec::Store,
-            Level::Store,
+            Level::STORE,
             None,
         )
         .unwrap();
@@ -1983,7 +1983,7 @@ mod tests {
     #[test]
     fn extract_entry_with_an_entry_that_lies_does_not_panic() {
         let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
-        w.add("a.txt", &b"content"[..], Codec::Store, Level::Store, None)
+        w.add("a.txt", &b"content"[..], Codec::Store, Level::STORE, None)
             .unwrap();
         let buf = w.finish().unwrap().into_inner();
         let real = ZipArchive::open(IoCursor::new(buf.clone()))
@@ -2012,7 +2012,7 @@ mod tests {
                 &format!("f{i}.txt"),
                 body.as_bytes(),
                 Codec::Deflate,
-                Level::Normal,
+                Level::NORMAL,
                 None,
             )
             .unwrap();
@@ -2036,7 +2036,7 @@ mod tests {
             "secret.txt",
             body,
             codec,
-            Level::Normal,
+            Level::NORMAL,
             None,
             Some(password),
         )
@@ -2157,7 +2157,7 @@ mod tests {
                 &format!("f{i}.txt"),
                 &body[..],
                 Codec::Deflate,
-                Level::Normal,
+                Level::NORMAL,
                 None,
             )
             .unwrap();
@@ -2185,7 +2185,7 @@ mod tests {
             "only.txt",
             &b"payload"[..],
             Codec::Deflate,
-            Level::Normal,
+            Level::NORMAL,
             None,
         )
         .unwrap();
@@ -2226,7 +2226,7 @@ mod tests {
     fn putting_a_password_on_a_plain_archive() {
         let body = b"plain to begin with ".repeat(300);
         let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
-        w.add("secret.txt", &body[..], Codec::Deflate, Level::Normal, None)
+        w.add("secret.txt", &body[..], Codec::Deflate, Level::NORMAL, None)
             .unwrap();
         let plain = w.finish().unwrap().into_inner();
 
@@ -2326,7 +2326,7 @@ mod tests {
                 n,
                 &b"identical contents"[..],
                 Codec::Store,
-                Level::Store,
+                Level::STORE,
                 None,
                 Some("k"),
             )
@@ -2390,7 +2390,7 @@ mod tests {
                 &format!("f{i:04}.txt"),
                 &b"x"[..],
                 Codec::Deflate,
-                Level::Normal,
+                Level::NORMAL,
                 None,
             )
             .unwrap();
@@ -2454,7 +2454,7 @@ mod tests {
                 size,
                 mtime: 0,
                 codec: Codec::Deflate,
-                level: Level::Normal,
+                level: Level::NORMAL,
             })
             .collect();
         let cut = batches(&files, 10);
@@ -2503,7 +2503,7 @@ mod tests {
                 size: body.len() as u64,
                 mtime: 1_700_000_000 + i as i64 * 120,
                 codec: Codec::Deflate,
-                level: Level::Normal,
+                level: Level::NORMAL,
             });
         }
 
@@ -2566,13 +2566,13 @@ mod tests {
             size: body.len() as u64,
             mtime: 1_700_000_000,
             codec: Codec::Zstd,
-            level: Level::Normal,
+            level: Level::NORMAL,
         }];
 
         for (threads, workers) in [(1, 0), (2, 1)] {
             assert!(files[0].size > IN_FLIGHT_PER_THREAD * threads as u64);
             let mut reference =
-                zstd::stream::write::Encoder::new(Vec::new(), Level::Normal.to_zstd()).unwrap();
+                zstd::stream::write::Encoder::new(Vec::new(), Level::NORMAL.to_zstd()).unwrap();
             reference.multithread(workers).unwrap();
             for chunk in body.chunks(STREAM_BUF) {
                 reference.write_all(chunk).unwrap();
@@ -2629,7 +2629,7 @@ mod tests {
                 size: 8,
                 mtime: 0,
                 codec: Codec::Deflate,
-                level: Level::Normal,
+                level: Level::NORMAL,
             });
         }
         let e = create_zip(&room.join("out.zip"), &files, 2, None, &|_, _, _| false).unwrap_err();
@@ -2668,7 +2668,7 @@ mod tests {
         let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
         for name in ["notes.txt", "old/one.bin", "old/deep/two.bin"] {
             let body = format!("body of {name} ").repeat(40).into_bytes();
-            w.add(name, &body[..], Codec::Deflate, Level::Normal, None)
+            w.add(name, &body[..], Codec::Deflate, Level::NORMAL, None)
                 .unwrap();
         }
         let archive = room.join("a.zip");
@@ -2781,11 +2781,11 @@ mod tests {
             "dir\\a.txt",
             &b"viejo"[..],
             Codec::Store,
-            Level::Store,
+            Level::STORE,
             None,
         )
         .unwrap();
-        w.add("dir\\b.txt", &b"otro"[..], Codec::Store, Level::Store, None)
+        w.add("dir\\b.txt", &b"otro"[..], Codec::Store, Level::STORE, None)
             .unwrap();
         let archive = room.join("a.zip");
         std::fs::write(&archive, w.finish().unwrap().into_inner()).unwrap();
@@ -2796,7 +2796,7 @@ mod tests {
             source: Some(fresh),
             name: "dir/a.txt".into(),
             codec: Codec::Store,
-            level: Level::Store,
+            level: Level::STORE,
         }];
         let out = room.join("b.zip");
         add_entries(&archive, &out, None, &extra, &|_, _, _| true).unwrap();
@@ -2827,7 +2827,7 @@ mod tests {
             "keep.txt",
             &b"hola"[..],
             Codec::Deflate,
-            Level::Normal,
+            Level::NORMAL,
             None,
         )
         .unwrap();
@@ -2839,7 +2839,7 @@ mod tests {
             source: None,
             name: "nueva carpeta/".into(),
             codec: Codec::Store,
-            level: Level::Store,
+            level: Level::STORE,
         }];
         add_entries(&archive, &out, None, &extra, &|_, _, _| true).unwrap();
 
@@ -2871,7 +2871,7 @@ mod tests {
                 &format!("f{i}.txt"),
                 &body[..],
                 Codec::Deflate,
-                Level::Normal,
+                Level::NORMAL,
                 None,
             )
             .unwrap();
@@ -2913,7 +2913,7 @@ mod tests {
         let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
         for name in ["keep.txt", "replace.txt"] {
             let body = format!("original {name} ").repeat(40).into_bytes();
-            w.add(name, &body[..], Codec::Deflate, Level::Normal, None)
+            w.add(name, &body[..], Codec::Deflate, Level::NORMAL, None)
                 .unwrap();
         }
         let archive = room.join("a.zip");
@@ -2926,13 +2926,13 @@ mod tests {
                 source: Some(fresh.clone()),
                 name: "replace.txt".into(),
                 codec: Codec::Deflate,
-                level: Level::Normal,
+                level: Level::NORMAL,
             },
             Addition {
                 source: Some(fresh.clone()),
                 name: "sub/added.bin".into(),
                 codec: Codec::Store,
-                level: Level::Store,
+                level: Level::STORE,
             },
         ];
         let out = room.join("b.zip");
@@ -2975,7 +2975,7 @@ mod tests {
             source: None,
             name: "sub/".into(),
             codec: Codec::Store,
-            level: Level::Store,
+            level: Level::STORE,
         }];
         let bodies: Vec<Vec<u8>> = (0..25)
             .map(|i| format!("number {i} ").repeat(300).into_bytes())
@@ -2987,7 +2987,7 @@ mod tests {
                 source: Some(path),
                 name: format!("sub/f{i}.txt"),
                 codec: Codec::Deflate,
-                level: Level::Normal,
+                level: Level::NORMAL,
             });
         }
         let out = room.join("b.zip");
@@ -3109,7 +3109,7 @@ mod tests {
             "nuevo.txt",
             &b"contenido".repeat(30)[..],
             Codec::Deflate,
-            Level::Normal,
+            Level::NORMAL,
             None,
             Some("secreto"),
         )

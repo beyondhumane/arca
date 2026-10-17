@@ -49,8 +49,8 @@ zstd = { version = "0.13", features = ["zstdmt"] }
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
 
-# `cargo run` compila sin optimizar, y eso con GPUI no es "un poco mas lento":
-# su motor de layout, el modelador de texto y el rasterizador rehacen su trabajo
+# `cargo run` compila sin optimizar, y eso en la ventana no es "un poco mas lento":
+# el layout de egui, el modelador de texto y el teselador rehacen su trabajo
 # en cada fotograma, y a opt-level 0 eso se ve como tirones al arrastrar y al
 # marcar. Nada de esto es codigo de Arca ni se depura nunca, asi que las
 # dependencias van optimizadas tambien en depuracion.

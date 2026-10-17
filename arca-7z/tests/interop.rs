@@ -32,10 +32,10 @@ fn seven_zip_reads_arca_and_arca_reads_seven_zip() {
         name: name.into(),
     });
     for (level, password, hide_names) in [
-        (Level::Store, None, false),
-        (Level::Fast, Some("secret"), false),
-        (Level::Normal, Some("secret"), true),
-        (Level::Store, Some("secret"), true),
+        (Level::STORE, None, false),
+        (Level::FAST, Some("secret"), false),
+        (Level::NORMAL, Some("secret"), true),
+        (Level::STORE, Some("secret"), true),
     ] {
         create_7z(
             &root.join("arca.7z"),

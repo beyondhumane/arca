@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Instant;
 
 pub(crate) type TaskId = u64;
@@ -45,6 +46,9 @@ pub(crate) struct Task {
     pub(crate) channel: Option<Receiver<Message>>,
     pub(crate) replies: Option<Sender<Answer>>,
     pub(crate) conflict: Option<String>,
+    pub(crate) conflict_from: Option<String>,
+    /// Where the window leaves the name chosen for a Rename answer.
+    pub(crate) rename_to: Arc<Mutex<Option<String>>>,
     pub(crate) reads: Vec<PathBuf>,
     pub(crate) writes: Vec<PathBuf>,
     // Folders a task fills with files of its own choosing, such as an
@@ -79,6 +83,8 @@ impl Task {
             channel: None,
             replies: None,
             conflict: None,
+            conflict_from: None,
+            rename_to: Arc::new(Mutex::new(None)),
             reads: Vec::new(),
             writes: Vec::new(),
             outputs: Vec::new(),
@@ -276,12 +282,25 @@ impl AppController {
             .find_map(|t| t.conflict.as_deref().map(|path| (t.id, path)))
     }
 
-    pub(crate) fn answer_conflict(&mut self, answer: Answer) {
+    /// What a disk transfer was bringing when it hit the name in `conflict`.
+    pub(crate) fn conflict_from(&self) -> Option<&str> {
+        self.state
+            .tasks
+            .iter()
+            .find(|t| t.conflict.is_some())
+            .and_then(|t| t.conflict_from.as_deref())
+    }
+
+    pub(crate) fn answer_conflict(&mut self, answer: Answer, name: Option<String>) {
         let Some((id, _)) = self.conflict() else {
             return;
         };
         if let Some(task) = self.task_mut(id) {
             task.conflict = None;
+            task.conflict_from = None;
+            if let Ok(mut slot) = task.rename_to.lock() {
+                *slot = name;
+            }
             if let Some(replies) = &task.replies {
                 let _ = replies.send(answer);
             }
@@ -354,7 +373,14 @@ impl AppController {
                         task.total = total;
                         task.current_file = name;
                     }
-                    Message::Conflict(path) => task.conflict = Some(path),
+                    Message::Conflict(path) => {
+                        task.conflict = Some(path);
+                        task.conflict_from = None;
+                    }
+                    Message::ConflictBetween(path, from) => {
+                        task.conflict = Some(path);
+                        task.conflict_from = Some(from);
+                    }
                     Message::Created(path, password) => {
                         if !task.close_when_done {
                             task.reread_after = Some((path, password, String::new()));
@@ -396,11 +422,20 @@ impl AppController {
                             .as_ref()
                             .map(|r| r.tag.clone())
                             .unwrap_or_default();
-                        let notice = super::fill(words.update_installing, &[("version", &version)]);
-                        match super::install_update(&path) {
+                        let notice = if cfg!(windows) {
+                            super::fill(words.update_installing, &[("version", &version)])
+                        } else {
+                            super::fill(words.update_installed, &[("version", &version)])
+                        };
+                        match super::install_update(&path, words) {
                             Ok(()) => {
-                                installing = true;
+                                // Windows hands over to the installer, which
+                                // closes Arca; elsewhere the files are already
+                                // in place and the next start is the new one.
+                                installing = cfg!(windows);
                                 self.state.notice = notice;
+                                self.state.error = false;
+                                self.state.update = None;
                             }
                             Err(e) => {
                                 self.state.notice = e;
@@ -448,6 +483,9 @@ impl AppController {
         }
         if settled {
             self.schedule();
+            if self.on_disk() {
+                self.refresh_disk();
+            }
             if !self.state.entries.is_empty() && self.state.notice.is_empty() {
                 self.state.notice = self.summary();
             }
@@ -475,9 +513,11 @@ impl AppController {
             return;
         };
         let notice = std::mem::take(&mut self.state.notice);
+        let undo = self.state.undo.take();
         self.open_with_password(path, pw);
         self.state.reread_dir = Some(dir);
         self.state.notice = notice;
+        self.state.undo = undo;
         self.state.view = super::View::Browse;
     }
 }

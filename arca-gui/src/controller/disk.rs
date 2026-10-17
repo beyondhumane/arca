@@ -3,7 +3,11 @@
 //! one more folder to step into.
 
 use super::*;
+use crate::archive_ops::{free_name, Answer};
 use arca_core::Entry;
+use std::collections::HashSet;
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 
 const ATTR_READ_ONLY: u8 = 0x01;
@@ -33,6 +37,7 @@ pub(crate) enum PlaceKind {
     Videos,
     Computer,
     Drive,
+    Removable,
     Pinned,
 }
 
@@ -59,6 +64,154 @@ pub(crate) fn disk_dir(path: &Path) -> String {
     } else {
         format!("{trimmed}/")
     }
+}
+
+#[cfg(unix)]
+fn volume_of(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    fs::symlink_metadata(path).ok().map(|meta| meta.dev())
+}
+
+/// The drive letter stands for the volume. A junction onto another drive
+/// gets through, and comes out as a failed rename with a notice.
+#[cfg(not(unix))]
+fn volume_of(path: &Path) -> Option<u64> {
+    let first = path.components().next()?;
+    let text = first.as_os_str().to_string_lossy().to_lowercase();
+    Some(text.bytes().fold(0u64, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(u64::from(byte))
+    }))
+}
+
+/// The worker's side of the name question: it sends the destination and
+/// the source, waits for the window, and hands back the answer with the
+/// name typed for a Rename. The "all" answers stick for the rest of the run.
+/// The window's answer to a taken name, with the name typed for a Rename.
+type AskName<'a> = dyn Fn(&Path, &Path) -> (Answer, Option<String>) + 'a;
+
+fn disk_asker<'a>(
+    tx: &'a Sender<Message>,
+    replies: &'a std::sync::mpsc::Receiver<Answer>,
+    chosen: &'a Arc<Mutex<Option<String>>>,
+) -> impl Fn(&Path, &Path) -> (Answer, Option<String>) + 'a {
+    let sticky = std::cell::Cell::new(None::<Answer>);
+    move |to: &Path, from: &Path| {
+        if let Some(a) = sticky.get() {
+            return (a, None);
+        }
+        let question =
+            Message::ConflictBetween(to.display().to_string(), from.display().to_string());
+        if tx.send(question).is_err() {
+            return (Answer::Cancel, None);
+        }
+        let answer = replies.recv().unwrap_or(Answer::Cancel);
+        if matches!(
+            answer,
+            Answer::ReplaceAll | Answer::SkipAll | Answer::RenameAll | Answer::Cancel
+        ) {
+            sticky.set(Some(answer));
+        }
+        let name = chosen.lock().ok().and_then(|mut slot| slot.take());
+        (answer, name)
+    }
+}
+
+/// Moves or copies each picked file or folder under `dest`, keeping names
+/// unless one is taken and the window says otherwise. The result is how
+/// many were carried over, or the message for the one that could not be.
+fn transfer_trees(
+    picked: &[(PathBuf, String)],
+    dest: &Path,
+    copy: bool,
+    notify: &dyn Fn(usize, usize, &str) -> bool,
+    ask: &AskName<'_>,
+    s: &'static crate::i18n::Strings,
+) -> Result<usize, String> {
+    let cancelled = || arca_core::Error::Cancelled.to_string();
+    let total = picked.len();
+    let mut carried = 0;
+    let mut claimed: HashSet<PathBuf> = HashSet::new();
+    for (i, (from, leaf)) in picked.iter().enumerate() {
+        if !notify(i, total, leaf) {
+            return Err(cancelled());
+        }
+        let mut to = dest.join(leaf);
+        if to.symlink_metadata().is_ok() {
+            let (answer, name) = ask(&to, from);
+            match answer {
+                Answer::Cancel => return Err(cancelled()),
+                Answer::Skip | Answer::SkipAll => continue,
+                Answer::Rename | Answer::RenameAll => {
+                    to = match name.filter(|n| !n.is_empty() && !n.contains(['/', '\\'])) {
+                        Some(n) if answer == Answer::Rename => dest.join(n),
+                        _ => free_name(&to, &claimed),
+                    };
+                    if to.symlink_metadata().is_ok() {
+                        to = free_name(&to, &claimed);
+                    }
+                }
+                Answer::Replace | Answer::ReplaceAll => {
+                    let gone = if to.is_dir() {
+                        fs::remove_dir_all(&to)
+                    } else {
+                        fs::remove_file(&to)
+                    };
+                    gone.map_err(|_| could_not(s, copy, &to))?;
+                }
+            }
+        }
+        claimed.insert(to.clone());
+        if copy {
+            copy_tree(from, &to).map_err(|path| could_not(s, true, &path))?;
+        } else if fs::rename(from, &to).is_err() {
+            // Across volumes a rename cannot do it: copy, then take the
+            // original away once every file is over.
+            copy_tree(from, &to).map_err(|path| could_not(s, false, &path))?;
+            let gone = if from.is_dir() {
+                fs::remove_dir_all(from)
+            } else {
+                fs::remove_file(from)
+            };
+            gone.map_err(|_| could_not(s, false, from))?;
+        }
+        carried += 1;
+    }
+    if !notify(total, total, "") {
+        return Err(cancelled());
+    }
+    Ok(carried)
+}
+
+/// Copies a file, or a folder and everything under it, to `to`. The error
+/// is the path that could not be read or written.
+fn copy_tree(from: &Path, to: &Path) -> std::result::Result<(), PathBuf> {
+    let meta = fs::symlink_metadata(from).map_err(|_| from.to_path_buf())?;
+    if meta.is_dir() {
+        fs::create_dir_all(to).map_err(|_| to.to_path_buf())?;
+        let items = fs::read_dir(from).map_err(|_| from.to_path_buf())?;
+        for item in items.flatten() {
+            copy_tree(&item.path(), &to.join(item.file_name()))?;
+        }
+        Ok(())
+    } else {
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(|_| parent.to_path_buf())?;
+        }
+        fs::copy(from, to)
+            .map(|_| ())
+            .map_err(|_| from.to_path_buf())
+    }
+}
+
+fn could_not(s: &'static crate::i18n::Strings, copy: bool, path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string());
+    fill(
+        if copy { s.cannot_copy } else { s.cannot_move },
+        &[("name", &name)],
+    )
 }
 
 /// The path on disk behind a listing name, folder or file.
@@ -147,7 +300,7 @@ fn disk_entry(name: String, is_dir: bool, meta: Option<&fs::Metadata>, hidden: b
     }
 }
 
-fn hidden_on_disk(name: &str, meta: Option<&fs::Metadata>) -> bool {
+pub(crate) fn hidden_on_disk(name: &str, meta: Option<&fs::Metadata>) -> bool {
     if cfg!(windows) {
         meta.is_some_and(|m| native_attributes(m) & ATTR_HIDDEN != 0)
     } else {
@@ -284,6 +437,290 @@ fn mounted_volumes() -> Vec<PathBuf> {
     roots
 }
 
+/// The outcome a device job in the background leaves for the window.
+pub(crate) type DeviceJob = Arc<Mutex<Option<Result<String, String>>>>;
+
+/// A storage volume the sidebar can offer: a partition with a file system
+/// that is not part of the running system.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Volume {
+    /// `/dev/sdb1`; empty where the platform gives no device node.
+    pub(crate) device: String,
+    pub(crate) label: String,
+    pub(crate) model: String,
+    pub(crate) size: String,
+    pub(crate) fs: String,
+    pub(crate) removable: bool,
+    pub(crate) mount: Option<PathBuf>,
+}
+
+impl Volume {
+    pub(crate) fn name(&self, volume_word: &str) -> String {
+        if !self.label.is_empty() {
+            self.label.clone()
+        } else if !self.model.is_empty() {
+            format!("{} {}", self.model, self.size)
+        } else if let Some(name) = self
+            .mount
+            .as_ref()
+            .and_then(|m| m.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+        {
+            name
+        } else {
+            format!("{} {volume_word}", self.size)
+        }
+    }
+
+    /// Where the sidebar sends a click: the mount point, or the device node
+    /// until it is mounted.
+    pub(crate) fn place(&self) -> PathBuf {
+        self.mount
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(&self.device))
+    }
+}
+
+/// Mount points that belong to the system rather than to a volume someone
+/// plugged in or set aside.
+fn system_mount(mount: &str) -> bool {
+    mount == "/"
+        || mount == "[SWAP]"
+        || [
+            "/boot", "/snap/", "/usr", "/var", "/home", "/opt", "/srv", "/tmp", "/nix", "/efi",
+        ]
+        .iter()
+        .any(|base| mount == base.trim_end_matches('/') || mount.starts_with(base))
+}
+
+#[cfg(target_os = "linux")]
+fn lsblk_unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&'x') {
+            chars.next();
+            let hex: String = chars.by_ref().take(2).collect();
+            if let Ok(code) = u8::from_str_radix(&hex, 16) {
+                out.push(code as char);
+                continue;
+            }
+            out.push_str("\\x");
+            out.push_str(&hex);
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The volumes `lsblk -P` describes, one `KEY="value"` line per device.
+#[cfg(target_os = "linux")]
+pub(crate) fn volumes_from_lsblk(text: &str) -> Vec<Volume> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let mut fields: HashMap<&str, String> = HashMap::new();
+        let mut rest = line.trim();
+        while let Some((key, after)) = rest.split_once("=\"") {
+            let Some((value, tail)) = after.split_once('"') else {
+                break;
+            };
+            fields.insert(key.trim(), lsblk_unescape(value));
+            rest = tail.trim_start();
+        }
+        let field = |key: &str| fields.get(key).cloned().unwrap_or_default();
+        let path = field("PATH");
+        let fs = field("FSTYPE");
+        let kind = field("TYPE");
+        let mount = field("MOUNTPOINT");
+        let removable = field("RM") == "1" || field("HOTPLUG") == "1";
+        let virtual_node = ["/dev/loop", "/dev/zram", "/dev/ram", "/dev/sr"]
+            .iter()
+            .any(|base| path.starts_with(base));
+        let no_filesystem = fs.is_empty()
+            || matches!(
+                fs.as_str(),
+                "swap" | "squashfs" | "LVM2_member" | "crypto_LUKS" | "linux_raid_member"
+            );
+        if virtual_node
+            || no_filesystem
+            || !matches!(kind.as_str(), "part" | "disk" | "crypt")
+            || (!mount.is_empty() && system_mount(&mount))
+        {
+            continue;
+        }
+        let set_aside = ["/media/", "/run/media/", "/mnt/"]
+            .iter()
+            .any(|base| mount.starts_with(base) || mount == base.trim_end_matches('/'));
+        if !removable && !mount.is_empty() && !set_aside {
+            continue;
+        }
+        out.push(Volume {
+            device: path,
+            label: field("LABEL"),
+            model: field("MODEL").trim().to_string(),
+            size: field("SIZE"),
+            fs,
+            removable,
+            mount: (!mount.is_empty()).then(|| PathBuf::from(mount)),
+        });
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn volumes() -> Vec<Volume> {
+    let listed = std::process::Command::new("lsblk")
+        .args([
+            "-P",
+            "-n",
+            "-o",
+            "NAME,PATH,LABEL,MOUNTPOINT,RM,HOTPLUG,FSTYPE,SIZE,TYPE,MODEL",
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| volumes_from_lsblk(&String::from_utf8_lossy(&o.stdout)));
+    match listed {
+        Some(volumes) => volumes,
+        None => mounted_volumes()
+            .into_iter()
+            .map(|mount| Volume {
+                mount: Some(mount),
+                ..Volume::default()
+            })
+            .collect(),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn volumes() -> Vec<Volume> {
+    mounted_volumes()
+        .into_iter()
+        .map(|mount| Volume {
+            mount: Some(mount),
+            ..Volume::default()
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn udisks_object(device: &str) -> String {
+    let name = device.trim_start_matches("/dev/");
+    let mut out = String::from("/org/freedesktop/UDisks2/block_devices/");
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else {
+            out.push_str(&format!("_{:02x}", c as u32));
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn run_device_command(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let text = String::from_utf8_lossy(&output.stderr);
+        let text = text.trim();
+        let text = text.rsplit_once(": ").map_or(text, |(_, last)| last);
+        Err(text.trim_end_matches('.').to_string())
+    }
+}
+
+/// Mounts the volume through UDisks and tells where it landed.
+#[cfg(target_os = "linux")]
+pub(crate) fn mount_device(device: &str) -> Result<PathBuf, String> {
+    let said = run_device_command("udisksctl", &["mount", "-b", device])?;
+    said.rsplit_once(" at ")
+        .map(|(_, at)| PathBuf::from(at.trim_end_matches('.')))
+        .ok_or(said)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn unmount_device(device: &str) -> Result<(), String> {
+    run_device_command("udisksctl", &["unmount", "-b", device]).map(|_| ())
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn label_device(device: &str, label: &str) -> Result<(), String> {
+    let object = udisks_object(device);
+    run_device_command(
+        "gdbus",
+        &[
+            "call",
+            "--system",
+            "--dest",
+            "org.freedesktop.UDisks2",
+            "--object-path",
+            &object,
+            "--method",
+            "org.freedesktop.UDisks2.Filesystem.SetLabel",
+            label,
+            "{}",
+        ],
+    )
+    .map(|_| ())
+}
+
+/// The file systems the format box offers, in the order it shows them.
+pub(crate) const FORMATS: [&str; 4] = ["ext4", "exfat", "vfat", "ntfs"];
+
+#[cfg(target_os = "linux")]
+pub(crate) fn format_device(device: &str, fs: &str, label: &str) -> Result<(), String> {
+    let object = udisks_object(device);
+    let options = if label.is_empty() {
+        "{}".to_string()
+    } else {
+        format!(
+            "{{'label': <'{}'>}}",
+            label.replace('\\', "\\\\").replace('\'', "\\'")
+        )
+    };
+    run_device_command(
+        "gdbus",
+        &[
+            "call",
+            "--system",
+            "--dest",
+            "org.freedesktop.UDisks2",
+            "--object-path",
+            &object,
+            "--method",
+            "org.freedesktop.UDisks2.Block.Format",
+            fs,
+            &options,
+        ],
+    )
+    .map(|_| ())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn mount_device(_device: &str) -> Result<PathBuf, String> {
+    Err(String::new())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn unmount_device(_device: &str) -> Result<(), String> {
+    Err(String::new())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn label_device(_device: &str, _label: &str) -> Result<(), String> {
+    Err(String::new())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn format_device(_device: &str, _fs: &str, _label: &str) -> Result<(), String> {
+    Err(String::new())
+}
+
 impl AppController {
     pub(crate) fn writable(&self) -> bool {
         self.state.archive.is_some() && self.state.format == Format::Zip
@@ -291,6 +728,321 @@ impl AppController {
 
     pub(crate) fn on_disk(&self) -> bool {
         self.state.archive.is_none() && self.state.disk.is_some()
+    }
+
+    /// Whether what is shown can be renamed, removed or added to: a zip, or
+    /// a folder on the disk.
+    pub(crate) fn can_change(&self) -> bool {
+        self.writable() || self.on_disk()
+    }
+
+    pub(crate) fn rename_on_disk(&mut self, from: &str, to: &str) {
+        let s = self.s();
+        let (a, b) = (disk_path(from), disk_path(to));
+        if b.exists() {
+            let name = b
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            self.state.notice = fill(s.name_taken, &[("name", &name)]);
+            self.state.error = true;
+            return;
+        }
+        match fs::rename(&a, &b) {
+            Ok(()) => {
+                self.state.notice.clear();
+                self.state.error = false;
+                self.refresh_disk();
+            }
+            Err(e) => {
+                self.state.notice = e.to_string();
+                self.state.error = true;
+            }
+        }
+    }
+
+    pub(crate) fn create_disk_folder(&mut self, name: &str) -> Option<String> {
+        let s = self.s();
+        let dir = format!("{}{name}/", self.state.current_dir);
+        let path = disk_path(&dir);
+        if path.exists() {
+            self.state.notice = fill(s.name_taken, &[("name", name)]);
+            self.state.error = true;
+            return None;
+        }
+        match fs::create_dir(&path) {
+            Ok(()) => {
+                self.state.notice.clear();
+                self.state.error = false;
+                self.refresh_disk();
+                Some(dir)
+            }
+            Err(e) => {
+                self.state.notice = e.to_string();
+                self.state.error = true;
+                None
+            }
+        }
+    }
+
+    /// Removes what is picked, for good or into the Trash, as a task.
+    pub(crate) fn remove_on_disk(&mut self, roots: &[String], trash: bool) {
+        let s = self.s();
+        let picked: Vec<PathBuf> = roots.iter().map(|root| disk_path(root)).collect();
+        if picked.is_empty() {
+            return;
+        }
+        let subject = match picked.as_slice() {
+            [one] => one
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            many => fill(s.items_carried, &[("n", &many.len().to_string())]),
+        };
+        let here = disk_path(&self.state.current_dir);
+        let sources = picked.clone();
+        let task = Task::new(
+            if trash {
+                s.trashing_files
+            } else {
+                s.deleting_files
+            },
+            subject,
+            Box::new(move |tx, _reply_rx, stop, hold| {
+                let notify = worker_notify(&tx, &stop, &hold);
+                let mut count = 0;
+                for (i, path) in picked.iter().enumerate() {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if !notify(i, picked.len(), &name) {
+                        let _ = tx.send(Message::Failed(arca_core::Error::Cancelled.to_string()));
+                        return;
+                    }
+                    let gone = if trash {
+                        trash_item(path)
+                    } else {
+                        remove_item(path).map_err(|e| e.to_string())
+                    };
+                    if gone.is_err() {
+                        let word = if trash {
+                            s.could_not_trash
+                        } else {
+                            s.could_not_remove
+                        };
+                        let _ = tx.send(Message::Failed(fill(word, &[("name", &name)])));
+                        return;
+                    }
+                    count += 1;
+                }
+                let word = if trash { s.trashed_n } else { s.removed_n };
+                let _ = tx.send(Message::Done(fill(word, &[("n", &count.to_string())])));
+            }),
+        )
+        .reading(sources)
+        .filling([here]);
+        self.enqueue(task);
+    }
+
+    /// Copies what is picked next to itself as "name copy", "name copy 2"…
+    pub(crate) fn duplicate_on_disk(&mut self, roots: &[String]) {
+        let s = self.s();
+        let picked: Vec<PathBuf> = roots.iter().map(|root| disk_path(root)).collect();
+        if picked.is_empty() {
+            return;
+        }
+        let subject = match picked.as_slice() {
+            [one] => one
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            many => fill(s.items_carried, &[("n", &many.len().to_string())]),
+        };
+        let here = disk_path(&self.state.current_dir);
+        let sources = picked.clone();
+        let task = Task::new(
+            s.duplicating_files,
+            subject,
+            Box::new(move |tx, _reply_rx, stop, hold| {
+                let notify = worker_notify(&tx, &stop, &hold);
+                let mut count = 0;
+                for (i, path) in picked.iter().enumerate() {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if !notify(i, picked.len(), &name) {
+                        let _ = tx.send(Message::Failed(arca_core::Error::Cancelled.to_string()));
+                        return;
+                    }
+                    let Some(to) = duplicate_target(path) else {
+                        continue;
+                    };
+                    if copy_tree(path, &to).is_err() {
+                        let _ = tx.send(Message::Failed(could_not(s, true, path)));
+                        return;
+                    }
+                    count += 1;
+                }
+                let _ = tx.send(Message::Done(fill(
+                    s.duplicated_n,
+                    &[("n", &count.to_string())],
+                )));
+            }),
+        )
+        .reading(sources)
+        .filling([here]);
+        self.enqueue(task);
+    }
+
+    /// Hands the file to a given application, or to the system's chooser.
+    pub(crate) fn open_with(&mut self, path: &Path, app: Option<&DesktopApp>) {
+        let s = self.s();
+        let result = match app {
+            Some(app) => app.launch(path),
+            None => open_with_chooser(path),
+        };
+        match result {
+            Ok(()) => {
+                self.state.notice.clear();
+                self.state.error = false;
+            }
+            Err(e) => {
+                self.state.notice = if e.is_empty() {
+                    s.no_opener.to_string()
+                } else {
+                    e
+                };
+                self.state.error = true;
+            }
+        }
+    }
+
+    /// Whether rows dragged inside the window can land on a folder here: a
+    /// zip takes a rewrite, and the disk takes a rename.
+    pub(crate) fn can_drop(&self) -> bool {
+        self.writable() || self.on_disk()
+    }
+
+    /// Whether every carried root sits on the same volume as the target, so
+    /// that a move is a rename and not a copy followed by a delete.
+    pub(crate) fn same_volume(&self, roots: &[String], target: &str) -> bool {
+        let into = volume_of(&disk_path(target));
+        roots
+            .iter()
+            .all(|root| volume_of(&disk_path(root.trim_end_matches('/'))) == into)
+    }
+
+    /// Dragging rows onto a folder with a copy asked for, or across volumes.
+    pub(crate) fn copy_on_disk(&mut self, roots: &[String], target: &str) {
+        self.transfer_on_disk(roots, target, true);
+    }
+
+    /// Dragging rows onto a folder on the disk: a rename on the same volume,
+    /// a copy and a delete across one.
+    pub(crate) fn move_on_disk(&mut self, roots: &[String], target: &str) {
+        self.transfer_on_disk(roots, target, false);
+    }
+
+    /// Moving or copying picked rows under `target` runs as a task with the
+    /// usual progress row. A name already taken there is put to the window
+    /// -- overwrite, skip, rename or stop -- the way Dolphin asks, and the
+    /// answer can stick for the rest of the run.
+    fn transfer_on_disk(&mut self, roots: &[String], target: &str, copy: bool) {
+        let s = self.s();
+        let into = disk_path(target);
+        let mut picked: Vec<(PathBuf, String)> = Vec::new();
+        for root in roots {
+            let from = root.trim_end_matches('/');
+            let Some(leaf) = from.rsplit('/').next().filter(|leaf| !leaf.is_empty()) else {
+                continue;
+            };
+            let parent = from.rfind('/').map_or("", |cut| &from[..=cut]);
+            if parent == target || target.starts_with(&format!("{from}/")) {
+                continue;
+            }
+            picked.push((disk_path(from), leaf.to_string()));
+        }
+        if picked.is_empty() {
+            return;
+        }
+        let subject = match picked.as_slice() {
+            [(_, leaf)] => leaf.clone(),
+            many => fill(s.items_carried, &[("n", &many.len().to_string())]),
+        };
+        let sources: Vec<PathBuf> = picked.iter().map(|(path, _)| path.clone()).collect();
+        let dest = into.clone();
+        let rename_to: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let chosen = Arc::clone(&rename_to);
+        let verb = if copy {
+            s.copying_files
+        } else {
+            s.moving_files
+        };
+        let mut task = Task::new(
+            verb,
+            subject,
+            Box::new(move |tx, reply_rx, stop, hold| {
+                let notify = worker_notify(&tx, &stop, &hold);
+                let ask = disk_asker(&tx, &reply_rx, &chosen);
+                let result = transfer_trees(&picked, &dest, copy, &notify, &ask, s);
+                let _ = tx.send(match result {
+                    Ok(count) => Message::Done(fill(
+                        if copy { s.copied_into } else { s.moved_into },
+                        &[
+                            ("n", &count.to_string()),
+                            ("dest", &dest.display().to_string()),
+                        ],
+                    )),
+                    Err(e) => Message::Failed(e),
+                });
+            }),
+        )
+        .reading(sources)
+        .filling([into]);
+        task.rename_to = rename_to;
+        task.stop_leaves_files = true;
+        self.enqueue(task);
+    }
+
+    /// What a drag out of a disk folder carries: every picked file, and the
+    /// files under every picked folder with their path from that folder, so
+    /// the shell can rebuild the tree where it drops.
+    #[cfg(windows)]
+    pub(crate) fn disk_drag_items(&self) -> Vec<(PathBuf, String, u64, Option<i64>)> {
+        const MOST: usize = 50_000;
+        let mut out = Vec::new();
+        for root in self.selected_roots() {
+            let trimmed = root.trim_end_matches('/');
+            let leaf = trimmed.rsplit('/').next().unwrap_or(trimmed).to_string();
+            let mut stack = vec![(disk_path(trimmed), leaf)];
+            while let Some((path, name)) = stack.pop() {
+                if out.len() >= MOST {
+                    return out;
+                }
+                let Ok(meta) = fs::metadata(&path) else {
+                    continue;
+                };
+                if meta.is_dir() {
+                    let Ok(items) = fs::read_dir(&path) else {
+                        continue;
+                    };
+                    for item in items.flatten() {
+                        let child = item.file_name().to_string_lossy().to_string();
+                        stack.push((item.path(), format!("{name}\\{child}")));
+                    }
+                } else {
+                    let mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64);
+                    out.push((path, name, meta.len(), mtime));
+                }
+            }
+        }
+        out
     }
 
     pub(crate) fn root_label(&self) -> &'static str {
@@ -371,6 +1123,9 @@ impl AppController {
         } else {
             disk_dir(path)
         };
+        // The panes still point into the archive that was open; rebuilding
+        // them from that path would try to read it off the disk.
+        self.state.current_dir.clear();
         self.reset_browser_panes();
         self.navigate_panes(dir);
         self.record_pane_history();
@@ -632,6 +1387,108 @@ impl AppController {
             .collect()
     }
 
+    /// Re-reads the volumes every few seconds and collects what a format
+    /// job in the background has to say.
+    pub(crate) fn refresh_volumes(&mut self) {
+        let due = self
+            .volumes_at
+            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(3));
+        if due {
+            self.volumes = volumes();
+            self.volumes_at = Some(std::time::Instant::now());
+        }
+        let finished = self
+            .volume_job
+            .as_ref()
+            .and_then(|job| job.lock().ok().and_then(|mut slot| slot.take()));
+        if let Some(outcome) = finished {
+            self.volume_job = None;
+            self.volumes_at = None;
+            self.report_device(outcome);
+        }
+    }
+
+    pub(crate) fn volume_at(&self, path: &Path) -> Option<&Volume> {
+        self.volumes
+            .iter()
+            .find(|v| v.mount.as_deref() == Some(path) || Path::new(&v.device) == path)
+    }
+
+    fn report_device(&mut self, outcome: Result<String, String>) {
+        let s = self.s();
+        match outcome {
+            Ok(said) => {
+                self.state.notice = said;
+                self.state.error = false;
+            }
+            Err(e) => {
+                self.state.notice = if e.is_empty() {
+                    s.no_device_tool.to_string()
+                } else {
+                    fill(s.device_failed, &[("error", &e)])
+                };
+                self.state.error = true;
+            }
+        }
+    }
+
+    /// Mounts the volume and tells where it landed, so the caller can go there.
+    pub(crate) fn mount_volume(&mut self, volume: &Volume) -> Option<PathBuf> {
+        let s = self.s();
+        let name = volume.name(s.volume_word);
+        let outcome = mount_device(&volume.device);
+        self.volumes_at = None;
+        match outcome {
+            Ok(at) => {
+                self.report_device(Ok(fill(
+                    s.mounted_at,
+                    &[("name", &name), ("path", &at.display().to_string())],
+                )));
+                Some(at)
+            }
+            Err(e) => {
+                self.report_device(Err(e));
+                None
+            }
+        }
+    }
+
+    pub(crate) fn unmount_volume(&mut self, volume: &Volume) {
+        let s = self.s();
+        let name = volume.name(s.volume_word);
+        let outcome =
+            unmount_device(&volume.device).map(|()| fill(s.unmounted, &[("name", &name)]));
+        self.volumes_at = None;
+        self.report_device(outcome);
+    }
+
+    pub(crate) fn label_volume(&mut self, volume: &Volume, label: &str) {
+        let s = self.s();
+        let name = volume.name(s.volume_word);
+        let outcome = label_device(&volume.device, label)
+            .map(|()| fill(s.labeled, &[("name", &name), ("label", label)]));
+        self.volumes_at = None;
+        self.report_device(outcome);
+    }
+
+    /// Formats in the background; `refresh_volumes` reports the outcome.
+    pub(crate) fn format_volume(&mut self, volume: &Volume, fs: &str, label: &str) {
+        let s = self.s();
+        let name = volume.name(s.volume_word);
+        self.state.notice = fill(s.formatting, &[("name", &name)]);
+        self.state.error = false;
+        let slot: DeviceJob = Arc::new(Mutex::new(None));
+        self.volume_job = Some(slot.clone());
+        let (device, fs, label) = (volume.device.clone(), fs.to_string(), label.to_string());
+        let done = fill(s.formatted, &[("name", &name)]);
+        std::thread::spawn(move || {
+            let outcome = format_device(&device, &fs, &label).map(|()| done);
+            if let Ok(mut slot) = slot.lock() {
+                *slot = Some(outcome);
+            }
+        });
+    }
+
     pub(crate) fn devices(&self) -> Vec<Place> {
         let s = self.s();
         let mut out = Vec::new();
@@ -655,15 +1512,15 @@ impl AppController {
                 label: s.computer_word.to_string(),
                 path: PathBuf::from("/"),
             });
-            for root in mounted_volumes() {
-                let label = root
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default();
+            for volume in &self.volumes {
                 out.push(Place {
-                    kind: PlaceKind::Drive,
-                    label,
-                    path: root,
+                    kind: if volume.removable {
+                        PlaceKind::Removable
+                    } else {
+                        PlaceKind::Drive
+                    },
+                    label: volume.name(s.volume_word),
+                    path: volume.place(),
                 });
             }
         }
@@ -693,4 +1550,369 @@ impl AppController {
         self.state.settings.save();
         self.refresh_disk();
     }
+}
+
+fn remove_item(path: &Path) -> std::io::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    if meta.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+}
+
+/// "name copy", "name copy 2"… beside the original, keeping the extension of
+/// a file where it is.
+pub(crate) fn duplicate_target(path: &Path) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    let leaf = path.file_name()?.to_string_lossy().into_owned();
+    let (stem, ext) = if path.is_dir() {
+        (leaf.clone(), String::new())
+    } else {
+        match leaf.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+            _ => (leaf.clone(), String::new()),
+        }
+    };
+    (1..10_000)
+        .map(|n| {
+            let name = if n == 1 {
+                format!("{stem} copy{ext}")
+            } else {
+                format!("{stem} copy {n}{ext}")
+            };
+            parent.join(name)
+        })
+        .find(|candidate| !candidate.exists())
+}
+
+/// Moves a file or folder to the Trash the way the desktop does it.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(crate) fn trash_item(path: &Path) -> Result<(), String> {
+    let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| home_dir().map(|h| h.join(".local/share")))
+        .ok_or_else(|| "no home".to_string())?;
+    let trash = data.join("Trash");
+    let (files, info) = (trash.join("files"), trash.join("info"));
+    fs::create_dir_all(&files).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&info).map_err(|e| e.to_string())?;
+    let leaf = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (target, sheet) = (1..10_000)
+        .map(|n| {
+            let name = if n == 1 {
+                leaf.clone()
+            } else {
+                format!("{leaf}.{n}")
+            };
+            (files.join(&name), info.join(format!("{name}.trashinfo")))
+        })
+        .find(|(a, b)| !a.exists() && !b.exists())
+        .ok_or_else(|| "trash is full of this name".to_string())?;
+    let encoded: String = path
+        .to_string_lossy()
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect();
+    let when = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let stamp = iso_utc(when);
+    fs::write(
+        &sheet,
+        format!("[Trash Info]\nPath={encoded}\nDeletionDate={stamp}\n"),
+    )
+    .map_err(|e| e.to_string())?;
+    if fs::rename(&path, &target).is_ok() {
+        return Ok(());
+    }
+    let _ = fs::remove_file(&sheet);
+    // Another volume: let the desktop's own tool work out that trash.
+    let out = std::process::Command::new("gio")
+        .arg("trash")
+        .arg(&path)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn trash_item(path: &Path) -> Result<(), String> {
+    let script = format!(
+        "tell application \"Finder\" to delete POSIX file \"{}\"",
+        path.display()
+            .to_string()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+    );
+    let out = std::process::Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn trash_item(path: &Path) -> Result<(), String> {
+    let what = if path.is_dir() {
+        "DeleteDirectory"
+    } else {
+        "DeleteFile"
+    };
+    let script = format!(
+        "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::{what}('{}', 'OnlyErrorDialogs', 'SendToRecycleBin')",
+        path.display().to_string().replace('\'', "''")
+    );
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// An application from a .desktop file that takes a kind of file.
+#[derive(Clone, Debug)]
+pub(crate) struct DesktopApp {
+    pub(crate) name: String,
+    pub(crate) exec: String,
+    pub(crate) terminal: bool,
+}
+
+impl DesktopApp {
+    pub(crate) fn launch(&self, path: &Path) -> Result<(), String> {
+        let file = path.display().to_string();
+        let mut argv: Vec<String> = Vec::new();
+        let mut placed = false;
+        for word in split_exec(&self.exec) {
+            match word.as_str() {
+                "%f" | "%F" | "%u" | "%U" => {
+                    argv.push(file.clone());
+                    placed = true;
+                }
+                w if w.starts_with('%') && w.len() == 2 => {}
+                _ => argv.push(word),
+            }
+        }
+        if !placed {
+            argv.push(file);
+        }
+        let Some((program, rest)) = argv.split_first() else {
+            return Err(String::new());
+        };
+        let mut command = if self.terminal {
+            let mut c = std::process::Command::new("xdg-terminal-exec");
+            c.args(&argv);
+            c
+        } else {
+            let mut c = std::process::Command::new(program);
+            c.args(rest);
+            c
+        };
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Splits an Exec= line on spaces, honouring double quotes.
+pub(crate) fn split_exec(exec: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quoted = false;
+    let mut chars = exec.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => quoted = !quoted,
+            '\\' if quoted => {
+                if let Some(next) = chars.next() {
+                    word.push(next);
+                }
+            }
+            ' ' if !quoted => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            other => word.push(other),
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
+/// The applications on this desktop that declare the file's MIME type,
+/// read from the .desktop files in the XDG data directories.
+#[cfg(target_os = "linux")]
+pub(crate) fn apps_for(path: &Path) -> Vec<DesktopApp> {
+    let mime = std::process::Command::new("xdg-mime")
+        .args(["query", "filetype"])
+        .arg(path)
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap_or_default();
+    if mime.is_empty() {
+        return Vec::new();
+    }
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(home) = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| home_dir().map(|h| h.join(".local/share")))
+    {
+        dirs.push(home.join("applications"));
+    }
+    let system = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".to_string());
+    dirs.extend(
+        system
+            .split(':')
+            .map(|d| PathBuf::from(d).join("applications")),
+    );
+    let mut seen = HashSet::new();
+    let mut apps = Vec::new();
+    for dir in dirs {
+        let Ok(items) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for item in items.flatten() {
+            let file = item.path();
+            if file.extension().and_then(|e| e.to_str()) != Some("desktop") {
+                continue;
+            }
+            let id = item.file_name();
+            if !seen.insert(id) {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(&file) else {
+                continue;
+            };
+            if let Some(app) = desktop_app(&text, &mime) {
+                apps.push(app);
+            }
+        }
+    }
+    apps.sort_by_key(|a| a.name.to_lowercase());
+    apps.dedup_by(|a, b| a.name == b.name && a.exec == b.exec);
+    apps
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn apps_for(_path: &Path) -> Vec<DesktopApp> {
+    Vec::new()
+}
+
+/// The entry of a .desktop file if it is shown and takes the MIME type.
+pub(crate) fn desktop_app(text: &str, mime: &str) -> Option<DesktopApp> {
+    let mut name = None;
+    let mut exec = None;
+    let mut terminal = false;
+    let mut takes = false;
+    let mut in_entry = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        if !in_entry {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "Name" => name = Some(value.trim().to_string()),
+            "Exec" => exec = Some(value.trim().to_string()),
+            "Terminal" => terminal = value.trim() == "true",
+            "NoDisplay" | "Hidden" if value.trim() == "true" => return None,
+            "Type" if value.trim() != "Application" => return None,
+            "MimeType" => {
+                let family = mime.split_once('/').map(|(f, _)| format!("{f}/*"));
+                takes = value
+                    .split(';')
+                    .map(str::trim)
+                    .any(|m| m == mime || family.as_deref() == Some(m));
+            }
+            _ => {}
+        }
+    }
+    if !takes {
+        return None;
+    }
+    Some(DesktopApp {
+        name: name?,
+        exec: exec?,
+        terminal,
+    })
+}
+
+#[cfg(windows)]
+fn open_with_chooser(path: &Path) -> Result<(), String> {
+    std::process::Command::new("rundll32.exe")
+        .arg("shell32.dll,OpenAs_RunDLL")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(windows))]
+fn open_with_chooser(_path: &Path) -> Result<(), String> {
+    Err(String::new())
+}
+
+/// "2026-10-16T19:27:00" for a Unix time, the shape .trashinfo wants.
+fn iso_utc(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let rest = secs.rem_euclid(86_400);
+    // Civil-from-days (Howard Hinnant).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}",
+        rest / 3600,
+        rest % 3600 / 60,
+        rest % 60
+    )
 }

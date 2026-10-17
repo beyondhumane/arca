@@ -15,26 +15,23 @@ path = "src/main.rs"
 [dependencies]
 arca-core.workspace = true
 arca-zip.workspace = true
-gpui = { package = "gpui-pre", version = "0.3", default-features = false }
+eframe = { version = "0.36", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+# Only the SVG loader: the backgrounds and the logo are vector art.
+egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
 sys-locale = "0.3"
 
 [target."cfg(windows)".dependencies]
 winreg = "0.55"
 arca-notify = { path = "../arca-notify" }
 
-[target."cfg(windows)".dependencies.gpui_platform]
-package = "gpui-pre-platform"
-version = "0.3"
 
-[target.'cfg(target_os = "linux")'.dependencies.gpui_platform]
-package = "gpui-pre-platform"
-version = "0.3"
-features = ["wayland", "x11"]
 
-[target.'cfg(target_os = "macos")'.dependencies.gpui_platform]
-package = "gpui-pre-platform"
-version = "0.3"
-features = ["font-kit"]
 
 [target."cfg(windows)".build-dependencies]
 winresource = "0.1"

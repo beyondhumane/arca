@@ -26,7 +26,7 @@ pub struct CreateOptions<'a> {
 impl Default for CreateOptions<'_> {
     fn default() -> Self {
         Self {
-            level: Level::Normal,
+            level: Level::NORMAL,
             password: None,
             hide_names: false,
         }
@@ -185,11 +185,9 @@ fn methods(options: &CreateOptions<'_>) -> Result<Vec<EncoderConfiguration>> {
             .into(),
         );
     }
-    methods.push(match options.level {
-        Level::Store => EncoderMethod::COPY.into(),
-        Level::Fast => Lzma2Options::from_level(1).into(),
-        Level::Normal => Lzma2Options::from_level(6).into(),
-        Level::Best => Lzma2Options::from_level(9).into(),
+    methods.push(match options.level.get() {
+        0 => EncoderMethod::COPY.into(),
+        n => Lzma2Options::from_level(u32::from(n)).into(),
     });
     Ok(methods)
 }

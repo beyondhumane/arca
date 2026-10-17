@@ -60,7 +60,7 @@ fn lzma2_filter(header: &mut [u8]) -> usize {
 #[test]
 fn round_trips_every_level_single_and_parallel() {
     let data = sample(300_000);
-    for level in [Level::Store, Level::Fast, Level::Normal, Level::Best] {
+    for level in [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST] {
         for threads in [1, 4] {
             let packed = compress(&data, level, threads);
             assert_eq!(&packed[..6], MAGIC);
@@ -72,7 +72,7 @@ fn round_trips_every_level_single_and_parallel() {
 #[test]
 fn parallel_output_has_several_blocks_and_stays_valid() {
     let data = sample(5 << 20);
-    let mut e = encoder(Vec::new(), Level::Store, 3).unwrap();
+    let mut e = encoder(Vec::new(), Level::STORE, 3).unwrap();
     assert_eq!(e.workers(), 3);
     for chunk in data.chunks(64 * 1024) {
         e.write_all(chunk).unwrap();
@@ -88,7 +88,7 @@ fn parallel_output_has_several_blocks_and_stays_valid() {
 #[test]
 fn empty_input_is_a_valid_stream() {
     for threads in [1, 2] {
-        let packed = compress(b"", Level::Normal, threads);
+        let packed = compress(b"", Level::NORMAL, threads);
         assert_eq!(decode(&packed).unwrap(), b"");
     }
 }
@@ -124,8 +124,8 @@ fn every_check_type_is_verified() {
 
 #[test]
 fn concatenated_streams_and_padding_are_one_payload() {
-    let a = compress(b"first ", Level::Fast, 1);
-    let b = compress(b"second", Level::Fast, 1);
+    let a = compress(b"first ", Level::FAST, 1);
+    let b = compress(b"second", Level::FAST, 1);
     let mut joined = a.clone();
     joined.extend_from_slice(&[0; 8]);
     joined.extend_from_slice(&b);
@@ -145,7 +145,7 @@ fn concatenated_streams_and_padding_are_one_payload() {
 
 #[test]
 fn truncation_anywhere_fails_without_panicking() {
-    let packed = compress(&sample(50_000), Level::Normal, 1);
+    let packed = compress(&sample(50_000), Level::NORMAL, 1);
     for cut in (0..packed.len()).step_by(7).chain([packed.len() - 1]) {
         assert!(decode(&packed[..cut]).is_err(), "cut at {cut}");
         let mut out = Vec::new();
@@ -157,7 +157,7 @@ fn truncation_anywhere_fails_without_panicking() {
 #[test]
 fn damaged_header_block_index_and_footer_are_rejected() {
     let data = sample(20_000);
-    let packed = compress(&data, Level::Normal, 1);
+    let packed = compress(&data, Level::NORMAL, 1);
     let len = packed.len();
     let backward = (u64::from(le32(&packed[len - 8..])) + 1) * 4;
     let index = len - 12 - backward as usize;
@@ -184,7 +184,7 @@ fn damaged_header_block_index_and_footer_are_rejected() {
 #[test]
 fn every_single_bit_flip_is_safe() {
     let data = sample(2_000);
-    let packed = compress(&data, Level::Fast, 1);
+    let packed = compress(&data, Level::FAST, 1);
     for at in 0..packed.len() {
         let mut bad = packed.clone();
         bad[at] ^= 0x80;
@@ -196,7 +196,7 @@ fn every_single_bit_flip_is_safe() {
 
 #[test]
 fn an_index_that_disagrees_with_the_data_is_caught() {
-    let packed = compress(b"hello", Level::Fast, 1);
+    let packed = compress(b"hello", Level::FAST, 1);
     let len = packed.len();
     let backward = (u64::from(le32(&packed[len - 8..])) + 1) * 4;
     let index = len - 12 - backward as usize;
@@ -214,7 +214,7 @@ fn an_index_that_disagrees_with_the_data_is_caught() {
 
 #[test]
 fn an_oversized_dictionary_is_refused_before_allocating() {
-    let mut packed = compress(b"hello", Level::Fast, 1);
+    let mut packed = compress(b"hello", Level::FAST, 1);
     patch_block_header(&mut packed, |h| {
         let at = lzma2_filter(h);
         h[at + 2] = 40;
@@ -225,7 +225,7 @@ fn an_oversized_dictionary_is_refused_before_allocating() {
 
 #[test]
 fn an_unknown_filter_is_an_error() {
-    let mut packed = compress(b"hello", Level::Fast, 1);
+    let mut packed = compress(b"hello", Level::FAST, 1);
     patch_block_header(&mut packed, |h| {
         let at = lzma2_filter(h);
         h[at] = 0x30;
@@ -235,7 +235,7 @@ fn an_unknown_filter_is_an_error() {
 
 #[test]
 fn an_unknown_check_type_is_an_error() {
-    let mut packed = compress(b"hello", Level::Fast, 1);
+    let mut packed = compress(b"hello", Level::FAST, 1);
     packed[7] = 0x02;
     let crc = crc32fast::hash(&packed[6..8]);
     packed[8..12].copy_from_slice(&crc.to_le_bytes());
@@ -261,13 +261,13 @@ fn index_parsing_rejects_hostile_values() {
 
 #[test]
 fn workers_fit_the_memory_budget() {
-    assert_eq!(workers(Level::Normal, 1), 1);
-    assert_eq!(workers(Level::Fast, 4), 4);
-    assert_eq!(workers(Level::Best, 64), 1);
-    assert!(workers(Level::Normal, 64) * worker_mib(6) as usize <= ENCODER_BUDGET_MIB as usize);
-    assert!(workers(Level::Normal, 0) >= 1);
-    assert_eq!(preset(Level::Store), 0);
-    assert_eq!(preset(Level::Best), 9);
+    assert_eq!(workers(Level::NORMAL, 1), 1);
+    assert_eq!(workers(Level::FAST, 4), 4);
+    assert_eq!(workers(Level::BEST, 64), 1);
+    assert!(workers(Level::NORMAL, 64) * worker_mib(6) as usize <= ENCODER_BUDGET_MIB as usize);
+    assert!(workers(Level::NORMAL, 0) >= 1);
+    assert_eq!(preset(Level::STORE), 0);
+    assert_eq!(preset(Level::BEST), 9);
 }
 
 #[test]
@@ -290,14 +290,14 @@ fn identify_looks_inside_instead_of_trusting_the_name() {
     std::fs::create_dir_all(&dir).unwrap();
     let mut tar = arca_tar::TarWriter::new(Vec::new());
     tar.add("a.txt", 3, 0, 0o644, &b"abc"[..]).unwrap();
-    let tar = compress(&tar.finish().unwrap(), Level::Fast, 1);
-    let plain = compress(&sample(4_000), Level::Fast, 1);
-    let empty_tar = compress(&[0; 10_240], Level::Fast, 1);
-    let end_marker = compress(&[0; 1_024], Level::Fast, 1);
-    let one_block = compress(&[0; 512], Level::Fast, 1);
-    let ragged = compress(&[0; 1_500], Level::Fast, 1);
-    let past_record = compress(&[0; 10_752], Level::Fast, 1);
-    let zeros = compress(&vec![0; 1 << 20], Level::Fast, 1);
+    let tar = compress(&tar.finish().unwrap(), Level::FAST, 1);
+    let plain = compress(&sample(4_000), Level::FAST, 1);
+    let empty_tar = compress(&[0; 10_240], Level::FAST, 1);
+    let end_marker = compress(&[0; 1_024], Level::FAST, 1);
+    let one_block = compress(&[0; 512], Level::FAST, 1);
+    let ragged = compress(&[0; 1_500], Level::FAST, 1);
+    let past_record = compress(&[0; 10_752], Level::FAST, 1);
+    let zeros = compress(&vec![0; 1 << 20], Level::FAST, 1);
     for (name, bytes, expected) in [
         ("a.tar.xz", &tar, Some(Format::TarXz)),
         ("a.xz", &tar, Some(Format::TarXz)),

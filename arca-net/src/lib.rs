@@ -51,15 +51,65 @@ pub fn get(url: &str, agent: &str) -> Option<String> {
 /// waiting for any more.
 #[cfg(not(windows))]
 pub fn fetch(
-    _url: &str,
-    _agent: &str,
-    _ceiling: usize,
-    _watch: &dyn Fn(usize, Option<usize>) -> bool,
+    url: &str,
+    agent: &str,
+    ceiling: usize,
+    watch: &dyn Fn(usize, Option<usize>) -> bool,
 ) -> Option<Vec<u8>> {
-    // Off Windows there is no system client to borrow. The one caller shows
-    // nothing when there is no answer, which is what a machine with no network
-    // gets too, so there is nothing here that needs writing yet.
-    None
+    // Off Windows the system client is curl, which every Linux and macOS has
+    // and which carries the system's own roots of trust: no TLS stack of our
+    // own, same as WinHTTP on the other side. The reply goes to a file so that
+    // the size can be watched while it grows.
+    if !url.starts_with("https://") {
+        return None;
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let file = std::env::temp_dir().join(format!("arca-net-{}-{stamp}", std::process::id()));
+    let mut child = std::process::Command::new("curl")
+        .args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--max-filesize",
+            &ceiling.to_string(),
+            "--user-agent",
+            agent,
+            "--output",
+        ])
+        .arg(&file)
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let done = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.success(),
+            Ok(None) => {
+                let so_far = std::fs::metadata(&file).map_or(0, |m| m.len() as usize);
+                if !watch(so_far, None) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = std::fs::remove_file(&file);
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => break false,
+        }
+    };
+    let bytes = std::fs::read(&file).ok();
+    let _ = std::fs::remove_file(&file);
+    let bytes = bytes.filter(|_| done)?;
+    (bytes.len() <= ceiling).then_some(bytes)
 }
 
 #[cfg(windows)]

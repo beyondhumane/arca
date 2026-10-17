@@ -4,16 +4,15 @@ mod archive_ops;
 mod assets;
 mod clipboard;
 mod controller;
-mod gpui_shell;
-mod gpui_theme;
 mod i18n;
 mod model;
 mod settings;
 #[cfg(test)]
 mod test_support;
 mod tree;
+mod ui;
 
-// Keep the GPUI view focused on presentation while exposing the application
+// Keep the egui view focused on presentation while exposing the application
 // contract at the crate boundary. These are crate-private, not public API.
 pub(crate) use archive_ops::*;
 pub(crate) use controller::*;
@@ -21,7 +20,7 @@ pub(crate) use model::*;
 pub(crate) use settings::*;
 
 use arca_core::{Codec, Level};
-use i18n::{strings, Lang, Strings};
+use i18n::{Lang, Strings};
 use tree::{parent_of, Row};
 // How wide a column starts out and the least it can be pulled down to. The
 // name gets the room because it is the thing being read; the rest hold a
@@ -38,7 +37,7 @@ const SIDEBAR_LEAST: f32 = 160.0;
 const SIDEBAR_MOST: f32 = 520.0;
 
 fn main() {
-    gpui_shell::run();
+    ui::run();
 }
 
 #[cfg(test)]
@@ -80,6 +79,20 @@ mod tests {
         assert!(newer("0.5.1", "v0.5.2"), "a leading v is forgiven");
         assert!(!newer("0.6.0", "0.5.9"), "older is not newer");
         assert!(!newer("0.6.0", "0.6.0"), "the same is not newer");
+        assert!(
+            newer("0.8.2", "0.8.3-preview.4"),
+            "a preview of the next one"
+        );
+        assert!(
+            newer("0.8.3-preview.4", "0.8.3-preview.12"),
+            "previews go by number"
+        );
+        assert!(
+            newer("0.8.3-preview.12", "0.8.3"),
+            "the release follows its previews"
+        );
+        assert!(!newer("0.8.3-preview.12", "0.8.3-preview.4"));
+        assert!(!newer("0.8.3", "0.8.3-preview.20"));
         assert!(!newer("0.10.0", "0.9.0"), "and the other way round too");
         // Missing parts are zero, so these are the same version.
         assert!(!newer("0.6", "0.6.0"));
@@ -129,10 +142,15 @@ mod tests {
             {"name":"arca-v0.6.2-linux-x86_64.tar.gz","browser_download_url":"https://github.com/beyondhumane/arca/releases/download/v0.6.2/arca-v0.6.2-linux-x86_64.tar.gz"}]}"#;
         let r = release_of(reply).expect("una release");
         assert_eq!(r.tag, "v0.6.2");
-        assert_eq!(
-            r.installer.as_deref(),
-            Some("https://github.com/beyondhumane/arca/releases/download/v0.6.2/arca-setup-0.6.2-x86_64.exe")
-        );
+        // The file picked is the one for the machine running the test.
+        let expected = match std::env::consts::OS {
+            "windows" => Some("https://github.com/beyondhumane/arca/releases/download/v0.6.2/arca-setup-0.6.2-x86_64.exe"),
+            "linux" if std::env::consts::ARCH == "x86_64" && std::env::var_os("APPIMAGE").is_none() => {
+                Some("https://github.com/beyondhumane/arca/releases/download/v0.6.2/arca-v0.6.2-linux-x86_64.tar.gz")
+            }
+            _ => None,
+        };
+        assert_eq!(r.installer.as_deref(), expected);
         assert!(r.sums.is_some());
     }
 

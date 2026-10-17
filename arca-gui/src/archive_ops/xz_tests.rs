@@ -23,7 +23,7 @@ fn make(out: &Path, inputs: &[PathBuf], format: Format) -> arca_core::Result<(u6
         inputs,
         format,
         Codec::Deflate,
-        Level::Fast,
+        Level::FAST,
         GO,
         (None, false),
     )
@@ -164,7 +164,7 @@ fn stopped_or_failed_creation_leaves_no_archive() {
             &inputs,
             format,
             Codec::Deflate,
-            Level::Store,
+            Level::STORE,
             stop,
             (None, false),
         );
@@ -224,7 +224,7 @@ fn a_stop_during_a_small_xz_job_publishes_nothing() {
         std::slice::from_ref(&small),
         Format::Xz,
         Codec::Deflate,
-        Level::Fast,
+        Level::FAST,
         stop,
         (None, false),
     );
@@ -236,7 +236,7 @@ fn a_stop_during_a_small_xz_job_publishes_nothing() {
         std::slice::from_ref(&small),
         Format::TarXz,
         Codec::Deflate,
-        Level::Fast,
+        Level::FAST,
         &|i, _, _| i == 0,
         (None, false),
     );

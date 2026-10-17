@@ -333,12 +333,7 @@ fn rest_is_empty_tar(decoder: &mut impl Read) -> bool {
 
 /// The xz preset for an Arca level. Store is preset 0: XZ has no stored mode.
 pub fn preset(level: Level) -> u32 {
-    match level {
-        Level::Store => 0,
-        Level::Fast => 1,
-        Level::Normal => 6,
-        Level::Best => 9,
-    }
+    u32::from(level.get())
 }
 
 fn dictionary(preset: u32) -> u64 {

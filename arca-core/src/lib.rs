@@ -119,22 +119,32 @@ impl Method {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Level {
-    Store,
-    Fast,
-    Normal,
-    Best,
-}
+/// A compression level on the 0..=9 scale 7-Zip made familiar: 0 stores,
+/// 1 is the fastest real compression and 9 the smallest output. Every
+/// backend maps it to its own scale, so the same number means roughly the
+/// same trade-off whatever the format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Level(u8);
 
 impl Level {
+    pub const MIN: u8 = 0;
+    pub const MAX: u8 = 9;
+    pub const STORE: Level = Level(0);
+    pub const FAST: Level = Level(1);
+    pub const NORMAL: Level = Level(6);
+    pub const BEST: Level = Level(9);
+
+    /// The level for a number, clamped to the scale.
+    pub fn new(n: u8) -> Level {
+        Level(n.min(Self::MAX))
+    }
+
+    pub fn get(self) -> u8 {
+        self.0
+    }
+
     pub fn to_flate2(self) -> u32 {
-        match self {
-            Level::Store => 0,
-            Level::Fast => 1,
-            Level::Normal => 6,
-            Level::Best => 9,
-        }
+        u32::from(self.0)
     }
 
     /// El nivel equivalente en libdeflate, que tiene doce en vez de nueve.
@@ -145,20 +155,38 @@ impl Level {
     /// cualquier cosa que zlib sepa hacer -- y por eso es el maximo: quien pide
     /// el maximo esta pidiendo tamano y sabe que va a esperar.
     pub fn to_libdeflate(self) -> i32 {
-        match self {
-            Level::Store => 0,
-            Level::Fast => 1,
-            Level::Normal => 6,
-            Level::Best => 12,
-        }
+        [0, 1, 2, 3, 4, 5, 6, 8, 10, 12][usize::from(self.0)]
     }
 
     pub fn to_zstd(self) -> i32 {
-        match self {
-            Level::Store => 1,
-            Level::Fast => 1,
-            Level::Normal => 3,
-            Level::Best => 12,
+        [1, 1, 2, 3, 4, 5, 6, 8, 10, 12][usize::from(self.0)]
+    }
+}
+
+impl fmt::Display for Level {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::str::FromStr for Level {
+    type Err = String;
+
+    /// A digit 0-9 or one of the names store, fast, normal, best.
+    fn from_str(s: &str) -> std::result::Result<Level, String> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "store" => Ok(Level::STORE),
+            "fast" => Ok(Level::FAST),
+            "normal" => Ok(Level::NORMAL),
+            "best" => Ok(Level::BEST),
+            digits => digits
+                .parse::<u8>()
+                .ok()
+                .filter(|n| *n <= Level::MAX)
+                .map(Level)
+                .ok_or_else(|| {
+                    format!("'{s}' is not a level: use 0-9, store, fast, normal or best")
+                }),
         }
     }
 }

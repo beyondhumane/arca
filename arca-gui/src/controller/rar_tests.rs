@@ -219,7 +219,7 @@ fn rar_mutation_jobs_are_rejected_before_touching_the_archive() {
             inputs: vec![],
             dir: String::new(),
             codec: Codec::Store,
-            level: Level::Store,
+            level: Level::STORE,
             password: None,
         },
     ];
@@ -310,7 +310,7 @@ fn switching_between_rar_sevenz_and_zip_keeps_passwords_scoped_to_the_archive() 
         &[input],
         Format::Zip,
         Codec::Store,
-        Level::Store,
+        Level::STORE,
         &|_, _, _| true,
         (Some("zip-secret"), false),
     )
@@ -472,7 +472,7 @@ fn rar_create_jobs_carry_only_the_options_the_writer_takes() {
     app.set_create_format(Format::Rar);
     assert!(app.state.output_name.ends_with(".rar"));
     assert!(!app.state.hide_names);
-    for level in [Level::Store, Level::Fast, Level::Normal, Level::Best] {
+    for level in [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST] {
         app.state.level = level;
         let Some(Job::Compress {
             out,
@@ -506,7 +506,7 @@ fn rar_creation_opens_the_new_archive_read_only_and_tests_it() {
     fs::write(source.join("a.txt"), b"first contents").unwrap();
     fs::write(source.join("nested").join("b.txt"), vec![b'x'; 70_000]).unwrap();
     let out = room.path("created.rar");
-    for level in [Level::Store, Level::Best] {
+    for level in [Level::STORE, Level::BEST] {
         let _ = fs::remove_file(&out);
         let mut controller = AppController::new(Settings::default());
         controller.run_job(rar_job(out.clone(), vec![source.clone()], level));
@@ -547,7 +547,7 @@ fn rar_creation_opens_the_new_archive_read_only_and_tests_it() {
             inputs: vec![source.join("a.txt")],
             dir: String::new(),
             codec: Codec::Store,
-            level: Level::Store,
+            level: Level::STORE,
             password: None,
         });
         settle(&mut controller);
@@ -587,7 +587,7 @@ fn rar_creation_rejects_unsupported_options_before_writing() {
                 inputs: vec![input.clone()],
                 format,
                 codec: Codec::Store,
-                level: Level::Normal,
+                level: Level::NORMAL,
                 password: password.map(str::to_string),
                 hide_names,
             },
@@ -610,7 +610,7 @@ fn rar_creation_refuses_an_existing_output_before_asking() {
     let out = room.path("existing.rar");
     fs::write(&out, b"original archive").unwrap();
     let mut app = AppController::new(Settings::default());
-    app.run_job(rar_job(out.clone(), vec![input.clone()], Level::Fast));
+    app.run_job(rar_job(out.clone(), vec![input.clone()], Level::FAST));
     settle(&mut app);
     assert!(
         app.conflict().is_none(),
@@ -645,7 +645,7 @@ fn rar_creation_stops_when_asked_and_leaves_nothing_behind() {
     for stop_after in [0usize, 3, 6] {
         let calls = std::sync::atomic::AtomicUsize::new(0);
         let result = run_job_blocking(
-            rar_job(out.clone(), vec![source.clone()], Level::Normal),
+            rar_job(out.clone(), vec![source.clone()], Level::NORMAL),
             strings(Lang::En),
             &|_, _, _| calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < stop_after,
             &|_| Answer::Cancel,
@@ -666,7 +666,7 @@ fn rar_creation_refuses_symbolic_links_without_writing() {
     std::os::unix::fs::symlink(source.join("real.txt"), source.join("link.txt")).unwrap();
     let out = room.path("links.rar");
     let result = run_job_blocking(
-        rar_job(out.clone(), vec![source], Level::Store),
+        rar_job(out.clone(), vec![source], Level::STORE),
         strings(Lang::En),
         &|_, _, _| true,
         &|_| Answer::Cancel,

@@ -1,4 +1,5 @@
 use super::disk::ancestors_of;
+use super::disk::{desktop_app, duplicate_target, split_exec};
 use super::*;
 use crate::test_support::Room;
 
@@ -238,9 +239,13 @@ fn archive_only_actions_stay_off_while_browsing_the_disk() {
     for row in rows.iter().filter(|row| !row.up) {
         app.set_checked(row, true);
     }
+    // Removing from the disk asks first, like removing from a zip, and
+    // nothing goes until the answer is yes.
     app.request_delete();
+    assert!(app.state.confirm_delete.is_some());
+    assert!(!app.state.error);
+    app.confirm_delete(false);
     assert!(app.state.confirm_delete.is_none());
-    assert!(app.state.error);
     assert!(std::fs::metadata(room.path("top.txt")).is_ok());
 }
 
@@ -348,4 +353,59 @@ fn a_remembered_flat_view_does_not_apply_on_disk() {
         names(&app),
         vec!["deeper".to_string(), "note.txt".to_string()]
     );
+}
+
+#[test]
+fn a_duplicate_sits_beside_the_original_with_copy_in_its_name() {
+    let room = populated();
+    let first = duplicate_target(&room.path("top.txt")).unwrap();
+    assert_eq!(first, room.path("top copy.txt"));
+    std::fs::write(&first, b"x").unwrap();
+    assert_eq!(
+        duplicate_target(&room.path("top.txt")).unwrap(),
+        room.path("top copy 2.txt")
+    );
+    assert_eq!(
+        duplicate_target(&room.path("nested")).unwrap(),
+        room.path("nested copy")
+    );
+}
+
+#[test]
+fn a_desktop_file_is_an_opener_when_it_names_the_mime_type() {
+    let text = "[Desktop Entry]\nType=Application\nName=Pad\nExec=pad %U\nMimeType=text/plain;text/x-log;\n";
+    let app = desktop_app(text, "text/x-log").unwrap();
+    assert_eq!((app.name.as_str(), app.exec.as_str()), ("Pad", "pad %U"));
+    assert!(desktop_app(text, "image/png").is_none());
+    let hidden = "[Desktop Entry]\nType=Application\nName=Pad\nExec=pad\nMimeType=text/plain;\nNoDisplay=true\n";
+    assert!(desktop_app(hidden, "text/plain").is_none());
+    assert_eq!(
+        split_exec("\"/opt/my app/bin\" --open %f"),
+        vec!["/opt/my app/bin", "--open", "%f"]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn only_volumes_that_are_not_the_system_count_as_devices() {
+    use super::disk::volumes_from_lsblk;
+    let text = concat!(
+        "NAME=\"loop0\" PATH=\"/dev/loop0\" LABEL=\"\" MOUNTPOINT=\"/snap/core/1\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"squashfs\" SIZE=\"74M\" TYPE=\"loop\" MODEL=\"\"\n",
+        "NAME=\"vda\" PATH=\"/dev/vda\" LABEL=\"\" MOUNTPOINT=\"\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"\" SIZE=\"50G\" TYPE=\"disk\" MODEL=\"\"\n",
+        "NAME=\"vda1\" PATH=\"/dev/vda1\" LABEL=\"cloudimg-rootfs\" MOUNTPOINT=\"/\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"ext4\" SIZE=\"49G\" TYPE=\"part\" MODEL=\"\"\n",
+        "NAME=\"vda15\" PATH=\"/dev/vda15\" LABEL=\"UEFI\" MOUNTPOINT=\"/boot/efi\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"vfat\" SIZE=\"99M\" TYPE=\"part\" MODEL=\"\"\n",
+        "NAME=\"vda2\" PATH=\"/dev/vda2\" LABEL=\"\" MOUNTPOINT=\"[SWAP]\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"swap\" SIZE=\"2G\" TYPE=\"part\" MODEL=\"\"\n",
+        "NAME=\"vda3\" PATH=\"/dev/vda3\" LABEL=\"\" MOUNTPOINT=\"/home\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"ext4\" SIZE=\"20G\" TYPE=\"part\" MODEL=\"\"\n",
+        "NAME=\"vdb\" PATH=\"/dev/vdb\" LABEL=\"\" MOUNTPOINT=\"/mnt/host_share\" RM=\"0\" HOTPLUG=\"0\" FSTYPE=\"ext4\" SIZE=\"10G\" TYPE=\"disk\" MODEL=\"\"\n",
+        "NAME=\"sdb1\" PATH=\"/dev/sdb1\" LABEL=\"My\\x20Stick\" MOUNTPOINT=\"\" RM=\"1\" HOTPLUG=\"1\" FSTYPE=\"vfat\" SIZE=\"7.5G\" TYPE=\"part\" MODEL=\"\"\n",
+        "NAME=\"sdc1\" PATH=\"/dev/sdc1\" LABEL=\"\" MOUNTPOINT=\"/media/me/disk\" RM=\"1\" HOTPLUG=\"1\" FSTYPE=\"exfat\" SIZE=\"1.8T\" TYPE=\"part\" MODEL=\"Elements\"\n",
+    );
+    let found = volumes_from_lsblk(text);
+    let devices: Vec<&str> = found.iter().map(|v| v.device.as_str()).collect();
+    assert_eq!(devices, vec!["/dev/vdb", "/dev/sdb1", "/dev/sdc1"]);
+    assert_eq!(found[0].name("volume"), "host_share");
+    assert_eq!(found[1].name("volume"), "My Stick");
+    assert!(found[1].mount.is_none() && found[1].removable);
+    assert_eq!(found[1].place(), std::path::PathBuf::from("/dev/sdb1"));
+    assert_eq!(found[2].name("volume"), "Elements 1.8T");
 }
