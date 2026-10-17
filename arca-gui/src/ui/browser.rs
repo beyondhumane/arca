@@ -140,7 +140,13 @@ impl Shell {
         let outer = ui.available_rect_before_wrap();
         let response = ui.interact(outer, ui.id().with("gutter"), Sense::click_and_drag());
         self.blank_events(response, pane, ui.painter_at(outer));
-        let inner = outer.shrink2(Vec2::new(GUTTER, GUTTER * 0.6));
+        // Details keeps its header at the full width and insets only the
+        // rows itself; the column panes are inset whole.
+        let inner = if columns {
+            outer.shrink2(Vec2::new(GUTTER, GUTTER * 0.6))
+        } else {
+            outer
+        };
         ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
             if columns {
                 self.columns_view(ui);
@@ -243,10 +249,12 @@ impl Shell {
             .auto_shrink(false)
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
+                let span = (total + 2.0 * GUTTER).max(ui.available_width());
                 let (header, _) =
-                    ui.allocate_exact_size(Vec2::new(total, self.row_h() + 2.0), Sense::hover());
+                    ui.allocate_exact_size(Vec2::new(span, self.row_h() + 2.0), Sense::hover());
                 ui.painter().rect_filled(header, 0, hex(p.surface));
-                let mut x = header.left();
+                // The cells start where the rows do, a gutter in.
+                let mut x = header.left() + GUTTER;
                 let mut resized = None;
                 let mut edges = Vec::with_capacity(shown.len());
                 for (slot, column) in shown.iter().enumerate() {
@@ -374,79 +382,87 @@ impl Shell {
                     self.empty_space(ui, None);
                     return;
                 }
-                let area_salt = "details-rows";
-                let mut area = egui::ScrollArea::vertical()
-                    .id_salt(area_salt)
-                    .auto_shrink(false);
-                if std::mem::take(&mut self.scroll_to_cursor) {
-                    if let Some(cursor) = self.controller.state.cursor {
-                        let id = ui.make_persistent_id(area_salt);
-                        let offset = egui::scroll_area::State::load(ui.ctx(), id)
-                            .map_or(0.0, |state| state.offset.y);
-                        let height = ui.available_height() - 40.0;
-                        area = area.vertical_scroll_offset(scroll_target(
-                            offset,
-                            height,
-                            cursor,
-                            self.row_h(),
-                        ));
-                    }
-                }
-                let shown = area.show_rows(ui, self.row_h(), rows.len(), |ui, range| {
-                    self.autoscroll(ui);
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for index in range {
-                        let row = &rows[index];
-                        let (rect, response) = ui.allocate_exact_size(
-                            Vec2::new(total, self.row_h()),
-                            Sense::click_and_drag(),
-                        );
-                        let look = RowLook {
-                            checked: self.controller.is_checked(row),
-                            cursor: self.controller.state.cursor == Some(index),
-                            open: false,
-                            cut: self.controller.state.cut_names.contains(&row.path),
-                        };
-                        paint_row_back(ui, rect, &response, &look, p);
-                        let mut x = rect.left();
-                        for (slot, column) in shown.iter().enumerate() {
-                            let cell = Rect::from_min_size(
-                                egui::pos2(x, rect.top()),
-                                Vec2::new(widths[slot], self.row_h()),
-                            );
-                            x += widths[slot];
-                            if *column == SortColumn::Name {
-                                if self.renaming_here(row) {
-                                    self.rename_field(ui, cell.shrink2(Vec2::new(24.0, 1.0)));
-                                } else {
-                                    paint_name(ui, cell, row, &look, p);
-                                }
-                                continue;
-                            }
-                            let text = column_text(row, *column, s, &current_dir);
-                            let (anchor, at) = if right_aligned(*column) {
-                                (
-                                    Align2::RIGHT_CENTER,
-                                    cell.right_center() - Vec2::new(10.0, 0.0),
-                                )
-                            } else {
-                                (
-                                    Align2::LEFT_CENTER,
-                                    cell.left_center() + Vec2::new(8.0, 0.0),
-                                )
-                            };
-                            ui.painter_at(cell).text(
-                                at,
-                                anchor,
-                                text,
-                                FontId::proportional(13.0),
-                                hex(p.muted),
-                            );
+                ui.add_space(GUTTER * 0.6);
+                let room = ui.available_rect_before_wrap();
+                let rows_rect = Rect::from_min_max(
+                    egui::pos2(room.left() + GUTTER, room.top()),
+                    egui::pos2(room.right() - GUTTER, room.bottom() - GUTTER * 0.6),
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rows_rect), |ui| {
+                    let area_salt = "details-rows";
+                    let mut area = egui::ScrollArea::vertical()
+                        .id_salt(area_salt)
+                        .auto_shrink(false);
+                    if std::mem::take(&mut self.scroll_to_cursor) {
+                        if let Some(cursor) = self.controller.state.cursor {
+                            let id = ui.make_persistent_id(area_salt);
+                            let offset = egui::scroll_area::State::load(ui.ctx(), id)
+                                .map_or(0.0, |state| state.offset.y);
+                            let height = ui.available_height() - 40.0;
+                            area = area.vertical_scroll_offset(scroll_target(
+                                offset,
+                                height,
+                                cursor,
+                                self.row_h(),
+                            ));
                         }
-                        self.row_events(ui, &response, row, index, None, look.checked);
                     }
+                    let shown = area.show_rows(ui, self.row_h(), rows.len(), |ui, range| {
+                        self.autoscroll(ui);
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for index in range {
+                            let row = &rows[index];
+                            let (rect, response) = ui.allocate_exact_size(
+                                Vec2::new(total, self.row_h()),
+                                Sense::click_and_drag(),
+                            );
+                            let look = RowLook {
+                                checked: self.controller.is_checked(row),
+                                cursor: self.controller.state.cursor == Some(index),
+                                open: false,
+                                cut: self.controller.state.cut_names.contains(&row.path),
+                            };
+                            paint_row_back(ui, rect, &response, &look, p);
+                            let mut x = rect.left();
+                            for (slot, column) in shown.iter().enumerate() {
+                                let cell = Rect::from_min_size(
+                                    egui::pos2(x, rect.top()),
+                                    Vec2::new(widths[slot], self.row_h()),
+                                );
+                                x += widths[slot];
+                                if *column == SortColumn::Name {
+                                    if self.renaming_here(row) {
+                                        self.rename_field(ui, cell.shrink2(Vec2::new(24.0, 1.0)));
+                                    } else {
+                                        paint_name(ui, cell, row, &look, p);
+                                    }
+                                    continue;
+                                }
+                                let text = column_text(row, *column, s, &current_dir);
+                                let (anchor, at) = if right_aligned(*column) {
+                                    (
+                                        Align2::RIGHT_CENTER,
+                                        cell.right_center() - Vec2::new(10.0, 0.0),
+                                    )
+                                } else {
+                                    (
+                                        Align2::LEFT_CENTER,
+                                        cell.left_center() + Vec2::new(8.0, 0.0),
+                                    )
+                                };
+                                ui.painter_at(cell).text(
+                                    at,
+                                    anchor,
+                                    text,
+                                    FontId::proportional(13.0),
+                                    hex(p.muted),
+                                );
+                            }
+                            self.row_events(ui, &response, row, index, None, look.checked);
+                        }
+                    });
+                    self.blank_below(ui, &shown, None);
                 });
-                self.blank_below(ui, &shown, None);
             });
     }
 
@@ -460,6 +476,11 @@ impl Shell {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             for pane in first..panes {
+                // Picking a folder in an earlier pane rebuilds the ones after
+                // it while this loop is still running, so count again.
+                if pane >= self.controller.state.browser.panes.len() {
+                    break;
+                }
                 let height = ui.available_height();
                 let directory = &self.controller.state.browser.panes[pane].directory;
                 let shown = super::theme::appear(ui.ctx(), egui::Id::new(("arca-pane", directory)));
