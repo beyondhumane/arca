@@ -14,10 +14,10 @@
 //! those roots to keep up to date, so that a program made of decompressors
 //! could read a version number.
 //!
-//! Anywhere else it answers nothing at all, which the caller has to be ready
-//! for anyway: no network, no reply, and a refusal from the machine all look
-//! the same from here on purpose. Nothing this crate is used for is important
-//! enough to explain itself.
+//! Anywhere else it hands the request to the system's `curl`, for the same
+//! reason. Whatever goes wrong comes back as a [`FetchError`] saying which of
+//! the few ways it was, so that a caller can tell a cancel from a failure and
+//! a missing client from a server that said no.
 
 #![cfg_attr(not(windows), forbid(unsafe_code))]
 
@@ -29,14 +29,54 @@
 /// the release says beforehand -- passes its own to [`fetch`].
 pub const CEILING: usize = 256 * 1024;
 
+/// Why a request brought nothing back.
+#[derive(Debug)]
+pub enum FetchError {
+    /// The address is not a plain `https://` one, so it was never sent.
+    Refused,
+    /// The system client could not be started or could not reach the other
+    /// end: no `curl`, no network, a name that does not resolve, a proxy that
+    /// turned the connection down.
+    Unavailable(std::io::Error),
+    /// The other end answered, but not with a 200.
+    Http,
+    /// The reply is longer than the ceiling the caller set.
+    TooLarge,
+    /// The watcher asked to stop before the reply was complete.
+    Cancelled,
+    /// [`get`] only: the reply arrived but is not UTF-8 text.
+    NotText,
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchError::Refused => f.write_str("not a plain https address"),
+            FetchError::Unavailable(e) => write!(f, "no connection: {e}"),
+            FetchError::Http => f.write_str("the server did not answer 200"),
+            FetchError::TooLarge => f.write_str("the reply is larger than allowed"),
+            FetchError::Cancelled => f.write_str("cancelled"),
+            FetchError::NotText => f.write_str("the reply is not text"),
+        }
+    }
+}
+
+impl std::error::Error for FetchError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            FetchError::Unavailable(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
 /// Asks `url` for its contents and gives them back as text.
 ///
-/// `https://` only, and only what fits under [`CEILING`]. `None` for every way
-/// it can fail, which includes a machine with no network, an address that does
-/// not answer, anything but a 200, and a body that is not text.
-pub fn get(url: &str, agent: &str) -> Option<String> {
+/// `https://` only, and only what fits under [`CEILING`]. Fails the same ways
+/// [`fetch`] does, and with [`FetchError::NotText`] for a body that is not text.
+pub fn get(url: &str, agent: &str) -> Result<String, FetchError> {
     let bytes = fetch(url, agent, CEILING, &|_, _| true)?;
-    String::from_utf8(bytes).ok()
+    String::from_utf8(bytes).map_err(|_| FetchError::NotText)
 }
 
 /// The same, for something that is not text and does not fit in a line.
@@ -55,13 +95,13 @@ pub fn fetch(
     agent: &str,
     ceiling: usize,
     watch: &dyn Fn(usize, Option<usize>) -> bool,
-) -> Option<Vec<u8>> {
+) -> Result<Vec<u8>, FetchError> {
     // Off Windows the system client is curl, which every Linux and macOS has
     // and which carries the system's own roots of trust: no TLS stack of our
     // own, same as WinHTTP on the other side. The reply goes to a file so that
     // the size can be watched while it grows.
     if !url.starts_with("https://") {
-        return None;
+        return Err(FetchError::Refused);
     }
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -89,27 +129,49 @@ pub fn fetch(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .ok()?;
+        .map_err(FetchError::Unavailable)?;
     let done = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status.success(),
+            Ok(Some(status)) if status.success() => break Ok(()),
+            Ok(Some(status)) => break Err(curl_failure(status.code())),
             Ok(None) => {
                 let so_far = std::fs::metadata(&file).map_or(0, |m| m.len() as usize);
                 if !watch(so_far, None) {
                     let _ = child.kill();
                     let _ = child.wait();
                     let _ = std::fs::remove_file(&file);
-                    return None;
+                    return Err(FetchError::Cancelled);
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            Err(_) => break false,
+            Err(e) => break Err(FetchError::Unavailable(e)),
         }
     };
-    let bytes = std::fs::read(&file).ok();
+    let bytes = std::fs::read(&file);
     let _ = std::fs::remove_file(&file);
-    let bytes = bytes.filter(|_| done)?;
-    (bytes.len() <= ceiling).then_some(bytes)
+    done?;
+    let bytes = bytes.map_err(FetchError::Unavailable)?;
+    if bytes.len() > ceiling {
+        return Err(FetchError::TooLarge);
+    }
+    Ok(bytes)
+}
+
+/// What a curl that exited unsuccessfully means, from its exit code.
+///
+/// 22 is `--fail` turning down an HTTP error and 63 is `--max-filesize`; the
+/// rest are curl not getting as far as a reply. No code at all means it was
+/// killed by a signal.
+#[cfg(any(not(windows), test))]
+fn curl_failure(code: Option<i32>) -> FetchError {
+    match code {
+        Some(22) => FetchError::Http,
+        Some(63) => FetchError::TooLarge,
+        Some(code) => FetchError::Unavailable(std::io::Error::other(format!(
+            "curl exited with code {code}"
+        ))),
+        None => FetchError::Unavailable(std::io::Error::other("curl was killed")),
+    }
 }
 
 #[cfg(windows)]
@@ -118,8 +180,8 @@ pub fn fetch(
     agent: &str,
     ceiling: usize,
     watch: &dyn Fn(usize, Option<usize>) -> bool,
-) -> Option<Vec<u8>> {
-    let (host, path) = split(url)?;
+) -> Result<Vec<u8>, FetchError> {
+    let (host, path) = split(url).ok_or(FetchError::Refused)?;
     windows_impl::fetch(&host, &path, agent, ceiling, watch)
 }
 
@@ -155,8 +217,17 @@ fn split(url: &str) -> Option<(String, String)> {
 
 #[cfg(windows)]
 mod windows_impl {
+    use super::FetchError;
     use windows::core::PCWSTR;
     use windows::Win32::Networking::WinHttp::*;
+
+    fn unavailable(e: windows::core::Error) -> FetchError {
+        FetchError::Unavailable(e.into())
+    }
+
+    fn last_error() -> FetchError {
+        FetchError::Unavailable(std::io::Error::last_os_error())
+    }
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -185,7 +256,7 @@ mod windows_impl {
         agent: &str,
         ceiling: usize,
         watch: &dyn Fn(usize, Option<usize>) -> bool,
-    ) -> Option<Vec<u8>> {
+    ) -> Result<Vec<u8>, FetchError> {
         let agent_w = wide(agent);
         let host_w = wide(host);
         let path_w = wide(path);
@@ -202,7 +273,7 @@ mod windows_impl {
                 0,
             ));
             if session.0.is_null() {
-                return None;
+                return Err(last_error());
             }
             // Time limits so that a server that accepts the connection and then
             // says nothing cannot leave a thread of ours waiting for ever. The
@@ -217,7 +288,7 @@ mod windows_impl {
                 0,
             ));
             if connection.0.is_null() {
-                return None;
+                return Err(last_error());
             }
 
             let request = Handle(WinHttpOpenRequest(
@@ -230,17 +301,13 @@ mod windows_impl {
                 WINHTTP_FLAG_SECURE,
             ));
             if request.0.is_null() {
-                return None;
+                return Err(last_error());
             }
 
-            if WinHttpSendRequest(request.0, None, None, 0, 0, 0).is_err() {
-                return None;
-            }
-            if WinHttpReceiveResponse(request.0, std::ptr::null_mut()).is_err() {
-                return None;
-            }
-            if status(request.0)? != 200 {
-                return None;
+            WinHttpSendRequest(request.0, None, None, 0, 0, 0).map_err(unavailable)?;
+            WinHttpReceiveResponse(request.0, std::ptr::null_mut()).map_err(unavailable)?;
+            if status(request.0) != Some(200) {
+                return Err(FetchError::Http);
             }
             // What the other end says it is going to send, if it says. A number
             // to draw a bar with, and nothing more: what is actually read is
@@ -251,13 +318,11 @@ mod windows_impl {
 
             let mut body: Vec<u8> = Vec::new();
             if !watch(0, expected) {
-                return None;
+                return Err(FetchError::Cancelled);
             }
             loop {
                 let mut waiting = 0u32;
-                if WinHttpQueryDataAvailable(request.0, &mut waiting).is_err() {
-                    return None;
-                }
+                WinHttpQueryDataAvailable(request.0, &mut waiting).map_err(unavailable)?;
                 if waiting == 0 {
                     break;
                 }
@@ -265,30 +330,27 @@ mod windows_impl {
                 if want == 0 {
                     // At the ceiling with more still coming. Whatever this is,
                     // it is not what was asked for.
-                    return None;
+                    return Err(FetchError::TooLarge);
                 }
                 let at = body.len();
                 body.resize(at + want, 0);
                 let mut read = 0u32;
-                if WinHttpReadData(
+                WinHttpReadData(
                     request.0,
                     body[at..].as_mut_ptr() as *mut _,
                     want as u32,
                     &mut read,
                 )
-                .is_err()
-                {
-                    return None;
-                }
+                .map_err(unavailable)?;
                 body.truncate(at + read as usize);
                 if read == 0 {
                     break;
                 }
                 if !watch(body.len(), expected) {
-                    return None;
+                    return Err(FetchError::Cancelled);
                 }
             }
-            Some(body)
+            Ok(body)
         }
     }
 
@@ -371,6 +433,26 @@ mod tests {
         );
         assert_eq!(split("https://example.com/#x"), None);
     }
+
+    #[test]
+    fn an_address_that_is_not_https_is_never_sent() {
+        assert!(matches!(
+            fetch("http://example.com", "arca-net-test", CEILING, &|_, _| true),
+            Err(FetchError::Refused)
+        ));
+        assert!(matches!(
+            get("ftp://example.com", "arca-net-test"),
+            Err(FetchError::Refused)
+        ));
+    }
+
+    #[test]
+    fn a_curl_exit_code_says_which_way_it_failed() {
+        assert!(matches!(curl_failure(Some(22)), FetchError::Http));
+        assert!(matches!(curl_failure(Some(63)), FetchError::TooLarge));
+        assert!(matches!(curl_failure(Some(6)), FetchError::Unavailable(_)));
+        assert!(matches!(curl_failure(None), FetchError::Unavailable(_)));
+    }
 }
 
 #[cfg(test)]
@@ -387,11 +469,11 @@ mod live {
             "arca-net-test",
         );
         match body {
-            Some(text) => {
+            Ok(text) => {
                 println!("{} bytes", text.len());
                 println!("{}", &text[..text.len().min(200)]);
             }
-            None => println!("sin respuesta (sin red, sin releases, o rechazada)"),
+            Err(e) => println!("sin respuesta: {e}"),
         }
     }
 }

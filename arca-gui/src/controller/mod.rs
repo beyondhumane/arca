@@ -953,7 +953,7 @@ impl AppController {
             // the program and its version is what a user agent is for. Nothing
             // else is sent: no machine, no user, no archive.
             let agent = format!("Arca/{running}");
-            let Some(reply) = arca_net::get(api, &agent) else {
+            let Ok(reply) = arca_net::get(api, &agent) else {
                 let _ = tx.send(Err(()));
                 return;
             };
