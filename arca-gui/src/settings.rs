@@ -72,6 +72,14 @@ pub(crate) const TEXT_LEAST: f32 = 10.0;
 pub(crate) const TEXT_MOST: f32 = 20.0;
 pub(crate) const TEXT_DEFAULT: f32 = 13.0;
 
+fn flag(value: &str) -> Option<bool> {
+    match value {
+        "yes" => Some(true),
+        "no" => Some(false),
+        _ => None,
+    }
+}
+
 fn bounded_width(width: f32, least: f32, most: f32) -> Option<f32> {
     width.is_finite().then(|| width.clamp(least, most))
 }
@@ -238,8 +246,8 @@ impl Settings {
                         }
                     }
                 }
-                ("motion", v) => s.motion = v != "no",
-                ("ask_on_drop", v) => s.ask_on_drop = v == "yes",
+                ("motion", v) => s.motion = flag(v).unwrap_or(s.motion),
+                ("ask_on_drop", v) => s.ask_on_drop = flag(v).unwrap_or(s.ask_on_drop),
                 ("title_bar", "system") => s.title_bar = TitleBar::System,
                 ("title_bar", "custom") => s.title_bar = TitleBar::Custom,
                 ("density", "compact") => s.density = Density::Compact,
@@ -251,13 +259,12 @@ impl Settings {
                 }
                 ("browser_view", "details") => s.browser_view = BrowserView::Details,
                 ("browser_view", "panes") => s.browser_view = BrowserView::Panes,
-                ("next_pane", v) => s.next_pane = v == "yes",
-                ("folder_peek", v) => s.folder_peek = v == "yes",
-                ("pointer_focus", v) => s.pointer_focus = v != "no",
+                ("next_pane", v) => s.next_pane = flag(v).unwrap_or(s.next_pane),
+                ("folder_peek", v) => s.folder_peek = flag(v).unwrap_or(s.folder_peek),
+                ("pointer_focus", v) => s.pointer_focus = flag(v).unwrap_or(s.pointer_focus),
                 // Older files chose the icon rail by hand; the window width decides now.
                 ("sidebar_collapsed", _) => {}
-                ("preview_visible", "yes") => s.preview_visible = true,
-                ("preview_visible", "no") => s.preview_visible = false,
+                ("preview_visible", v) => s.preview_visible = flag(v).unwrap_or(s.preview_visible),
                 ("preview_width", v) => {
                     if let Some(width) = v
                         .parse::<f32>()
@@ -276,9 +283,9 @@ impl Settings {
                         s.directory_width = width;
                     }
                 }
-                ("flat", v) => s.flat = v == "yes",
-                ("folders", v) => s.folders = v == "yes",
-                ("updates", v) => s.updates = v != "no",
+                ("flat", v) => s.flat = flag(v).unwrap_or(s.flat),
+                ("folders", v) => s.folders = flag(v).unwrap_or(s.folders),
+                ("updates", v) => s.updates = flag(v).unwrap_or(s.updates),
                 ("channel", v) => {
                     s.channel = if v == "preview" {
                         Channel::Preview
@@ -296,7 +303,7 @@ impl Settings {
                 ("recent", p) if !p.is_empty() => s.recent.push(p.to_string()),
                 ("pinned", p) if !p.is_empty() => s.pinned.push(p.to_string()),
                 ("last_folder", p) if !p.is_empty() => s.last_folder = Some(p.to_string()),
-                ("show_hidden", v) => s.show_hidden = v == "yes",
+                ("show_hidden", v) => s.show_hidden = flag(v).unwrap_or(s.show_hidden),
                 ("window", v) => {
                     let Some(n) = v
                         .split(',')
@@ -660,6 +667,38 @@ mod tests {
             Settings::parse(&format!("{invalid}\nflat = yes")).browser_view,
             BrowserView::Details
         );
+    }
+
+    #[test]
+    fn malformed_flags_keep_the_default_and_the_last_valid_value() {
+        let keys = [
+            "motion",
+            "ask_on_drop",
+            "next_pane",
+            "folder_peek",
+            "pointer_focus",
+            "preview_visible",
+            "flat",
+            "folders",
+            "updates",
+            "show_hidden",
+        ];
+        for bad in ["maybe", "true", "false", "Yes", "NO", "1", "0", ""] {
+            let malformed: String = keys.iter().map(|k| format!("{k} = {bad}\n")).collect();
+            assert_eq!(
+                Settings::parse(&malformed).text(),
+                Settings::default().text(),
+                "{bad}"
+            );
+            for set in ["yes", "no"] {
+                let valid: String = keys.iter().map(|k| format!("{k} = {set}\n")).collect();
+                assert_eq!(
+                    Settings::parse(&format!("{valid}{malformed}")).text(),
+                    Settings::parse(&valid).text(),
+                    "{set} then {bad}"
+                );
+            }
+        }
     }
 
     #[test]
