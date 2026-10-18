@@ -25,7 +25,7 @@ tempfile = "3"
 
 # Dialogos de fichero nativos. Es lo unico que toca la plataforma.
 rfd = "0.17"
-skrifa = { version = "0.46", default-features = false, features = ["std"] }
+skrifa = { version = "0.48", default-features = false, features = ["std"] }
 flate2.workspace = true
 
 # Solo los formatos que alguien mete en un zip y espera poder mirar. Sin las
