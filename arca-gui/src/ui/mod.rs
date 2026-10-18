@@ -1320,11 +1320,7 @@ impl Shell {
             self.controller
                 .dispatch(AppAction::SetChecked { row: target, value });
         } else {
-            self.controller.state.checked.fill(false);
-            self.controller.dispatch(AppAction::SetChecked {
-                row: target,
-                value: true,
-            });
+            self.controller.dispatch(AppAction::SelectOnly(target));
         }
         self.controller
             .set_pane_cursor(self.controller.state.browser.active, Some(index));

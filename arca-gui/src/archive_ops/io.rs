@@ -585,7 +585,7 @@ pub(crate) fn dest_path(
             }
             renamed
         }
-        Answer::Cancel => return Err(arca_core::Error::Format("cancelled".into())),
+        Answer::Cancel => return Err(arca_core::Error::Cancelled),
     };
     claimed.insert(chosen.clone());
     Ok(Some(chosen))
@@ -1392,5 +1392,28 @@ mod tests {
                 arca_core::Error::Format("ISO entry changed since listing".into()).to_string()
             );
         }
+    }
+
+    #[test]
+    fn cancelling_the_conflict_prompt_is_a_stop_not_a_broken_archive() {
+        let dir = room("cancel");
+        let archive = one_big_zip(&dir);
+        let dest = dir.join("out");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("big.bin"), b"keep").unwrap();
+        let result = extract(
+            &archive,
+            &dest,
+            &[],
+            &|_, _, _| true,
+            &|_| Answer::Cancel,
+            None,
+        );
+        assert!(
+            matches!(result, Err(arca_core::Error::Cancelled)),
+            "{result:?}"
+        );
+        assert_eq!(fs::read(dest.join("big.bin")).unwrap(), b"keep");
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

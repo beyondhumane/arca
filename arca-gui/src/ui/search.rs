@@ -389,9 +389,7 @@ impl Shell {
         else {
             return;
         };
-        self.controller.state.checked.fill(false);
-        self.controller
-            .dispatch(AppAction::SetChecked { row, value: true });
+        self.controller.dispatch(AppAction::SelectOnly(row));
         let active = self.controller.state.browser.active;
         self.controller.set_pane_cursor(active, Some(index));
         self.scroll_to_cursor = true;

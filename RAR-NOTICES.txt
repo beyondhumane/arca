@@ -47,7 +47,7 @@ Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-APACHE -> SHA-256 a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5
   LICENSE-MIT -> SHA-256 98181e7249d0c01737645ec982499ce99a0f07eb8f7d625b8840d799d10dbc01
 
-cap-fs-ext 3.4.6
+cap-fs-ext 4.0.3
 Declared license: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 Source: registry+https://github.com/rust-lang/crates.io-index
   COPYRIGHT -> SHA-256 5b3d8a674979e158328c57f5c4cc12150df79d0bdf12c86eafc2e9c6006a2d4e
@@ -55,7 +55,7 @@ Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-Apache-2.0_WITH_LLVM-exception -> SHA-256 268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5
   LICENSE-MIT -> SHA-256 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
 
-cap-primitives 3.4.6
+cap-primitives 4.0.3
 Declared license: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 Source: registry+https://github.com/rust-lang/crates.io-index
   COPYRIGHT -> SHA-256 a8799c2a07dabcb8d52481f885c5ab7000acb8a4d3cd9503fbcb97c84d350e65
@@ -63,7 +63,7 @@ Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-Apache-2.0_WITH_LLVM-exception -> SHA-256 268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5
   LICENSE-MIT -> SHA-256 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
 
-cap-std 3.4.6
+cap-std 4.0.3
 Declared license: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 Source: registry+https://github.com/rust-lang/crates.io-index
   COPYRIGHT -> SHA-256 6b1691fdee3b03c3946696a7be125fcf50eff310b9486fac850c1b8aea91478b
@@ -107,7 +107,7 @@ Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-APACHE -> SHA-256 a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5
   LICENSE-MIT -> SHA-256 73b9dc2e79c7308998dd30296e073aefaefb944a68fb89aa412c23c0edcabcaa
 
-crc32fast 1.5.1
+crc32fast 1.5.2
 Declared license: MIT OR Apache-2.0
 Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-APACHE -> SHA-256 c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08
@@ -175,7 +175,7 @@ Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-APACHE -> SHA-256 a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5
   LICENSE-MIT -> SHA-256 a07fcacc3c60de4dc0fab10ac9d6aaba7379974e28451c99da7f7df09c25b28c
 
-io-extras 0.18.4
+io-extras 0.19.0
 Declared license: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 Source: registry+https://github.com/rust-lang/crates.io-index
   COPYRIGHT -> SHA-256 f0c1d22de8bd3b776a40f2691f08b84e91c7bafc78b72a51150e231002b88db3
@@ -191,13 +191,21 @@ Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-Apache-2.0_WITH_LLVM-exception -> SHA-256 268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5
   LICENSE-MIT -> SHA-256 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
 
+io-lifetimes 3.0.1
+Declared license: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+Source: registry+https://github.com/rust-lang/crates.io-index
+  COPYRIGHT -> SHA-256 495c30b45120f8af07cfa26eb9cb1ebfe8324560dca2b3b1e76cad1b9b6b489a
+  LICENSE-APACHE -> SHA-256 a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2
+  LICENSE-Apache-2.0_WITH_LLVM-exception -> SHA-256 268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5
+  LICENSE-MIT -> SHA-256 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
+
 ipnet 2.12.2
 Declared license: MIT OR Apache-2.0
 Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-APACHE -> SHA-256 87d9feb9238c6bd8e0024fc4733b06cff036f89f36d93b7df1c8a0549bbb7a5b
   LICENSE-MIT -> SHA-256 47dc9ff29128ddfb4d6a0435383c9f89120bc374dbcc1dd00b933a0b28aa7865
 
-libc 0.2.189
+libc 0.2.190
 Declared license: MIT OR Apache-2.0
 Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-APACHE -> SHA-256 62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a
@@ -241,7 +249,7 @@ Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-APACHE -> SHA-256 62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a
   LICENSE-MIT -> SHA-256 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
 
-rars 0.10.0
+rars 0.10.2
 Declared license: Apache-2.0
 Source: registry+https://github.com/rust-lang/crates.io-index
   COPYING -> SHA-256 cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
