@@ -1,6 +1,6 @@
 use super::dialogs::shortcut_label;
 use super::layout::{breadcrumb_indices, decide, toggle_sidebar};
-use super::theme::{hex, palette_of};
+use super::theme::{hex, palette_of, text_font, text_size};
 use super::widgets::*;
 use super::*;
 use eframe::egui::{self, RichText};
@@ -761,7 +761,7 @@ impl Shell {
             &label,
             6.0,
             egui::TextFormat {
-                font_id: egui::FontId::proportional(12.0),
+                font_id: text_font(ui.style(), -1.0),
                 color: hex(p.success),
                 valign: egui::Align::Center,
                 ..Default::default()
@@ -795,7 +795,7 @@ impl Shell {
                     let p = palette_of(ui.ctx());
                     ui.label(
                         RichText::new(s.picker_waiting)
-                            .size(12.0)
+                            .size(text_size(ui.style(), -1.0))
                             .color(hex(p.warning)),
                     );
                     ui.separator();

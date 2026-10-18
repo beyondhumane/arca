@@ -217,6 +217,18 @@ pub(crate) fn icon_text(glyph: &str) -> egui::RichText {
     egui::RichText::new(glyph).family(FontFamily::Name("phosphor".into()))
 }
 
+pub(crate) fn text_size(style: &egui::Style, delta: f32) -> f32 {
+    TextStyle::Body.resolve(style).size + delta
+}
+
+pub(crate) fn text_font(style: &egui::Style, delta: f32) -> FontId {
+    FontId::proportional(text_size(style, delta))
+}
+
+pub(crate) fn mono_font(style: &egui::Style, delta: f32) -> FontId {
+    FontId::monospace(text_size(style, delta))
+}
+
 pub(crate) fn display(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(DISPLAY.into()))
 }
@@ -378,6 +390,27 @@ mod tests {
                 }
                 assert!(contrast(p.state_foreground, state) >= 4.5, "{name}");
             }
+        }
+    }
+
+    #[test]
+    fn view_text_follows_the_text_size_setting() {
+        let ctx = egui::Context::default();
+        let library = themes::builtin();
+        let larger = Settings {
+            text_size: 18.0,
+            ..Settings::default()
+        };
+        for mode in [egui::Theme::Dark, egui::Theme::Light] {
+            install(&ctx, &Settings::default(), &library);
+            let style = ctx.style_of(mode);
+            assert_eq!(text_size(&style, 1.0), 14.0);
+            assert_eq!(text_font(&style, -0.5).size, 12.5);
+            assert_eq!(mono_font(&style, -1.0).size, 12.0);
+            install(&ctx, &larger, &library);
+            let style = ctx.style_of(mode);
+            assert_eq!(text_size(&style, 1.0), 19.0);
+            assert_eq!(text_font(&style, -2.5).size, 15.5);
         }
     }
 

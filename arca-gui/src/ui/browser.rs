@@ -1,9 +1,9 @@
-use super::theme::{alpha, hex, palette_of, Palette};
+use super::theme::{alpha, hex, palette_of, text_font, text_size, Palette};
 use super::widgets::*;
 use super::*;
 use crate::settings::BrowserView;
 use crate::tree::Kind;
-use eframe::egui::{self, Align2, FontId, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};
+use eframe::egui::{self, Align2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2};
 use egui_phosphor::regular as icon;
 
 #[cfg(test)]
@@ -106,7 +106,7 @@ fn paint_name(ui: &egui::Ui, rect: Rect, row: &Row, look: &RowLook, p: Palette) 
         kind_glyph(row.kind)
     };
     let glyph_color = if row.is_dir { p.focus } else { p.muted };
-    let font = FontId::proportional(14.0);
+    let font = text_font(ui.style(), 1.0);
     painter.text(
         rect.left_center() + Vec2::new(6.0, 0.0),
         Align2::LEFT_CENTER,
@@ -294,7 +294,7 @@ impl Shell {
                                     s.more_items,
                                     &[("count", &(rows.len() - SHOWN).to_string())],
                                 ))
-                                .size(12.0)
+                                .size(text_size(ui.style(), -1.0))
                                 .color(hex(p.muted)),
                             );
                         }
@@ -461,7 +461,7 @@ impl Shell {
                     job.append(
                         label,
                         0.0,
-                        egui::TextFormat::simple(FontId::proportional(12.5), hex(color)),
+                        egui::TextFormat::simple(text_font(ui.style(), -0.5), hex(color)),
                     );
                     if let Some(arrow) = arrow {
                         job.append(
@@ -610,7 +610,7 @@ impl Shell {
                                     at,
                                     anchor,
                                     text,
-                                    FontId::proportional(13.0),
+                                    text_font(ui.style(), 0.0),
                                     hex(p.muted),
                                 );
                             }

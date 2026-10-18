@@ -1,4 +1,4 @@
-use super::theme::{hex, palette_of};
+use super::theme::{hex, palette_of, text_size};
 use super::widgets::*;
 use super::*;
 use eframe::egui::{self, RichText};
@@ -120,8 +120,12 @@ impl Shell {
                             mime_of(&name)
                         );
                         ui.add(
-                            egui::Label::new(RichText::new(facts).size(12.0).color(hex(p.muted)))
-                                .truncate(),
+                            egui::Label::new(
+                                RichText::new(facts)
+                                    .size(text_size(ui.style(), -1.0))
+                                    .color(hex(p.muted)),
+                            )
+                            .truncate(),
                         );
                     }
                 });

@@ -1,4 +1,4 @@
-use super::theme::{hex, palette_of};
+use super::theme::{hex, palette_of, text_font, text_size};
 use super::Shell;
 use crate::controller::disk_path;
 use crate::tree::Folder;
@@ -304,7 +304,7 @@ impl Shell {
                                 rect.right_center() - egui::vec2(10.0, 0.0),
                                 egui::Align2::RIGHT_CENTER,
                                 &place,
-                                egui::FontId::proportional(12.0),
+                                text_font(ui.style(), -1.0),
                                 hex(p.muted),
                             );
                             if row.clicked() {
@@ -328,7 +328,11 @@ impl Shell {
                                         &super::dialogs::shortcut_label(key, s),
                                     );
                                 }
-                                ui.label(egui::RichText::new(what).size(12.0).color(hex(p.muted)));
+                                ui.label(
+                                    egui::RichText::new(what)
+                                        .size(text_size(ui.style(), -1.0))
+                                        .color(hex(p.muted)),
+                                );
                                 ui.add_space(10.0);
                             }
                         });
