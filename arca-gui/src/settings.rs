@@ -117,13 +117,8 @@ pub(crate) struct Settings {
     pub(crate) channel: Channel,
     // Every file in the archive at once, instead of one folder at a time.
     pub(crate) flat: bool,
-    // El panel de carpetas del archivo, a la izquierda.
-    //
-    // La clave se llama `folders` y no `tree` a proposito. La vieja existe en
-    // los ajustes de todo el mundo puesta a `no`, porque asi venia de fabrica
-    // y durante una version entera no la leyo nadie: honrarla ahora escondería
-    // el panel a quien nunca pidio esconderlo. Con otro nombre, la vieja se
-    // ignora y el panel sigue saliendo.
+    // Keyed `folders`, not `tree`: old configs carry `tree = no` from a release
+    // that never read it, and honouring it would hide the panel.
     pub(crate) folders: bool,
     // Which code page an unflagged zip has its names written in. Only the
     // person looking at the archive can know, so it is remembered: somebody

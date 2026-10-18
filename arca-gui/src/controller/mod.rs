@@ -267,8 +267,7 @@ impl AppController {
         self.state.password_input.clear();
         // Two questions at most, and never none: the password the archive
         // already has, when it has one and the window does not know it, and
-        // then the one it is about to get. Going straight to the job here is
-        // what left the button only able to take a password off.
+        // then the one it is about to get.
         let locked = self.state.entries.iter().any(|entry| entry.encrypted)
             && self.state.archive_password.is_none();
         self.state.waiting_on_password = Some(if locked {
@@ -834,9 +833,6 @@ impl AppController {
     // A swap of two names, because the version before the change was moved
     // aside rather than thrown away. There is one step and no more: taking it
     // back leaves nothing to take back, and the sidecar goes with it.
-    //
-    // Lives on the controller rather than in a view because there is nothing
-    // about it that belongs to a toolkit, and both surfaces offer it.
     pub(crate) fn undo_last(&mut self) {
         if self.blocked() {
             return;
@@ -1168,10 +1164,6 @@ impl AppController {
         self.remember_folder();
     }
 
-    // Every folder starts with nothing picked, the way the Explorer does.
-    // A folder is picked here by ticking every entry underneath it, which is
-    // what lets one be extracted whole, so clicking a folder and walking into
-    // it used to arrive with all of its contents already ticked.
     pub(crate) fn remember(&mut self, path: &Path) {
         let text = path.to_string_lossy().to_string();
         self.state.settings.recent.retain(|p| *p != text);
@@ -1579,13 +1571,6 @@ impl AppController {
                         self.state.archive_password = None;
                         self.state.waiting_on_password = Some(Pending::OpenArchive);
                     }
-                    // Nothing picked to begin with. It used to be
-                    // everything, which was invisible while the ticks were
-                    // the only sign of it; now that a picked row is painted
-                    // it would open as a wall of blue, and "everything is
-                    // selected" is not what a list means when you open it.
-                    // The buttons that work on the whole archive never
-                    // looked at the ticks anyway.
                     self.state.checked = vec![false; v.len()];
                     self.state.folders = tree::folders_of(&v);
                     self.state.entries = v;
@@ -1906,9 +1891,6 @@ impl AppController {
         self.add_files(paths);
     }
 
-    // A drop used to mean one thing and now means another, so while something
-    // is held over the window it says which. Guessing in silence is what made
-    // the old behaviour surprising in the first place.
     pub(crate) fn view_entry(&mut self, index: usize) {
         if let Some(cursor) = self
             .visible_rows()
@@ -2111,12 +2093,6 @@ impl AppController {
             );
         // The file on disk is about to change, so the listing has to be redone.
         //
-        // One match rather than a copy of the same `if let` per job: written as
-        // copies, a new folder and a move were left out, and the window went on
-        // showing a listing the archive no longer matched until it was reopened
-        // by hand. This list is the jobs that rebuild the file, and it is the
-        // same one the undo entry below is built from.
-        //
         // A window that leaves when the job ends has nothing to show, and
         // pointing it at the new archive would cancel its own departure: what
         // decides the window closes is still being on View::Running, and
@@ -2129,9 +2105,6 @@ impl AppController {
         // The ones that build the archive again leave the old one beside it.
         // What is kept here is the word for the change, so that offering to
         // take it back can say what it would be taking back.
-        //
-        // Without this the undo entry was never written, which is why Ctrl+Z
-        // and the menu entry were permanently greyed out.
         let words = self.s();
         self.state.undo = match &job {
             Job::Delete { archive, .. } => Some((archive.clone(), words.delete_word)),
