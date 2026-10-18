@@ -451,6 +451,31 @@ mod tests {
     }
 
     #[test]
+    fn select_only_replaces_the_selection_and_updates_the_pane() {
+        let mut c = controller();
+        let rows = c.visible_rows();
+        let file = rows.iter().find(|r| r.path == "root.txt").unwrap().clone();
+        let folder = rows.iter().find(|r| r.path == "a/").unwrap().clone();
+        c.state.checked[0] = true;
+        c.select_only(&folder);
+        assert_eq!(c.state.checked, [false, true, true, true, true]);
+        assert_eq!(
+            c.state.browser.panes[0].selected,
+            HashSet::from([1, 2, 3, 4])
+        );
+        c.select_only(&file);
+        assert_eq!(c.state.checked, [true, false, false, false, false]);
+        assert_eq!(c.state.browser.panes[0].selected, HashSet::from([0]));
+        let hidden = Row {
+            path: "elsewhere.txt".into(),
+            ..file
+        };
+        c.select_only(&hidden);
+        assert!(c.state.checked.iter().all(|on| !on));
+        assert!(c.state.browser.panes[0].selected.is_empty());
+    }
+
+    #[test]
     fn three_levels_keep_ancestors_and_replace_only_descendants() {
         let mut c = controller();
         assert!(c.enter_folder_from_pane(0, "a/"));

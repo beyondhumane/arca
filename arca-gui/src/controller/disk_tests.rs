@@ -1,5 +1,5 @@
 use super::disk::ancestors_of;
-use super::disk::{desktop_app, duplicate_target, split_exec};
+use super::disk::{copy_tree, could_not, desktop_app, duplicate_target, split_exec};
 use super::*;
 use crate::test_support::Room;
 
@@ -368,6 +368,25 @@ fn a_duplicate_sits_beside_the_original_with_copy_in_its_name() {
     assert_eq!(
         duplicate_target(&room.path("nested")).unwrap(),
         room.path("nested copy")
+    );
+}
+
+#[test]
+fn a_failed_copy_says_which_file_and_why() {
+    let room = populated();
+    let missing = room.path("gone.txt");
+    let (path, error) = copy_tree(&missing, &room.path("copy.txt")).unwrap_err();
+    assert_eq!(path, missing);
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    let s = crate::i18n::strings(crate::i18n::Lang::En);
+    let reason = error.to_string();
+    assert_eq!(
+        could_not(s, true, &path, &error),
+        format!("Could not copy gone.txt: {reason}")
+    );
+    assert_eq!(
+        could_not(s, false, &path, &error),
+        format!("Could not move gone.txt: {reason}")
     );
 }
 

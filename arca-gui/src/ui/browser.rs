@@ -1071,11 +1071,7 @@ impl Shell {
         if response.secondary_clicked() && idle {
             activate(self);
             if !checked && !row.up {
-                self.controller.state.checked.fill(false);
-                self.controller.dispatch(AppAction::SetChecked {
-                    row: row.clone(),
-                    value: true,
-                });
+                self.controller.dispatch(AppAction::SelectOnly(row.clone()));
             }
             let active = self.controller.state.browser.active;
             self.controller.set_pane_cursor(active, Some(index));
@@ -1152,11 +1148,14 @@ impl Shell {
                 RowAction::CopyNames if on_disk => s.copy_name,
                 _ => label,
             };
-            let keys = if on_disk && action == RowAction::Delete {
-                "Mayús+Supr"
-            } else {
-                keys
-            };
+            let keys = super::dialogs::shortcut_label(
+                if on_disk && action == RowAction::Delete {
+                    "shift-delete"
+                } else {
+                    keys
+                },
+                s,
+            );
             if action == RowAction::OpenWith {
                 if let Some(path) = row.map(|row| crate::controller::disk::disk_path(&row.path)) {
                     if self.open_with_menu(ui, &path, idle) {
@@ -1187,7 +1186,7 @@ impl Shell {
                     RowAction::Copy | RowAction::Cut => self.can_copy_files() || row.is_some(),
                     _ => true,
                 };
-            if menu_entry(ui, glyph, &label, keys, enabled).clicked() {
+            if menu_entry(ui, glyph, &label, &keys, enabled).clicked() {
                 if row.is_none() {
                     self.controller.dispatch(AppAction::ClearSelection);
                 }

@@ -123,36 +123,37 @@ impl RowAction {
         }
     }
 
-    /// What it is called, and the keys that do the same thing. A menu that does
-    /// not name the shortcut is a menu nobody graduates from.
+    /// What it is called, and the keys that do the same thing as a
+    /// `keystroke` spec. A menu that does not name the shortcut is a menu
+    /// nobody graduates from.
     pub(crate) fn label(self, s: &'static Strings) -> (&'static str, &'static str) {
         match self {
-            RowAction::Open => (s.open_word, "Enter"),
+            RowAction::Open => (s.open_word, "enter"),
             RowAction::OpenWith => (s.open_with, ""),
             RowAction::NewFolderWith => (s.new_folder_with, ""),
-            RowAction::Duplicate => (s.duplicate_word, "Ctrl+D"),
+            RowAction::Duplicate => (s.duplicate_word, "ctrl-d"),
             RowAction::MoveTo => (s.move_to, ""),
             RowAction::CopyTo => (s.copy_to, ""),
             RowAction::Properties => (s.properties_word, ""),
-            RowAction::Trash => (s.trash_word, "Supr"),
+            RowAction::Trash => (s.trash_word, "delete"),
             RowAction::OpenInPane => (s.open_in_pane, ""),
             RowAction::ExtractSelection => (s.extract_selected, ""),
-            RowAction::ExtractHere => (s.extract_here, "Alt+W"),
+            RowAction::ExtractHere => (s.extract_here, "alt-w"),
             RowAction::TestSelection => (s.test_selection, ""),
-            RowAction::View => (s.view_word, "F3"),
-            RowAction::Rename => (s.rename_word, "F2"),
-            RowAction::Delete => (s.delete_word, "Supr"),
-            RowAction::Copy => (s.copy_word, "Ctrl+C"),
-            RowAction::Cut => (s.cut_word, "Ctrl+X"),
-            RowAction::Paste => (s.paste_word, "Ctrl+V"),
-            RowAction::CopyNames => (s.copy_names, "Ctrl+Shift+C"),
-            RowAction::SelectAll => (s.select_all, "Ctrl+A"),
+            RowAction::View => (s.view_word, "f3"),
+            RowAction::Rename => (s.rename_word, "f2"),
+            RowAction::Delete => (s.delete_word, "delete"),
+            RowAction::Copy => (s.copy_word, "ctrl-c"),
+            RowAction::Cut => (s.cut_word, "ctrl-x"),
+            RowAction::Paste => (s.paste_word, "ctrl-v"),
+            RowAction::CopyNames => (s.copy_names, "ctrl-shift-c"),
+            RowAction::SelectAll => (s.select_all, "ctrl-a"),
             RowAction::NewFolder => (s.new_folder, ""),
-            RowAction::Compress => (s.compress_selection, "Ctrl+N"),
+            RowAction::Compress => (s.compress_selection, "ctrl-n"),
             RowAction::CopyPath => (s.copy_path, ""),
             RowAction::Pin => (s.pin_word, ""),
-            RowAction::ExtractAll => (s.extract_all, "Ctrl+E"),
-            RowAction::TestArchive => (s.test_word, "Ctrl+T"),
+            RowAction::ExtractAll => (s.extract_all, "ctrl-e"),
+            RowAction::TestArchive => (s.test_word, "ctrl-t"),
         }
     }
 

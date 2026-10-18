@@ -24,10 +24,10 @@ clap.workspace = true
 rayon.workspace = true
 
 [target."cfg(unix)".dependencies]
-signal-hook = { version = "=0.3.18", optional = true }
+signal-hook = { version = "=0.4.5", optional = true }
 
 [target."cfg(windows)".dependencies]
-ctrlc = { version = "=3.4.7", optional = true }
+ctrlc = { version = "=3.5.2", optional = true }
 
 [features]
 rar = ["arca-rar/rar", "dep:ctrlc", "dep:signal-hook"]

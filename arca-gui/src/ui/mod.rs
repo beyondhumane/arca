@@ -236,6 +236,7 @@ pub(crate) struct Shell {
     theme_query: String,
     theme_filter: usize,
     theme_draft: Option<themes::Theme>,
+    theme_error: Option<String>,
     carrying: bool,
     /// A drop waiting on the Move / Copy / Cancel menu.
     pending_drop: Option<PendingDrop>,
@@ -316,6 +317,7 @@ impl Shell {
             theme_query: String::new(),
             theme_filter: 0,
             theme_draft: None,
+            theme_error: None,
             carrying: false,
             pending_drop: None,
             blank_drop: None,
@@ -687,7 +689,15 @@ impl Shell {
                             choice = Some(Some(true));
                         }
                         ui.separator();
-                        if entry(ui, egui_phosphor::regular::X, s.cancel, "Esc", true).clicked() {
+                        if entry(
+                            ui,
+                            egui_phosphor::regular::X,
+                            s.cancel,
+                            &dialogs::shortcut_label("escape", s),
+                            true,
+                        )
+                        .clicked()
+                        {
                             choice = Some(None);
                         }
                     });
@@ -1215,16 +1225,17 @@ impl Shell {
             return;
         }
         if !clipboard::AVAILABLE {
-            self.controller.state.notice =
-                "File clipboard integration is available on Windows only.".into();
+            self.controller.state.notice = self.controller.s().clipboard_windows_only.into();
             self.controller.state.error = true;
             return;
         }
+        let s = self.controller.s();
         self.controller.state.notice = if cut {
-            "Preparing selected files to move…".into()
+            s.preparing_move
         } else {
-            "Preparing selected files to copy…".into()
-        };
+            s.preparing_copy
+        }
+        .into();
         self.controller.state.error = false;
         self.controller.dispatch(AppAction::Copy { cut });
     }
@@ -1250,8 +1261,7 @@ impl Shell {
             return;
         }
         if !clipboard::AVAILABLE {
-            self.controller.state.notice =
-                "File clipboard integration is available on Windows only.".into();
+            self.controller.state.notice = self.controller.s().clipboard_windows_only.into();
             self.controller.state.error = true;
             return;
         }
@@ -1320,11 +1330,7 @@ impl Shell {
             self.controller
                 .dispatch(AppAction::SetChecked { row: target, value });
         } else {
-            self.controller.state.checked.fill(false);
-            self.controller.dispatch(AppAction::SetChecked {
-                row: target,
-                value: true,
-            });
+            self.controller.dispatch(AppAction::SelectOnly(target));
         }
         self.controller
             .set_pane_cursor(self.controller.state.browser.active, Some(index));
@@ -1742,7 +1748,10 @@ impl Shell {
                     }
                     (_, total) => format!("{} / {total}", task.done),
                 };
-                return format!("{} · {}", task.verb, progress);
+                return fill(
+                    s.progress_status,
+                    &[("verb", &task.verb), ("progress", &progress)],
+                );
             }
             many => return fill(s.operations_count, &[("n", &many.len().to_string())]),
         }
@@ -1752,7 +1761,10 @@ impl Shell {
             } else {
                 format!("{} / {}", state.done_count, state.total_count)
             };
-            return format!("{} · {}", state.title, progress);
+            return fill(
+                s.progress_status,
+                &[("verb", &state.title), ("progress", &progress)],
+            );
         }
         if !state.notice.is_empty() {
             return state.notice.clone();

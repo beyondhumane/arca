@@ -89,5 +89,5 @@ It must also **adopt an existing Inno installation**: same `AppId` (`{7C4E0E4A-6
 - **egui, not another stack.** It is the one `arca-gui` uses since the move back from GPUI (see `migration-to-egui.md`); both crates share eframe and the CI cache.
 - **SVG through `egui_extras` (`resvg`).** The symbol, the logo and the backgrounds are vector. Each SVG carries an intrinsic size of about 1.5 times its on-screen size, so the texture `egui_extras` rasterizes is scaled down rather than up and the edges stay smooth.
 - **Backgrounds without blur filters.** Each `feGaussianBlur` forced a whole canvas to be rasterized, and the screen took seconds to paint the background.
-- **Sora and Inter embedded.** Sora SemiBold (headings, buttons, emphasis) and Inter Regular (body), both under the OFL, which ships in `arca-setup/assets/fonts`. If they fail to load, the installer falls back to the system font.
+- **Sora and Inter embedded.** Sora SemiBold (headings, buttons, emphasis) and Inter Regular (body), both under the OFL, which ships in `arca-brand/fonts`. If they fail to load, the installer falls back to the system font.
 - **The tagline is outlined**, extracted from Sora's glyphs, so the logo looks the same without the font installed.

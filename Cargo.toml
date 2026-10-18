@@ -11,6 +11,7 @@ members = [
     "arca-cli",
     "arca-gui",
     "arca-setup",
+    "arca-brand",
     "arca-icons",
     "arca-drag",
     "arca-notify",
@@ -41,11 +42,12 @@ arca-7z   = { path = "arca-7z", default-features = false }
 arca-rar = { path = "arca-rar" }
 arca-iso = { path = "arca-iso" }
 arca-icons = { path = "arca-icons" }
+arca-brand = { path = "arca-brand" }
 # DEFLATE: zlib-rs, la implementacion en Rust mas rapida medida (ver diseno S02)
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 crc32fast = "1"
 # Zstandard: bindings a libzstd, con su multihilo interno activado.
-zstd = { version = "0.13", features = ["zstdmt"] }
+zstd = { version = "0.14", features = ["zstdmt"] }
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
 

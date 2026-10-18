@@ -76,7 +76,7 @@ fn conflict_actions_answer_every_supported_choice() {
 }
 
 #[test]
-fn background_events_are_blocked_by_gpui_modals_and_native_pickers() {
+fn background_events_are_blocked_by_modals_and_native_pickers() {
     assert!(background_event_allowed(false, false));
     assert!(!background_event_allowed(true, false));
     assert!(!background_event_allowed(false, true));
@@ -237,11 +237,32 @@ fn every_folder_of_the_tree_is_named_by_the_path_it_navigates_to() {
 
 #[test]
 fn shortcuts_are_spelled_the_way_the_platform_spells_them() {
-    assert_eq!(keystroke("ctrl-shift-c", false), "Ctrl+Shift+C");
-    assert_eq!(keystroke("ctrl-shift-c", true), "⌘⇧C");
-    assert_eq!(keystroke("alt-left", false), "Alt+←");
-    assert_eq!(keystroke("+", false), "+");
-    assert_eq!(keystroke("f5", false), "F5");
+    let en = crate::i18n::strings(super::Lang::En);
+    let es = crate::i18n::strings(super::Lang::Es);
+    assert_eq!(keystroke("ctrl-shift-c", false, en), "Ctrl+Shift+C");
+    assert_eq!(keystroke("ctrl-shift-c", true, en), "⌘⇧C");
+    assert_eq!(keystroke("alt-left", false, en), "Alt+←");
+    assert_eq!(keystroke("+", false, en), "+");
+    assert_eq!(keystroke("f5", false, en), "F5");
+    assert_eq!(keystroke("shift-delete", false, en), "Shift+Delete");
+    assert_eq!(keystroke("shift-delete", false, es), "Mayús+Supr");
+    assert_eq!(keystroke("shift-delete", true, es), "⇧Supr");
+    assert_eq!(keystroke("enter", false, es), "Intro");
+}
+
+#[test]
+fn every_menu_shortcut_is_a_spec_the_formatter_knows() {
+    let en = crate::i18n::strings(super::Lang::En);
+    for action in RowAction::ALL {
+        let (_, keys) = action.label(en);
+        assert!(
+            keys.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+            "{keys}"
+        );
+    }
+    assert_eq!(RowAction::Copy.label(en).1, "ctrl-c");
+    assert_eq!(RowAction::Trash.label(en).1, "delete");
 }
 
 #[test]
@@ -460,4 +481,26 @@ fn resize_edges_pick_corners_then_sides_and_nothing_inside() {
     assert_eq!(at(10.0, 598.0), Some(D::SouthWest));
     assert_eq!(at(400.0, 300.0), None);
     assert_eq!(at(-1.0, 300.0), None);
+}
+
+#[test]
+fn clipboard_notices_and_progress_read_in_each_language() {
+    use crate::i18n::{strings, Lang};
+    let en = strings(Lang::En);
+    assert_eq!(
+        en.clipboard_windows_only,
+        "File clipboard integration is available on Windows only."
+    );
+    assert_eq!(
+        fill(
+            en.progress_status,
+            &[("verb", "Extracting"), ("progress", "3 / 9")]
+        ),
+        "Extracting \u{b7} 3 / 9"
+    );
+    let es = strings(Lang::Es);
+    assert_ne!(es.clipboard_windows_only, en.clipboard_windows_only);
+    assert_ne!(es.preparing_move, en.preparing_move);
+    assert_ne!(es.preparing_copy, en.preparing_copy);
+    assert_ne!(es.preparing_move, es.preparing_copy);
 }

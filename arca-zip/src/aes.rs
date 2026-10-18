@@ -1,5 +1,6 @@
 use aes::cipher::{KeyIvInit, StreamCipher};
 use arca_core::{Error, Result};
+use hmac::digest::KeyInit;
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
 
@@ -64,7 +65,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 pub fn random_salt() -> Result<[u8; SALT_256]> {
     let mut salt = [0u8; SALT_256];
-    getrandom::getrandom(&mut salt)
+    getrandom::fill(&mut salt)
         .map_err(|e| Error::Format(format!("no randomness available: {e}")))?;
     Ok(salt)
 }
@@ -78,7 +79,7 @@ pub fn encrypt(
     let salt = random_salt()?;
     let keys = derive(password, &salt);
     stream(&keys.cipher).apply_keystream(data);
-    let mut mac = <HmacSha1 as Mac>::new_from_slice(&keys.mac)
+    let mut mac = <HmacSha1 as KeyInit>::new_from_slice(&keys.mac)
         .map_err(|_| Error::Format("bad HMAC key length".into()))?;
     mac.update(data);
     let tag = mac.finalize().into_bytes();
@@ -106,7 +107,7 @@ pub fn decrypt(password: &str, body: &[u8]) -> Result<Vec<u8>> {
         return Err(Error::Format("wrong password".into()));
     }
 
-    let mut mac = <HmacSha1 as Mac>::new_from_slice(&keys.mac)
+    let mut mac = <HmacSha1 as KeyInit>::new_from_slice(&keys.mac)
         .map_err(|_| Error::Format("bad HMAC key length".into()))?;
     mac.update(cipher_text);
     let tag = mac.finalize().into_bytes();
@@ -174,7 +175,7 @@ impl<W: std::io::Write> AesWriter<W> {
         Ok(AesWriter {
             inner,
             stream: stream(&keys.cipher),
-            mac: <HmacSha1 as Mac>::new_from_slice(&keys.mac)
+            mac: <HmacSha1 as KeyInit>::new_from_slice(&keys.mac)
                 .map_err(|_| Error::Format("bad HMAC key length".into()))?,
             written: 0,
             scratch: Vec::new(),
@@ -234,7 +235,7 @@ impl<R: std::io::Read> AesReader<R> {
         Ok(AesReader {
             inner,
             stream: stream(&keys.cipher),
-            mac: <HmacSha1 as Mac>::new_from_slice(&keys.mac)
+            mac: <HmacSha1 as KeyInit>::new_from_slice(&keys.mac)
                 .map_err(|_| Error::Format("bad HMAC key length".into()))?,
             remaining: cipher_len,
         })

@@ -85,6 +85,7 @@ pub(crate) enum AppAction {
     Back,
     Forward,
     SetChecked { row: Row, value: bool },
+    SelectOnly(Row),
     ClearSelection,
     Sort(SortColumn),
     ToggleColumn(SortColumn),

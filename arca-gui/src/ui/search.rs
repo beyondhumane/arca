@@ -389,9 +389,7 @@ impl Shell {
         else {
             return;
         };
-        self.controller.state.checked.fill(false);
-        self.controller
-            .dispatch(AppAction::SetChecked { row, value: true });
+        self.controller.dispatch(AppAction::SelectOnly(row));
         let active = self.controller.state.browser.active;
         self.controller.set_pane_cursor(active, Some(index));
         self.scroll_to_cursor = true;
@@ -568,11 +566,13 @@ impl Shell {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     for (keys, what) in [
-                        ("↑↓", s.hint_navigate),
-                        ("↵", s.hint_open),
-                        ("Alt+↵", s.hint_containing),
+                        (&["up", "down"][..], s.hint_navigate),
+                        (&["enter"], s.hint_open),
+                        (&["alt-enter"], s.hint_containing),
                     ] {
-                        kbd(ui, keys);
+                        for key in keys {
+                            kbd(ui, &super::dialogs::shortcut_label(key, s));
+                        }
                         ui.label(RichText::new(what).small().color(hex(p.muted)));
                         ui.add_space(8.0);
                     }
