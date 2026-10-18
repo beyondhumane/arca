@@ -49,7 +49,7 @@ Segunda marca, en evaluación: una «A» hecha de dos bandas paralelas que se cr
 | `#8B9BB3` | Gris de interfaz |
 | `#F4F7FF` | Fondo |
 
-Tipografía: **Sora** para títulos y botones, **Inter** para el texto. Las dos son OFL; su licencia está en `arca-setup/assets/fonts`.
+Tipografía: **Sora** para títulos y botones, **Inter** para el texto. Las dos son OFL; su licencia está en `arca-brand/fonts`.
 
 ### Geometría del símbolo
 

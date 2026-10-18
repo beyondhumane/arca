@@ -13,6 +13,7 @@ name = "arca-setup"
 path = "src/main.rs"
 
 [dependencies]
+arca-brand.workspace = true
 arca-core.workspace = true
 arca-zip.workspace = true
 eframe = { version = "0.36", default-features = false, features = [

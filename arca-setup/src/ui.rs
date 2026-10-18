@@ -1,5 +1,5 @@
 use crate::theme::{
-    self, alpha, color, BLUE, BLUE_2, BLUE_HOVER, BLUE_PRESSED, INK, LINE, MUTED, PALE, PALE_HOVER,
+    self, alpha, hex, BLUE, BLUE_2, BLUE_HOVER, BLUE_PRESSED, INK, LINE, MUTED, PALE, PALE_HOVER,
     SLATE, SWITCH_OFF, TRACK, WHITE,
 };
 use eframe::egui::{
@@ -81,7 +81,7 @@ fn focus_ring(ui: &Ui, response: &Response, rect: Rect, radius: f32) {
         ui.painter().rect_stroke(
             rect.expand(2.),
             radius + 2.,
-            Stroke::new(2., color(BLUE_2)),
+            Stroke::new(2., hex(BLUE_2)),
             StrokeKind::Outside,
         );
     }
@@ -90,7 +90,7 @@ fn focus_ring(ui: &Ui, response: &Response, rect: Rect, radius: f32) {
 pub fn primary_button(ui: &mut Ui, label: &str, width: Option<f32>, arrow: bool) -> Response {
     let galley = ui
         .painter()
-        .layout_no_wrap(label.to_string(), theme::display(15.), color(WHITE));
+        .layout_no_wrap(label.to_string(), theme::display(15.), hex(WHITE));
     let text = galley.size();
     let content = text.x + if arrow { 27. } else { 0. };
     let (rect, response) =
@@ -114,19 +114,19 @@ pub fn primary_button(ui: &mut Ui, label: &str, width: Option<f32>, arrow: bool)
             }
             .as_shape(rect, 12),
         );
-        painter.rect_filled(rect, 12, color(fill));
+        painter.rect_filled(rect, 12, hex(fill));
         let left = rect.center().x - content / 2.;
         painter.galley(
             pos2(left, rect.center().y - text.y / 2.),
             galley,
-            color(WHITE),
+            hex(WHITE),
         );
         if arrow {
             glyph(
                 painter,
                 Rect::from_center_size(pos2(left + content - 8.5, rect.center().y), vec2(17., 17.)),
                 Glyph::ArrowRight,
-                color(WHITE),
+                hex(WHITE),
             );
         }
         focus_ring(ui, &response, rect, 12.);
@@ -137,7 +137,7 @@ pub fn primary_button(ui: &mut Ui, label: &str, width: Option<f32>, arrow: bool)
 pub fn secondary_button(ui: &mut Ui, label: &str, leading: Option<Glyph>) -> Response {
     let galley = ui
         .painter()
-        .layout_no_wrap(label.to_string(), theme::display(15.), color(BLUE));
+        .layout_no_wrap(label.to_string(), theme::display(15.), hex(BLUE));
     let text = galley.size();
     let content = text.x + if leading.is_some() { 24. } else { 0. };
     let (rect, response) = ui.allocate_exact_size(vec2(content + 48., 46.), Sense::click());
@@ -154,8 +154,8 @@ pub fn secondary_button(ui: &mut Ui, label: &str, leading: Option<Glyph>) -> Res
         painter.rect(
             rect,
             12,
-            color(fill),
-            Stroke::new(1., color(LINE)),
+            hex(fill),
+            Stroke::new(1., hex(LINE)),
             StrokeKind::Inside,
         );
         let mut left = rect.center().x - content / 2.;
@@ -164,15 +164,11 @@ pub fn secondary_button(ui: &mut Ui, label: &str, leading: Option<Glyph>) -> Res
                 painter,
                 Rect::from_center_size(pos2(left + 8., rect.center().y), vec2(16., 16.)),
                 which,
-                color(BLUE),
+                hex(BLUE),
             );
             left += 24.;
         }
-        painter.galley(
-            pos2(left, rect.center().y - text.y / 2.),
-            galley,
-            color(BLUE),
-        );
+        painter.galley(pos2(left, rect.center().y - text.y / 2.), galley, hex(BLUE));
         focus_ring(ui, &response, rect, 12.);
     }
     response.on_hover_cursor(CursorIcon::PointingHand)
@@ -181,10 +177,10 @@ pub fn secondary_button(ui: &mut Ui, label: &str, leading: Option<Glyph>) -> Res
 pub fn link(ui: &mut Ui, label: &str) -> Response {
     let galley = ui
         .painter()
-        .layout_no_wrap(label.to_string(), theme::text(13.5), color(BLUE));
+        .layout_no_wrap(label.to_string(), theme::text(13.5), hex(BLUE));
     let (rect, response) = ui.allocate_exact_size(galley.size() + vec2(0., 2.), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Link, ui.is_enabled(), label));
-    let tint = color(if response.hovered() {
+    let tint = hex(if response.hovered() {
         BLUE_PRESSED
     } else {
         BLUE
@@ -205,14 +201,14 @@ pub fn switch(ui: &mut Ui, on: bool, label: &str) -> Response {
     response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, ui.is_enabled(), on, label));
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        painter.rect_filled(rect, 12, color(if on { BLUE } else { SWITCH_OFF }));
+        painter.rect_filled(rect, 12, hex(if on { BLUE } else { SWITCH_OFF }));
         let knob = if on {
             pos2(rect.right() - 12., rect.center().y)
         } else {
             pos2(rect.left() + 12., rect.center().y)
         };
         painter.circle_filled(knob + vec2(0., 1.), 9.5, alpha(INK, 0.18));
-        painter.circle_filled(knob, 9., color(WHITE));
+        painter.circle_filled(knob, 9., hex(WHITE));
         focus_ring(ui, &response, rect, 12.);
     }
     response.on_hover_cursor(CursorIcon::PointingHand)
@@ -242,11 +238,11 @@ pub fn progress_bar(ui: &mut Ui, percent: f32, width: f32) -> Response {
         )
     });
     let painter = ui.painter();
-    painter.rect_filled(rect, 6, color(TRACK));
+    painter.rect_filled(rect, 6, hex(TRACK));
     let filled = rect.width() * (percent / 100.).clamp(0., 1.);
     if filled > 0. {
         let bar = Rect::from_min_size(rect.min, vec2(filled.max(12.), rect.height()));
-        painter.rect_filled(bar, 6, color(BLUE));
+        painter.rect_filled(bar, 6, hex(BLUE));
         let shine = Rect::from_min_max(pos2(bar.center().x, bar.top()), bar.max);
         painter.rect_filled(shine, 6, alpha(BLUE_2, 0.45));
     }
@@ -268,33 +264,27 @@ pub fn step_row(ui: &mut Ui, state: StepState, label: &str) {
         let center = rect.center();
         match state {
             StepState::Done => {
-                painter.circle_filled(center, 10., color(BLUE));
+                painter.circle_filled(center, 10., hex(BLUE));
                 glyph(
                     painter,
                     Rect::from_center_size(center, vec2(12., 12.)),
                     Glyph::Check,
-                    color(WHITE),
+                    hex(WHITE),
                 );
             }
             StepState::Active => {
-                painter.circle_stroke(center, 9., Stroke::new(2., color(TRACK)));
-                spinner(
-                    painter,
-                    center,
-                    9.,
-                    color(BLUE),
-                    ui.input(|input| input.time),
-                );
+                painter.circle_stroke(center, 9., Stroke::new(2., hex(TRACK)));
+                spinner(painter, center, 9., hex(BLUE), ui.input(|input| input.time));
                 ui.ctx().request_repaint();
             }
             StepState::Pending => {
-                painter.circle_stroke(center, 9., Stroke::new(2., color(MUTED)));
+                painter.circle_stroke(center, 9., Stroke::new(2., hex(MUTED)));
             }
         }
         ui.label(
             egui::RichText::new(label)
                 .font(theme::text(14.))
-                .color(color(SLATE)),
+                .color(hex(SLATE)),
         );
     });
 }
@@ -324,7 +314,7 @@ pub fn window_control(
         ui.painter(),
         Rect::from_center_size(rect.center(), vec2(15., 15.)),
         which,
-        color(if closes && hovered { WHITE } else { INK }),
+        hex(if closes && hovered { WHITE } else { INK }),
     );
     response
 }
