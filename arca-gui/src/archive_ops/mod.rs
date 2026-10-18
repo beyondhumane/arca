@@ -280,7 +280,7 @@ pub(crate) fn install_update(path: &Path, s: &'static Strings) -> std::result::R
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     if let Some(appimage) = std::env::var_os("APPIMAGE").map(PathBuf::from) {
         if path.extension().is_some_and(|ext| ext == "AppImage") {
-            return replace_binary(path, &appimage).map_err(|_| s.update_unwritable.to_string());
+            return replace_binary(path, &appimage).map_err(|error| update_error(error, s));
         }
     }
     let dir = exe.parent().ok_or_else(|| s.update_failed.to_string())?;
@@ -305,17 +305,22 @@ pub(crate) fn install_update(path: &Path, s: &'static Strings) -> std::result::R
             continue;
         };
         if let Err(error) = replace_binary(&new, &dir.join(name)) {
-            outcome = Err(if error.kind() == std::io::ErrorKind::PermissionDenied {
-                s.update_unwritable.to_string()
-            } else {
-                error.to_string()
-            });
+            outcome = Err(update_error(error, s));
             break;
         }
     }
     let _ = fs::remove_dir_all(&unpack);
     let _ = fs::remove_file(path);
     outcome
+}
+
+#[cfg(not(windows))]
+fn update_error(error: std::io::Error, s: &Strings) -> String {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        s.update_unwritable.to_string()
+    } else {
+        error.to_string()
+    }
 }
 
 #[cfg(not(windows))]
@@ -766,6 +771,19 @@ pub(crate) fn run_job_blocking(
 #[cfg(test)]
 mod tests {
     use super::rename_entry_name;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn update_error_only_calls_permission_denied_unwritable() {
+        use std::io::{Error, ErrorKind};
+        let s = crate::i18n::strings(crate::i18n::Lang::En);
+        assert_eq!(
+            super::update_error(Error::from(ErrorKind::PermissionDenied), s),
+            s.update_unwritable
+        );
+        let full = Error::new(ErrorKind::StorageFull, "no space left on device");
+        assert_eq!(super::update_error(full, s), "no space left on device");
+    }
 
     #[test]
     fn folder_rename_handles_the_row_path_trailing_slash() {
