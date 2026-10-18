@@ -222,8 +222,8 @@ impl Shell {
             }
             let preview = self.controller.state.settings.preview_visible;
             if pick_entry(ui, icon::EYE, s.preview_panel, preview).clicked() {
-                self.controller.state.settings.preview_visible = !preview;
-                self.controller.state.settings.save();
+                self.controller
+                    .update_settings(|settings| settings.preview_visible = !preview);
             }
             ui.separator();
             group_label(ui, s.panes_view);
@@ -233,13 +233,13 @@ impl Shell {
             }
             let folder_peek = self.controller.state.settings.folder_peek;
             if pick_entry(ui, icon::FOLDER_OPEN, s.folder_peek, folder_peek).clicked() {
-                self.controller.state.settings.folder_peek = !folder_peek;
-                self.controller.state.settings.save();
+                self.controller
+                    .update_settings(|settings| settings.folder_peek = !folder_peek);
             }
             let pointer_focus = self.controller.state.settings.pointer_focus;
             if pick_entry(ui, icon::CURSOR, s.pointer_focus, pointer_focus).clicked() {
-                self.controller.state.settings.pointer_focus = !pointer_focus;
-                self.controller.state.settings.save();
+                self.controller
+                    .update_settings(|settings| settings.pointer_focus = !pointer_focus);
             }
             ui.separator();
             group_label(ui, s.density_title);
@@ -253,8 +253,8 @@ impl Shell {
                 (icon::ARROWS_OUT_LINE_VERTICAL, s.airy_word, Density::Airy),
             ] {
                 if pick_entry(ui, glyph, label, density == want).clicked() && density != want {
-                    self.controller.state.settings.density = want;
-                    self.controller.state.settings.save();
+                    self.controller
+                        .update_settings(|settings| settings.density = want);
                 }
             }
             ui.separator();
@@ -291,10 +291,10 @@ impl Shell {
     }
 
     fn remember_width(&mut self, width: f32, slot: impl Fn(&mut Settings) -> &mut f32) {
-        let settings = &mut self.controller.state.settings;
-        if (*slot(settings) - width).abs() > 0.5 && !self.ctx.input(|i| i.pointer.any_down()) {
-            *slot(settings) = width;
-            settings.save();
+        let stored = *slot(&mut self.controller.state.settings);
+        if (stored - width).abs() > 0.5 && !self.ctx.input(|i| i.pointer.any_down()) {
+            self.controller
+                .update_settings(|settings| *slot(settings) = width);
         }
     }
 
@@ -308,8 +308,7 @@ impl Shell {
         }
         ui.horizontal(|ui| {
             if icon_button(ui, icon::SIDEBAR_SIMPLE, s.folder_tree, true).clicked() {
-                toggle_sidebar(&mut self.controller.state.settings);
-                self.controller.state.settings.save();
+                self.controller.update_settings(toggle_sidebar);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if own_bar {
@@ -714,8 +713,8 @@ impl Shell {
                     .add_enabled(!recent.is_empty(), egui::Button::new(s.clear_history))
                     .clicked()
                 {
-                    self.controller.state.settings.recent.clear();
-                    self.controller.state.settings.save();
+                    self.controller
+                        .update_settings(|settings| settings.recent.clear());
                 }
             });
             ui.separator();

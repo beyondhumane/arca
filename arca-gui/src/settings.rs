@@ -398,12 +398,14 @@ impl Settings {
         s
     }
 
-    pub(crate) fn save(&self) {
-        let Some(p) = config_file() else { return };
+    pub(crate) fn save(&self) -> std::io::Result<()> {
+        let Some(p) = config_file() else {
+            return Ok(());
+        };
         if let Some(dir) = p.parent() {
-            let _ = fs::create_dir_all(dir);
+            fs::create_dir_all(dir)?;
         }
-        let _ = fs::write(p, self.text());
+        fs::write(p, self.text())
     }
 
     /// The settings file as text.

@@ -396,6 +396,17 @@ mod tests {
     }
 
     #[test]
+    fn select_only_replaces_the_active_selection() {
+        let mut c = controller();
+        c.go_to("a/b/".into());
+        let rows = c.visible_rows();
+        let pick = |name: &str| rows.iter().find(|r| r.path == name).unwrap().clone();
+        c.set_checked(&pick("a/b/middle.txt"), true);
+        c.select_only(&pick("a/b/c/"));
+        assert_eq!(c.selected_roots(), ["a/b/c"]);
+    }
+
+    #[test]
     fn inactive_folder_checks_match_active_checks_for_partial_and_complete_selection() {
         for backslashes in [false, true] {
             let mut c = controller();

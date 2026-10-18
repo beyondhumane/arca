@@ -263,8 +263,8 @@ impl Shell {
             self.properties = Some(super::inspect(&path, pinned));
         }
         if let Some(path) = forget {
-            self.controller.state.settings.recent.retain(|p| *p != path);
-            self.controller.state.settings.save();
+            self.controller
+                .update_settings(|settings| settings.recent.retain(|p| *p != path));
         }
     }
 

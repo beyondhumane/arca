@@ -133,8 +133,8 @@ impl Shell {
             });
         });
         if close {
-            self.controller.state.settings.preview_visible = false;
-            self.controller.state.settings.save();
+            self.controller
+                .update_settings(|settings| settings.preview_visible = false);
             self.close_preview();
             return;
         }

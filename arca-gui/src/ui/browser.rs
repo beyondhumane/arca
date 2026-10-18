@@ -523,14 +523,11 @@ impl Shell {
                     } else {
                         CELL_LEAST
                     };
-                    let slot = column_slot(column);
-                    let settings = &mut self.controller.state.settings;
-                    if let Some(stored) = settings.widths.get_mut(slot) {
-                        *stored = width.clamp(least, 900.0);
-                    }
-                    if done {
-                        settings.save();
-                    }
+                    self.controller.set_column_width(
+                        column_slot(column),
+                        width.clamp(least, 900.0),
+                        done,
+                    );
                 }
                 if rows.is_empty() {
                     self.empty_state(ui);

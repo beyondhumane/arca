@@ -972,8 +972,7 @@ impl Shell {
                         return;
                     }
                     if name.is_empty() || name.contains('/') || name.contains('\\') {
-                        self.controller.state.notice = s.bad_name.to_string();
-                        self.controller.state.error = true;
+                        self.controller.set_notice(s.bad_name, true);
                         return;
                     }
                     if let Some(dir) = self.controller.create_disk_folder(&name) {
@@ -984,8 +983,7 @@ impl Shell {
                     return;
                 };
                 if name.is_empty() || name.contains('/') || name.contains('\\') {
-                    self.controller.state.notice = s.bad_name.to_string();
-                    self.controller.state.error = true;
+                    self.controller.set_notice(s.bad_name, true);
                     self.close_name();
                     return;
                 }
@@ -995,8 +993,8 @@ impl Shell {
                     .iter()
                     .any(|row| row.label.eq_ignore_ascii_case(&name))
                 {
-                    self.controller.state.notice = fill(s.name_taken, &[("name", &name)]);
-                    self.controller.state.error = true;
+                    self.controller
+                        .set_notice(fill(s.name_taken, &[("name", &name)]), true);
                     self.close_name();
                     return;
                 }
@@ -1232,18 +1230,19 @@ impl Shell {
             return;
         }
         if !clipboard::AVAILABLE {
-            self.controller.state.notice = self.controller.s().clipboard_windows_only.into();
-            self.controller.state.error = true;
+            self.controller
+                .set_notice(self.controller.s().clipboard_windows_only, true);
             return;
         }
         let s = self.controller.s();
-        self.controller.state.notice = if cut {
-            s.preparing_move
-        } else {
-            s.preparing_copy
-        }
-        .into();
-        self.controller.state.error = false;
+        self.controller.set_notice(
+            if cut {
+                s.preparing_move
+            } else {
+                s.preparing_copy
+            },
+            false,
+        );
         self.controller.dispatch(AppAction::Copy { cut });
     }
 
@@ -1268,17 +1267,17 @@ impl Shell {
             return;
         }
         if !clipboard::AVAILABLE {
-            self.controller.state.notice = self.controller.s().clipboard_windows_only.into();
-            self.controller.state.error = true;
+            self.controller
+                .set_notice(self.controller.s().clipboard_windows_only, true);
             return;
         }
         self.controller.dispatch(AppAction::Paste);
     }
 
     fn set_next_pane(&mut self, on: bool) {
-        self.controller.state.settings.next_pane = on;
+        self.controller
+            .update_settings(|settings| settings.next_pane = on);
         self.controller.set_free_panes(!on);
-        self.controller.state.settings.save();
     }
 
     fn switch_view(&mut self, view: crate::settings::BrowserView, flat: bool) {
@@ -1287,22 +1286,18 @@ impl Shell {
         self.controller.transition_browser_view(columns, flat);
         self.controller
             .set_free_panes(!self.controller.state.settings.next_pane);
-        self.controller.state.settings.browser_view =
-            if columns { view } else { BrowserView::Details };
-        if flat {
-            self.controller
-                .state
-                .settings
-                .columns
-                .set(SortColumn::Path, true);
-        }
-        self.controller.state.settings.save();
+        self.controller.update_settings(|settings| {
+            settings.browser_view = if columns { view } else { BrowserView::Details };
+            if flat {
+                settings.columns.set(SortColumn::Path, true);
+            }
+        });
         self.scroll_to_cursor = true;
     }
 
     fn show_preview(&mut self, entry: usize) {
-        self.controller.state.settings.preview_visible = true;
-        self.controller.state.settings.save();
+        self.controller
+            .update_settings(|settings| settings.preview_visible = true);
         self.controller.view_entry(entry);
     }
 
@@ -1348,15 +1343,15 @@ impl Shell {
     /// Nudge the text size by `step` points, or back to the default for 0.
     pub(super) fn step_text_size(&mut self, step: f32) {
         use crate::settings::{TEXT_DEFAULT, TEXT_LEAST, TEXT_MOST};
-        let settings = &mut self.controller.state.settings;
+        let size = self.controller.state.settings.text_size;
         let next = if step == 0.0 {
             TEXT_DEFAULT
         } else {
-            (settings.text_size + step).clamp(TEXT_LEAST, TEXT_MOST)
+            (size + step).clamp(TEXT_LEAST, TEXT_MOST)
         };
-        if next != settings.text_size {
-            settings.text_size = next;
-            settings.save();
+        if next != size {
+            self.controller
+                .update_settings(|settings| settings.text_size = next);
         }
     }
 

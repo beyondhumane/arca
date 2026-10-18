@@ -220,15 +220,15 @@ impl AppController {
             AppAction::ToggleColumn(column) => {
                 let on = self.state.settings.columns.on(column);
                 self.state.settings.columns.set(column, !on);
-                self.state.settings.save();
+                self.save_settings();
             }
             AppAction::SetLanguage(lang) => {
                 self.state.settings.lang = lang;
-                self.state.settings.save();
+                self.save_settings();
             }
             AppAction::SetTheme(theme) => {
                 self.state.settings.theme = theme;
-                self.state.settings.save();
+                self.save_settings();
             }
             AppAction::AnswerConflict(answer, name) => self.answer_conflict(answer, name),
             AppAction::CancelPassword => self.cancel_password(),
@@ -462,16 +462,78 @@ impl AppController {
     /// The format is left alone while an archive is being browsed, because
     /// then `state.format` is the format of what is open.
     pub(crate) fn set_archive_defaults(&mut self, format: Format, codec: Codec, level: Level) {
-        let settings = &mut self.state.settings;
-        settings.new_format = format;
-        settings.new_codec = codec;
-        settings.new_level = level;
-        settings.save();
+        self.update_settings(|settings| {
+            settings.new_format = format;
+            settings.new_codec = codec;
+            settings.new_level = level;
+        });
         if self.state.archive.is_none() || matches!(self.state.view, View::Add) {
             self.set_create_format(format);
         }
         self.state.codec = codec;
         self.state.level = level;
+    }
+
+    pub(crate) const CODECS: [Codec; 3] = [Codec::Store, Codec::Deflate, Codec::Zstd];
+    pub(crate) const LEVEL_PRESETS: [Level; 4] =
+        [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST];
+
+    pub(crate) fn compressor(&self) -> Compressor {
+        Self::compressor_for(self.state.format, self.state.codec)
+    }
+
+    pub(crate) fn compressor_for(format: Format, codec: Codec) -> Compressor {
+        match format {
+            Format::SevenZ | Format::TarXz | Format::Xz => Compressor::Fixed("LZMA2"),
+            Format::Rar => Compressor::Fixed("RAR"),
+            Format::Zip => Compressor::Codec {
+                codec,
+                editable: true,
+            },
+            _ => Compressor::Codec {
+                codec,
+                editable: false,
+            },
+        }
+    }
+
+    pub(crate) fn set_codec(&mut self, codec: Codec) {
+        self.state.codec = codec;
+    }
+
+    pub(crate) fn set_level(&mut self, level: Level) {
+        self.state.level = level;
+    }
+
+    pub(crate) fn set_notice(&mut self, notice: impl Into<String>, error: bool) {
+        self.state.notice = notice.into();
+        self.state.error = error;
+    }
+
+    pub(crate) fn update_settings<R>(&mut self, change: impl FnOnce(&mut Settings) -> R) -> R {
+        let changed = change(&mut self.state.settings);
+        self.save_settings();
+        changed
+    }
+
+    /// Widths change on every frame of a drag and are written once it ends.
+    pub(crate) fn set_column_width(&mut self, slot: usize, width: f32, persist: bool) {
+        if let Some(stored) = self.state.settings.widths.get_mut(slot) {
+            *stored = width;
+        }
+        if persist {
+            self.save_settings();
+        }
+    }
+
+    fn save_settings(&mut self) {
+        if let Err(error) = self.state.settings.save() {
+            let notice = fill(
+                self.s().settings_not_saved,
+                &[("error", &error.to_string())],
+            );
+            self.set_notice(notice, true);
+        }
     }
 
     pub(crate) fn set_create_format(&mut self, format: Format) {
@@ -889,7 +951,7 @@ impl AppController {
     // remembered.
     pub(crate) fn reread_names(&mut self, page: arca_zip::pages::Page) {
         self.state.settings.page = page;
-        self.state.settings.save();
+        self.save_settings();
         for e in &mut self.state.entries {
             if e.utf8 {
                 continue;
@@ -1195,7 +1257,7 @@ impl AppController {
         self.state.settings.recent.retain(|p| *p != text);
         self.state.settings.recent.insert(0, text);
         self.state.settings.recent.truncate(10);
-        self.state.settings.save();
+        self.save_settings();
     }
     pub(crate) fn spawn<F>(&mut self, total: usize, work: F)
     where
@@ -2836,5 +2898,38 @@ mod filter_tests {
             Vec::<String>::new(),
             "a search inside one folder does not reach into another"
         );
+    }
+}
+
+#[cfg(test)]
+mod compressor_tests {
+    use super::*;
+
+    #[test]
+    fn only_zip_lets_the_codec_be_picked() {
+        let mut controller = AppController::new(Settings::default());
+        for (format, expected) in [
+            (Format::SevenZ, Compressor::Fixed("LZMA2")),
+            (Format::TarXz, Compressor::Fixed("LZMA2")),
+            (Format::Xz, Compressor::Fixed("LZMA2")),
+            (Format::Rar, Compressor::Fixed("RAR")),
+            (
+                Format::Zip,
+                Compressor::Codec {
+                    codec: Codec::Deflate,
+                    editable: true,
+                },
+            ),
+            (
+                Format::TarGz,
+                Compressor::Codec {
+                    codec: Codec::Deflate,
+                    editable: false,
+                },
+            ),
+        ] {
+            controller.state.format = format;
+            assert_eq!(controller.compressor(), expected, "{format:?}");
+        }
     }
 }

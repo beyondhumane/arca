@@ -1260,7 +1260,7 @@ impl AppController {
         let text = (!path.as_os_str().is_empty()).then(|| path.to_string_lossy().to_string());
         if self.state.settings.last_folder != text {
             self.state.settings.last_folder = text;
-            self.state.settings.save();
+            self.save_settings();
         }
     }
 
@@ -1550,7 +1550,7 @@ impl AppController {
         } else {
             self.state.settings.pinned.push(text);
         }
-        self.state.settings.save();
+        self.save_settings();
     }
 
     pub(crate) fn set_show_hidden(&mut self, show: bool) {
@@ -1558,7 +1558,7 @@ impl AppController {
             return;
         }
         self.state.settings.show_hidden = show;
-        self.state.settings.save();
+        self.save_settings();
         self.refresh_disk();
     }
 }
