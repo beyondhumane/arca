@@ -1071,11 +1071,7 @@ impl Shell {
         if response.secondary_clicked() && idle {
             activate(self);
             if !checked && !row.up {
-                self.controller.state.checked.fill(false);
-                self.controller.dispatch(AppAction::SetChecked {
-                    row: row.clone(),
-                    value: true,
-                });
+                self.controller.dispatch(AppAction::SelectOnly(row.clone()));
             }
             let active = self.controller.state.browser.active;
             self.controller.set_pane_cursor(active, Some(index));
