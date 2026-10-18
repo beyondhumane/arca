@@ -1,6 +1,6 @@
 use super::{
-    overall, payload, stamp_manifest, system, Event, Job, INNO_LEFTOVERS, MANIFEST, SHELL_DLL,
-    VERSION,
+    overall, payload, stamp_manifest, system, warn_on, Event, Job, INNO_LEFTOVERS, MANIFEST,
+    SHELL_DLL, VERSION,
 };
 use std::{fs, path::Path};
 use system::ctx;
@@ -41,11 +41,12 @@ pub fn run(job: &Job, report: &mut dyn FnMut(Event)) -> Result<(), String> {
     }
     report(Event::Progress(overall(1, 0.4)));
     if !job.files_only {
-        if job.choices.menu {
-            system::register_modern_menu(dir);
+        let menu = if job.choices.menu {
+            system::register_modern_menu(dir)
         } else {
-            system::unregister_modern_menu();
-        }
+            system::unregister_modern_menu()
+        };
+        warn_on(menu, report);
     }
     report(Event::Progress(overall(1, 1.)));
 
@@ -68,7 +69,7 @@ pub fn run(job: &Job, report: &mut dyn FnMut(Event)) -> Result<(), String> {
             system::remove_from_path(dir)?;
         }
         report(Event::Progress(overall(2, 0.7)));
-        let _ = system::create_shortcut(dir);
+        warn_on(system::create_shortcut(dir), report);
         report(Event::Progress(overall(2, 0.85)));
         let size_kb = u32::try_from(size / 1024).unwrap_or(u32::MAX);
         system::write_uninstall_entry(dir, size_kb)?;
