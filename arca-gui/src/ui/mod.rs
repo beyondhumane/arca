@@ -236,6 +236,7 @@ pub(crate) struct Shell {
     theme_query: String,
     theme_filter: usize,
     theme_draft: Option<themes::Theme>,
+    theme_error: Option<String>,
     carrying: bool,
     /// A drop waiting on the Move / Copy / Cancel menu.
     pending_drop: Option<PendingDrop>,
@@ -316,6 +317,7 @@ impl Shell {
             theme_query: String::new(),
             theme_filter: 0,
             theme_draft: None,
+            theme_error: None,
             carrying: false,
             pending_drop: None,
             blank_drop: None,
