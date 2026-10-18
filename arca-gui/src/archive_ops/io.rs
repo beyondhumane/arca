@@ -131,7 +131,7 @@ impl<'a, R: Read> Paced<'a, R> {
 
 impl<R: Read> Read for Paced<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if self.since >= 4 << 20 {
+        if self.since >= STEP {
             self.since = 0;
             if !(self.notify)(0, 1, self.name) {
                 self.stopped = true;
