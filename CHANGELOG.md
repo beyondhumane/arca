@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.0](https://github.com/beyondhumane/arca/compare/v0.9.0...v0.10.0) (2026-10-18)
+
+
+### Features
+
+* **site:** list every release file and show sizes in MiB ([#61](https://github.com/beyondhumane/arca/issues/61)) ([ec8403a](https://github.com/beyondhumane/arca/commit/ec8403a6b562351d151038aa7d1f9e73ff602719))
+
+
+### Bug fixes
+
+* **arca-gui:** keep the real error when an AppImage update fails ([#77](https://github.com/beyondhumane/arca/issues/77)) ([33e5229](https://github.com/beyondhumane/arca/commit/33e5229eda61ac738ba280e8112a4c9294ddb294))
+* **arca-gui:** persist the defaults for new archives ([#68](https://github.com/beyondhumane/arca/issues/68)) ([0d32b70](https://github.com/beyondhumane/arca/commit/0d32b70850a441b08ee99cdb7ba62952a461d9cb))
+* **arca-gui:** report a cancelled conflict prompt as a stop ([#65](https://github.com/beyondhumane/arca/issues/65)) ([0ff16cc](https://github.com/beyondhumane/arca/commit/0ff16cc999075ed5fd5d462e6a83359db099a9b8))
+* **arca-gui:** say why a disk copy or move failed ([#67](https://github.com/beyondhumane/arca/issues/67)) ([2445b1a](https://github.com/beyondhumane/arca/commit/2445b1a40d193584cfe51726baf43871d259a749))
+* **arca-setup:** report best-effort step failures and uninstall leftovers ([#81](https://github.com/beyondhumane/arca/issues/81)) ([1068edf](https://github.com/beyondhumane/arca/commit/1068edf157a66c857173b9c1deda22b520b9a059))
+
 ## [0.9.0](https://github.com/beyondhumane/arca/compare/v0.8.2...v0.9.0) (2026-10-17)
 
 
