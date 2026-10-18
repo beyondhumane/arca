@@ -224,13 +224,13 @@ pub(crate) fn download_update(
 
     // The sums first, which are four lines: if those cannot be fetched there is
     // no sense in pulling five megabytes down to not be able to check them.
-    let listing = arca_net::get(sums, &agent).ok_or_else(|| s.update_failed.to_string())?;
+    let listing = arca_net::get(sums, &agent).map_err(|_| s.update_failed.to_string())?;
     let want = sum_for(&listing, name).ok_or_else(|| s.update_failed.to_string())?;
 
     let body = arca_net::fetch(installer, &agent, INSTALLER_LIMIT, &|so_far, total| {
         notify(so_far, total.unwrap_or(0), name)
     })
-    .ok_or_else(|| s.update_failed.to_string())?;
+    .map_err(|_| s.update_failed.to_string())?;
 
     let got: [u8; 32] = Sha256::digest(&body).into();
     if got != want {
