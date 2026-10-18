@@ -13,7 +13,7 @@ rar = ["dep:rars", "dep:tempfile", "dep:libc"]
 
 [dependencies]
 arca-core.workspace = true
-rars = { version = "=0.10.0", default-features = false, features = ["encryption", "write"], optional = true }
+rars = { version = "=0.10.2", default-features = false, features = ["encryption", "write"], optional = true }
 tempfile = { version = "3", optional = true }
 
 [target.'cfg(unix)'.dependencies]
