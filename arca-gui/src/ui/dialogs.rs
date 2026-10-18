@@ -705,25 +705,24 @@ impl Shell {
 
     fn pickers(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
-        let format = self.controller.state.format;
+        let format = self.controller.state.settings.new_format;
+        let codec = self.controller.state.settings.new_codec;
+        let level = self.controller.state.settings.new_level;
         let is_zip = format == Format::Zip;
         let is_lzma2 = matches!(format, Format::SevenZ | Format::TarXz | Format::Xz);
+        let (mut new_format, mut new_codec, mut new_level) = (format, codec, level);
         egui::Grid::new(ui.id().with("pickers"))
             .num_columns(2)
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
                 ui.label(s.format);
-                let mut chosen = format;
                 egui::ComboBox::from_id_salt("format")
                     .selected_text(format.label())
                     .show_ui(ui, |ui| {
                         for candidate in AppController::create_formats() {
-                            ui.selectable_value(&mut chosen, candidate, candidate.label());
+                            ui.selectable_value(&mut new_format, candidate, candidate.label());
                         }
                     });
-                if chosen != format {
-                    self.controller.set_create_format(chosen);
-                }
                 ui.end_row();
                 ui.label(s.compressor);
                 if is_lzma2 {
@@ -731,41 +730,39 @@ impl Shell {
                 } else if format == Format::Rar {
                     ui.label("RAR");
                 } else {
-                    let codec = self.controller.state.codec;
-                    let mut chosen = codec;
                     ui.add_enabled_ui(is_zip, |ui| {
                         egui::ComboBox::from_id_salt("codec")
                             .selected_text(self.controller.codec_name(codec))
                             .show_ui(ui, |ui| {
                                 for candidate in [Codec::Store, Codec::Deflate, Codec::Zstd] {
                                     ui.selectable_value(
-                                        &mut chosen,
+                                        &mut new_codec,
                                         candidate,
                                         self.controller.codec_name(candidate),
                                     );
                                 }
                             });
                     });
-                    self.controller.state.codec = chosen;
                 }
                 ui.end_row();
                 ui.label(s.level);
-                let level = self.controller.state.level;
-                let mut chosen = level;
                 egui::ComboBox::from_id_salt("level")
                     .selected_text(self.controller.level_name(level))
                     .show_ui(ui, |ui| {
                         for candidate in [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST] {
                             ui.selectable_value(
-                                &mut chosen,
+                                &mut new_level,
                                 candidate,
                                 self.controller.level_name(candidate),
                             );
                         }
                     });
-                self.controller.state.level = chosen;
                 ui.end_row();
             });
+        if (new_format, new_codec, new_level) != (format, codec, level) {
+            self.controller
+                .set_archive_defaults(new_format, new_codec, new_level);
+        }
     }
 
     /// The compress box, in the language of the settings pages: a header

@@ -1127,7 +1127,7 @@ impl AppController {
         self.state.waiting_on_password = None;
         self.state.password_input.clear();
         self.state.password_wrong = false;
-        self.state.format = Format::Zip;
+        self.state.format = Self::default_format(&self.state.settings);
         self.state.disk = Some(DiskState::default());
         let dir = if path.as_os_str().is_empty() {
             String::new()
