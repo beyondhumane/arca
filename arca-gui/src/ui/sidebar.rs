@@ -405,7 +405,8 @@ fn tree(
                     }
                     first = false;
                     let (text, keys) = action.label(context.s);
-                    if menu_entry(ui, action.glyph(), text, keys, true).clicked() {
+                    let keys = super::dialogs::shortcut_label(keys, context.s);
+                    if menu_entry(ui, action.glyph(), text, &keys, true).clicked() {
                         *event = Some(TreeEvent::Action(action, id.clone()));
                     }
                 }

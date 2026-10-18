@@ -45,36 +45,6 @@ pub(crate) fn read_only_suffix(format: Option<Format>) -> String {
     }
 }
 
-// The little triangle beside a column name that says which way it is sorted.
-// Ascending points up, which is what a file list means by it everywhere: the
-// smallest, the earliest, the first alphabetically, at the top.
-//
-// The one thing to get wrong here is the sign. Screen coordinates grow
-// downwards, so the apex of an upward triangle sits at a SMALLER y than its
-// base, and writing it the other way round gives a mark that says the opposite
-// of what the list is doing without anything else looking amiss.
-// How many folders at the front of the path have to go behind the "…" for the
-// rest to fit in `room`. Drops from the front, because the folders you are
-// nearest are the ones worth seeing, and never drops the last one: the folder
-// you are standing in stays whatever its name costs, cut short if it must be.
-// The row a height falls on, out of the ones the table drew this frame.
-//
-// The rows do not touch: there is a gap of the item spacing between one and the
-// next, and the table paints over it so that the stripes look continuous, but
-// the rectangles it hands back stop short. Asking which rectangle *contains* a
-// height therefore has no answer whenever the pointer is resting in one of
-// those gaps, which is most of the way from one row to the next. So the
-// question asked here is which row has started by this height, and the answer
-// in a gap is the row above it.
-//
-// Above the first row it clamps to the first: a drag that has run off that end
-// is still asking for everything up to it. Under the last row there are two
-// different situations and they cannot share an answer. If there is more list
-// below, still to be scrolled into view, the answer is that last row and the
-// drag carries on from there. If the list has ended, the height is in the empty
-// space under it and the answer is `len`, one past the end, which is not a row:
-// pressing down there and moving a little must pick nothing at all rather than
-// reach up and grab whatever happens to be last.
 pub(crate) fn saved_of(r: &Row) -> f64 {
     if r.size == 0 {
         0.0

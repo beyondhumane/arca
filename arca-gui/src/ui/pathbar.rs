@@ -317,12 +317,17 @@ impl Shell {
                         ui.horizontal(|ui| {
                             ui.add_space(6.0);
                             for (keys, what) in [
-                                ("Tab", s.complete_word),
-                                ("↑↓", s.choose_word),
-                                ("↵", s.open_word),
-                                ("Esc", s.cancel),
+                                (&["tab"][..], s.complete_word),
+                                (&["up", "down"], s.choose_word),
+                                (&["enter"], s.open_word),
+                                (&["escape"], s.cancel),
                             ] {
-                                super::widgets::kbd(ui, keys);
+                                for key in keys {
+                                    super::widgets::kbd(
+                                        ui,
+                                        &super::dialogs::shortcut_label(key, s),
+                                    );
+                                }
                                 ui.label(
                                     egui::RichText::new(what)
                                         .size(text_size(ui.style(), -1.0))

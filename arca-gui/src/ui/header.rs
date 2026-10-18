@@ -1,3 +1,4 @@
+use super::dialogs::shortcut_label;
 use super::layout::{breadcrumb_indices, decide, toggle_sidebar};
 use super::theme::{hex, palette_of, text_font, text_size};
 use super::widgets::*;
@@ -320,7 +321,7 @@ impl Shell {
                     self.controller.state.show_settings = true;
                 }
                 let browsing = archive || self.controller.on_disk();
-                let search_tip = format!("{}  (Ctrl+K)", s.search_word);
+                let search_tip = format!("{}  ({})", s.search_word, shortcut_label("ctrl-k", s));
                 if icon_button(ui, icon::MAGNIFYING_GLASS, &search_tip, idle && browsing).clicked()
                 {
                     self.toggle_search();
@@ -386,7 +387,8 @@ impl Shell {
                         } else {
                             self.filter_open || filtering
                         };
-                        let find_tip = format!("{}  (Ctrl+F)", s.find_word);
+                        let find_tip =
+                            format!("{}  ({})", s.find_word, shortcut_label("ctrl-f", s));
                         if icon_toggle(ui, icon::FUNNEL, &find_tip, true, on).clicked() {
                             if panes {
                                 self.toggle_pane_filter(active);
@@ -541,7 +543,11 @@ impl Shell {
                     ui.allocate_exact_size(egui::vec2(rest, 26.0), egui::Sense::click());
                 edit |= response
                     .on_hover_cursor(egui::CursorIcon::Text)
-                    .on_hover_text(format!("{}  (Ctrl+L)", s.edit_path))
+                    .on_hover_text(format!(
+                        "{}  ({})",
+                        s.edit_path,
+                        shortcut_label("ctrl-l", s)
+                    ))
                     .clicked();
             }
         }
@@ -592,7 +598,10 @@ impl Shell {
             }
             let undo = idle && self.controller.state.undo.is_some();
             if ui
-                .add_enabled(undo, egui::Button::new(s.undo_word).shortcut_text("Ctrl+Z"))
+                .add_enabled(
+                    undo,
+                    egui::Button::new(s.undo_word).shortcut_text(shortcut_label("ctrl-z", s)),
+                )
                 .clicked()
             {
                 self.overflow_action(OverflowAction::Undo);
@@ -625,7 +634,7 @@ impl Shell {
             if ui
                 .add_enabled(
                     idle && browsing,
-                    egui::Button::new(s.select_all).shortcut_text("Ctrl+A"),
+                    egui::Button::new(s.select_all).shortcut_text(shortcut_label("ctrl-a", s)),
                 )
                 .clicked()
             {
@@ -634,7 +643,8 @@ impl Shell {
             if ui
                 .add_enabled(
                     idle && browsing,
-                    egui::Button::new(s.invert_selection).shortcut_text("Ctrl+I"),
+                    egui::Button::new(s.invert_selection)
+                        .shortcut_text(shortcut_label("ctrl-i", s)),
                 )
                 .clicked()
             {
@@ -643,7 +653,7 @@ impl Shell {
             if ui
                 .add_enabled(
                     idle,
-                    egui::Button::new(s.clear_selection).shortcut_text("Esc"),
+                    egui::Button::new(s.clear_selection).shortcut_text(shortcut_label("escape", s)),
                 )
                 .clicked()
             {
@@ -717,7 +727,7 @@ impl Shell {
                 self.controller.state.show_settings = true;
             }
             if ui
-                .add(egui::Button::new(s.shortcuts_title).shortcut_text("F1"))
+                .add(egui::Button::new(s.shortcuts_title).shortcut_text(shortcut_label("f1", s)))
                 .clicked()
             {
                 self.controller.state.show_shortcuts = true;
@@ -822,12 +832,12 @@ impl Shell {
                 }
                 if self.width >= 1000.0 {
                     for (keys, what) in [
-                        ("F1", s.shortcuts_title),
-                        ("Ctrl+F", s.find_word),
-                        ("F3", s.view_word),
+                        ("f1", s.shortcuts_title),
+                        ("ctrl-f", s.find_word),
+                        ("f3", s.view_word),
                     ] {
                         ui.label(RichText::new(what).small().color(hex(p.muted)));
-                        kbd(ui, keys);
+                        kbd(ui, &shortcut_label(keys, s));
                     }
                 }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {

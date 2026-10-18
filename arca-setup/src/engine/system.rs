@@ -111,7 +111,7 @@ fn write_env_path(key: &RegKey, text: &str) -> Res<()> {
     key.set_raw_value(
         "Path",
         &RegValue {
-            bytes: utf16_bytes(text),
+            bytes: utf16_bytes(text).into(),
             vtype: REG_EXPAND_SZ,
         },
     )
@@ -317,20 +317,18 @@ fn powershell(script: &str) -> Res<()> {
     wait_for(powershell_command(script), POWERSHELL_TIMEOUT)
 }
 
-pub fn register_modern_menu(dir: &Path) {
+pub fn register_modern_menu(dir: &Path) -> Res<()> {
     let script = format!(
-        "Add-AppxPackage -Register {} -ExternalLocation {} -ErrorAction SilentlyContinue",
+        "Add-AppxPackage -Register {} -ExternalLocation {} -ErrorAction Stop",
         quote_ps(&dir.join(MANIFEST).display().to_string()),
         quote_ps(&dir.display().to_string()),
     );
-    let _ = powershell(&script);
+    powershell(&script).map_err(ctx("registering the modern context menu"))
 }
 
-pub fn unregister_modern_menu() {
-    let script = format!(
-        "Get-AppxPackage {MODERN_PACKAGE} | Remove-AppxPackage -ErrorAction SilentlyContinue"
-    );
-    let _ = powershell(&script);
+pub fn unregister_modern_menu() -> Res<()> {
+    let script = format!("Get-AppxPackage {MODERN_PACKAGE} | Remove-AppxPackage -ErrorAction Stop");
+    powershell(&script).map_err(ctx("removing the modern context menu"))
 }
 
 fn shortcut_path() -> Option<PathBuf> {
@@ -357,12 +355,18 @@ pub fn create_shortcut(dir: &Path) -> Res<()> {
         quote_ps(&dir.display().to_string()),
         quote_ps(&format!("{exe},0")),
     );
-    powershell(&script)
+    powershell(&script).map_err(ctx("creating the Start menu shortcut"))
 }
 
-pub fn remove_shortcut() {
-    if let Some(link) = shortcut_path() {
-        let _ = fs::remove_file(link);
+pub fn remove_shortcut() -> Res<()> {
+    let Some(link) = shortcut_path() else {
+        return Ok(());
+    };
+    match fs::remove_file(&link) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => {
+            Err(format!("removing {}: {error}", link.display()))
+        }
+        _ => Ok(()),
     }
 }
 

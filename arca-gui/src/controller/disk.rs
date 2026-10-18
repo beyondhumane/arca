@@ -156,23 +156,23 @@ fn transfer_trees(
                     } else {
                         fs::remove_file(&to)
                     };
-                    gone.map_err(|_| could_not(s, copy, &to))?;
+                    gone.map_err(|e| could_not(s, copy, &to, &e))?;
                 }
             }
         }
         claimed.insert(to.clone());
         if copy {
-            copy_tree(from, &to).map_err(|path| could_not(s, true, &path))?;
+            copy_tree(from, &to).map_err(|(path, e)| could_not(s, true, &path, &e))?;
         } else if fs::rename(from, &to).is_err() {
             // Across volumes a rename cannot do it: copy, then take the
             // original away once every file is over.
-            copy_tree(from, &to).map_err(|path| could_not(s, false, &path))?;
+            copy_tree(from, &to).map_err(|(path, e)| could_not(s, false, &path, &e))?;
             let gone = if from.is_dir() {
                 fs::remove_dir_all(from)
             } else {
                 fs::remove_file(from)
             };
-            gone.map_err(|_| could_not(s, false, from))?;
+            gone.map_err(|e| could_not(s, false, from, &e))?;
         }
         carried += 1;
     }
@@ -183,35 +183,46 @@ fn transfer_trees(
 }
 
 /// Copies a file, or a folder and everything under it, to `to`. The error
-/// is the path that could not be read or written.
-fn copy_tree(from: &Path, to: &Path) -> std::result::Result<(), PathBuf> {
-    let meta = fs::symlink_metadata(from).map_err(|_| from.to_path_buf())?;
+/// is the path that could not be read or written, and why.
+pub(crate) fn copy_tree(
+    from: &Path,
+    to: &Path,
+) -> std::result::Result<(), (PathBuf, std::io::Error)> {
+    let at = |path: &Path| {
+        let path = path.to_path_buf();
+        move |e| (path, e)
+    };
+    let meta = fs::symlink_metadata(from).map_err(at(from))?;
     if meta.is_dir() {
-        fs::create_dir_all(to).map_err(|_| to.to_path_buf())?;
-        let items = fs::read_dir(from).map_err(|_| from.to_path_buf())?;
+        fs::create_dir_all(to).map_err(at(to))?;
+        let items = fs::read_dir(from).map_err(at(from))?;
         for item in items.flatten() {
             copy_tree(&item.path(), &to.join(item.file_name()))?;
         }
         Ok(())
     } else {
         if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent).map_err(|_| parent.to_path_buf())?;
+            fs::create_dir_all(parent).map_err(at(parent))?;
         }
-        fs::copy(from, to)
-            .map(|_| ())
-            .map_err(|_| from.to_path_buf())
+        fs::copy(from, to).map(|_| ()).map_err(at(from))
     }
 }
 
-fn could_not(s: &'static crate::i18n::Strings, copy: bool, path: &Path) -> String {
+pub(crate) fn could_not(
+    s: &'static crate::i18n::Strings,
+    copy: bool,
+    path: &Path,
+    error: &std::io::Error,
+) -> String {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.display().to_string());
-    fill(
+    let what = fill(
         if copy { s.cannot_copy } else { s.cannot_move },
         &[("name", &name)],
-    )
+    );
+    format!("{what}: {error}")
 }
 
 /// The path on disk behind a listing name, folder or file.
@@ -879,8 +890,8 @@ impl AppController {
                     let Some(to) = duplicate_target(path) else {
                         continue;
                     };
-                    if copy_tree(path, &to).is_err() {
-                        let _ = tx.send(Message::Failed(could_not(s, true, path)));
+                    if let Err((_, e)) = copy_tree(path, &to) {
+                        let _ = tx.send(Message::Failed(could_not(s, true, path, &e)));
                         return;
                     }
                     count += 1;

@@ -224,13 +224,13 @@ pub(crate) fn download_update(
 
     // The sums first, which are four lines: if those cannot be fetched there is
     // no sense in pulling five megabytes down to not be able to check them.
-    let listing = arca_net::get(sums, &agent).ok_or_else(|| s.update_failed.to_string())?;
+    let listing = arca_net::get(sums, &agent).map_err(|_| s.update_failed.to_string())?;
     let want = sum_for(&listing, name).ok_or_else(|| s.update_failed.to_string())?;
 
     let body = arca_net::fetch(installer, &agent, INSTALLER_LIMIT, &|so_far, total| {
         notify(so_far, total.unwrap_or(0), name)
     })
-    .ok_or_else(|| s.update_failed.to_string())?;
+    .map_err(|_| s.update_failed.to_string())?;
 
     let got: [u8; 32] = Sha256::digest(&body).into();
     if got != want {
@@ -280,7 +280,7 @@ pub(crate) fn install_update(path: &Path, s: &'static Strings) -> std::result::R
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     if let Some(appimage) = std::env::var_os("APPIMAGE").map(PathBuf::from) {
         if path.extension().is_some_and(|ext| ext == "AppImage") {
-            return replace_binary(path, &appimage).map_err(|_| s.update_unwritable.to_string());
+            return replace_binary(path, &appimage).map_err(|error| update_error(error, s));
         }
     }
     let dir = exe.parent().ok_or_else(|| s.update_failed.to_string())?;
@@ -305,17 +305,22 @@ pub(crate) fn install_update(path: &Path, s: &'static Strings) -> std::result::R
             continue;
         };
         if let Err(error) = replace_binary(&new, &dir.join(name)) {
-            outcome = Err(if error.kind() == std::io::ErrorKind::PermissionDenied {
-                s.update_unwritable.to_string()
-            } else {
-                error.to_string()
-            });
+            outcome = Err(update_error(error, s));
             break;
         }
     }
     let _ = fs::remove_dir_all(&unpack);
     let _ = fs::remove_file(path);
     outcome
+}
+
+#[cfg(not(windows))]
+fn update_error(error: std::io::Error, s: &Strings) -> String {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        s.update_unwritable.to_string()
+    } else {
+        error.to_string()
+    }
 }
 
 #[cfg(not(windows))]
@@ -439,26 +444,15 @@ pub(crate) fn run_job_blocking(
             if detect(&archive) != Some(Format::Zip) {
                 return Err(s.only_zip_can_change.to_string());
             }
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
-            let done = arca_zip::rewrite_password(
-                &archive,
-                &temp,
-                current.as_deref(),
-                new.as_deref(),
-                notify,
-            );
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
+            rewrite_zip(&archive, |temp| {
+                arca_zip::rewrite_password(
+                    &archive,
+                    temp,
+                    current.as_deref(),
+                    new.as_deref(),
+                    notify,
+                )
+            })?;
             let name = archive
                 .file_name()
                 .map(|x| x.to_string_lossy().to_string())
@@ -484,27 +478,16 @@ pub(crate) fn run_job_blocking(
                 return Err(s.only_zip_can_change.to_string());
             }
             let doomed: HashSet<String> = names.into_iter().collect();
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
-            let done = arca_zip::remove_entries(
-                &archive,
-                &temp,
-                password.as_deref(),
-                &|e| !doomed.contains(&e.name),
-                notify,
-            );
+            rewrite_zip(&archive, |temp| {
+                arca_zip::remove_entries(
+                    &archive,
+                    temp,
+                    password.as_deref(),
+                    &|e| !doomed.contains(&e.name),
+                    notify,
+                )
+            })?;
             let gone = doomed.len();
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
             Ok(fill(s.deleted, &[("n", &gone.to_string())]))
         }
         Job::CopyTo { archive, dest } => {
@@ -517,7 +500,7 @@ pub(crate) fn run_job_blocking(
                 .file_name()
                 .map(|x| x.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let copied = (|| -> std::io::Result<u64> {
+            let copied = (|| -> arca_core::Result<u64> {
                 let mut from = BufReader::with_capacity(BUF, File::open(&archive)?);
                 let mut to = BufWriter::with_capacity(BUF, File::create(&dest)?);
                 let mut buf = vec![0u8; BUF];
@@ -537,7 +520,7 @@ pub(crate) fn run_job_blocking(
                         (total / (1 << 20)).max(1) as usize,
                         &name,
                     ) {
-                        return Err(std::io::Error::other("cancelled"));
+                        return Err(arca_core::Error::Cancelled);
                     }
                 }
                 to.flush()?;
@@ -556,10 +539,10 @@ pub(crate) fn run_job_blocking(
                     // whether the reason was a full disk or somebody pressing
                     // stop.
                     let _ = fs::remove_file(&dest);
-                    if e.to_string() == "cancelled" {
-                        return Err(arca_core::Error::Cancelled.to_string());
-                    }
-                    Err(e.to_string())
+                    Err(match e {
+                        arca_core::Error::Io(e) => e.to_string(),
+                        e => e.to_string(),
+                    })
                 }
             }
         }
@@ -573,30 +556,19 @@ pub(crate) fn run_job_blocking(
             if detect(&archive) != Some(Format::Zip) {
                 return Err(s.only_zip_can_change.to_string());
             }
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
             // A folder answers to two spellings: some tools file an entry for
             // the folder itself with a slash on the end, others only file what
             // is inside it. Both have to move, and neither can be assumed.
             let rename = |name: &str| rename_entry_name(name, &from, &to, folder);
-            let done = arca_zip::rename_entries(
-                &archive,
-                &temp,
-                password.as_deref(),
-                &|e| rename(&e.name),
-                notify,
-            );
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
+            rewrite_zip(&archive, |temp| {
+                arca_zip::rename_entries(
+                    &archive,
+                    temp,
+                    password.as_deref(),
+                    &|e| rename(&e.name),
+                    notify,
+                )
+            })?;
             // Nothing to say: the new name is in the list, which is where the
             // eye already is. An empty word here leaves the summary of the
             // archive standing, which is what the bar is for.
@@ -671,21 +643,10 @@ pub(crate) fn run_job_blocking(
             if extra.is_empty() {
                 return Err(s.nothing_to_do.to_string());
             }
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
             let n = extra.len();
-            let done = arca_zip::add_entries(&archive, &temp, password.as_deref(), &extra, notify);
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
+            rewrite_zip(&archive, |temp| {
+                arca_zip::add_entries(&archive, temp, password.as_deref(), &extra, notify)
+            })?;
             Ok(fill(s.added, &[("n", &n.to_string())]))
         }
         // Not reached: getting the new version is handled earlier, on the
@@ -700,29 +661,18 @@ pub(crate) fn run_job_blocking(
             if detect(&archive) != Some(Format::Zip) {
                 return Err(s.only_zip_can_change.to_string());
             }
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
             // All of them in one pass. Moving is renaming with a different
             // folder in front, and renaming is a rewrite of the whole archive:
             // five files moved one at a time would be five rewrites.
-            let done = arca_zip::rename_entries(
-                &archive,
-                &temp,
-                password.as_deref(),
-                &|e| moved_name(&e.name, &moves),
-                notify,
-            );
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
+            rewrite_zip(&archive, |temp| {
+                arca_zip::rename_entries(
+                    &archive,
+                    temp,
+                    password.as_deref(),
+                    &|e| moved_name(&e.name, &moves),
+                    notify,
+                )
+            })?;
             // The list says where everything is now, which is the whole answer.
             Ok(String::new())
         }
@@ -734,13 +684,6 @@ pub(crate) fn run_job_blocking(
             if detect(&archive) != Some(Format::Zip) {
                 return Err(s.only_zip_can_change.to_string());
             }
-            let temp = archive.with_file_name(format!(
-                "{}.arca-new",
-                archive
-                    .file_name()
-                    .map(|x| x.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            ));
             let extra = [arca_zip::Addition {
                 // No file behind it: a folder in a zip is a name and nothing
                 // else.
@@ -749,13 +692,9 @@ pub(crate) fn run_job_blocking(
                 codec: Codec::Store,
                 level: Level::STORE,
             }];
-            let done = arca_zip::add_entries(&archive, &temp, password.as_deref(), &extra, notify);
-            if let Err(e) = done {
-                let _ = fs::remove_file(&temp);
-                return Err(e.to_string());
-            }
-            step_aside(&archive).map_err(|e| e.to_string())?;
-            fs::rename(&temp, &archive).map_err(|e| e.to_string())?;
+            rewrite_zip(&archive, |temp| {
+                arca_zip::add_entries(&archive, temp, password.as_deref(), &extra, notify)
+            })?;
             // Nothing to say: the folder is in the list, which is where the eye
             // already is.
             Ok(String::new())
@@ -765,7 +704,60 @@ pub(crate) fn run_job_blocking(
 
 #[cfg(test)]
 mod tests {
-    use super::rename_entry_name;
+    use super::{rename_entry_name, run_job_blocking, Answer, Job};
+    use crate::i18n::{strings, Lang};
+    use crate::test_support::Room;
+    use std::fs;
+
+    fn copy(room: &Room, carry_on: bool) -> (std::path::PathBuf, Result<String, String>) {
+        let archive = room.path("source.zip");
+        let dest = room.path("copy.zip");
+        if !carry_on {
+            fs::write(&archive, vec![7u8; 2 << 20]).unwrap();
+        }
+        let result = run_job_blocking(
+            Job::CopyTo {
+                archive,
+                dest: dest.clone(),
+            },
+            strings(Lang::En),
+            &move |_, _, _| carry_on,
+            &|_| Answer::Cancel,
+        );
+        (dest, result)
+    }
+
+    #[test]
+    fn stopped_copy_reports_cancelled_and_removes_the_partial_file() {
+        let room = Room::new();
+        let (dest, result) = copy(&room, false);
+        assert_eq!(result, Err(arca_core::Error::Cancelled.to_string()));
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn failed_copy_reports_the_io_error_itself() {
+        let room = Room::new();
+        let (dest, result) = copy(&room, true);
+        let expected = fs::File::open(room.path("source.zip"))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(result, Err(expected));
+        assert!(!dest.exists());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn update_error_only_calls_permission_denied_unwritable() {
+        use std::io::{Error, ErrorKind};
+        let s = crate::i18n::strings(crate::i18n::Lang::En);
+        assert_eq!(
+            super::update_error(Error::from(ErrorKind::PermissionDenied), s),
+            s.update_unwritable
+        );
+        let full = Error::new(ErrorKind::StorageFull, "no space left on device");
+        assert_eq!(super::update_error(full, s), "no space left on device");
+    }
 
     #[test]
     fn folder_rename_handles_the_row_path_trailing_slash() {

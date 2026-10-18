@@ -1,4 +1,4 @@
-use super::theme::{self, hex, palette_of, BLUE, BLUE_ACTIVE, BLUE_HOVER, WHITE};
+use super::theme::{self, hex, palette_of, BLUE, BLUE_HOVER, BLUE_PRESSED, WHITE};
 use eframe::egui::{
     self, Color32, Response, RichText, Sense, Stroke, Ui, Vec2, WidgetInfo, WidgetType,
 };
@@ -145,12 +145,12 @@ pub(crate) fn primary_button(ui: &mut Ui, label: &str, enabled: bool) -> Respons
         let (rest, hover) = if ui.style().visuals.dark_mode {
             (BLUE, BLUE_HOVER)
         } else {
-            (BLUE_HOVER, BLUE_ACTIVE)
+            (BLUE_HOVER, BLUE_PRESSED)
         };
         let widgets = &mut ui.visuals_mut().widgets;
         widgets.inactive.weak_bg_fill = hex(rest);
         widgets.hovered.weak_bg_fill = hex(hover);
-        widgets.active.weak_bg_fill = hex(BLUE_ACTIVE);
+        widgets.active.weak_bg_fill = hex(BLUE_PRESSED);
         ui.add_enabled(
             enabled,
             egui::Button::new(RichText::new(label).color(hex(WHITE)))

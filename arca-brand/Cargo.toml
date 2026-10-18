@@ -1,0 +1,12 @@
+[package]
+name = "arca-brand"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Brand colours and typefaces shared by the Arca windows"
+publish = false
+
+[dependencies]
+egui = { version = "0.36", default-features = false }
