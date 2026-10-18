@@ -444,6 +444,10 @@ pub struct Strings {
     pub clear_finished: &'static str,
     pub dismiss_word: &'static str,
     pub hide_word: &'static str,
+    pub clipboard_windows_only: &'static str,
+    pub preparing_move: &'static str,
+    pub preparing_copy: &'static str,
+    pub progress_status: &'static str,
 }
 
 const EN: Strings = Strings {
@@ -853,6 +857,10 @@ const EN: Strings = Strings {
     clear_finished: "Clear finished",
     dismiss_word: "Dismiss",
     hide_word: "Hide",
+    clipboard_windows_only: "File clipboard integration is available on Windows only.",
+    preparing_move: "Preparing selected files to move…",
+    preparing_copy: "Preparing selected files to copy…",
+    progress_status: "{verb} · {progress}",
 };
 
 const ES: Strings = Strings {
@@ -1262,6 +1270,10 @@ const ES: Strings = Strings {
     clear_finished: "Quitar terminadas",
     dismiss_word: "Quitar",
     hide_word: "Ocultar",
+    clipboard_windows_only: "La integración con el portapapeles de archivos solo está disponible en Windows.",
+    preparing_move: "Preparando los archivos seleccionados para mover…",
+    preparing_copy: "Preparando los archivos seleccionados para copiar…",
+    progress_status: "{verb} · {progress}",
 };
 
 pub fn strings(l: Lang) -> &'static Strings {

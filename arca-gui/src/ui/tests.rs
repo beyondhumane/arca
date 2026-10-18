@@ -461,3 +461,25 @@ fn resize_edges_pick_corners_then_sides_and_nothing_inside() {
     assert_eq!(at(400.0, 300.0), None);
     assert_eq!(at(-1.0, 300.0), None);
 }
+
+#[test]
+fn clipboard_notices_and_progress_read_in_each_language() {
+    use crate::i18n::{strings, Lang};
+    let en = strings(Lang::En);
+    assert_eq!(
+        en.clipboard_windows_only,
+        "File clipboard integration is available on Windows only."
+    );
+    assert_eq!(
+        fill(
+            en.progress_status,
+            &[("verb", "Extracting"), ("progress", "3 / 9")]
+        ),
+        "Extracting \u{b7} 3 / 9"
+    );
+    let es = strings(Lang::Es);
+    assert_ne!(es.clipboard_windows_only, en.clipboard_windows_only);
+    assert_ne!(es.preparing_move, en.preparing_move);
+    assert_ne!(es.preparing_copy, en.preparing_copy);
+    assert_ne!(es.preparing_move, es.preparing_copy);
+}
