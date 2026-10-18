@@ -500,7 +500,7 @@ pub(crate) fn run_job_blocking(
                 .file_name()
                 .map(|x| x.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let copied = (|| -> std::io::Result<u64> {
+            let copied = (|| -> arca_core::Result<u64> {
                 let mut from = BufReader::with_capacity(BUF, File::open(&archive)?);
                 let mut to = BufWriter::with_capacity(BUF, File::create(&dest)?);
                 let mut buf = vec![0u8; BUF];
@@ -520,7 +520,7 @@ pub(crate) fn run_job_blocking(
                         (total / (1 << 20)).max(1) as usize,
                         &name,
                     ) {
-                        return Err(std::io::Error::other("cancelled"));
+                        return Err(arca_core::Error::Cancelled);
                     }
                 }
                 to.flush()?;
@@ -539,10 +539,10 @@ pub(crate) fn run_job_blocking(
                     // whether the reason was a full disk or somebody pressing
                     // stop.
                     let _ = fs::remove_file(&dest);
-                    if e.to_string() == "cancelled" {
-                        return Err(arca_core::Error::Cancelled.to_string());
-                    }
-                    Err(e.to_string())
+                    Err(match e {
+                        arca_core::Error::Io(e) => e.to_string(),
+                        e => e.to_string(),
+                    })
                 }
             }
         }
@@ -704,7 +704,47 @@ pub(crate) fn run_job_blocking(
 
 #[cfg(test)]
 mod tests {
-    use super::rename_entry_name;
+    use super::{rename_entry_name, run_job_blocking, Answer, Job};
+    use crate::i18n::{strings, Lang};
+    use crate::test_support::Room;
+    use std::fs;
+
+    fn copy(room: &Room, carry_on: bool) -> (std::path::PathBuf, Result<String, String>) {
+        let archive = room.path("source.zip");
+        let dest = room.path("copy.zip");
+        if !carry_on {
+            fs::write(&archive, vec![7u8; 2 << 20]).unwrap();
+        }
+        let result = run_job_blocking(
+            Job::CopyTo {
+                archive,
+                dest: dest.clone(),
+            },
+            strings(Lang::En),
+            &move |_, _, _| carry_on,
+            &|_| Answer::Cancel,
+        );
+        (dest, result)
+    }
+
+    #[test]
+    fn stopped_copy_reports_cancelled_and_removes_the_partial_file() {
+        let room = Room::new();
+        let (dest, result) = copy(&room, false);
+        assert_eq!(result, Err(arca_core::Error::Cancelled.to_string()));
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn failed_copy_reports_the_io_error_itself() {
+        let room = Room::new();
+        let (dest, result) = copy(&room, true);
+        let expected = fs::File::open(room.path("source.zip"))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(result, Err(expected));
+        assert!(!dest.exists());
+    }
 
     #[cfg(not(windows))]
     #[test]
