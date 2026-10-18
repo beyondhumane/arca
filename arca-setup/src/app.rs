@@ -4,7 +4,7 @@ use crate::{
     engine::{self, Choices, Event, Job, Mode},
     i18n::Lang,
     screens::{Action, RELEASES},
-    theme::{self, color, FOG},
+    theme::{self, hex, FOG},
     ui::{self, Glyph, StepState},
 };
 use eframe::egui::{self, pos2, vec2, Key, Rect, Sense, ViewportCommand};
@@ -384,7 +384,7 @@ impl eframe::App for Setup {
         }
         self.on_key(&ctx);
         let area = ui.max_rect();
-        ui.painter().rect_filled(area, 0, color(FOG));
+        ui.painter().rect_filled(area, 0, hex(FOG));
         assets::image(self.background())
             .fit_to_exact_size(area.size())
             .paint_at(ui, area);

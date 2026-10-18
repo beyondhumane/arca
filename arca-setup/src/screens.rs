@@ -2,7 +2,7 @@ use crate::{
     app::{step_states, Setup, HEADER},
     assets,
     engine::{Choices, Mode},
-    theme::{self, color, LINE, MUTED, SLATE, WHITE},
+    theme::{self, hex, LINE, MUTED, SLATE, WHITE},
     ui::{self, Glyph},
 };
 use eframe::egui::{self, pos2, vec2, Align, Layout, Rect, RichText, Stroke, Ui, UiBuilder};
@@ -34,7 +34,7 @@ fn body(ui: &mut Ui, text: &str, size: f32, tint: u32) {
         RichText::new(text)
             .font(theme::text(size))
             .line_height(Some(size + 7.5))
-            .color(color(tint)),
+            .color(hex(tint)),
     );
 }
 
@@ -141,7 +141,7 @@ impl Setup {
                 ui.label(
                     RichText::new(hint)
                         .font(theme::text(12.5))
-                        .color(color(MUTED)),
+                        .color(hex(MUTED)),
                 );
             });
             clicked.then_some(Action::Toggle(toggle))
@@ -189,19 +189,19 @@ impl Setup {
                 }
                 let (line, _) =
                     ui.allocate_exact_size(vec2(ui.available_width(), 1.), egui::Sense::hover());
-                ui.painter().rect_filled(line, 0, color(LINE));
+                ui.painter().rect_filled(line, 0, hex(LINE));
                 row(ui, 10., |ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(16., 16.), egui::Sense::hover());
-                    ui::glyph(ui.painter(), rect, Glyph::Folder, color(MUTED));
+                    ui::glyph(ui.painter(), rect, Glyph::Folder, hex(MUTED));
                     ui.label(
                         RichText::new(s.location)
                             .font(theme::display(12.5))
-                            .color(color(SLATE)),
+                            .color(hex(SLATE)),
                     );
                     ui.label(
                         RichText::new(self.dir.display().to_string())
                             .font(theme::text(12.5))
-                            .color(color(MUTED)),
+                            .color(hex(MUTED)),
                     );
                 });
             });
@@ -311,8 +311,8 @@ impl Setup {
             body(ui, s.failed_hint, 14., SLATE);
             ui.add_space(14.);
             egui::Frame::new()
-                .fill(color(WHITE))
-                .stroke(Stroke::new(1., color(LINE)))
+                .fill(hex(WHITE))
+                .stroke(Stroke::new(1., hex(LINE)))
                 .corner_radius(10)
                 .inner_margin(12)
                 .show(ui, |ui| {
@@ -321,7 +321,7 @@ impl Setup {
                         RichText::new(detail)
                             .font(theme::text(12.))
                             .line_height(Some(17.))
-                            .color(color(SLATE)),
+                            .color(hex(SLATE)),
                     );
                 });
             ui.add_space(20.);

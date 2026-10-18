@@ -1,17 +1,13 @@
 use super::themes::{self, Theme};
-use crate::assets::FONT_FILES;
 use crate::settings::{FontChoice, Settings};
 use crate::ThemePreference;
+pub(crate) use arca_brand::{alpha, hex, BLUE, BLUE_HOVER, BLUE_PRESSED, WHITE};
+use arca_brand::{INTER, SORA};
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Stroke, TextStyle,
     Visuals,
 };
 use std::sync::Arc;
-
-pub(crate) const BLUE: u32 = 0x0066FF;
-pub(crate) const BLUE_HOVER: u32 = 0x0057DB;
-pub(crate) const BLUE_ACTIVE: u32 = 0x004CC2;
-pub(crate) const WHITE: u32 = 0xFFFFFF;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Palette {
@@ -137,15 +133,6 @@ pub(crate) fn forget(ctx: &egui::Context, id: egui::Id) {
     ctx.data_mut(|d| d.remove::<bool>(id.with("seen")));
 }
 
-pub(crate) fn hex(value: u32) -> Color32 {
-    Color32::from_rgb((value >> 16) as u8, (value >> 8) as u8, value as u8)
-}
-
-pub(crate) fn alpha(value: u32, amount: f32) -> Color32 {
-    let [r, g, b, _] = hex(value).to_array();
-    Color32::from_rgba_unmultiplied(r, g, b, (amount.clamp(0.0, 1.0) * 255.0) as u8)
-}
-
 pub(crate) fn palette_of(ctx: &egui::Context) -> Palette {
     let set = ctx
         .data(|d| d.get_temp::<Palettes>(palettes_id()))
@@ -160,7 +147,7 @@ pub(crate) fn palette_of(ctx: &egui::Context) -> Palette {
     }
 }
 
-pub(crate) const DISPLAY: &str = "Sora";
+pub(crate) const DISPLAY: &str = SORA;
 
 const FONT_LIMIT: u64 = 32 * 1024 * 1024;
 
@@ -178,16 +165,9 @@ fn font_file(path: &str) -> Option<Vec<u8>> {
 
 pub(crate) fn fonts(choice: &FontChoice) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
-    fonts.font_data.insert(
-        DISPLAY.into(),
-        Arc::new(FontData::from_static(FONT_FILES[0])),
-    );
-    fonts.font_data.insert(
-        "Inter".into(),
-        Arc::new(FontData::from_static(FONT_FILES[1])),
-    );
+    arca_brand::register_brand_fonts(&mut fonts);
     let primary = match choice {
-        FontChoice::Inter => "Inter",
+        FontChoice::Inter => INTER,
         FontChoice::Sora => DISPLAY,
         FontChoice::Mono => "Hack",
         FontChoice::Ubuntu => "Ubuntu-Light",
@@ -198,13 +178,13 @@ pub(crate) fn fonts(choice: &FontChoice) -> FontDefinitions {
                     .insert("custom".into(), Arc::new(FontData::from_owned(bytes)));
                 "custom"
             }
-            None => "Inter",
+            None => INTER,
         },
     };
     if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
-        family.retain(|f| f != primary && f != "Inter");
-        family.insert(0, "Inter".into());
-        if primary != "Inter" {
+        family.retain(|f| f != primary && f != INTER);
+        family.insert(0, INTER.into());
+        if primary != INTER {
             family.insert(0, primary.into());
         }
     }
@@ -388,7 +368,7 @@ mod tests {
 
     #[test]
     fn actions_and_semantic_states_remain_legible() {
-        for primary in [BLUE, BLUE_HOVER, BLUE_ACTIVE] {
+        for primary in [BLUE, BLUE_HOVER, BLUE_PRESSED] {
             assert!(contrast(WHITE, primary) >= 4.5);
         }
         for (name, p) in themes::builtin().into_iter().map(|t| (t.name, t.palette)) {
