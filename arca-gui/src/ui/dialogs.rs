@@ -67,7 +67,7 @@ pub(crate) fn shortcut_rows(s: &'static Strings) -> [Vec<ShortcutRow>; 2] {
     ]
 }
 
-pub(crate) fn keystroke(spec: &str, mac: bool) -> String {
+pub(crate) fn keystroke(spec: &str, mac: bool, s: &'static Strings) -> String {
     if spec.len() == 1 {
         return spec.to_uppercase();
     }
@@ -79,25 +79,32 @@ pub(crate) fn keystroke(spec: &str, mac: bool) -> String {
             "alt" if mac => "⌥".into(),
             "alt" => "Alt".into(),
             "shift" if mac => "⇧".into(),
-            "shift" => "Shift".into(),
-            "escape" => "Esc".into(),
-            "delete" => "Delete".into(),
-            "backspace" => "Backspace".into(),
-            "enter" => "Enter".into(),
-            "space" => "Space".into(),
-            "tab" => "Tab".into(),
+            "shift" => s.key_shift.into(),
+            "escape" => s.key_escape.into(),
+            "delete" => s.key_delete.into(),
+            "backspace" => s.key_backspace.into(),
+            "enter" => s.key_enter.into(),
+            "space" => s.key_space.into(),
+            "tab" => s.key_tab.into(),
             "left" => "←".into(),
             "right" => "→".into(),
             "up" => "↑".into(),
             "down" => "↓".into(),
-            "home" => "Home".into(),
-            "end" => "End".into(),
-            "pageup" => "PgUp".into(),
-            "pagedown" => "PgDn".into(),
+            "home" => s.key_home.into(),
+            "end" => s.key_end.into(),
+            "pageup" => s.key_page_up.into(),
+            "pagedown" => s.key_page_down.into(),
             other => other.to_uppercase(),
         })
         .collect();
     parts.join(if mac { "" } else { "+" })
+}
+
+pub(crate) fn shortcut_label(spec: &str, s: &'static Strings) -> String {
+    if spec.is_empty() {
+        return String::new();
+    }
+    keystroke(spec, cfg!(target_os = "macos"), s)
 }
 
 fn shortcuts_table(ui: &mut egui::Ui, s: &'static Strings) {
@@ -112,7 +119,7 @@ fn shortcuts_table(ui: &mut egui::Ui, s: &'static Strings) {
                     for (keys, what) in rows {
                         ui.horizontal(|ui| {
                             for key in keys {
-                                kbd(ui, &keystroke(key, mac));
+                                kbd(ui, &keystroke(key, mac, s));
                             }
                         });
                         ui.label(what);
