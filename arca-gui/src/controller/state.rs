@@ -1,7 +1,7 @@
 //! Runtime state owned by the application controller.
 
 use super::{Cut, Message, Pending, Release, View, Viewed};
-use crate::model::{Format, SortColumn};
+use crate::model::Format;
 use crate::settings::Settings;
 use crate::tree;
 use arca_core::{Codec, Entry, Level};
@@ -20,9 +20,6 @@ pub(crate) struct AppState {
     pub(crate) settings: Settings,
     pub(crate) archive: Option<PathBuf>,
     pub(crate) entries: Vec<Entry>,
-    pub(crate) checked: Vec<bool>,
-    pub(crate) filter: String,
-    pub(crate) order: (SortColumn, bool),
     pub(crate) channel: Option<Receiver<Message>>,
     pub(crate) notice: String,
     pub(crate) error: bool,
@@ -51,7 +48,6 @@ pub(crate) struct AppState {
     pub(crate) window_title: String,
     pub(crate) disk: Option<super::DiskState>,
     pub(crate) origin: Option<super::Origin>,
-    pub(crate) current_dir: String,
     pub(crate) show_settings: bool,
     // Every operation asked for, running or waiting or finished and not yet
     // put away. The listing is not one of them: it is what the window is.
@@ -84,9 +80,6 @@ pub(crate) struct AppState {
     // whatever was ahead, the way a browser does.
     pub(crate) history: Vec<String>,
     pub(crate) here: usize,
-    // The row the keyboard is on. Everything the arrows, Enter and Space do
-    // hangs off this. None means nothing is focused yet.
-    pub(crate) cursor: Option<usize>,
     // The entry being renamed and what has been typed into it so far. Held by
     // path rather than by row number so that sorting or filtering underneath a
     // half typed name cannot move the box onto somebody else's row.

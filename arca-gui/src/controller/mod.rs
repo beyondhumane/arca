@@ -220,15 +220,15 @@ impl AppController {
             AppAction::ToggleColumn(column) => {
                 let on = self.state.settings.columns.on(column);
                 self.state.settings.columns.set(column, !on);
-                self.state.settings.save();
+                self.save_settings();
             }
             AppAction::SetLanguage(lang) => {
                 self.state.settings.lang = lang;
-                self.state.settings.save();
+                self.save_settings();
             }
             AppAction::SetTheme(theme) => {
                 self.state.settings.theme = theme;
-                self.state.settings.save();
+                self.save_settings();
             }
             AppAction::AnswerConflict(answer, name) => self.answer_conflict(answer, name),
             AppAction::CancelPassword => self.cancel_password(),
@@ -278,8 +278,8 @@ impl AppController {
     }
 
     pub(crate) fn sort_by(&mut self, column: SortColumn) {
-        let order = if self.state.order.0 == column {
-            (column, !self.state.order.1)
+        let order = if self.state.active_pane().order.0 == column {
+            (column, !self.state.active_pane().order.1)
         } else {
             (column, true)
         };
@@ -300,7 +300,7 @@ impl AppController {
             dest = dest.join(archive_stem(&archive));
         }
         let wanted = if only_checked {
-            self.state.checked.clone()
+            self.state.active_pane().checked.clone()
         } else {
             vec![true; self.state.entries.len()]
         };
@@ -462,16 +462,78 @@ impl AppController {
     /// The format is left alone while an archive is being browsed, because
     /// then `state.format` is the format of what is open.
     pub(crate) fn set_archive_defaults(&mut self, format: Format, codec: Codec, level: Level) {
-        let settings = &mut self.state.settings;
-        settings.new_format = format;
-        settings.new_codec = codec;
-        settings.new_level = level;
-        settings.save();
+        self.update_settings(|settings| {
+            settings.new_format = format;
+            settings.new_codec = codec;
+            settings.new_level = level;
+        });
         if self.state.archive.is_none() || matches!(self.state.view, View::Add) {
             self.set_create_format(format);
         }
         self.state.codec = codec;
         self.state.level = level;
+    }
+
+    pub(crate) const CODECS: [Codec; 3] = [Codec::Store, Codec::Deflate, Codec::Zstd];
+    pub(crate) const LEVEL_PRESETS: [Level; 4] =
+        [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST];
+
+    pub(crate) fn compressor(&self) -> Compressor {
+        Self::compressor_for(self.state.format, self.state.codec)
+    }
+
+    pub(crate) fn compressor_for(format: Format, codec: Codec) -> Compressor {
+        match format {
+            Format::SevenZ | Format::TarXz | Format::Xz => Compressor::Fixed("LZMA2"),
+            Format::Rar => Compressor::Fixed("RAR"),
+            Format::Zip => Compressor::Codec {
+                codec,
+                editable: true,
+            },
+            _ => Compressor::Codec {
+                codec,
+                editable: false,
+            },
+        }
+    }
+
+    pub(crate) fn set_codec(&mut self, codec: Codec) {
+        self.state.codec = codec;
+    }
+
+    pub(crate) fn set_level(&mut self, level: Level) {
+        self.state.level = level;
+    }
+
+    pub(crate) fn set_notice(&mut self, notice: impl Into<String>, error: bool) {
+        self.state.notice = notice.into();
+        self.state.error = error;
+    }
+
+    pub(crate) fn update_settings<R>(&mut self, change: impl FnOnce(&mut Settings) -> R) -> R {
+        let changed = change(&mut self.state.settings);
+        self.save_settings();
+        changed
+    }
+
+    /// Widths change on every frame of a drag and are written once it ends.
+    pub(crate) fn set_column_width(&mut self, slot: usize, width: f32, persist: bool) {
+        if let Some(stored) = self.state.settings.widths.get_mut(slot) {
+            *stored = width;
+        }
+        if persist {
+            self.save_settings();
+        }
+    }
+
+    fn save_settings(&mut self) {
+        if let Err(error) = self.state.settings.save() {
+            let notice = fill(
+                self.s().settings_not_saved,
+                &[("error", &error.to_string())],
+            );
+            self.set_notice(notice, true);
+        }
     }
 
     pub(crate) fn set_create_format(&mut self, format: Format) {
@@ -550,7 +612,6 @@ impl AppController {
         for row in self.visible_rows() {
             self.set_checked_projection(&row, true);
         }
-        self.snapshot_active_pane();
     }
     pub(crate) fn invert_visible(&mut self) {
         let rows = self.visible_rows();
@@ -559,7 +620,6 @@ impl AppController {
         for (r, v) in rows.iter().zip(values) {
             self.set_checked_projection(r, v);
         }
-        self.snapshot_active_pane();
     }
     pub(crate) fn request_delete(&mut self) {
         if !self.can_change() {
@@ -614,9 +674,6 @@ impl AppController {
                 settings,
                 archive: None,
                 entries: Vec::new(),
-                checked: Vec::new(),
-                filter: String::new(),
-                order: (SortColumn::Name, true),
                 channel: None,
                 notice: String::new(),
                 error: false,
@@ -640,7 +697,6 @@ impl AppController {
                 window_title: "Arca".to_string(),
                 disk: None,
                 origin: None,
-                current_dir: String::new(),
                 show_settings: false,
                 tasks: Vec::new(),
                 next_task: 0,
@@ -655,7 +711,6 @@ impl AppController {
                 reread_queued: None,
                 history: vec![String::new()],
                 here: 0,
-                cursor: None,
                 confirm_delete: None,
                 clip_dir: None,
                 cut_names: HashSet::new(),
@@ -688,7 +743,7 @@ impl AppController {
     pub(crate) fn summary(&self) -> String {
         let s = self.s();
         if self.on_disk() {
-            let rows = children_of(&self.state.entries, &self.state.current_dir);
+            let rows = children_of(&self.state.entries, &self.state.active_pane().directory);
             let raw: u64 = rows
                 .iter()
                 .filter(|row| !row.is_dir)
@@ -731,8 +786,13 @@ impl AppController {
         }
     }
     pub(crate) fn selected_roots(&self) -> Vec<String> {
-        self.selection_roots(&self.state.current_dir, |index| {
-            self.state.checked.get(index).copied().unwrap_or(false)
+        self.selection_roots(&self.state.active_pane().directory, |index| {
+            self.state
+                .active_pane()
+                .checked
+                .get(index)
+                .copied()
+                .unwrap_or(false)
         })
     }
 
@@ -743,7 +803,7 @@ impl AppController {
         let Some(pane) = self.state.browser.panes.get(pane) else {
             return Vec::new();
         };
-        self.selection_roots(&pane.directory, |index| pane.selected.contains(&index))
+        self.selection_roots(&pane.directory, |index| pane.is_checked(index))
     }
 
     fn selection_roots(&self, directory: &str, checked: impl Fn(usize) -> bool) -> Vec<String> {
@@ -805,11 +865,14 @@ impl AppController {
     // for good the moment somebody changed their mind.
     pub(crate) fn clear_picked(&mut self) {
         self.cancel_preview();
-        self.state.checked.iter_mut().for_each(|c| *c = false);
-        self.state.cursor = None;
+        self.state
+            .active_pane_mut()
+            .checked
+            .iter_mut()
+            .for_each(|c| *c = false);
+        self.state.active_pane_mut().cursor = None;
         // A row number means something else in the folder now on screen.
         self.state.last_click = None;
-        self.snapshot_active_pane();
     }
     pub(crate) fn go_forward(&mut self) {
         if self.can_go_forward() {
@@ -831,7 +894,7 @@ impl AppController {
         self.state
             .entries
             .iter()
-            .zip(&self.state.checked)
+            .zip(&self.state.active_pane().checked)
             .filter(|(_, &on)| on)
             .map(|(e, _)| e.name.clone())
             .collect()
@@ -888,7 +951,7 @@ impl AppController {
     // remembered.
     pub(crate) fn reread_names(&mut self, page: arca_zip::pages::Page) {
         self.state.settings.page = page;
-        self.state.settings.save();
+        self.save_settings();
         for e in &mut self.state.entries {
             if e.utf8 {
                 continue;
@@ -898,8 +961,8 @@ impl AppController {
         }
         self.state.folders = tree::folders_of(&self.state.entries);
         self.clear_picked();
-        self.state.cursor = None;
-        self.state.current_dir.clear();
+        self.state.active_pane_mut().cursor = None;
+        self.state.active_pane_mut().directory.clear();
         self.state.history = vec![String::new()];
         self.state.here = 0;
         self.reset_browser_panes();
@@ -1102,9 +1165,8 @@ impl AppController {
         self.go_to(parent_of(&normalized_dir(path)));
         self.clear_picked();
         for i in entries_under(&self.state.entries, path) {
-            self.state.checked[i] = true;
+            self.state.active_pane_mut().checked[i] = true;
         }
-        self.snapshot_active_pane();
     }
 
     pub(crate) fn set_checked(&mut self, row: &Row, value: bool) {
@@ -1119,16 +1181,14 @@ impl AppController {
         }
         self.cancel_preview();
         self.set_checked_projection(row, value);
-        self.snapshot_active_pane();
     }
 
     pub(crate) fn select_only(&mut self, row: &Row) {
         self.cancel_preview();
-        self.state.checked.fill(false);
+        self.state.active_pane_mut().checked.fill(false);
         if !row.up && self.is_visible(row) {
             self.set_checked_projection(row, true);
         }
-        self.snapshot_active_pane();
     }
 
     fn is_visible(&self, row: &Row) -> bool {
@@ -1143,13 +1203,13 @@ impl AppController {
         }
         match row.entry {
             Some(i) => {
-                if let Some(on) = self.state.checked.get_mut(i) {
+                if let Some(on) = self.state.active_pane_mut().checked.get_mut(i) {
                     *on = value;
                 }
             }
             None => {
                 for i in entries_under(&self.state.entries, &row.path) {
-                    self.state.checked[i] = value;
+                    self.state.active_pane_mut().checked[i] = value;
                 }
             }
         }
@@ -1161,11 +1221,11 @@ impl AppController {
     // window as everything else.
     #[cfg(windows)]
     pub(crate) fn dragged_files(&self) -> Vec<(Entry, String)> {
-        let base = &self.state.current_dir;
+        let base = &self.state.active_pane().directory;
         self.state
             .entries
             .iter()
-            .zip(&self.state.checked)
+            .zip(&self.state.active_pane().checked)
             .filter(|(e, &on)| on && !e.is_dir)
             .map(|(e, _)| {
                 let full = e.name.replace('\\', "/");
@@ -1197,7 +1257,7 @@ impl AppController {
         self.state.settings.recent.retain(|p| *p != text);
         self.state.settings.recent.insert(0, text);
         self.state.settings.recent.truncate(10);
-        self.state.settings.save();
+        self.save_settings();
     }
     pub(crate) fn spawn<F>(&mut self, total: usize, work: F)
     where
@@ -1352,7 +1412,7 @@ impl AppController {
         self.run_job(Job::Add {
             archive,
             inputs,
-            dir: self.state.current_dir.clone(),
+            dir: self.state.active_pane().directory.clone(),
             codec: self.state.codec,
             level: self.state.level,
             password: self.state.archive_password.clone(),
@@ -1423,7 +1483,7 @@ impl AppController {
         // before it and takes the clipboard over, so it runs after it.
         let clipboard = temp.join("Arca").join("clipboard");
 
-        let wanted = self.state.checked.clone();
+        let wanted = self.state.active_pane().checked.clone();
         let total = wanted.iter().filter(|b| **b).count();
         let pw = self.state.archive_password.clone();
         self.state.close_when_done = false;
@@ -1599,7 +1659,7 @@ impl AppController {
                         self.state.archive_password = None;
                         self.state.waiting_on_password = Some(Pending::OpenArchive);
                     }
-                    self.state.checked = vec![false; v.len()];
+                    self.state.active_pane_mut().checked = vec![false; v.len()];
                     self.state.folders = tree::folders_of(&v);
                     self.state.entries = v;
                     if let Some(f) = detect(&path) {
@@ -1623,11 +1683,11 @@ impl AppController {
                     let restore_dir = self.state.reread_dir.take();
                     self.state.history = vec![String::new()];
                     self.state.here = 0;
-                    self.state.current_dir = restore_dir
+                    self.state.active_pane_mut().directory = restore_dir
                         .map(|dir| nearest_existing_dir(&self.state.entries, &dir))
                         .unwrap_or_default();
-                    if !self.state.current_dir.is_empty() {
-                        self.state.history = vec![self.state.current_dir.clone()];
+                    if !self.state.active_pane().directory.is_empty() {
+                        self.state.history = vec![self.state.active_pane().directory.clone()];
                     }
                     self.reset_browser_panes();
                     self.state.busy = false;
@@ -1708,18 +1768,18 @@ impl AppController {
     }
 
     pub(crate) fn row_root(&self) -> &str {
-        if self.flat() || self.state.filter.trim().is_empty() {
+        if self.flat() || self.state.active_pane().filter.trim().is_empty() {
             ""
         } else {
-            &self.state.current_dir
+            &self.state.active_pane().directory
         }
     }
 
     pub(crate) fn visible_rows(&self) -> Vec<Row> {
         self.rows_for(
-            &self.state.current_dir,
-            &self.state.filter,
-            self.state.order,
+            &self.state.active_pane().directory,
+            &self.state.active_pane().filter,
+            self.state.active_pane().order,
             self.flat(),
             !self.state.browser.columns,
         )
@@ -1946,7 +2006,7 @@ impl AppController {
         }
         if self.on_disk() {
             self.state.origin = Some(Origin {
-                directory: self.state.current_dir.clone(),
+                directory: self.state.active_pane().directory.clone(),
                 path: String::new(),
             });
         }
@@ -1956,13 +2016,13 @@ impl AppController {
         self.state.password_wrong = false;
         self.state.reread_dir = None;
         self.state.entries.clear();
-        self.state.checked.clear();
+        self.state.active_pane_mut().checked.clear();
         self.state.folders = tree::Folder::default();
-        self.state.current_dir.clear();
+        self.state.active_pane_mut().directory.clear();
         self.state.history = vec![String::new()];
         self.state.here = 0;
-        self.state.cursor = None;
-        self.state.filter.clear();
+        self.state.active_pane_mut().cursor = None;
+        self.state.active_pane_mut().filter.clear();
         self.state.viewing = None;
         self.state.confirm_delete = None;
         self.state.confirm_drop = None;
@@ -2003,7 +2063,7 @@ impl AppController {
             return;
         }
         if let Some(path) = self.state.archive.clone() {
-            let dir = self.state.current_dir.clone();
+            let dir = self.state.active_pane().directory.clone();
             self.open_with_password(path, self.state.archive_password.clone());
             self.state.reread_dir = Some(dir);
         }
@@ -2047,7 +2107,7 @@ impl AppController {
             self.state.notice = self.s().only_zip_can_change.into();
             return;
         }
-        if reread_target(&job, &self.state.current_dir).is_some() {
+        if reread_target(&job, &self.state.active_pane().directory).is_some() {
             self.cancel_preview();
         }
         if let Job::Test {
@@ -2128,7 +2188,7 @@ impl AppController {
         let reread_after = if self.state.close_when_done {
             None
         } else {
-            reread_target(&job, &self.state.current_dir)
+            reread_target(&job, &self.state.active_pane().directory)
         };
         // The ones that build the archive again leave the old one beside it.
         // What is kept here is the word for the change, so that offering to
@@ -2211,7 +2271,14 @@ impl AppController {
         self.enqueue(task);
     }
     pub(crate) fn is_checked(&self, row: &Row) -> bool {
-        self.row_is_checked(row, |i| self.state.checked.get(i).copied().unwrap_or(false))
+        self.row_is_checked(row, |i| {
+            self.state
+                .active_pane()
+                .checked
+                .get(i)
+                .copied()
+                .unwrap_or(false)
+        })
     }
 
     fn row_is_checked(&self, row: &Row, selected: impl Fn(usize) -> bool) -> bool {
@@ -2668,7 +2735,7 @@ mod password_tests {
             encrypted,
             zipcrypto: false,
         }];
-        controller.state.checked = vec![false];
+        controller.state.active_pane_mut().checked = vec![false];
         controller
     }
 
@@ -2778,8 +2845,8 @@ mod filter_tests {
             entry("Game/Data/level.dat"),
             entry("Other/redistributable.bin"),
         ];
-        controller.state.current_dir = dir.to_string();
-        controller.state.filter = filter.to_string();
+        controller.state.active_pane_mut().directory = dir.to_string();
+        controller.state.active_pane_mut().filter = filter.to_string();
         controller
             .visible_rows()
             .into_iter()
@@ -2831,5 +2898,38 @@ mod filter_tests {
             Vec::<String>::new(),
             "a search inside one folder does not reach into another"
         );
+    }
+}
+
+#[cfg(test)]
+mod compressor_tests {
+    use super::*;
+
+    #[test]
+    fn only_zip_lets_the_codec_be_picked() {
+        let mut controller = AppController::new(Settings::default());
+        for (format, expected) in [
+            (Format::SevenZ, Compressor::Fixed("LZMA2")),
+            (Format::TarXz, Compressor::Fixed("LZMA2")),
+            (Format::Xz, Compressor::Fixed("LZMA2")),
+            (Format::Rar, Compressor::Fixed("RAR")),
+            (
+                Format::Zip,
+                Compressor::Codec {
+                    codec: Codec::Deflate,
+                    editable: true,
+                },
+            ),
+            (
+                Format::TarGz,
+                Compressor::Codec {
+                    codec: Codec::Deflate,
+                    editable: false,
+                },
+            ),
+        ] {
+            controller.state.format = format;
+            assert_eq!(controller.compressor(), expected, "{format:?}");
+        }
     }
 }

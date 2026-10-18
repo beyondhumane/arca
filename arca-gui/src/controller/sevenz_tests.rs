@@ -137,7 +137,7 @@ fn opening_another_archive_discards_entries_pending_actions_and_old_responses() 
     app.open(archive.clone());
     assert!(old_stop.load(std::sync::atomic::Ordering::Relaxed));
     assert!(app.state.entries.is_empty());
-    assert!(app.state.checked.is_empty());
+    assert!(app.state.active_pane().checked.is_empty());
     assert!(app.state.waiting_on_password.is_none());
     assert!(app.state.archive_password.is_none());
     assert!(app.pending_reread().is_none());
@@ -280,7 +280,7 @@ fn selected_extraction_resumes_with_the_selection_after_password_entry() {
         .iter()
         .position(|e| e.name == "source/b.txt")
         .unwrap();
-    app.state.checked[index] = true;
+    app.state.active_pane_mut().checked[index] = true;
     let dest = room.path("selected");
     app.start_extract_to(true, dest.clone());
     assert!(matches!(

@@ -270,7 +270,7 @@ impl Shell {
         let settings_now = controller.state.settings.title_bar;
         egui_extras::install_image_loaders(ctx);
         Self {
-            filter_value: controller.state.filter.clone(),
+            filter_value: controller.state.active_pane().filter.clone(),
             controller,
             ctx: ctx.clone(),
             dialog: None,
@@ -740,6 +740,7 @@ impl Shell {
     fn selected_count(&self) -> usize {
         self.controller
             .state
+            .active_pane()
             .checked
             .iter()
             .filter(|checked| **checked)
@@ -789,7 +790,13 @@ impl Shell {
         if matches!(kind, DialogKind::Extract { .. })
             && (self.controller.state.archive.is_none()
                 || (matches!(kind, DialogKind::Extract { only_checked: true })
-                    && !self.controller.state.checked.iter().any(|checked| *checked)))
+                    && !self
+                        .controller
+                        .state
+                        .active_pane()
+                        .checked
+                        .iter()
+                        .any(|checked| *checked)))
         {
             return;
         }
@@ -965,8 +972,7 @@ impl Shell {
                         return;
                     }
                     if name.is_empty() || name.contains('/') || name.contains('\\') {
-                        self.controller.state.notice = s.bad_name.to_string();
-                        self.controller.state.error = true;
+                        self.controller.set_notice(s.bad_name, true);
                         return;
                     }
                     if let Some(dir) = self.controller.create_disk_folder(&name) {
@@ -977,8 +983,7 @@ impl Shell {
                     return;
                 };
                 if name.is_empty() || name.contains('/') || name.contains('\\') {
-                    self.controller.state.notice = s.bad_name.to_string();
-                    self.controller.state.error = true;
+                    self.controller.set_notice(s.bad_name, true);
                     self.close_name();
                     return;
                 }
@@ -988,12 +993,12 @@ impl Shell {
                     .iter()
                     .any(|row| row.label.eq_ignore_ascii_case(&name))
                 {
-                    self.controller.state.notice = fill(s.name_taken, &[("name", &name)]);
-                    self.controller.state.error = true;
+                    self.controller
+                        .set_notice(fill(s.name_taken, &[("name", &name)]), true);
                     self.close_name();
                     return;
                 }
-                let full = format!("{}{name}/", self.controller.state.current_dir);
+                let full = format!("{}{name}/", self.controller.state.active_pane().directory);
                 self.close_name();
                 self.controller.dispatch(AppAction::Run(Job::NewFolder {
                     archive,
@@ -1049,9 +1054,9 @@ impl Shell {
             return;
         }
         if let Some(destination) =
-            action.destination(row.as_ref(), &self.controller.state.current_dir)
+            action.destination(row.as_ref(), &self.controller.state.active_pane().directory)
         {
-            if destination != self.controller.state.current_dir {
+            if destination != self.controller.state.active_pane().directory {
                 self.controller.go_to(destination);
             }
         }
@@ -1124,7 +1129,7 @@ impl Shell {
             RowAction::Properties => {
                 let path = match row {
                     Some(row) if !row.up => disk_path(&row.path),
-                    _ => disk_path(&self.controller.state.current_dir),
+                    _ => disk_path(&self.controller.state.active_pane().directory),
                 };
                 let pinned = self.controller.is_pinned(&path);
                 self.properties = Some(inspect(&path, pinned));
@@ -1155,7 +1160,7 @@ impl Shell {
                 }
                 Some(_) => {}
                 None if self.controller.on_disk() => {
-                    let here = disk_path(&self.controller.state.current_dir);
+                    let here = disk_path(&self.controller.state.active_pane().directory);
                     self.controller.dispatch(AppAction::TogglePinned(here));
                 }
                 None => {}
@@ -1225,18 +1230,19 @@ impl Shell {
             return;
         }
         if !clipboard::AVAILABLE {
-            self.controller.state.notice = self.controller.s().clipboard_windows_only.into();
-            self.controller.state.error = true;
+            self.controller
+                .set_notice(self.controller.s().clipboard_windows_only, true);
             return;
         }
         let s = self.controller.s();
-        self.controller.state.notice = if cut {
-            s.preparing_move
-        } else {
-            s.preparing_copy
-        }
-        .into();
-        self.controller.state.error = false;
+        self.controller.set_notice(
+            if cut {
+                s.preparing_move
+            } else {
+                s.preparing_copy
+            },
+            false,
+        );
         self.controller.dispatch(AppAction::Copy { cut });
     }
 
@@ -1248,7 +1254,7 @@ impl Shell {
             let Some((roots, cut)) = self.disk_clip.clone() else {
                 return;
             };
-            let target = self.controller.state.current_dir.clone();
+            let target = self.controller.state.active_pane().directory.clone();
             if cut {
                 self.controller.move_on_disk(&roots, &target);
                 self.disk_clip = None;
@@ -1261,17 +1267,17 @@ impl Shell {
             return;
         }
         if !clipboard::AVAILABLE {
-            self.controller.state.notice = self.controller.s().clipboard_windows_only.into();
-            self.controller.state.error = true;
+            self.controller
+                .set_notice(self.controller.s().clipboard_windows_only, true);
             return;
         }
         self.controller.dispatch(AppAction::Paste);
     }
 
     fn set_next_pane(&mut self, on: bool) {
-        self.controller.state.settings.next_pane = on;
+        self.controller
+            .update_settings(|settings| settings.next_pane = on);
         self.controller.set_free_panes(!on);
-        self.controller.state.settings.save();
     }
 
     fn switch_view(&mut self, view: crate::settings::BrowserView, flat: bool) {
@@ -1280,22 +1286,18 @@ impl Shell {
         self.controller.transition_browser_view(columns, flat);
         self.controller
             .set_free_panes(!self.controller.state.settings.next_pane);
-        self.controller.state.settings.browser_view =
-            if columns { view } else { BrowserView::Details };
-        if flat {
-            self.controller
-                .state
-                .settings
-                .columns
-                .set(SortColumn::Path, true);
-        }
-        self.controller.state.settings.save();
+        self.controller.update_settings(|settings| {
+            settings.browser_view = if columns { view } else { BrowserView::Details };
+            if flat {
+                settings.columns.set(SortColumn::Path, true);
+            }
+        });
         self.scroll_to_cursor = true;
     }
 
     fn show_preview(&mut self, entry: usize) {
-        self.controller.state.settings.preview_visible = true;
-        self.controller.state.settings.save();
+        self.controller
+            .update_settings(|settings| settings.preview_visible = true);
         self.controller.view_entry(entry);
     }
 
@@ -1313,7 +1315,7 @@ impl Shell {
             return;
         };
         if modifiers.shift {
-            let from = self.controller.state.cursor.unwrap_or(index);
+            let from = self.controller.state.active_pane().cursor.unwrap_or(index);
             let (lo, hi) = if from <= index {
                 (from, index)
             } else {
@@ -1341,15 +1343,15 @@ impl Shell {
     /// Nudge the text size by `step` points, or back to the default for 0.
     pub(super) fn step_text_size(&mut self, step: f32) {
         use crate::settings::{TEXT_DEFAULT, TEXT_LEAST, TEXT_MOST};
-        let settings = &mut self.controller.state.settings;
+        let size = self.controller.state.settings.text_size;
         let next = if step == 0.0 {
             TEXT_DEFAULT
         } else {
-            (settings.text_size + step).clamp(TEXT_LEAST, TEXT_MOST)
+            (size + step).clamp(TEXT_LEAST, TEXT_MOST)
         };
-        if next != settings.text_size {
-            settings.text_size = next;
-            settings.save();
+        if next != size {
+            self.controller
+                .update_settings(|settings| settings.text_size = next);
         }
     }
 
@@ -1432,7 +1434,12 @@ impl Shell {
         };
         let letter = letter.to_lowercase().to_string();
         let rows = self.controller.visible_rows();
-        let start = self.controller.state.cursor.map_or(0, |cursor| cursor + 1);
+        let start = self
+            .controller
+            .state
+            .active_pane()
+            .cursor
+            .map_or(0, |cursor| cursor + 1);
         let found = (0..rows.len())
             .map(|step| (start + step) % rows.len().max(1))
             .find(|index| {
@@ -1603,7 +1610,13 @@ impl Shell {
             Shortcut::Undo if self.controller.state.undo.is_some() => self.controller.undo_last(),
             Shortcut::Rename if archive.is_some() => {
                 let rows = self.controller.visible_rows();
-                if let Some(row) = self.controller.state.cursor.and_then(|i| rows.get(i)) {
+                if let Some(row) = self
+                    .controller
+                    .state
+                    .active_pane()
+                    .cursor
+                    .and_then(|i| rows.get(i))
+                {
                     let path = row.path.clone();
                     self.begin_rename(&path, false);
                 }
@@ -1618,6 +1631,7 @@ impl Shell {
                 if let Some(entry) = self
                     .controller
                     .state
+                    .active_pane()
                     .cursor
                     .and_then(|index| rows.get(index))
                     .and_then(|row| row.entry)
@@ -1652,7 +1666,13 @@ impl Shell {
             return;
         }
         if key == "space" {
-            if let Some(row) = self.controller.state.cursor.and_then(|i| rows.get(i)) {
+            if let Some(row) = self
+                .controller
+                .state
+                .active_pane()
+                .cursor
+                .and_then(|i| rows.get(i))
+            {
                 let value = !self.controller.is_checked(row);
                 self.controller.dispatch(AppAction::SetChecked {
                     row: row.clone(),
@@ -1662,7 +1682,13 @@ impl Shell {
             return;
         }
         if matches!(key, "enter" | "right" | "arrowright") && !modifiers.alt {
-            if let Some(row) = self.controller.state.cursor.and_then(|i| rows.get(i)) {
+            if let Some(row) = self
+                .controller
+                .state
+                .active_pane()
+                .cursor
+                .and_then(|i| rows.get(i))
+            {
                 if row.is_dir || key == "enter" {
                     let row = row.clone();
                     self.activate(&row);
@@ -1679,7 +1705,7 @@ impl Shell {
             return;
         }
         let last = rows.len() - 1;
-        let current = self.controller.state.cursor;
+        let current = self.controller.state.active_pane().cursor;
         let Some(index) = cursor_step(key, current, last) else {
             return;
         };
@@ -1718,7 +1744,8 @@ impl Shell {
         for part in self
             .controller
             .state
-            .current_dir
+            .active_pane()
+            .directory
             .split('/')
             .filter(|part| !part.is_empty())
         {

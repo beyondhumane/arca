@@ -5,12 +5,17 @@ use eframe::egui::{self, RichText};
 
 impl Shell {
     pub(super) fn preview_for_cursor(&mut self) {
-        let index = self.controller.state.cursor.and_then(|cursor| {
-            self.controller
-                .visible_rows()
-                .get(cursor)
-                .and_then(|row| (!row.is_dir && !row.up).then_some(row.entry).flatten())
-        });
+        let index = self
+            .controller
+            .state
+            .active_pane()
+            .cursor
+            .and_then(|cursor| {
+                self.controller
+                    .visible_rows()
+                    .get(cursor)
+                    .and_then(|row| (!row.is_dir && !row.up).then_some(row.entry).flatten())
+            });
         if index != self.controller.state.preview.index {
             if let Some(index) = index {
                 self.controller.request_preview(index);
@@ -132,8 +137,8 @@ impl Shell {
             });
         });
         if close {
-            self.controller.state.settings.preview_visible = false;
-            self.controller.state.settings.save();
+            self.controller
+                .update_settings(|settings| settings.preview_visible = false);
             self.close_preview();
             return;
         }

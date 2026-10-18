@@ -222,8 +222,8 @@ impl Shell {
             }
             let preview = self.controller.state.settings.preview_visible;
             if pick_entry(ui, icon::EYE, s.preview_panel, preview).clicked() {
-                self.controller.state.settings.preview_visible = !preview;
-                self.controller.state.settings.save();
+                self.controller
+                    .update_settings(|settings| settings.preview_visible = !preview);
             }
             ui.separator();
             group_label(ui, s.panes_view);
@@ -233,13 +233,13 @@ impl Shell {
             }
             let folder_peek = self.controller.state.settings.folder_peek;
             if pick_entry(ui, icon::FOLDER_OPEN, s.folder_peek, folder_peek).clicked() {
-                self.controller.state.settings.folder_peek = !folder_peek;
-                self.controller.state.settings.save();
+                self.controller
+                    .update_settings(|settings| settings.folder_peek = !folder_peek);
             }
             let pointer_focus = self.controller.state.settings.pointer_focus;
             if pick_entry(ui, icon::CURSOR, s.pointer_focus, pointer_focus).clicked() {
-                self.controller.state.settings.pointer_focus = !pointer_focus;
-                self.controller.state.settings.save();
+                self.controller
+                    .update_settings(|settings| settings.pointer_focus = !pointer_focus);
             }
             ui.separator();
             group_label(ui, s.density_title);
@@ -253,8 +253,8 @@ impl Shell {
                 (icon::ARROWS_OUT_LINE_VERTICAL, s.airy_word, Density::Airy),
             ] {
                 if pick_entry(ui, glyph, label, density == want).clicked() && density != want {
-                    self.controller.state.settings.density = want;
-                    self.controller.state.settings.save();
+                    self.controller
+                        .update_settings(|settings| settings.density = want);
                 }
             }
             ui.separator();
@@ -291,10 +291,10 @@ impl Shell {
     }
 
     fn remember_width(&mut self, width: f32, slot: impl Fn(&mut Settings) -> &mut f32) {
-        let settings = &mut self.controller.state.settings;
-        if (*slot(settings) - width).abs() > 0.5 && !self.ctx.input(|i| i.pointer.any_down()) {
-            *slot(settings) = width;
-            settings.save();
+        let stored = *slot(&mut self.controller.state.settings);
+        if (stored - width).abs() > 0.5 && !self.ctx.input(|i| i.pointer.any_down()) {
+            self.controller
+                .update_settings(|settings| *slot(settings) = width);
         }
     }
 
@@ -308,8 +308,7 @@ impl Shell {
         }
         ui.horizontal(|ui| {
             if icon_button(ui, icon::SIDEBAR_SIMPLE, s.folder_tree, true).clicked() {
-                toggle_sidebar(&mut self.controller.state.settings);
-                self.controller.state.settings.save();
+                self.controller.update_settings(toggle_sidebar);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if own_bar {
@@ -378,7 +377,7 @@ impl Shell {
                         .unwrap_or_default();
                     ui.label(RichText::new(here).strong().color(hex(p.link)));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let filtering = !self.controller.state.filter.is_empty();
+                        let filtering = !self.controller.state.active_pane().filter.is_empty();
                         let panes = self.panes_view();
                         let active = self.controller.state.browser.active;
                         let on = if panes {
@@ -399,7 +398,7 @@ impl Shell {
                     });
                 });
                 let wanted = !self.panes_view()
-                    && (self.filter_open || !self.controller.state.filter.is_empty());
+                    && (self.filter_open || !self.controller.state.active_pane().filter.is_empty());
                 let open = ui
                     .ctx()
                     .animate_bool(egui::Id::new("arca-filter-open"), wanted);
@@ -427,7 +426,7 @@ impl Shell {
     /// The funnel button: opens the filter row with the field focused, or
     /// closes it and lets everything show again.
     pub(super) fn toggle_filter(&mut self) {
-        if self.filter_open || !self.controller.state.filter.is_empty() {
+        if self.filter_open || !self.controller.state.active_pane().filter.is_empty() {
             self.close_filter();
         } else {
             self.filter_open = true;
@@ -438,7 +437,7 @@ impl Shell {
     fn close_filter(&mut self) {
         self.filter_open = false;
         self.filter_value.clear();
-        if !self.controller.state.filter.is_empty() {
+        if !self.controller.state.active_pane().filter.is_empty() {
             self.controller
                 .dispatch(AppAction::SetFilter(String::new()));
         }
@@ -449,8 +448,8 @@ impl Shell {
         let s = self.controller.s();
         let id = egui::Id::new(FILTER_ID);
         let focused = ui.memory(|m| m.has_focus(id));
-        if !focused && self.controller.state.filter != self.filter_value {
-            self.filter_value = self.controller.state.filter.clone();
+        if !focused && self.controller.state.active_pane().filter != self.filter_value {
+            self.filter_value = self.controller.state.active_pane().filter.clone();
         }
         let p = palette_of(ui.ctx());
         ui.add_space(4.0);
@@ -714,8 +713,8 @@ impl Shell {
                     .add_enabled(!recent.is_empty(), egui::Button::new(s.clear_history))
                     .clicked()
                 {
-                    self.controller.state.settings.recent.clear();
-                    self.controller.state.settings.save();
+                    self.controller
+                        .update_settings(|settings| settings.recent.clear());
                 }
             });
             ui.separator();

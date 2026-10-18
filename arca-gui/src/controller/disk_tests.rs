@@ -78,7 +78,7 @@ fn browsing_lists_folders_as_they_are_entered() {
     app.browse_disk(&room.0);
     assert!(app.on_disk());
     assert!(!app.state.busy);
-    assert_eq!(app.state.current_dir, disk_dir(&room.0));
+    assert_eq!(app.state.active_pane().directory, disk_dir(&room.0));
     assert_eq!(names(&app), vec!["nested", "top.txt"]);
 
     let nested = disk_dir(&room.path("nested"));
@@ -98,7 +98,7 @@ fn browsing_lists_folders_as_they_are_entered() {
     assert_eq!(names(&app), vec!["deeper", "note.txt"]);
     assert!(app.can_go_up());
     app.go_up();
-    assert_eq!(app.state.current_dir, disk_dir(&room.0));
+    assert_eq!(app.state.active_pane().directory, disk_dir(&room.0));
     assert_eq!(names(&app), vec!["nested", "top.txt"]);
     assert_eq!(
         app.state
@@ -153,7 +153,7 @@ fn an_archive_on_disk_opens_in_place_and_closes_back_onto_its_row() {
     app.go_up();
     assert!(app.on_disk());
     assert!(app.state.archive.is_none());
-    assert_eq!(app.state.current_dir, disk_dir(&room.0));
+    assert_eq!(app.state.active_pane().directory, disk_dir(&room.0));
     let cursor = app.state.browser.panes[app.state.browser.active].cursor;
     let rows = app.visible_rows();
     let under_cursor = cursor
@@ -183,7 +183,7 @@ fn a_folder_opened_from_the_disk_is_remembered_for_the_next_start() {
     let mut next = AppController::new(settings);
     next.start_browsing();
     assert!(next.on_disk());
-    assert_eq!(next.state.current_dir, nested);
+    assert_eq!(next.state.active_pane().directory, nested);
 
     let gone = Settings {
         last_folder: Some(room.path("missing").to_string_lossy().to_string()),
@@ -192,7 +192,10 @@ fn a_folder_opened_from_the_disk_is_remembered_for_the_next_start() {
     let mut fallback = AppController::new(gone);
     fallback.start_browsing();
     assert!(fallback.on_disk());
-    assert_ne!(fallback.state.current_dir, disk_dir(&room.path("missing")));
+    assert_ne!(
+        fallback.state.active_pane().directory,
+        disk_dir(&room.path("missing"))
+    );
 }
 
 #[test]
@@ -306,15 +309,18 @@ fn refreshing_the_disk_keeps_the_selection_by_name() {
         .expect("top.txt listed");
     app.set_pane_cursor(app.state.browser.active, Some(top));
     let entry = rows[top].entry.expect("a file row has an entry");
-    app.state.checked[entry] = true;
-    app.snapshot_active_pane();
+    app.state.active_pane_mut().checked[entry] = true;
     assert_eq!(app.selected_disk_paths(), vec![room.path("top.txt")]);
 
     std::fs::write(room.path("aaa.txt"), b"sorts first").unwrap();
     app.refresh_disk();
     assert_eq!(app.selected_disk_paths(), vec![room.path("top.txt")]);
     let rows = app.visible_rows();
-    let cursor = app.state.cursor.expect("cursor survives a refresh");
+    let cursor = app
+        .state
+        .active_pane()
+        .cursor
+        .expect("cursor survives a refresh");
     assert_eq!(rows[cursor].label, "top.txt");
     assert!(names(&app).contains(&"aaa.txt".to_string()));
 }

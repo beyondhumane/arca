@@ -724,8 +724,6 @@ impl Shell {
         let format = self.controller.state.settings.new_format;
         let codec = self.controller.state.settings.new_codec;
         let level = self.controller.state.settings.new_level;
-        let is_zip = format == Format::Zip;
-        let is_lzma2 = matches!(format, Format::SevenZ | Format::TarXz | Format::Xz);
         let (mut new_format, mut new_codec, mut new_level) = (format, codec, level);
         egui::Grid::new(ui.id().with("pickers"))
             .num_columns(2)
@@ -741,31 +739,27 @@ impl Shell {
                     });
                 ui.end_row();
                 ui.label(s.compressor);
-                if is_lzma2 {
-                    ui.label("LZMA2");
-                } else if format == Format::Rar {
-                    ui.label("RAR");
-                } else {
-                    ui.add_enabled_ui(is_zip, |ui| {
-                        egui::ComboBox::from_id_salt("codec")
-                            .selected_text(self.controller.codec_name(codec))
-                            .show_ui(ui, |ui| {
-                                for candidate in [Codec::Store, Codec::Deflate, Codec::Zstd] {
-                                    ui.selectable_value(
-                                        &mut new_codec,
-                                        candidate,
-                                        self.controller.codec_name(candidate),
-                                    );
-                                }
-                            });
-                    });
+                match AppController::compressor_for(format, codec) {
+                    Compressor::Fixed(name) => {
+                        ui.label(name);
+                    }
+                    Compressor::Codec { codec, editable } => {
+                        let chosen = ui
+                            .add_enabled_ui(editable, |ui| {
+                                codec_combo(ui, &self.controller, "codec", codec, None)
+                            })
+                            .inner;
+                        if let Some(codec) = chosen {
+                            new_codec = codec;
+                        }
+                    }
                 }
                 ui.end_row();
                 ui.label(s.level);
                 egui::ComboBox::from_id_salt("level")
                     .selected_text(self.controller.level_name(level))
                     .show_ui(ui, |ui| {
-                        for candidate in [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST] {
+                        for candidate in AppController::LEVEL_PRESETS {
                             ui.selectable_value(
                                 &mut new_level,
                                 candidate,
@@ -840,7 +834,7 @@ impl Shell {
             .first()
             .and_then(|path| path.parent())
             .map(|dir| dir.display().to_string())
-            .unwrap_or_else(|| format!("/{}", self.controller.state.current_dir));
+            .unwrap_or_else(|| format!("/{}", self.controller.state.active_pane().directory));
         let mut place = self
             .controller
             .state
@@ -885,36 +879,25 @@ impl Shell {
             self.controller.set_create_format(chosen);
         }
         let format = self.controller.state.format;
-        let is_zip = format == Format::Zip;
-        let is_lzma2 = matches!(format, Format::SevenZ | Format::TarXz | Format::Xz);
-        let codec = self.controller.state.codec;
         let mut pick = None;
         card(ui, s.col_method, None, true, |ui| {
-            if is_lzma2 {
-                ui.label(RichText::new("LZMA2").color(hex(p.muted)));
-            } else if format == Format::Rar {
-                ui.label(RichText::new("RAR").color(hex(p.muted)));
-            } else if is_zip {
-                let mut chosen = codec;
-                egui::ComboBox::from_id_salt("compress-method")
-                    .selected_text(self.controller.codec_name(codec))
-                    .width(200.0)
-                    .show_ui(ui, |ui| {
-                        for candidate in [Codec::Store, Codec::Deflate, Codec::Zstd] {
-                            ui.selectable_value(
-                                &mut chosen,
-                                candidate,
-                                self.controller.codec_name(candidate),
-                            );
-                        }
-                    });
-                pick = (chosen != codec).then_some(chosen);
-            } else {
-                ui.label(RichText::new(self.controller.codec_name(codec)).color(hex(p.muted)));
+            match self.controller.compressor() {
+                Compressor::Fixed(name) => {
+                    ui.label(RichText::new(name).color(hex(p.muted)));
+                }
+                Compressor::Codec {
+                    codec,
+                    editable: true,
+                } => {
+                    pick = codec_combo(ui, &self.controller, "compress-method", codec, Some(200.0));
+                }
+                Compressor::Codec { codec, .. } => {
+                    ui.label(RichText::new(self.controller.codec_name(codec)).color(hex(p.muted)));
+                }
             }
         });
         if let Some(codec) = pick {
-            self.controller.state.codec = codec;
+            self.controller.set_codec(codec);
         }
         let level = self.controller.state.level;
         let mut at = u32::from(level.get());
@@ -942,7 +925,7 @@ impl Shell {
             );
         });
         if moved {
-            self.controller.state.level = Level::new(at as u8);
+            self.controller.set_level(Level::new(at as u8));
         }
 
         if matches!(format, Format::Zip | Format::SevenZ) {
@@ -1188,7 +1171,7 @@ impl Shell {
         };
         heading(ui, title);
         let description = if kind == ModalKind::NewFolder {
-            format!("{hint}: /{}", self.controller.state.current_dir)
+            format!("{hint}: /{}", self.controller.state.active_pane().directory)
         } else if kind == ModalKind::Label {
             let device = self.device_label.as_ref().map(|v| v.device.clone());
             format!("{hint} · {}", device.unwrap_or_default())
@@ -1531,8 +1514,8 @@ impl Shell {
         let mut folder_peek = self.controller.state.settings.folder_peek;
         card(ui, s.folder_peek, Some(s.folder_peek_hint), true, |ui| {
             if switch(ui, &mut folder_peek, s.folder_peek).changed() {
-                self.controller.state.settings.folder_peek = folder_peek;
-                self.controller.state.settings.save();
+                self.controller
+                    .update_settings(|settings| settings.folder_peek = folder_peek);
             }
         });
         let mut pointer_focus = self.controller.state.settings.pointer_focus;
@@ -1543,8 +1526,8 @@ impl Shell {
             true,
             |ui| {
                 if switch(ui, &mut pointer_focus, s.pointer_focus).changed() {
-                    self.controller.state.settings.pointer_focus = pointer_focus;
-                    self.controller.state.settings.save();
+                    self.controller
+                        .update_settings(|settings| settings.pointer_focus = pointer_focus);
                 }
             },
         );
@@ -1559,9 +1542,10 @@ impl Shell {
             }),
         ] {
             card(ui, label, Some(hint), true, |ui| {
-                let settings = &mut self.controller.state.settings;
-                if switch(ui, pick(settings), label).changed() {
-                    settings.save();
+                let mut on = *pick(&mut self.controller.state.settings);
+                if switch(ui, &mut on, label).changed() {
+                    self.controller
+                        .update_settings(|settings| *pick(settings) = on);
                 }
             });
         }
@@ -1770,31 +1754,27 @@ impl Shell {
                 &[(s.title_bar_system, !custom), (s.title_bar_custom, custom)],
             );
         });
-        let settings = &mut self.controller.state.settings;
-        let mut dirty = false;
-        if let Some(font) = chosen {
-            settings.font = font;
-            dirty = true;
+        if chosen.is_none() && size_step.is_none() && !motion_changed && bar_pick.is_none() {
+            return;
         }
-        if let Some(step) = size_step {
-            settings.text_size = (size + f32::from(step)).clamp(TEXT_LEAST, TEXT_MOST);
-            dirty = true;
-        }
-        if motion_changed {
-            settings.motion = motion;
-            dirty = true;
-        }
-        if let Some(i) = bar_pick {
-            settings.title_bar = if i == 0 {
-                TitleBar::System
-            } else {
-                TitleBar::Custom
-            };
-            dirty = true;
-        }
-        if dirty {
-            settings.save();
-        }
+        self.controller.update_settings(|settings| {
+            if let Some(font) = chosen {
+                settings.font = font;
+            }
+            if let Some(step) = size_step {
+                settings.text_size = (size + f32::from(step)).clamp(TEXT_LEAST, TEXT_MOST);
+            }
+            if motion_changed {
+                settings.motion = motion;
+            }
+            if let Some(i) = bar_pick {
+                settings.title_bar = if i == 0 {
+                    TitleBar::System
+                } else {
+                    TitleBar::Custom
+                };
+            }
+        });
     }
 
     fn theme_library(&self, ui: &mut egui::Ui, shown: &[Theme], dark_now: bool) -> LibraryClicks {
@@ -2008,20 +1988,19 @@ impl Shell {
         self.theme_error = None;
         self.themes = themes::all();
         self.look.clear();
-        let settings = &mut self.controller.state.settings;
-        forget_theme(settings, name);
-        settings.save();
+        self.controller
+            .update_settings(|settings| forget_theme(settings, name));
     }
 
     fn apply_theme_choice(&mut self, t: &Theme, dark_now: bool) {
-        let settings = &mut self.controller.state.settings;
-        if t.dark {
-            settings.dark_theme = t.name.clone();
-        } else {
-            settings.light_theme = t.name.clone();
-        }
-        settings.save();
-        let follow = settings.theme == ThemePreference::System && dark_now == t.dark;
+        let follow = self.controller.update_settings(|settings| {
+            if t.dark {
+                settings.dark_theme = t.name.clone();
+            } else {
+                settings.light_theme = t.name.clone();
+            }
+            settings.theme == ThemePreference::System && dark_now == t.dark
+        });
         if !follow {
             self.set_theme(if t.dark {
                 ThemePreference::Dark
@@ -2081,8 +2060,8 @@ impl Shell {
             },
         );
         if ask_changed {
-            self.controller.state.settings.ask_on_drop = ask;
-            self.controller.state.settings.save();
+            self.controller
+                .update_settings(|settings| settings.ask_on_drop = ask);
         }
         let mut on = self.controller.state.settings.updates;
         let mut toggled = false;
@@ -2112,8 +2091,7 @@ impl Shell {
         };
         if let Some(channel) = channel {
             let controller = &mut self.controller;
-            controller.state.settings.channel = channel;
-            controller.state.settings.save();
+            controller.update_settings(|settings| settings.channel = channel);
             controller.state.update = None;
             controller.state.update_check = UpdateCheck::Idle;
             if controller.state.settings.updates {
@@ -2147,10 +2125,11 @@ impl Shell {
             SettingsControl::ThemeLight => self.set_theme(ThemePreference::Light),
             SettingsControl::ThemeDark => self.set_theme(ThemePreference::Dark),
             SettingsControl::Updates => {
-                let settings = &mut self.controller.state.settings;
-                settings.updates = !settings.updates;
-                settings.save();
-                if settings.updates {
+                let updates = self.controller.update_settings(|settings| {
+                    settings.updates = !settings.updates;
+                    settings.updates
+                });
+                if updates {
                     self.controller.ask_about_updates();
                 }
             }
@@ -2409,6 +2388,28 @@ pub(crate) fn plain_markdown(text: &str) -> String {
     }
     out.push_str(rest);
     out.replace("**", "").replace('`', "")
+}
+
+/// The ZIP codec picker both the create and the settings dialogs show.
+/// Returns the codec picked this frame, if it differs from `codec`.
+fn codec_combo(
+    ui: &mut egui::Ui,
+    controller: &AppController,
+    id: &str,
+    codec: Codec,
+    width: Option<f32>,
+) -> Option<Codec> {
+    let mut chosen = codec;
+    let mut combo = egui::ComboBox::from_id_salt(id).selected_text(controller.codec_name(codec));
+    if let Some(width) = width {
+        combo = combo.width(width);
+    }
+    combo.show_ui(ui, |ui| {
+        for candidate in AppController::CODECS {
+            ui.selectable_value(&mut chosen, candidate, controller.codec_name(candidate));
+        }
+    });
+    (chosen != codec).then_some(chosen)
 }
 
 #[cfg(test)]

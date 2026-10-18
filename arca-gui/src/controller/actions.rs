@@ -5,8 +5,16 @@ use crate::archive_ops::*;
 use crate::i18n::Lang;
 use crate::model::*;
 use crate::tree::{parent_of, Kind, Row};
-use arca_core::Entry;
+use arca_core::{Codec, Entry};
 use std::path::{Path, PathBuf};
+
+/// What the create and settings dialogs offer for the compressor of the
+/// chosen format.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Compressor {
+    Fixed(&'static str),
+    Codec { codec: Codec, editable: bool },
+}
 
 pub(crate) enum Message {
     Listing(

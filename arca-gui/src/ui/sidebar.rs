@@ -44,7 +44,7 @@ impl Shell {
         let here = self
             .controller
             .on_disk()
-            .then(|| disk_path(&self.controller.state.current_dir));
+            .then(|| disk_path(&self.controller.state.active_pane().directory));
         let mut browse = None;
         let mut unpin = None;
         let mut open = None;
@@ -263,8 +263,8 @@ impl Shell {
             self.properties = Some(super::inspect(&path, pinned));
         }
         if let Some(path) = forget {
-            self.controller.state.settings.recent.retain(|p| *p != path);
-            self.controller.state.settings.save();
+            self.controller
+                .update_settings(|settings| settings.recent.retain(|p| *p != path));
         }
     }
 
@@ -279,7 +279,7 @@ impl Shell {
             .and_then(|archive| archive.file_name())
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default();
-        let current = self.controller.state.current_dir.clone();
+        let current = self.controller.state.active_pane().directory.clone();
         let mut event = None;
         if nav_item(ui, icon::ARCHIVE, &root, current.is_empty(), false).clicked() {
             event = Some(TreeEvent::Navigate(String::new()));
