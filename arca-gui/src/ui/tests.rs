@@ -76,7 +76,7 @@ fn conflict_actions_answer_every_supported_choice() {
 }
 
 #[test]
-fn background_events_are_blocked_by_gpui_modals_and_native_pickers() {
+fn background_events_are_blocked_by_modals_and_native_pickers() {
     assert!(background_event_allowed(false, false));
     assert!(!background_event_allowed(true, false));
     assert!(!background_event_allowed(false, true));
