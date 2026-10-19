@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "arca-7z"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "arca-core",
  "crc32fast",
@@ -269,14 +269,14 @@ dependencies = [
 
 [[package]]
 name = "arca-brand"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "egui",
 ]
 
 [[package]]
 name = "arca-cli"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "arca-7z",
  "arca-core",
@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "arca-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "arca-drag"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "windows 0.58.0",
  "windows-core 0.58.0",
@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "arca-gui"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "arca-7z",
  "arca-brand",
@@ -344,14 +344,14 @@ dependencies = [
 
 [[package]]
 name = "arca-icons"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "windows 0.58.0",
 ]
 
 [[package]]
 name = "arca-iso"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "arca-core",
  "tempfile",
@@ -359,21 +359,21 @@ dependencies = [
 
 [[package]]
 name = "arca-net"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "windows 0.58.0",
 ]
 
 [[package]]
 name = "arca-notify"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "windows 0.58.0",
 ]
 
 [[package]]
 name = "arca-rar"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "arca-core",
  "libc",
@@ -383,7 +383,7 @@ dependencies = [
 
 [[package]]
 name = "arca-setup"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "arca-brand",
  "arca-core",
@@ -398,14 +398,14 @@ dependencies = [
 
 [[package]]
 name = "arca-tar"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "arca-core",
 ]
 
 [[package]]
 name = "arca-xz"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "arca-core",
  "arca-tar",
@@ -415,7 +415,7 @@ dependencies = [
 
 [[package]]
 name = "arca-zip"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "aes",
  "arca-core",
