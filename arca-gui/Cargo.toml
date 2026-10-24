@@ -26,7 +26,7 @@ tempfile = "3"
 
 # Dialogos de fichero nativos. Es lo unico que toca la plataforma.
 rfd = "0.17"
-skrifa = { version = "0.46", default-features = false, features = ["std"] }
+skrifa = { version = "0.48", default-features = false, features = ["std"] }
 flate2.workspace = true
 
 # Solo los formatos que alguien mete en un zip y espera poder mirar. Sin las
@@ -43,14 +43,14 @@ sys-locale = "0.3"
 
 # The window, the widgets and the accessibility tree. Glow is the smaller of
 # eframe's two GPU back ends and the one that starts fastest on old drivers.
-eframe = { version = "0.36", default-features = false, features = [
+eframe = { version = "0.37", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "glow",
     "wayland",
     "x11",
 ] }
-egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
+egui_extras = { version = "0.37", default-features = false, features = ["svg"] }
 egui-phosphor = { version = "0.14", default-features = false, features = ["regular"] }
 # SHA-256 para comprobar lo que se baja antes de ejecutarlo. RustCrypto, safe
 # Rust puro, la misma familia que el sha1 del cifrado de arca-zip.

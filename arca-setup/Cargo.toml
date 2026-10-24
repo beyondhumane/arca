@@ -16,7 +16,7 @@ path = "src/main.rs"
 arca-brand.workspace = true
 arca-core.workspace = true
 arca-zip.workspace = true
-eframe = { version = "0.36", default-features = false, features = [
+eframe = { version = "0.37", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "glow",
@@ -24,7 +24,7 @@ eframe = { version = "0.36", default-features = false, features = [
     "x11",
 ] }
 # Only the SVG loader: the backgrounds and the logo are vector art.
-egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
+egui_extras = { version = "0.37", default-features = false, features = ["svg"] }
 sys-locale = "0.3"
 
 [target."cfg(windows)".dependencies]

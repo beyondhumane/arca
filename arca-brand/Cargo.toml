@@ -9,4 +9,4 @@ description = "Brand colours and typefaces shared by the Arca windows"
 publish = false
 
 [dependencies]
-egui = { version = "0.36", default-features = false }
+egui = { version = "0.37", default-features = false }
