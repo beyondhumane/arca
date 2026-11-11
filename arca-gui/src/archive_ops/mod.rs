@@ -14,7 +14,7 @@ use crate::{archive_stem, detect, human, moved_name, sum_for, Format, INSTALLER_
 use arca_core::{Codec, Level};
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
 pub(crate) enum Job {
@@ -500,9 +500,11 @@ pub(crate) fn run_job_blocking(
                 .file_name()
                 .map(|x| x.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let copied = (|| -> arca_core::Result<u64> {
+            // Staged rather than created in place: the destination can be the
+            // archive itself under another spelling of its path, and creating
+            // it would truncate the only copy before a byte had been read.
+            let copied = io::staged(&dest, |mut to| -> arca_core::Result<u64> {
                 let mut from = BufReader::with_capacity(BUF, File::open(&archive)?);
-                let mut to = BufWriter::with_capacity(BUF, File::create(&dest)?);
                 let mut buf = vec![0u8; BUF];
                 let mut done = 0u64;
                 loop {
@@ -525,7 +527,7 @@ pub(crate) fn run_job_blocking(
                 }
                 to.flush()?;
                 Ok(done)
-            })();
+            });
             match copied {
                 Ok(bytes) => Ok(fill(
                     s.copied_to,
@@ -534,16 +536,10 @@ pub(crate) fn run_job_blocking(
                         ("dest", &dest.display().to_string()),
                     ],
                 )),
-                Err(e) => {
-                    // Half a copy is not a copy. Whatever was written goes,
-                    // whether the reason was a full disk or somebody pressing
-                    // stop.
-                    let _ = fs::remove_file(&dest);
-                    Err(match e {
-                        arca_core::Error::Io(e) => e.to_string(),
-                        e => e.to_string(),
-                    })
-                }
+                Err(e) => Err(match e {
+                    arca_core::Error::Io(e) => e.to_string(),
+                    e => e.to_string(),
+                }),
             }
         }
         Job::Rename {
@@ -733,6 +729,29 @@ mod tests {
         let (dest, result) = copy(&room, false);
         assert_eq!(result, Err(arca_core::Error::Cancelled.to_string()));
         assert!(!dest.exists());
+    }
+
+    #[test]
+    fn copy_onto_the_archive_under_another_spelling_keeps_it() {
+        let room = Room::new();
+        let archive = room.path("source.zip");
+        let body = vec![7u8; 3 << 20];
+        fs::write(&archive, &body).unwrap();
+        fs::create_dir(room.path("sub")).unwrap();
+        let dest = room.path("sub").join("..").join("source.zip");
+        assert_ne!(dest, archive);
+        let result = run_job_blocking(
+            Job::CopyTo {
+                archive: archive.clone(),
+                dest: dest.clone(),
+            },
+            strings(Lang::En),
+            &|_, _, _| true,
+            &|_| Answer::Cancel,
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(fs::read(&archive).unwrap(), body);
+        assert!(!room.path("source.zip.arca-new").exists());
     }
 
     #[test]

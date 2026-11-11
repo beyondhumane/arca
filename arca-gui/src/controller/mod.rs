@@ -2325,7 +2325,7 @@ impl AppController {
             }
         }
         let s: &'static Strings = self.s();
-        let stop_leaves_files = matches!(job, Job::Extract { .. } | Job::CopyTo { .. });
+        let stop_leaves_files = matches!(job, Job::Extract { .. });
         let verb = match &job {
             Job::Extract { .. } => s.extracting.to_string(),
             Job::Test { .. } => s.testing.to_string(),
