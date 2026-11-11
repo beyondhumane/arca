@@ -2134,7 +2134,8 @@ impl Shell {
                 }
             }
             SettingsControl::Subfolder => {
-                self.controller.state.into_subfolder = !self.controller.state.into_subfolder;
+                let on = !self.controller.state.into_subfolder;
+                self.controller.set_into_subfolder(on);
             }
         }
     }
