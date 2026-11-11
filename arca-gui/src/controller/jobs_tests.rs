@@ -113,6 +113,44 @@ fn two_readers_of_one_archive_do_not_wait_for_each_other() {
     settle(&mut app);
 }
 
+#[cfg(windows)]
+#[test]
+fn dragging_out_of_an_archive_carries_the_dragged_rows_not_the_selection() {
+    let room = Room::new();
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("a.txt"), b"first").unwrap();
+    fs::write(source.join("b.txt"), b"second").unwrap();
+    let archive = room.path("drag.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.open_with_password(archive, None);
+    settle(&mut app);
+    let named = |picked: Vec<(Entry, String)>| {
+        let mut names: Vec<String> = picked.into_iter().map(|(_, name)| name).collect();
+        names.sort();
+        names
+    };
+    assert_eq!(
+        named(app.dragged_files(&["source/b.txt".into()])),
+        ["b.txt"]
+    );
+    assert_eq!(
+        named(app.dragged_files(&["source/".into()])),
+        [r"source\a.txt", r"source\b.txt"]
+    );
+    assert!(app.dragged_files(&["source/c.txt".into()]).is_empty());
+}
+
 #[test]
 fn stopping_one_row_leaves_the_other_alone() {
     let mut app = AppController::new(Settings::default());

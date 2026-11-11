@@ -1219,18 +1219,26 @@ impl AppController {
     // hands it to whatever the system opens it with. It runs on its own thread
     // because the entry can be large, and reports through the same progress
     // window as everything else.
+    //
+    // What is carried is the rows the drag picked up, not the selection: a row
+    // dragged without being ticked first is the whole of what is meant. Each
+    // file keeps its path from the folder its root sits in, so a dragged
+    // folder lands as that folder.
     #[cfg(windows)]
-    pub(crate) fn dragged_files(&self) -> Vec<(Entry, String)> {
-        let base = &self.state.active_pane().directory;
+    pub(crate) fn dragged_files(&self, roots: &[String]) -> Vec<(Entry, String)> {
         self.state
             .entries
             .iter()
-            .zip(&self.state.active_pane().checked)
-            .filter(|(e, &on)| on && !e.is_dir)
-            .map(|(e, _)| {
+            .filter(|e| !e.is_dir)
+            .filter_map(|e| {
                 let full = e.name.replace('\\', "/");
-                let rel = full.strip_prefix(base.as_str()).unwrap_or(&full);
-                (e.clone(), rel.replace('/', "\\"))
+                let rel = roots.iter().find_map(|root| {
+                    let root = root.trim_end_matches('/');
+                    let inside = full == root || full.starts_with(&format!("{root}/"));
+                    let parent = root.rfind('/').map_or(0, |at| at + 1);
+                    inside.then(|| full[parent..].to_string())
+                })?;
+                Some((e.clone(), rel.replace('/', "\\")))
             })
             .filter(|(_, rel)| !rel.is_empty())
             .collect()
@@ -1304,9 +1312,9 @@ impl AppController {
     // thought better of costs nothing, and a drag of six gigabytes starts as
     // fast as a drag of one file.
     #[cfg(windows)]
-    pub(crate) fn drag_out(&mut self) {
+    pub(crate) fn drag_out(&mut self, roots: &[String]) {
         if self.on_disk() {
-            let picked = self.disk_drag_items();
+            let picked = self.disk_drag_items(roots);
             if picked.is_empty() {
                 return;
             }
@@ -1330,7 +1338,7 @@ impl AppController {
             self.state.notice = self.s().sevenz_copy.to_string();
             return;
         }
-        let picked = self.dragged_files();
+        let picked = self.dragged_files(roots);
         if picked.is_empty() {
             return;
         }
@@ -1355,7 +1363,7 @@ impl AppController {
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn drag_out(&mut self) {}
+    pub(crate) fn drag_out(&mut self, _roots: &[String]) {}
 
     // Escape and the Cancel button are the same act, so they go through the
     // same code: two copies of this would drift apart the first time one side
@@ -1956,7 +1964,11 @@ impl AppController {
             }
         };
         let Some(archive) = self.state.archive.clone() else {
-            open_first(self, paths);
+            if self.on_disk() {
+                self.dropped_on_disk(paths);
+            } else {
+                open_first(self, paths);
+            }
             return;
         };
         let all_archives = paths.iter().all(|p| detect(p).is_some());

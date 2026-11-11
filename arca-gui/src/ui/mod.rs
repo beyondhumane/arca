@@ -1415,12 +1415,13 @@ impl Shell {
             });
             if outside {
                 self.carrying = false;
+                // What the drag picked up, taken before it is cleared: a row
+                // dragged without being ticked is not in the selection.
+                let roots = egui::DragAndDrop::payload::<DraggedRows>(ctx)
+                    .map(|rows| rows.0.clone())
+                    .unwrap_or_default();
                 egui::DragAndDrop::clear_payload(ctx);
-                if self.controller.state.format == Format::SevenZ {
-                    self.controller.state.notice = self.controller.s().sevenz_copy.to_string();
-                } else {
-                    self.controller.drag_out();
-                }
+                self.controller.drag_out(&roots);
             } else if !ctx.input(|input| input.pointer.primary_down()) {
                 self.carrying = false;
             }

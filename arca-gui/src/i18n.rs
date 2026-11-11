@@ -203,6 +203,7 @@ pub struct Strings {
     pub only_zip_can_change: &'static str,
     pub hide_names: &'static str,
     pub password_or_corrupt: &'static str,
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub sevenz_copy: &'static str,
     pub rar_create_policy: &'static str,
     pub confirm_delete: &'static str,

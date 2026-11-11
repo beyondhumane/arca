@@ -945,6 +945,29 @@ impl AppController {
             .all(|root| volume_of(&disk_path(root.trim_end_matches('/'))) == into)
     }
 
+    /// Files dropped on the window from another program while it shows a
+    /// folder on the disk go into that folder, as a copy, which is what the
+    /// window tells the program it did. Only a drop that would copy nothing,
+    /// like an archive dropped back on the folder it is already in, opens it.
+    pub(crate) fn dropped_on_disk(&mut self, paths: Vec<PathBuf>) {
+        let target = self.state.active_pane().directory.clone();
+        let roots: Vec<String> = paths
+            .iter()
+            .map(|path| disk_dir(path).trim_end_matches('/').to_string())
+            .collect();
+        let arriving = roots.iter().any(|root| {
+            let parent = root.rfind('/').map_or("", |at| &root[..=at]);
+            !parent.eq_ignore_ascii_case(&target)
+        });
+        if target.is_empty() || !arriving {
+            if let Some(first) = paths.into_iter().find(|path| detect(path).is_some()) {
+                self.open(first);
+            }
+            return;
+        }
+        self.copy_on_disk(&roots, &target);
+    }
+
     /// Dragging rows onto a folder with a copy asked for, or across volumes.
     pub(crate) fn copy_on_disk(&mut self, roots: &[String], target: &str) {
         self.transfer_on_disk(roots, target, true);
@@ -1017,14 +1040,17 @@ impl AppController {
         self.enqueue(task);
     }
 
-    /// What a drag out of a disk folder carries: every picked file, and the
-    /// files under every picked folder with their path from that folder, so
+    /// What a drag out of a disk folder carries: every dragged file, and the
+    /// files under every dragged folder with their path from that folder, so
     /// the shell can rebuild the tree where it drops.
     #[cfg(windows)]
-    pub(crate) fn disk_drag_items(&self) -> Vec<(PathBuf, String, u64, Option<i64>)> {
+    pub(crate) fn disk_drag_items(
+        &self,
+        roots: &[String],
+    ) -> Vec<(PathBuf, String, u64, Option<i64>)> {
         const MOST: usize = 50_000;
         let mut out = Vec::new();
-        for root in self.selected_roots() {
+        for root in roots {
             let trimmed = root.trim_end_matches('/');
             let leaf = trimmed.rsplit('/').next().unwrap_or(trimmed).to_string();
             let mut stack = vec![(disk_path(trimmed), leaf)];
