@@ -81,8 +81,11 @@ and check it, and a stopped or failed creation leaves no half-written archive.
 
 Adding, deleting, renaming and changing passwords in an existing archive remain
 ZIP-only; 7z and RAR can be created but not modified afterwards. 7z virtual-file drag-out is disabled to avoid repeatedly decoding solid
-blocks; use Copy or Extract instead. Copying to the system file clipboard is
-platform-dependent.
+blocks; use Copy or Extract instead. Copy, cut and paste use the system clipboard on
+Windows and Linux, so files move between Arca and the Explorer, Thunar, Dolphin
+or Nautilus. On Linux the other programs cannot tell a cut from a copy, so a
+cut pasted there arrives as a copy, and cutting out of an archive is offered on
+Windows only.
 
 ## Jobs and keyboard access
 

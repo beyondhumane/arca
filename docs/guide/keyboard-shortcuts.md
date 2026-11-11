@@ -21,7 +21,7 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>a…z</kbd> | Jump by filename prefix |
 | <kbd>Alt+Left</kbd> <kbd>Alt+Right</kbd> | Back and forward in history |
 | <kbd>Ctrl+O</kbd> <kbd>Ctrl+N</kbd> <kbd>Ctrl+E</kbd> | Open archive, create archive, extract all |
-| <kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd> | File copy, cut, paste (Windows integration) |
+| <kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd> | Copy, cut and paste files, shared with the system file manager on Windows and Linux |
 | <kbd>Ctrl+Shift+C</kbd> | Copy selected names as text |
 | <kbd>Ctrl+F</kbd> | Show and focus the active pane's filter |
 | <kbd>F2</kbd> | Rename the selected entry in a writable ZIP |
@@ -35,7 +35,7 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>+</kbd> <kbd>-</kbd> | Select or deselect by filename mask |
 | <kbd>Tab</kbd> <kbd>Shift+Tab</kbd> | Move between focusable controls and panes |
 | <kbd>F1</kbd> | Shortcut help |
-| <kbd>Esc</kbd> | Dismiss the active dialog or inline edit; otherwise clear selection |
+| <kbd>Esc</kbd> | Dismiss the active dialog or inline edit; otherwise take back a pending cut, and then clear the selection |
 
 Ctrl+click toggles a row; Shift+click selects a range. A click selects a row and a double-click or Enter opens it; with **Open folders in the next pane** on, one click on a folder shows it in the next pane. Right-click a row or empty pane space for its menu. Drag pane dividers to resize; use horizontal scrolling to reach ancestors.
 

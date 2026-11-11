@@ -325,6 +325,37 @@ fn an_extraction_fills_the_folder_it_extracts_into() {
 }
 
 #[test]
+fn only_a_large_copy_to_the_clipboard_gets_a_row_in_operations() {
+    assert!(super::copies_quietly(0));
+    assert!(super::copies_quietly(5 << 20));
+    assert!(!super::copies_quietly(64 << 20));
+    assert!(!super::copies_quietly(3 << 30));
+}
+
+#[test]
+fn a_cut_that_has_not_been_pasted_can_be_taken_back() {
+    let mut app = AppController::new(Settings::default());
+    assert!(app.cancel_cut().is_none());
+    let cut = |name: &str| Cut {
+        archive: PathBuf::from("/tmp/cut.zip"),
+        paths: vec![PathBuf::from(format!("/tmp/clip/{name}"))],
+        names: vec![name.into()],
+    };
+    app.state.cut_names.insert("a.txt".into());
+    app.state.cut_pending = Some(cut("a.txt"));
+    assert_eq!(
+        app.cancel_cut(),
+        Some(vec![PathBuf::from("/tmp/clip/a.txt")])
+    );
+    assert!(app.state.cut_pending.is_none());
+    assert!(app.state.cut_names.is_empty());
+    // One still being prepared is taken back too, so it cannot arm later.
+    app.state.cut_armed = Some((7, cut("b.txt")));
+    assert!(app.cancel_cut().is_some());
+    assert!(app.state.cut_armed.is_none());
+}
+
+#[test]
 fn only_the_copy_that_staged_a_cut_can_arm_it() {
     let mut app = AppController::new(Settings::default());
     let ready: fn() -> Work = || {
@@ -358,6 +389,64 @@ fn only_the_copy_that_staged_a_cut_can_arm_it() {
         app.state.cut_pending.as_ref().map(|c| c.names.clone()),
         Some(vec!["a.txt".to_string()])
     );
+}
+
+#[test]
+fn a_cut_that_never_reached_the_clipboard_stops_fading_its_rows() {
+    let mut app = AppController::new(Settings::default());
+    let failing: Work = Box::new(|tx, _, _, _| {
+        let _ = tx.send(Message::Failed("disk full".into()));
+    });
+    let id = app.enqueue(Task::new("Cut", "a", failing));
+    app.state.cut_names.insert("a.txt".into());
+    app.state.cut_armed = Some((
+        id,
+        Cut {
+            archive: PathBuf::from("/tmp/cut.zip"),
+            paths: vec![PathBuf::from("/tmp/clip/a.txt")],
+            names: vec!["a.txt".into()],
+        },
+    ));
+    settle(&mut app);
+    assert!(app.state.cut_armed.is_none());
+    assert!(app.state.cut_pending.is_none());
+    assert!(app.state.cut_names.is_empty());
+}
+
+#[test]
+fn taking_back_a_cut_still_being_prepared_stops_it() {
+    let mut app = AppController::new(Settings::default());
+    let (work, release, started) = gate();
+    let id = app.enqueue(Task::new("Cut", "a", work));
+    started.recv().unwrap();
+    app.state.cut_armed = Some((
+        id,
+        Cut {
+            archive: PathBuf::from("/tmp/cut.zip"),
+            paths: vec![PathBuf::from("/tmp/clip/a.txt")],
+            names: vec!["a.txt".into()],
+        },
+    ));
+    assert!(app.cancel_cut().is_some());
+    let task = app.state.tasks.iter().find(|t| t.id == id).unwrap();
+    assert!(task.stop.load(std::sync::atomic::Ordering::Relaxed));
+    release.send(()).unwrap();
+    settle(&mut app);
+}
+
+#[test]
+fn leaving_for_the_disk_forgets_a_cut_out_of_the_archive() {
+    let room = Room::new();
+    let mut app = AppController::new(Settings::default());
+    app.state.cut_names.insert("a.txt".into());
+    app.state.cut_pending = Some(Cut {
+        archive: PathBuf::from("/tmp/cut.zip"),
+        paths: vec![PathBuf::from("/tmp/clip/a.txt")],
+        names: vec!["a.txt".into()],
+    });
+    app.browse_disk(&room.0);
+    assert!(app.state.cut_pending.is_none());
+    assert!(app.state.cut_names.is_empty());
 }
 
 #[test]

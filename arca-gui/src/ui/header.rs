@@ -669,7 +669,9 @@ impl Shell {
                 }
                 if ui
                     .add_enabled(
-                        self.can_copy_files() && writable,
+                        self.can_copy_files()
+                            && writable
+                            && (self.controller.on_disk() || clipboard::CUTS),
                         egui::Button::new(s.cut_word),
                     )
                     .clicked()

@@ -79,6 +79,15 @@ fn worker_notify<'a>(
     }
 }
 
+/// Whether copying this much out of an archive for the clipboard can go
+/// without a row in Operations. A few megabytes are extracted before a bar
+/// would have finished appearing; gigabytes take long enough that progress,
+/// pause and cancel are owed, as for any other extraction.
+pub(crate) fn copies_quietly(bytes: u64) -> bool {
+    const QUIET_BELOW: u64 = 64 << 20;
+    bytes < QUIET_BELOW
+}
+
 fn password_error(error: &arca_core::Error) -> bool {
     arca_7z::password_required(error)
         || matches!(error, arca_core::Error::BadPassword)
@@ -1357,11 +1366,26 @@ impl AppController {
     #[cfg(not(windows))]
     pub(crate) fn drag_out(&mut self) {}
 
-    // Escape and the Cancel button are the same act, so they go through the
-    // same code: two copies of this would drift apart the first time one side
-    // grew a step.
-    // The names ticked right now, which is what every action that works on a
-    // selection needs.
+    /// Takes back a cut that has not been pasted, as Esc does in the Explorer:
+    /// the rows stop fading and a paste no longer takes the entries out. A cut
+    /// still being extracted is stopped before it reaches the clipboard. Gives
+    /// back the copies the clipboard was handed, so the window can let go of
+    /// the clipboard if it still holds them.
+    pub(crate) fn cancel_cut(&mut self) -> Option<Vec<PathBuf>> {
+        if let Some((armed_by, _)) = &self.state.cut_armed {
+            if let Some(task) = self.state.tasks.iter().find(|t| t.id == *armed_by) {
+                task.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        let cut = self
+            .state
+            .cut_pending
+            .take()
+            .or_else(|| self.state.cut_armed.take().map(|(_, cut)| cut))?;
+        self.state.cut_names.clear();
+        Some(cut.paths)
+    }
+
     pub(crate) fn cut_landed(&mut self) {
         let Some(cut) = &self.state.cut_pending else {
             return;
@@ -1435,6 +1459,9 @@ impl AppController {
         let Some(archive) = self.state.archive.clone() else {
             return;
         };
+        // Only a zip can have entries taken out of it in place; anywhere else a
+        // cut could never finish, so it is a copy.
+        let cut = cut && self.writable();
         let roots = self.selected_roots();
         if roots.is_empty() {
             return;
@@ -1446,7 +1473,7 @@ impl AppController {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let temp = match fs::canonicalize(std::env::temp_dir()) {
-            Ok(path) => path,
+            Ok(path) => clipboard::shell_path(path),
             Err(error) => {
                 self.state.notice = error.to_string();
                 self.state.error = true;
@@ -1485,6 +1512,16 @@ impl AppController {
 
         let wanted = self.state.active_pane().checked.clone();
         let total = wanted.iter().filter(|b| **b).count();
+        let bytes: u64 = self
+            .state
+            .entries
+            .iter()
+            .zip(&wanted)
+            .filter(|(_, on)| **on)
+            .map(|(e, _)| e.size)
+            .sum();
+        let quiet = copies_quietly(bytes);
+        let ready = fill(s.on_clipboard, &[("n", &roots.len().to_string())]);
         let pw = self.state.archive_password.clone();
         self.state.close_when_done = false;
         let source = archive.clone();
@@ -1501,21 +1538,22 @@ impl AppController {
                     .map_err(|e| e.to_string())
                     .and_then(|_| clipboard::set_files(&landed, cut).map(|()| landed.len()));
                 // Only once the new list is on the clipboard: until that moment the
-                // old paths are still what a paste would reach for.
-                if let Some(old) = previous {
-                    let _ = fs::remove_dir_all(old);
+                // old paths are still what a paste would reach for. A copy that
+                // never got there takes its own half-filled folder with it.
+                let stale = if outcome.is_ok() { previous } else { Some(dir) };
+                if let Some(stale) = stale {
+                    let _ = fs::remove_dir_all(stale);
                 }
                 let _ = tx.send(match outcome {
-                    // Nothing to say. Copying somewhere else does not announce
-                    // itself either, and the rows a cut is holding are already
-                    // faded; what is worth a line is the entries leaving the
-                    // archive, and that has its own. An empty message hands the
-                    // status bar back to the summary of what is open.
+                    // A small copy says nothing: copying somewhere else does not
+                    // announce itself either, and an empty message hands the
+                    // status bar back to the summary of what is open. A large one
+                    // had a row in Operations, and the row says it is done.
                     Ok(_) => {
                         if cut {
                             let _ = tx.send(Message::CutReady);
                         }
-                        Message::Done(String::new())
+                        Message::Done(if quiet { String::new() } else { ready })
                     }
                     Err(why) => Message::Failed(fill(s.clipboard_failed, &[("why", &why)])),
                 });
@@ -1524,9 +1562,7 @@ impl AppController {
         .reading([source])
         .writing([clipboard])
         .total(total);
-        // The one job that runs without saying so: it is over before a bar
-        // has finished appearing.
-        task.quiet = true;
+        task.quiet = quiet;
         let id = self.enqueue(task);
         self.state.cut_armed = armed.map(|cut| (id, cut));
     }
@@ -1574,6 +1610,7 @@ impl AppController {
                 let notify = worker_notify(&tx, &stop, &hold);
                 let outcome =
                     extract_one(&archive, &entry, password.as_deref(), &notify).and_then(|path| {
+                        let path = clipboard::shell_path(path);
                         if !notify(1, 1, &entry.name) {
                             return Err(arca_core::Error::Cancelled);
                         }

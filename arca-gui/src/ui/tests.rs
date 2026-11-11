@@ -164,15 +164,44 @@ fn the_row_menu_only_offers_the_clipboard_where_there_is_one() {
     // copy, cut and paste are left out rather than greyed out.
     let offered: Vec<bool> = RowAction::ALL.iter().map(|a| a.offered(false)).collect();
     assert!(RowAction::ALL.iter().all(|a| a.offered(true)));
-    for action in [RowAction::Copy, RowAction::Cut, RowAction::Paste] {
+    for action in [RowAction::Copy, RowAction::Paste] {
         assert_eq!(offered[action as usize], clipboard::AVAILABLE);
     }
+    assert_eq!(offered[RowAction::Cut as usize], clipboard::CUTS);
     assert!(offered[RowAction::Open as usize]);
     assert!(offered[RowAction::Delete as usize]);
     // The element id of each menu row is built from `action as usize`, so
     // an action added out of order would silently share an id.
     for (index, action) in RowAction::ALL.iter().enumerate() {
         assert_eq!(*action as usize, index);
+    }
+}
+
+#[test]
+fn a_paste_on_disk_moves_copies_or_duplicates_like_the_explorer() {
+    let roots = vec!["C:/a/one.txt".to_string(), "C:/b/two/".to_string()];
+    assert_eq!(
+        paste_plan(&roots, true, "C:/b/"),
+        PastePlan {
+            moved: vec!["C:/a/one.txt".into()],
+            ..PastePlan::default()
+        }
+    );
+    assert_eq!(
+        paste_plan(&roots, false, "C:/b/"),
+        PastePlan {
+            copied: vec!["C:/a/one.txt".into()],
+            duplicated: vec!["C:/b/two".into()],
+            ..PastePlan::default()
+        }
+    );
+    assert_eq!(
+        paste_plan(&roots, false, "c:/A/").duplicated,
+        vec!["C:/a/one.txt".to_string()]
+    );
+    let faded = cut_rows(&roots);
+    for row in ["C:/a/one.txt", "C:/b/two/", "C:/b/two"] {
+        assert!(faded.contains(row), "{row}");
     }
 }
 
