@@ -1040,48 +1040,6 @@ impl AppController {
         self.enqueue(task);
     }
 
-    /// What a drag out of a disk folder carries: every dragged file, and the
-    /// files under every dragged folder with their path from that folder, so
-    /// the shell can rebuild the tree where it drops.
-    #[cfg(windows)]
-    pub(crate) fn disk_drag_items(
-        &self,
-        roots: &[String],
-    ) -> Vec<(PathBuf, String, u64, Option<i64>)> {
-        const MOST: usize = 50_000;
-        let mut out = Vec::new();
-        for root in roots {
-            let trimmed = root.trim_end_matches('/');
-            let leaf = trimmed.rsplit('/').next().unwrap_or(trimmed).to_string();
-            let mut stack = vec![(disk_path(trimmed), leaf)];
-            while let Some((path, name)) = stack.pop() {
-                if out.len() >= MOST {
-                    return out;
-                }
-                let Ok(meta) = fs::metadata(&path) else {
-                    continue;
-                };
-                if meta.is_dir() {
-                    let Ok(items) = fs::read_dir(&path) else {
-                        continue;
-                    };
-                    for item in items.flatten() {
-                        let child = item.file_name().to_string_lossy().to_string();
-                        stack.push((item.path(), format!("{name}\\{child}")));
-                    }
-                } else {
-                    let mtime = meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs() as i64);
-                    out.push((path, name, meta.len(), mtime));
-                }
-            }
-        }
-        out
-    }
-
     pub(crate) fn root_label(&self) -> &'static str {
         if self.on_disk() {
             self.s().computer_word
@@ -1952,4 +1910,15 @@ fn iso_utc(secs: i64) -> String {
         rest % 3600 / 60,
         rest % 60
     )
+}
+
+/// The paths on disk behind dragged rows, one for each, folders included as
+/// themselves rather than as everything inside them.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn drag_paths(roots: &[String]) -> Vec<PathBuf> {
+    roots
+        .iter()
+        .map(|root| disk_path(root.trim_end_matches('/')))
+        .filter(|path| !path.as_os_str().is_empty())
+        .collect()
 }

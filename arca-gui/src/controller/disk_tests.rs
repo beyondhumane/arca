@@ -475,23 +475,21 @@ fn an_archive_dropped_back_on_its_own_folder_opens() {
     assert_eq!(app.state.archive.as_deref(), Some(archive.as_path()));
 }
 
-#[cfg(windows)]
 #[test]
-fn dragging_out_carries_the_dragged_rows_even_when_none_is_ticked() {
+fn dragging_out_hands_over_each_dragged_row_as_itself() {
     let room = populated();
-    let mut app = AppController::new(Settings::default());
-    app.browse_disk(&room.0);
-    settle(&mut app);
-    assert!(app.selected_roots().is_empty());
     let top = disk_dir(&room.path("top.txt"))
         .trim_end_matches('/')
         .to_string();
     let nested = disk_dir(&room.path("nested"));
-    let items = app.disk_drag_items(&[top, nested]);
-    let mut names: Vec<String> = items.into_iter().map(|(_, name, ..)| name).collect();
-    names.sort();
+    let paths = super::disk::drag_paths(&[top, nested, String::new()]);
+    assert_eq!(paths.len(), 2);
     assert_eq!(
-        names,
-        [r"nested\deeper\leaf.txt", r"nested\note.txt", "top.txt"]
+        std::fs::canonicalize(&paths[0]).unwrap(),
+        std::fs::canonicalize(room.path("top.txt")).unwrap()
+    );
+    assert_eq!(
+        std::fs::canonicalize(&paths[1]).unwrap(),
+        std::fs::canonicalize(room.path("nested")).unwrap()
     );
 }

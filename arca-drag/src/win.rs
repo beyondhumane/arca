@@ -1,30 +1,36 @@
-//! The Windows half: an `IDataObject` that extracts on demand, an
-//! `IDropSource` that says when the drag is over, and the call that starts it.
+//! The Windows half: an `IDataObject` that extracts on demand, hosted where the
+//! shell's calls do not land on the window's thread, and the calls that start a
+//! drag the way the Explorer starts its own.
 
-use std::cell::RefCell;
+use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Sender};
+use std::sync::Mutex;
 
-use windows::core::{implement, Result, HRESULT, PCWSTR};
+use windows::core::{implement, Interface, Result, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{
-    BOOL, DATA_S_SAMEFORMATETC, DV_E_FORMATETC, DV_E_TYMED, E_NOTIMPL, HGLOBAL,
-    OLE_E_ADVISENOTSUPPORTED, POINT, S_OK,
+    GlobalFree, BOOL, DATA_S_SAMEFORMATETC, DV_E_FORMATETC, DV_E_TYMED, E_NOTIMPL, HANDLE, HGLOBAL,
+    OLE_E_ADVISENOTSUPPORTED, S_OK,
 };
-use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES};
+use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_NORMAL;
+use windows::Win32::System::Com::Marshal::CoMarshalInterThreadInterfaceInStream;
+use windows::Win32::System::Com::StructuredStorage::CoGetInterfaceAndReleaseStream;
 use windows::Win32::System::Com::{
-    IAdviseSink, IDataObject, IDataObject_Impl, IEnumFORMATETC, IEnumSTATDATA, DATADIR,
-    DATADIR_GET, FORMATETC, STGMEDIUM, TYMED_HGLOBAL, TYMED_ISTREAM,
+    CoInitializeEx, CoUninitialize, IAdviseSink, IBindCtx, IDataObject, IDataObject_Impl,
+    IEnumFORMATETC, IEnumSTATDATA, IStream, COINIT_MULTITHREADED, DATADIR, DATADIR_GET, FORMATETC,
+    STGMEDIUM, TYMED_HGLOBAL, TYMED_ISTREAM,
 };
 use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::{
-    DoDragDrop, IDropSource, IDropSource_Impl, OleInitialize, DROPEFFECT, DROPEFFECT_COPY,
+    IDropSource, OleDuplicateData, OleInitialize, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_LINK,
     DROPEFFECT_MOVE, DROPEFFECT_NONE,
 };
-use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
-use windows::Win32::UI::Shell::Common::STRRET;
 use windows::Win32::UI::Shell::{
-    SHCreateStdEnumFmtEtc, SHCreateStreamOnFileEx, FD_ATTRIBUTES, FD_FILESIZE, FD_WRITESTIME,
-    FILEDESCRIPTORW, FILEGROUPDESCRIPTORW,
+    IDataObjectAsyncCapability, IDataObjectAsyncCapability_Impl, SHCreateStdEnumFmtEtc,
+    SHCreateStreamOnFileEx, SHDoDragDrop, FD_ATTRIBUTES, FD_FILESIZE, FD_WRITESTIME,
+    FILEDESCRIPTORW,
 };
 
 /// What one entry looks like to the shell before anything has been extracted.
@@ -43,6 +49,16 @@ pub enum Effect {
     None,
     Copy,
     Move,
+}
+
+fn effect_of(e: DROPEFFECT) -> Effect {
+    if e.0 & DROPEFFECT_MOVE.0 != 0 {
+        Effect::Move
+    } else if e.0 & DROPEFFECT_COPY.0 != 0 {
+        Effect::Copy
+    } else {
+        Effect::None
+    }
 }
 
 fn format(name: &str) -> u16 {
@@ -89,14 +105,47 @@ fn to_filetime(unix: i64) -> u64 {
     ((unix + EPOCH_DIFFERENCE).max(0) as u64).saturating_mul(10_000_000)
 }
 
-#[implement(IDataObject)]
+/// What the shell asks the data object to keep: the drag image, and whatever
+/// else the drop helpers need to pass between processes. Global handles, kept
+/// as numbers so the object can be shared between threads.
+struct Kept {
+    format: u16,
+    handle: isize,
+}
+
+type Deliver = Box<dyn Fn(usize) -> Option<PathBuf> + Send + Sync>;
+
+#[implement(IDataObject, IDataObjectAsyncCapability)]
 struct Source {
     items: Vec<Item>,
-    deliver: Box<dyn Fn(usize) -> Option<PathBuf>>,
+    deliver: Deliver,
     formats: Formats,
     /// Set by the shell through `SetData` when a move has gone through, which
     /// is the only way it ever says so.
-    performed: RefCell<DROPEFFECT>,
+    performed: Mutex<DROPEFFECT>,
+    kept: Mutex<Vec<Kept>>,
+    asynchronous: AtomicBool,
+    running: AtomicBool,
+    /// Told when the last reference goes, so the thread keeping this object's
+    /// apartment alive knows it can let go of it.
+    gone: Mutex<Option<Sender<()>>>,
+}
+
+impl Drop for Source {
+    fn drop(&mut self) {
+        if let Ok(kept) = self.kept.get_mut() {
+            for item in kept.drain(..) {
+                unsafe {
+                    let _ = GlobalFree(HGLOBAL(item.handle as *mut _));
+                }
+            }
+        }
+        if let Ok(gone) = self.gone.get_mut() {
+            if let Some(tx) = gone.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
 }
 
 impl Source {
@@ -142,6 +191,19 @@ impl Source {
         }
         to_global(&bytes)
     }
+
+    fn kept_handle(&self, format: u16) -> Option<isize> {
+        let kept = self.kept.lock().ok()?;
+        kept.iter().find(|k| k.format == format).map(|k| k.handle)
+    }
+}
+
+fn hglobal_medium(handle: HGLOBAL) -> STGMEDIUM {
+    STGMEDIUM {
+        tymed: TYMED_HGLOBAL.0 as u32,
+        u: windows::Win32::System::Com::STGMEDIUM_0 { hGlobal: handle },
+        pUnkForRelease: std::mem::ManuallyDrop::new(None),
+    }
 }
 
 impl IDataObject_Impl for Source_Impl {
@@ -151,11 +213,7 @@ impl IDataObject_Impl for Source_Impl {
 
         if wanted == self.formats.descriptor && request.tymed & TYMED_HGLOBAL.0 as u32 != 0 {
             let block = unsafe { self.descriptor()? };
-            return Ok(STGMEDIUM {
-                tymed: TYMED_HGLOBAL.0 as u32,
-                u: windows::Win32::System::Com::STGMEDIUM_0 { hGlobal: block },
-                pUnkForRelease: std::mem::ManuallyDrop::new(None),
-            });
+            return Ok(hglobal_medium(block));
         }
 
         if wanted == self.formats.contents && request.tymed & TYMED_ISTREAM.0 as u32 != 0 {
@@ -195,11 +253,25 @@ impl IDataObject_Impl for Source_Impl {
         if wanted == self.formats.preferred && request.tymed & TYMED_HGLOBAL.0 as u32 != 0 {
             let effect: u32 = DROPEFFECT_COPY.0;
             let block = unsafe { to_global(&effect.to_le_bytes())? };
-            return Ok(STGMEDIUM {
-                tymed: TYMED_HGLOBAL.0 as u32,
-                u: windows::Win32::System::Com::STGMEDIUM_0 { hGlobal: block },
-                pUnkForRelease: std::mem::ManuallyDrop::new(None),
-            });
+            return Ok(hglobal_medium(block));
+        }
+
+        if request.tymed & TYMED_HGLOBAL.0 as u32 != 0 {
+            if let Some(handle) = self.kept_handle(wanted) {
+                // SAFETY: the handle is one this object owns until it is
+                // dropped; the copy belongs to whoever asked for it.
+                let copy = unsafe {
+                    OleDuplicateData(
+                        HANDLE(handle as *mut _),
+                        windows::Win32::System::Ole::CLIPBOARD_FORMAT(wanted),
+                        GMEM_MOVEABLE,
+                    )
+                };
+                if copy.is_invalid() {
+                    return Err(windows::core::Error::from_win32());
+                }
+                return Ok(hglobal_medium(HGLOBAL(copy.0)));
+            }
         }
 
         Err(DV_E_FORMATETC.into())
@@ -211,10 +283,10 @@ impl IDataObject_Impl for Source_Impl {
 
     fn QueryGetData(&self, request: *const FORMATETC) -> HRESULT {
         let request = unsafe { *request };
-        let known = request.cfFormat == self.formats.descriptor
+        let ours = request.cfFormat == self.formats.descriptor
             || request.cfFormat == self.formats.contents
             || request.cfFormat == self.formats.preferred;
-        if !known {
+        if !ours && self.kept_handle(request.cfFormat).is_none() {
             return DV_E_FORMATETC;
         }
         let tymed = if request.cfFormat == self.formats.contents {
@@ -233,61 +305,95 @@ impl IDataObject_Impl for Source_Impl {
         DATA_S_SAMEFORMATETC
     }
 
-    /// The one that matters here: after a move, the shell reports back through
-    /// this what it actually did, and that is the only notice a source ever
-    /// gets that its files have been taken rather than copied.
+    /// After a move, the shell reports back through this what it actually
+    /// did. The drag helpers also park the drag image here, in formats of
+    /// their own, and read it back from the other side of the drop; refusing
+    /// them is what leaves a drag with no picture.
     fn SetData(
         &self,
         request: *const FORMATETC,
         medium: *const STGMEDIUM,
-        _release: BOOL,
+        release: BOOL,
     ) -> Result<()> {
         let request = unsafe { *request };
+        let medium = unsafe { &*medium };
+        if medium.tymed != TYMED_HGLOBAL.0 as u32 {
+            return Err(E_NOTIMPL.into());
+        }
+        let handle = unsafe { medium.u.hGlobal };
         if request.cfFormat == self.formats.performed || request.cfFormat == self.formats.preferred
         {
             unsafe {
-                let handle = (*medium).u.hGlobal;
                 let at = GlobalLock(handle);
                 if !at.is_null() {
                     let value = std::ptr::read_unaligned(at.cast::<u32>());
-                    *self.performed.borrow_mut() = DROPEFFECT(value);
+                    if let Ok(mut performed) = self.performed.lock() {
+                        *performed = DROPEFFECT(value);
+                    }
                     let _ = GlobalUnlock(handle);
+                }
+                if release.as_bool() {
+                    let _ = GlobalFree(handle);
                 }
             }
             return Ok(());
         }
-        Err(E_NOTIMPL.into())
+        // Owned from here on: taken as given when the caller hands it over,
+        // copied when it keeps its own.
+        let owned = if release.as_bool() {
+            handle
+        } else {
+            let copy = unsafe {
+                OleDuplicateData(
+                    HANDLE(handle.0),
+                    windows::Win32::System::Ole::CLIPBOARD_FORMAT(request.cfFormat),
+                    GMEM_MOVEABLE,
+                )
+            };
+            if copy.is_invalid() {
+                return Err(windows::core::Error::from_win32());
+            }
+            HGLOBAL(copy.0)
+        };
+        let mut kept = self
+            .kept
+            .lock()
+            .map_err(|_| windows::core::Error::from(windows::Win32::Foundation::E_FAIL))?;
+        if let Some(old) = kept.iter_mut().find(|k| k.format == request.cfFormat) {
+            unsafe {
+                let _ = GlobalFree(HGLOBAL(old.handle as *mut _));
+            }
+            old.handle = owned.0 as isize;
+        } else {
+            kept.push(Kept {
+                format: request.cfFormat,
+                handle: owned.0 as isize,
+            });
+        }
+        Ok(())
     }
 
     fn EnumFormatEtc(&self, direction: u32) -> Result<IEnumFORMATETC> {
         if DATADIR(direction as i32) != DATADIR_GET {
             return Err(E_NOTIMPL.into());
         }
-        let offered = [
-            FORMATETC {
-                cfFormat: self.formats.descriptor,
-                ptd: std::ptr::null_mut(),
-                dwAspect: 1,
-                lindex: -1,
-                tymed: TYMED_HGLOBAL.0 as u32,
-            },
-            FORMATETC {
-                cfFormat: self.formats.contents,
-                ptd: std::ptr::null_mut(),
-                dwAspect: 1,
-                lindex: -1,
-                tymed: TYMED_ISTREAM.0 as u32,
-            },
-            FORMATETC {
-                cfFormat: self.formats.preferred,
-                ptd: std::ptr::null_mut(),
-                dwAspect: 1,
-                lindex: -1,
-                tymed: TYMED_HGLOBAL.0 as u32,
-            },
+        let entry = |format: u16, tymed: u32| FORMATETC {
+            cfFormat: format,
+            ptd: std::ptr::null_mut(),
+            dwAspect: 1,
+            lindex: -1,
+            tymed,
+        };
+        let mut offered = vec![
+            entry(self.formats.descriptor, TYMED_HGLOBAL.0 as u32),
+            entry(self.formats.contents, TYMED_ISTREAM.0 as u32),
+            entry(self.formats.preferred, TYMED_HGLOBAL.0 as u32),
         ];
+        if let Ok(kept) = self.kept.lock() {
+            offered.extend(kept.iter().map(|k| entry(k.format, TYMED_HGLOBAL.0 as u32)));
+        }
         // The shell will build the enumerator; there is nothing to be gained
-        // from writing a third COM object to walk an array of three.
+        // from writing a third COM object to walk an array.
         unsafe { SHCreateStdEnumFmtEtc(&offered) }
     }
 
@@ -304,80 +410,164 @@ impl IDataObject_Impl for Source_Impl {
     }
 }
 
-#[implement(IDropSource)]
-struct Hand;
-
-impl IDropSource_Impl for Hand_Impl {
-    fn QueryContinueDrag(&self, escape: BOOL, keys: MODIFIERKEYS_FLAGS) -> HRESULT {
-        const LEFT: u32 = 0x0001;
-        const RIGHT: u32 = 0x0002;
-        if escape.as_bool() {
-            return windows::Win32::Foundation::DRAGDROP_S_CANCEL;
-        }
-        // Letting go of every button is the drop. This is the whole of what a
-        // drop source has to decide.
-        if keys.0 & (LEFT | RIGHT) == 0 {
-            return windows::Win32::Foundation::DRAGDROP_S_DROP;
-        }
-        S_OK
+/// Lets the Explorer take the entries on its own background thread, with its
+/// own progress window, instead of holding the drop until every one has been
+/// extracted. It is what its own ZIP folders do.
+impl IDataObjectAsyncCapability_Impl for Source_Impl {
+    fn SetAsyncMode(&self, asynchronous: BOOL) -> Result<()> {
+        self.asynchronous
+            .store(asynchronous.as_bool(), Ordering::SeqCst);
+        Ok(())
     }
 
-    fn GiveFeedback(&self, _effect: DROPEFFECT) -> HRESULT {
-        // The cursors Windows already has say all of this better than a
-        // hand-drawn set would.
-        windows::Win32::Foundation::DRAGDROP_S_USEDEFAULTCURSORS
+    fn GetAsyncMode(&self) -> Result<BOOL> {
+        Ok(self.asynchronous.load(Ordering::SeqCst).into())
+    }
+
+    fn StartOperation(&self, _reserved: Option<&IBindCtx>) -> Result<()> {
+        self.running.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn InOperation(&self) -> Result<BOOL> {
+        Ok(self.running.load(Ordering::SeqCst).into())
+    }
+
+    fn EndOperation(
+        &self,
+        _result: HRESULT,
+        _reserved: Option<&IBindCtx>,
+        _effect: u32,
+    ) -> Result<()> {
+        self.running.store(false, Ordering::SeqCst);
+        Ok(())
     }
 }
 
-use std::os::windows::ffi::OsStrExt;
+/// A pointer handed from one thread to another, inside a stream COM made for
+/// exactly that crossing.
+struct Crossing(usize);
 
-/// Starts a drag and does not return until it has been dropped or abandoned.
+/// Starts a drag of archive entries and returns once they have been dropped or
+/// the drag has been abandoned.
 ///
-/// `deliver` is asked for one item at a time, by index, and only once something
-/// is being dropped. It runs on this thread, so it must not need the caller's
-/// state back.
-pub fn drag(
-    items: Vec<Item>,
-    deliver: Box<dyn Fn(usize) -> Option<PathBuf>>,
-    allow_move: bool,
-) -> Effect {
+/// The data object lives in the multithreaded apartment, on a thread of its
+/// own, so the calls the shell makes to extract each entry are served by COM's
+/// threads and never by the window's: a large entry does not freeze the window
+/// while it is being taken. With the async capability the Explorer takes them
+/// after the drop, with its own progress window, and this returns at once.
+///
+/// `deliver` is asked for one item at a time, by index, from whichever thread
+/// the shell's call arrives on.
+pub fn drag(items: Vec<Item>, deliver: Deliver, allow_move: bool) -> Effect {
     if items.is_empty() {
         return Effect::None;
     }
-    unsafe {
-        // The window toolkit already does this to be a drop target, and asking
-        // twice is harmless; without it on a thread that has not, DoDragDrop
-        // fails outright.
-        let _ = OleInitialize(None);
-
-        let performed = RefCell::new(DROPEFFECT_NONE);
+    let (ready_tx, ready_rx) = channel::<Option<Crossing>>();
+    let (gone_tx, gone_rx) = channel::<()>();
+    std::thread::spawn(move || unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let source: IDataObject = Source {
             items,
             deliver,
             formats: Formats::get(),
-            performed,
+            performed: Mutex::new(DROPEFFECT_NONE),
+            kept: Mutex::new(Vec::new()),
+            asynchronous: AtomicBool::new(true),
+            running: AtomicBool::new(false),
+            gone: Mutex::new(Some(gone_tx)),
         }
         .into();
-        let hand: IDropSource = Hand.into();
+        let marshaled = CoMarshalInterThreadInterfaceInStream(&IDataObject::IID, &source);
+        // The stream holds what the other thread needs; this thread only has
+        // to keep the apartment alive until the last reference is gone.
+        drop(source);
+        match marshaled {
+            Ok(stream) => {
+                let _ = ready_tx.send(Some(Crossing(stream.into_raw() as usize)));
+                let _ = gone_rx.recv();
+            }
+            Err(_) => {
+                let _ = ready_tx.send(None);
+            }
+        }
+        CoUninitialize();
+    });
 
+    let Ok(Some(Crossing(raw))) = ready_rx.recv() else {
+        return Effect::None;
+    };
+    unsafe {
+        // The window toolkit already does this to be a drop target, and asking
+        // twice is harmless; without it on a thread that has not, the drag
+        // fails outright.
+        let _ = OleInitialize(None);
+        let stream = IStream::from_raw(raw as *mut _);
+        let data: Result<IDataObject> = CoGetInterfaceAndReleaseStream(&stream);
+        // The call above has released the stream itself.
+        std::mem::forget(stream);
+        let Ok(data) = data else {
+            return Effect::None;
+        };
         let allowed = if allow_move {
             DROPEFFECT(DROPEFFECT_COPY.0 | DROPEFFECT_MOVE.0)
         } else {
             DROPEFFECT_COPY
         };
-        let mut outcome = DROPEFFECT_NONE;
-        let _ = DoDragDrop(&source, &hand, allowed, &mut outcome);
-
-        match outcome {
-            e if e.0 & DROPEFFECT_MOVE.0 != 0 => Effect::Move,
-            e if e.0 & DROPEFFECT_COPY.0 != 0 => Effect::Copy,
-            _ => Effect::None,
-        }
+        // The shell's own drop source and drag image: the same picture and
+        // cursors a drag out of the Explorer has.
+        SHDoDragDrop(None, &data, None::<&IDropSource>, allowed)
+            .map(effect_of)
+            .unwrap_or(Effect::None)
     }
 }
 
-// Silences the unused warnings for the pieces the shell only needs to see.
-const _: Option<POINT> = None;
-const _: Option<STRRET> = None;
-const _: Option<FILEGROUPDESCRIPTORW> = None;
-const _: Option<FILE_FLAGS_AND_ATTRIBUTES> = None;
+/// Starts a drag of files that already exist, the way the Explorer does: the
+/// shell builds the data object from the paths, with its own formats, drag
+/// image and cursors, and whoever receives the drop does the copying with its
+/// own progress and its own questions. Nothing is read here, however large the
+/// folders are. Returns once the drop is over.
+pub fn drag_files(paths: &[PathBuf]) -> Effect {
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+    use windows::Win32::UI::Shell::{
+        BHID_DataObject, IShellItemArray, SHCreateShellItemArrayFromIDLists, SHParseDisplayName,
+    };
+
+    unsafe {
+        let _ = OleInitialize(None);
+        let mut pidls: Vec<*mut ITEMIDLIST> = Vec::with_capacity(paths.len());
+        for path in paths {
+            let wide: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let mut pidl = std::ptr::null_mut();
+            if SHParseDisplayName(PCWSTR(wide.as_ptr()), None::<&IBindCtx>, &mut pidl, 0, None)
+                .is_ok()
+                && !pidl.is_null()
+            {
+                pidls.push(pidl);
+            }
+        }
+        let listed: Vec<*const ITEMIDLIST> = pidls.iter().map(|p| p.cast_const()).collect();
+        let array: Result<IShellItemArray> = if listed.is_empty() {
+            Err(windows::Win32::Foundation::E_INVALIDARG.into())
+        } else {
+            SHCreateShellItemArrayFromIDLists(&listed)
+        };
+        for pidl in pidls {
+            CoTaskMemFree(Some(pidl.cast_const().cast()));
+        }
+        let Ok(data) = array.and_then(|array| {
+            array.BindToHandler::<_, IDataObject>(None::<&IBindCtx>, &BHID_DataObject)
+        }) else {
+            return Effect::None;
+        };
+        let allowed = DROPEFFECT(DROPEFFECT_COPY.0 | DROPEFFECT_MOVE.0 | DROPEFFECT_LINK.0);
+        SHDoDragDrop(None, &data, None::<&IDropSource>, allowed)
+            .map(effect_of)
+            .unwrap_or(Effect::None)
+    }
+}

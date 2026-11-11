@@ -1244,15 +1244,13 @@ impl AppController {
             .collect()
     }
 
-    // Dragging the selection out of the window. Blocks until it has been
-    // dropped or abandoned, because that is what `DoDragDrop` does: the window
-    // stops repainting for as long as the drag lasts, which nobody sees because
-    // the pointer is somewhere else by then.
+    // Dragging rows out of the window. The window waits while the pointer is
+    // carrying them, as any drag source does, and is free again at the drop.
     //
     // Nothing is extracted here. The shell is handed a list of names and sizes
-    // and asks for one file at a time while it is dropping, so a drag that is
-    // thought better of costs nothing, and a drag of six gigabytes starts as
-    // fast as a drag of one file.
+    // and, after the drop, asks for one file at a time on a thread of its own
+    // behind its own progress window, so a drag that is thought better of costs
+    // nothing, and a drag of six gigabytes starts as fast as a drag of one file.
     pub(crate) fn go_to(&mut self, path: String) {
         self.navigate_panes(path);
         self.record_pane_history();
@@ -1314,21 +1312,15 @@ impl AppController {
     #[cfg(windows)]
     pub(crate) fn drag_out(&mut self, roots: &[String]) {
         if self.on_disk() {
-            let picked = self.disk_drag_items(roots);
-            if picked.is_empty() {
-                return;
-            }
-            let items: Vec<arca_drag::Item> = picked
-                .iter()
-                .map(|(_, name, size, mtime)| arca_drag::Item {
-                    name: name.clone(),
-                    size: *size,
-                    mtime: *mtime,
-                })
-                .collect();
-            let paths: Vec<PathBuf> = picked.into_iter().map(|(path, ..)| path).collect();
-            let deliver = Box::new(move |i: usize| paths.get(i).cloned());
-            let _ = arca_drag::drag(items, deliver, false);
+            // Files that already exist go as themselves, the way the Explorer
+            // drags them: nothing is walked or read here, and whoever takes the
+            // drop copies or moves them with its own progress. The folder is
+            // read again whatever the drag says it did: a move the shell carries
+            // out itself reports no effect at all, so that the source does not
+            // delete what has already gone.
+            let paths = disk::drag_paths(roots);
+            arca_drag::drag_files(&paths);
+            self.dispatch(AppAction::Refresh);
             return;
         }
         let Some(archive) = self.state.archive.clone() else {
