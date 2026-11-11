@@ -3,7 +3,6 @@ use eframe::egui::{
     self, Color32, Response, RichText, Sense, Stroke, Ui, Vec2, WidgetInfo, WidgetType,
 };
 
-/// A square button holding one glyph, named for screen readers by its tip.
 /// Names a text field for screen readers. Its placeholder is read as a hint
 /// and is gone as soon as anything is typed, so it cannot be the name.
 pub(crate) fn named(response: &Response, name: &str) {
@@ -20,12 +19,12 @@ pub(crate) trait NamedMenu {
 
 impl NamedMenu for Response {
     fn named_menu(self, name: &str) -> Response {
-        let spoken = name.to_string();
-        self.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &spoken));
+        self.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, name));
         self.on_hover_text(name)
     }
 }
 
+/// A square button holding one glyph, named for screen readers by its tip.
 pub(crate) fn icon_button(ui: &mut Ui, glyph: &str, tip: &str, enabled: bool) -> Response {
     icon_toggle(ui, glyph, tip, enabled, false)
 }

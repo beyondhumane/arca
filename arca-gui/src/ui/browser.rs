@@ -1191,7 +1191,11 @@ impl Shell {
                     RowAction::Copy | RowAction::Cut => self.can_copy_files() || row.is_some(),
                     _ => true,
                 };
-            if menu_entry(ui, glyph, &label, &keys, enabled).clicked() {
+            let entry = menu_entry(ui, glyph, &label, &keys, enabled);
+            if enabled && std::mem::take(&mut self.focus_menu) {
+                entry.request_focus();
+            }
+            if entry.clicked() {
                 if row.is_none() {
                     self.controller.dispatch(AppAction::ClearSelection);
                 }

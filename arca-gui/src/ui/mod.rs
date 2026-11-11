@@ -254,6 +254,9 @@ pub(crate) struct Shell {
     // Where the row under the keyboard cursor was drawn this frame, so a menu
     // opened from the keyboard has somewhere to open.
     cursor_row: Option<(egui::Rect, egui::LayerId, usize)>,
+    // Set by Shift+F10: the menu it opens takes the keyboard, starting at its
+    // first entry, so the arrows and Enter work the menu and not the list.
+    focus_menu: bool,
     search: Option<search::Search>,
     decorated: bool,
 }
@@ -330,6 +333,7 @@ impl Shell {
             add_show_password: false,
             anchor: None,
             cursor_row: None,
+            focus_menu: false,
             search: None,
             decorated: system_title_bar(&settings_now),
         }
@@ -603,13 +607,12 @@ impl Shell {
         }
     }
 
-    /// The shadow that follows the pointer while rows are carried: icon,
-    /// name (or a count) and what letting go would do.
-    // The row menu opened with Shift+F10, beside the row under the keyboard
-    // cursor, or the menu of the folder itself when no row has it.
+    /// The row menu opened with Shift+F10, beside the row under the keyboard
+    /// cursor, or the menu of the folder itself when no row has it.
     fn key_menu(&mut self, ctx: &egui::Context) {
         let id = key_menu_id();
         if !egui::Popup::is_id_open(ctx, id) {
+            self.focus_menu = false;
             return;
         }
         let (anchor, layer, index) = self.cursor_row.unwrap_or_else(|| {
@@ -637,6 +640,8 @@ impl Shell {
         .show(|ui| self.row_menu(ui, row.as_ref(), index));
     }
 
+    /// The shadow that follows the pointer while rows are carried: icon,
+    /// name (or a count) and what letting go would do.
     fn drag_shadow(&self, ctx: &egui::Context) {
         let Some(payload) = egui::DragAndDrop::payload::<DraggedRows>(ctx) else {
             return;
@@ -1629,7 +1634,10 @@ impl Shell {
                     }));
                 }
             }
-            Shortcut::ContextMenu => egui::Popup::open_id(&self.ctx, key_menu_id()),
+            Shortcut::ContextMenu => {
+                self.focus_menu = true;
+                egui::Popup::open_id(&self.ctx, key_menu_id());
+            }
             Shortcut::Refresh => self.controller.dispatch(AppAction::Refresh),
             Shortcut::Invert => self.controller.dispatch(AppAction::InvertVisible),
             Shortcut::ClearSelection => {
