@@ -1009,6 +1009,18 @@ impl AppController {
             self.state.view = View::Browse;
         }
     }
+    // The version kept for undo is a whole copy of the archive beside it, so
+    // it goes as soon as the window stops offering to put it back. Unless the
+    // archive itself is missing: a rewrite whose last rename failed leaves the
+    // old version only there, and it is the one copy left.
+    pub(crate) fn drop_undo(&mut self) {
+        if let Some((archive, _)) = self.state.undo.take() {
+            if archive.exists() {
+                let _ = fs::remove_file(undo_path(&archive));
+            }
+        }
+    }
+
     // Puts the archive back the way it was before the last change.
     //
     // A swap of two names, because the version before the change was moved
@@ -2216,7 +2228,7 @@ impl AppController {
         self.state.confirm_drop = None;
         self.state.renaming = None;
         self.state.asking_folder = false;
-        self.state.undo = None;
+        self.drop_undo();
         self.state.overlay = false;
         self.state.close_when_done = false;
         self.state.view = View::Browse;
@@ -2382,7 +2394,7 @@ impl AppController {
         // What is kept here is the word for the change, so that offering to
         // take it back can say what it would be taking back.
         let words = self.s();
-        self.state.undo = match &job {
+        let undo = match &job {
             Job::Delete { archive, .. } => Some((archive.clone(), words.delete_word)),
             Job::Rename { archive, .. } => Some((archive.clone(), words.rename_word)),
             Job::Add { archive, .. } => Some((archive.clone(), words.add_to_archive)),
@@ -2391,6 +2403,13 @@ impl AppController {
             Job::Move { archive, .. } => Some((archive.clone(), words.moving_word)),
             _ => None,
         };
+        // A change to the same archive replaces the kept version itself when
+        // it steps the archive aside; anything else would leave it orphaned.
+        let kept = self.state.undo.as_ref().map(|(archive, _)| archive);
+        if kept != undo.as_ref().map(|(archive, _)| archive) {
+            self.drop_undo();
+        }
+        self.state.undo = undo;
 
         let (reads, writes, outputs) = touched_by(&job);
         let mut task = Task::new(

@@ -2081,6 +2081,10 @@ impl eframe::App for Shell {
         self.dialogs(&ctx);
         self.window_chrome(&ctx);
     }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.controller.drop_undo();
+    }
 }
 
 /// The row paths a cut fades: a root as picked, and the same with the slash a
