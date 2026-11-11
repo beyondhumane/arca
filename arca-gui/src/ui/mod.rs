@@ -1616,6 +1616,7 @@ impl Shell {
                     .active_pane()
                     .cursor
                     .and_then(|i| rows.get(i))
+                    .filter(|row| !row.up)
                 {
                     let path = row.path.clone();
                     self.begin_rename(&path, false);
