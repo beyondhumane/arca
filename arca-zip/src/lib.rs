@@ -2,7 +2,10 @@
 
 pub mod aes;
 pub mod pages;
+mod reader;
 pub mod zipcrypto;
+
+pub use reader::ExtractionReader;
 
 use arca_core::{limits, Codec, Cursor, Entry, Error, Level, Method, Result};
 use flate2::write::DeflateEncoder;
