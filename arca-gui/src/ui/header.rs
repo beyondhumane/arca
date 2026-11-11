@@ -819,7 +819,12 @@ impl Shell {
                     }
                 }
                 if self.controller.state.archive.is_some() || self.controller.on_disk() {
-                    let visible = self.controller.visible_rows().len();
+                    let visible = self
+                        .controller
+                        .visible_rows()
+                        .iter()
+                        .filter(|row| !row.up)
+                        .count();
                     let counts = fill(
                         s.counts,
                         &[
