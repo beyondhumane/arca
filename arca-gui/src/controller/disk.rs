@@ -1121,7 +1121,7 @@ impl AppController {
         self.state.folders = tree::folders_of(&[]);
         self.state.history.clear();
         self.state.here = 0;
-        self.state.undo = None;
+        self.drop_undo();
         self.state.renaming = None;
         self.state.archive_password = None;
         self.state.waiting_on_password = None;

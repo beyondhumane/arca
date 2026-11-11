@@ -1825,6 +1825,10 @@ impl eframe::App for Shell {
         self.dialogs(&ctx);
         self.window_chrome(&ctx);
     }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.controller.drop_undo();
+    }
 }
 
 /// Which way the window would grow from a pointer at `pos`, if `pos` is on

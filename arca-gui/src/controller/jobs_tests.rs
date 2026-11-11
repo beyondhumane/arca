@@ -487,3 +487,78 @@ fn an_edit_can_still_be_undone_after_the_archive_is_read_again() {
     settle(&mut app);
     assert_eq!(app.state.entries.len(), before);
 }
+
+fn edited_archive(room: &Room) -> (AppController, PathBuf) {
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("a.txt"), b"first contents").unwrap();
+    fs::write(source.join("b.txt"), b"second contents").unwrap();
+    let archive = room.path("edit.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.open_with_password(archive.clone(), None);
+    settle(&mut app);
+    delete_named(&mut app, &archive, "a.txt");
+    (app, archive)
+}
+
+fn delete_named(app: &mut AppController, archive: &Path, leaf: &str) {
+    let name = app
+        .state
+        .entries
+        .iter()
+        .find(|entry| entry.name.ends_with(leaf))
+        .unwrap()
+        .name
+        .clone();
+    app.run_job(Job::Delete {
+        archive: archive.to_path_buf(),
+        names: vec![name],
+        password: None,
+    });
+    settle(app);
+}
+
+#[test]
+fn leaving_an_edited_archive_removes_the_version_kept_for_undo() {
+    let room = Room::new();
+    let (mut app, archive) = edited_archive(&room);
+    let kept = crate::archive_ops::undo_path(&archive);
+    assert!(kept.exists());
+    app.browse_disk(&room.path(""));
+    assert!(app.state.undo.is_none());
+    assert!(!kept.exists());
+    assert!(archive.exists());
+}
+
+#[test]
+fn closing_the_window_removes_the_version_kept_for_undo() {
+    let room = Room::new();
+    let (mut app, archive) = edited_archive(&room);
+    let kept = crate::archive_ops::undo_path(&archive);
+    assert!(kept.exists());
+    app.drop_undo();
+    assert!(!kept.exists());
+}
+
+#[test]
+fn a_second_edit_keeps_one_step_to_undo() {
+    let room = Room::new();
+    let (mut app, archive) = edited_archive(&room);
+    let after_first = app.state.entries.len();
+    delete_named(&mut app, &archive, "b.txt");
+    assert!(crate::archive_ops::undo_path(&archive).exists());
+    app.undo_last();
+    settle(&mut app);
+    assert_eq!(app.state.entries.len(), after_first);
+    assert!(!crate::archive_ops::undo_path(&archive).exists());
+}
