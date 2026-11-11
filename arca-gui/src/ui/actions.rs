@@ -543,3 +543,13 @@ pub(crate) fn shell_size(compact: bool) -> (f32, f32) {
         NORMAL_SIZE
     }
 }
+
+/// The side buttons of a mouse go back and forward through the folders, as
+/// they do in the Explorer and in every browser.
+pub(crate) fn side_button(button: eframe::egui::PointerButton) -> Option<Shortcut> {
+    match button {
+        eframe::egui::PointerButton::Extra1 => Some(Shortcut::Back),
+        eframe::egui::PointerButton::Extra2 => Some(Shortcut::Forward),
+        _ => None,
+    }
+}

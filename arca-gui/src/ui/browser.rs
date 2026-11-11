@@ -1077,7 +1077,7 @@ impl Shell {
         if !row.up {
             response.context_menu(|ui| self.row_menu(ui, Some(row), index));
         }
-        if response.drag_started() && idle && !row.up {
+        if response.drag_started_by(egui::PointerButton::Primary) && idle && !row.up {
             let roots = if checked {
                 match pane {
                     Some(pane) => self.controller.pane_selected_roots(pane),
@@ -1271,7 +1271,7 @@ impl Shell {
             }
             self.controller.dispatch(AppAction::ClearSelection);
         }
-        if response.drag_started() && self.background_idle() {
+        if response.drag_started_by(egui::PointerButton::Primary) && self.background_idle() {
             // A drag is only a drag once the pointer has moved, so the
             // corner is where the button went down, not where it is now.
             let origin = response

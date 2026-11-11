@@ -19,7 +19,7 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>Shift+Up</kbd> <kbd>Shift+Down</kbd> | Extend the selection |
 | <kbd>Ctrl+A</kbd> | Select visible rows in the active pane |
 | <kbd>a…z</kbd> | Jump by filename prefix |
-| <kbd>Alt+Left</kbd> <kbd>Alt+Right</kbd> | Back and forward in history |
+| <kbd>Alt+Left</kbd> <kbd>Alt+Right</kbd> | Back and forward in history; the mouse's side buttons do the same |
 | <kbd>Ctrl+O</kbd> <kbd>Ctrl+N</kbd> <kbd>Ctrl+E</kbd> | Open archive, create archive, extract all |
 | <kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd> | Copy, cut and paste files, shared with the system file manager on Windows and Linux |
 | <kbd>Ctrl+Shift+C</kbd> | Copy selected names as text |

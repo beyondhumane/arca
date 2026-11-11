@@ -1492,6 +1492,17 @@ impl Shell {
                     modifiers,
                     ..
                 } => self.key_down(key, modifiers),
+                egui::Event::PointerButton {
+                    button,
+                    pressed: true,
+                    ..
+                } => {
+                    if let Some(shortcut) =
+                        side_button(button).filter(|_| !self.background_blocked() && !self.typing())
+                    {
+                        self.shortcut(shortcut);
+                    }
+                }
                 egui::Event::Copy if !self.typing() => {
                     if ctx.input(|input| input.modifiers.shift) {
                         self.shortcut(Shortcut::CopyNames);
