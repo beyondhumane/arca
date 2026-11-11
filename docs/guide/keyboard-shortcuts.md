@@ -34,7 +34,7 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>Ctrl+Z</kbd> | Undo the last supported archive modification |
 | <kbd>Alt+W</kbd> | Extract here |
 | <kbd>Ctrl+Shift+N</kbd> | New folder |
-| <kbd>Alt+Enter</kbd> | Properties of the cursor row, or of the folder when there is none |
+| <kbd>Alt+Enter</kbd> | Properties of the cursor row, or of the folder when there is none (on disk) |
 | <kbd>Alt+P</kbd> | Show or hide the preview panel |
 | <kbd>Ctrl+W</kbd> | Close the window |
 | <kbd>+</kbd> <kbd>-</kbd> | Select or deselect by filename mask |

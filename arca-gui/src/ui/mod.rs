@@ -1385,7 +1385,11 @@ impl Shell {
                 }
                 egui::Event::Cut if !self.typing() => self.dispatch_clipboard(true),
                 egui::Event::Paste(_) if !self.typing() => self.dispatch_paste(),
-                egui::Event::Text(text) if !self.typing() && !self.background_blocked() => {
+                egui::Event::Text(text)
+                    if !self.typing()
+                        && !self.background_blocked()
+                        && !ctx.input(|input| input.modifiers.alt && !input.modifiers.ctrl) =>
+                {
                     self.jump_to(&text)
                 }
                 _ => {}
