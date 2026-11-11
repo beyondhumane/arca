@@ -22,6 +22,22 @@ use std::path::PathBuf;
 /// it can leave the entries out rather than offer something that only fails.
 pub const AVAILABLE: bool = cfg!(windows);
 
+/// A path the way the shell reads one. `fs::canonicalize` hands back paths
+/// with the `\\?\` prefix on Windows, and the Explorer takes a CF_HDROP made of
+/// those as a list with nothing in it: Ctrl+V does nothing at all.
+pub(crate) fn shell_path(path: PathBuf) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{share}"))
+    } else if let Some(local) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(local)
+    } else {
+        path
+    }
+}
+
 #[cfg(windows)]
 pub fn set_files(paths: &[PathBuf], cut: bool) -> Result<(), String> {
     use clipboard_win::{formats, raw, Clipboard, Setter};
@@ -30,7 +46,10 @@ pub fn set_files(paths: &[PathBuf], cut: bool) -> Result<(), String> {
     const COPY: u32 = 1;
     const MOVE: u32 = 2;
 
-    let list: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+    let list: Vec<String> = paths
+        .iter()
+        .map(|p| shell_path(p.clone()).display().to_string())
+        .collect();
     if list.is_empty() {
         return Err("nothing to copy".into());
     }
@@ -132,3 +151,24 @@ pub fn sequence() -> Option<u32> {
 
 #[cfg(not(windows))]
 pub fn clear() {}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn the_shell_gets_paths_without_the_verbatim_prefix() {
+        let plain = |p: &str| shell_path(PathBuf::from(p));
+        assert_eq!(
+            plain(r"\\?\C:\Temp\Arca\a.txt"),
+            PathBuf::from(r"C:\Temp\Arca\a.txt")
+        );
+        assert_eq!(
+            plain(r"\\?\UNC\server\share\a"),
+            PathBuf::from(r"\\server\share\a")
+        );
+        assert_eq!(plain(r"C:\Temp\a.txt"), PathBuf::from(r"C:\Temp\a.txt"));
+        assert_eq!(plain("/tmp/a.txt"), PathBuf::from("/tmp/a.txt"));
+    }
+}

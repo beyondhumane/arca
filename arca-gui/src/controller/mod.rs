@@ -1469,7 +1469,7 @@ impl AppController {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let temp = match fs::canonicalize(std::env::temp_dir()) {
-            Ok(path) => path,
+            Ok(path) => clipboard::shell_path(path),
             Err(error) => {
                 self.state.notice = error.to_string();
                 self.state.error = true;
