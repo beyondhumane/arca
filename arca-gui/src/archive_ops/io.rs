@@ -156,7 +156,7 @@ fn staged_path(out: &Path) -> PathBuf {
 
 // Written under a temporary name beside `out` and renamed once complete, so a
 // stop or a failure halfway leaves no truncated archive under the real name.
-fn staged<T>(
+pub(crate) fn staged<T>(
     out: &Path,
     write: impl FnOnce(BufWriter<File>) -> arca_core::Result<T>,
 ) -> arca_core::Result<T> {
