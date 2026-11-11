@@ -213,6 +213,7 @@ impl Shell {
                 .background_color(hex(p.raised))
                 .desired_width(ui.available_width()),
         );
+        super::widgets::named(&response, s.edit_path);
         if self.path_missing {
             ui.painter().rect_stroke(
                 response.rect,

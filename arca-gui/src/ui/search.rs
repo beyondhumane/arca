@@ -425,6 +425,7 @@ impl Shell {
                             .font(egui::TextStyle::Heading)
                             .desired_width(room.max(80.0)),
                     );
+                    super::widgets::named(&response, s.search_files);
                     if search.focus || !response.has_focus() {
                         response.request_focus();
                         search.focus = false;

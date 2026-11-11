@@ -269,6 +269,12 @@ pub(crate) struct Shell {
     pasted_text: bool,
     cut_checked: std::time::Instant,
     anchor: Option<(egui::Id, egui::Pos2)>,
+    // Where the row under the keyboard cursor was drawn this frame, so a menu
+    // opened from the keyboard has somewhere to open.
+    cursor_row: Option<(egui::Rect, egui::LayerId, usize)>,
+    // Set by Shift+F10: the menu it opens takes the keyboard, starting at its
+    // first entry, so the arrows and Enter work the menu and not the list.
+    focus_menu: bool,
     search: Option<search::Search>,
     decorated: bool,
 }
@@ -350,6 +356,8 @@ impl Shell {
             pasted_text: false,
             cut_checked: std::time::Instant::now(),
             anchor: None,
+            cursor_row: None,
+            focus_menu: false,
             search: None,
             decorated: system_title_bar(&settings_now),
         }
@@ -630,6 +638,39 @@ impl Shell {
                 self.drop_rows(payload.0.clone(), target);
             }
         }
+    }
+
+    /// The row menu opened with Shift+F10, beside the row under the keyboard
+    /// cursor, or the menu of the folder itself when no row has it.
+    fn key_menu(&mut self, ctx: &egui::Context) {
+        let id = key_menu_id();
+        if !egui::Popup::is_id_open(ctx, id) {
+            self.focus_menu = false;
+            return;
+        }
+        let (anchor, layer, index) = self.cursor_row.unwrap_or_else(|| {
+            let middle = ctx.content_rect().center();
+            (
+                egui::Rect::from_center_size(middle, egui::Vec2::ZERO),
+                egui::LayerId::background(),
+                usize::MAX,
+            )
+        });
+        let row = self
+            .controller
+            .visible_rows()
+            .get(index)
+            .cloned()
+            .filter(|row| !row.up);
+        egui::Popup::new(
+            id,
+            ctx.clone(),
+            egui::PopupAnchor::ParentRect(anchor),
+            layer,
+        )
+        .kind(egui::PopupKind::Menu)
+        .open_memory(None)
+        .show(|ui| self.row_menu(ui, row.as_ref(), index));
     }
 
     /// The shadow that follows the pointer while rows are carried: icon,
@@ -1790,6 +1831,10 @@ impl Shell {
                     }));
                 }
             }
+            Shortcut::ContextMenu => {
+                self.focus_menu = true;
+                egui::Popup::open_id(&self.ctx, key_menu_id());
+            }
             Shortcut::Refresh => self.controller.dispatch(AppAction::Refresh),
             Shortcut::Invert => self.controller.dispatch(AppAction::InvertVisible),
             Shortcut::ClearSelection => {
@@ -2013,6 +2058,7 @@ impl eframe::App for Shell {
         self.sync_window(&ctx);
         self.input(&ctx);
         self.width = ui.available_width();
+        self.cursor_row = None;
         let only_form = self.controller.state.one_shot && self.modal_kind() == Some(ModalKind::Add);
         if !only_form {
             self.workspace(ui);
@@ -2020,6 +2066,7 @@ impl eframe::App for Shell {
         // After the lists, so every row has had its say about a drop.
         self.settle_blank_drop(&ctx);
         self.drag_shadow(&ctx);
+        self.key_menu(&ctx);
         self.drop_menu(&ctx);
         self.jobs(&ctx);
         self.dialogs(&ctx);
@@ -2160,4 +2207,8 @@ pub(crate) fn cursor_step(key: &str, current: Option<usize>, last: usize) -> Opt
         "end" => Some(last),
         _ => None,
     }
+}
+
+fn key_menu_id() -> egui::Id {
+    egui::Id::new("arca-key-menu")
 }
