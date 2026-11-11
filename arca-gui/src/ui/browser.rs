@@ -1045,11 +1045,12 @@ impl Shell {
         };
         if response.clicked() && idle {
             activate(self);
-            if let (Some(pane), true, false) = (
-                pane,
-                row.is_dir && !row.up,
+            let opens = click_opens_folder(
+                row,
                 modifiers.shift || modifiers.command,
-            ) {
+                self.controller.state.settings.next_pane,
+            );
+            if let (Some(pane), true) = (pane, opens) {
                 self.controller.clear_picked();
                 self.controller.set_pane_cursor(pane, Some(index));
                 self.controller.enter_folder_from_pane(pane, &row.path);
@@ -1355,4 +1356,13 @@ pub(crate) fn column_slots(
         first,
         ((room + gap) / fit as f32 - gap).max(wanted.min(room)),
     )
+}
+
+/// Whether one click on a row opens it as a folder rather than selecting it.
+///
+/// Only in the column browser, where a folder picked in one pane is shown in
+/// the next, does a single click open; everywhere else it selects, and opening
+/// takes a double click or Enter, as in the Explorer.
+pub(crate) fn click_opens_folder(row: &Row, modified: bool, next_pane: bool) -> bool {
+    next_pane && row.is_dir && !row.up && !modified
 }
