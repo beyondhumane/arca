@@ -820,12 +820,13 @@ impl Shell {
                 }
                 if self.controller.state.archive.is_some() || self.controller.on_disk() {
                     let visible = self.controller.visible_rows().len();
-                    let counts = format!(
-                        "{visible} {} {} \u{b7} {} {}",
-                        s.visible_of,
-                        self.controller.folder_total(),
-                        self.selected_count(),
-                        s.checked
+                    let counts = fill(
+                        s.counts,
+                        &[
+                            ("visible", &visible.to_string()),
+                            ("total", &self.controller.folder_total().to_string()),
+                            ("checked", &self.selected_count().to_string()),
+                        ],
                     );
                     ui.label(RichText::new(counts).small().color(hex(p.muted)));
                 }

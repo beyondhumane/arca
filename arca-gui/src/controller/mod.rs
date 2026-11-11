@@ -157,10 +157,14 @@ impl AppController {
             self.state.password_wrong = password.is_some();
             self.state.archive_password = None;
             self.state.waiting_on_password = Some(pending);
+            // The error itself is written for a log ("malformed archive: ...: wrong
+            // password"), in English whatever the window speaks.
             self.state.notice = if matches!(error, arca_core::Error::PasswordOrCorrupt) {
                 self.s().password_or_corrupt.to_string()
+            } else if password.is_some() {
+                self.s().password_wrong.to_string()
             } else {
-                error.to_string()
+                self.s().password_needed.to_string()
             };
             self.state.password_notice = Some(self.state.notice.clone());
         } else {
