@@ -123,6 +123,15 @@ fn background_events_are_blocked_by_modals_and_native_pickers() {
 }
 
 #[test]
+fn the_extraction_picker_opens_beside_the_archive() {
+    let folder = std::env::temp_dir().join("picker");
+    let archive = folder.join("a.zip");
+    assert_eq!(picker_start(Some(&archive)), Some(folder));
+    assert_eq!(picker_start(Some(Path::new("a.zip"))), None);
+    assert_eq!(picker_start(None), None);
+}
+
+#[test]
 fn clipboard_actions_require_capability_idle_archive_and_selection() {
     assert!(clipboard_action_allowed(true, true, true, 1, true));
     assert!(!clipboard_action_allowed(false, true, true, 1, true));
