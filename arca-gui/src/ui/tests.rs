@@ -34,6 +34,20 @@ fn dialogs_fit_compact_and_normal_viewports() {
 }
 
 #[test]
+fn the_side_buttons_of_the_mouse_go_back_and_forward() {
+    assert_eq!(
+        side_button(egui::PointerButton::Extra1),
+        Some(Shortcut::Back)
+    );
+    assert_eq!(
+        side_button(egui::PointerButton::Extra2),
+        Some(Shortcut::Forward)
+    );
+    assert_eq!(side_button(egui::PointerButton::Primary), None);
+    assert_eq!(side_button(egui::PointerButton::Middle), None);
+}
+
+#[test]
 fn breadcrumbs_keep_root_and_nearest_folders() {
     assert_eq!(breadcrumb_indices(4, 1000.), ((0..4).collect(), Vec::new()));
     assert_eq!(breadcrumb_indices(6, 1000.), (vec![0, 2, 3, 4, 5], vec![1]));
