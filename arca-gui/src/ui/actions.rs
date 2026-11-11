@@ -134,7 +134,7 @@ impl RowAction {
             RowAction::Duplicate => (s.duplicate_word, "ctrl-d"),
             RowAction::MoveTo => (s.move_to, ""),
             RowAction::CopyTo => (s.copy_to, ""),
-            RowAction::Properties => (s.properties_word, ""),
+            RowAction::Properties => (s.properties_word, "alt-enter"),
             RowAction::Trash => (s.trash_word, "delete"),
             RowAction::OpenInPane => (s.open_in_pane, ""),
             RowAction::ExtractSelection => (s.extract_selected, ""),
@@ -148,7 +148,7 @@ impl RowAction {
             RowAction::Paste => (s.paste_word, "ctrl-v"),
             RowAction::CopyNames => (s.copy_names, "ctrl-shift-c"),
             RowAction::SelectAll => (s.select_all, "ctrl-a"),
-            RowAction::NewFolder => (s.new_folder, ""),
+            RowAction::NewFolder => (s.new_folder, "ctrl-shift-n"),
             RowAction::Compress => (s.compress_selection, "ctrl-n"),
             RowAction::CopyPath => (s.copy_path, ""),
             RowAction::Pin => (s.pin_word, ""),
@@ -437,6 +437,11 @@ pub(crate) enum Shortcut {
     Search,
     /// A mask that picks names, or one that drops them.
     PickGroup(bool),
+    Properties,
+    NewFolder,
+    Up,
+    CloseWindow,
+    TogglePreview,
 }
 
 /// Reading a key press, with no state and no side effects, so the table of
@@ -451,8 +456,14 @@ pub(crate) fn shortcut_for(
     key: &str,
     typing: bool,
 ) -> Option<Shortcut> {
+    // The ones the Explorer has taught everybody (Ctrl+Shift+N, Alt+Enter,
+    // Alt+Up, Alt+D, F4, Ctrl+W, Alt+P) mean here what they mean there.
     if secondary && shift {
-        return (key == "c").then_some(Shortcut::CopyNames);
+        return match key {
+            "c" => Some(Shortcut::CopyNames),
+            "n" => Some(Shortcut::NewFolder),
+            _ => None,
+        };
     }
     if secondary {
         return match key {
@@ -463,6 +474,7 @@ pub(crate) fn shortcut_for(
             "l" => Some(Shortcut::EditPath),
             "k" => Some(Shortcut::Search),
             "i" => Some(Shortcut::Invert),
+            "w" => Some(Shortcut::CloseWindow),
             "z" if !typing => Some(Shortcut::Undo),
             _ => None,
         };
@@ -470,6 +482,10 @@ pub(crate) fn shortcut_for(
     if alt {
         return match key {
             "w" => Some(Shortcut::ExtractHere),
+            "d" => Some(Shortcut::EditPath),
+            "p" => Some(Shortcut::TogglePreview),
+            "enter" if !typing => Some(Shortcut::Properties),
+            "up" | "arrowup" if !typing => Some(Shortcut::Up),
             "left" | "arrowleft" if !typing => Some(Shortcut::Back),
             "right" | "arrowright" if !typing => Some(Shortcut::Forward),
             _ => None,
@@ -482,6 +498,7 @@ pub(crate) fn shortcut_for(
         "f1" => Some(Shortcut::Shortcuts),
         "f2" => Some(Shortcut::Rename),
         "f3" => Some(Shortcut::View),
+        "f4" => Some(Shortcut::EditPath),
         "f5" => Some(Shortcut::Refresh),
         "escape" => Some(Shortcut::ClearSelection),
         // The keypad plus and minus, where WinRAR has kept picking a group by

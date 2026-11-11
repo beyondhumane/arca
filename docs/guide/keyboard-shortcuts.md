@@ -13,7 +13,7 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | --- | --- |
 | <kbd>Up</kbd> <kbd>Down</kbd> <kbd>PageUp</kbd> <kbd>PageDown</kbd> <kbd>Home</kbd> <kbd>End</kbd> | Move the cursor |
 | <kbd>Right</kbd> | Enter the cursor folder |
-| <kbd>Left</kbd> <kbd>Backspace</kbd> | Go to the parent folder |
+| <kbd>Left</kbd> <kbd>Backspace</kbd> <kbd>Alt+Up</kbd> | Go to the parent folder |
 | <kbd>Enter</kbd> | Enter a folder or explicitly open a file with its system application |
 | <kbd>Space</kbd> | Toggle the cursor row's selection |
 | <kbd>Shift+Up</kbd> <kbd>Shift+Down</kbd> | Extend the selection |
@@ -24,6 +24,7 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd> | File copy, cut, paste (Windows integration) |
 | <kbd>Ctrl+Shift+C</kbd> | Copy selected names as text |
 | <kbd>Ctrl+F</kbd> | Show and focus the active pane's filter |
+| <kbd>Ctrl+L</kbd> <kbd>Alt+D</kbd> <kbd>F4</kbd> | Type a path in the path bar |
 | <kbd>F2</kbd> | Rename the selected entry in a writable ZIP |
 | <kbd>F3</kbd> | Enable integrated preview for the cursor file |
 | <kbd>Ctrl+T</kbd> | Test the archive |
@@ -32,6 +33,10 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>Delete</kbd> | Confirm deletion of selected entries in a writable ZIP |
 | <kbd>Ctrl+Z</kbd> | Undo the last supported archive modification |
 | <kbd>Alt+W</kbd> | Extract here |
+| <kbd>Ctrl+Shift+N</kbd> | New folder |
+| <kbd>Alt+Enter</kbd> | Properties of the cursor row, or of the folder when there is none |
+| <kbd>Alt+P</kbd> | Show or hide the preview panel |
+| <kbd>Ctrl+W</kbd> | Close the window |
 | <kbd>+</kbd> <kbd>-</kbd> | Select or deselect by filename mask |
 | <kbd>Tab</kbd> <kbd>Shift+Tab</kbd> | Move between focusable controls and panes |
 | <kbd>F1</kbd> | Shortcut help |
