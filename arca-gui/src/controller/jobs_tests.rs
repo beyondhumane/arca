@@ -152,6 +152,74 @@ fn dragging_out_of_an_archive_carries_the_dragged_rows_not_the_selection() {
 }
 
 #[test]
+fn a_drop_is_followed_until_the_shell_says_it_is_over() {
+    use std::sync::atomic::AtomicBool;
+    let (pulled, taken) = channel();
+    for event in [
+        Pulled::Taking(0),
+        Pulled::Took(0, true),
+        Pulled::Taking(0),
+        Pulled::Took(0, true),
+        Pulled::Taking(1),
+        Pulled::Took(1, true),
+        Pulled::Ended(true),
+    ] {
+        pulled.send(event).unwrap();
+    }
+    let mut seen = Vec::new();
+    let outcome = follow_drop(&taken, &[10, 5], &AtomicBool::new(false), |done, i| {
+        seen.push((done, i));
+        true
+    });
+    assert_eq!(outcome, Dropped::Taken(15));
+    assert_eq!(seen.last(), Some(&(15, Some(1))));
+}
+
+#[test]
+fn a_drop_counts_what_failed() {
+    use std::sync::atomic::AtomicBool;
+    let (pulled, taken) = channel();
+    pulled.send(Pulled::Took(0, false)).unwrap();
+    pulled.send(Pulled::Took(1, true)).unwrap();
+    pulled.send(Pulled::Ended(true)).unwrap();
+    let outcome = follow_drop(&taken, &[1, 2, 3], &AtomicBool::new(false), |_, _| true);
+    assert_eq!(outcome, Dropped::Failed(1));
+}
+
+#[test]
+fn entries_the_shell_skipped_do_not_make_a_drop_fail() {
+    use std::sync::atomic::AtomicBool;
+    let (pulled, taken) = channel();
+    pulled.send(Pulled::Took(1, true)).unwrap();
+    pulled.send(Pulled::Ended(true)).unwrap();
+    let outcome = follow_drop(&taken, &[1, 2, 3], &AtomicBool::new(false), |_, _| true);
+    assert_eq!(outcome, Dropped::Taken(2));
+}
+
+#[test]
+fn a_drop_the_shell_gave_up_on_is_not_a_success() {
+    use std::sync::atomic::AtomicBool;
+    let (pulled, taken) = channel();
+    pulled.send(Pulled::Took(0, true)).unwrap();
+    pulled.send(Pulled::Ended(false)).unwrap();
+    let outcome = follow_drop(&taken, &[1, 2], &AtomicBool::new(false), |_, _| true);
+    assert_eq!(outcome, Dropped::Abandoned);
+    let (pulled, taken) = channel();
+    pulled.send(Pulled::Took(0, true)).unwrap();
+    drop(pulled);
+    let outcome = follow_drop(&taken, &[1, 2], &AtomicBool::new(false), |_, _| true);
+    assert_eq!(outcome, Dropped::Abandoned);
+}
+
+#[test]
+fn a_stopped_drop_is_not_waited_on() {
+    use std::sync::atomic::AtomicBool;
+    let (_pulled, taken) = channel::<Pulled>();
+    let outcome = follow_drop(&taken, &[1], &AtomicBool::new(true), |_, _| true);
+    assert_eq!(outcome, Dropped::Abandoned);
+}
+
+#[test]
 fn stopping_one_row_leaves_the_other_alone() {
     let mut app = AppController::new(Settings::default());
     let (a, release_a, started_a) = gate();
@@ -396,74 +464,6 @@ fn only_the_copy_that_staged_a_cut_can_arm_it() {
         app.state.cut_pending.as_ref().map(|c| c.names.clone()),
         Some(vec!["a.txt".to_string()])
     );
-}
-
-#[test]
-fn a_drop_is_followed_until_the_shell_says_it_is_over() {
-    use std::sync::atomic::AtomicBool;
-    let (pulled, taken) = channel();
-    for event in [
-        Pulled::Taking(0),
-        Pulled::Took(0, true),
-        Pulled::Taking(0),
-        Pulled::Took(0, true),
-        Pulled::Taking(1),
-        Pulled::Took(1, true),
-        Pulled::Ended(true),
-    ] {
-        pulled.send(event).unwrap();
-    }
-    let mut seen = Vec::new();
-    let outcome = follow_drop(&taken, &[10, 5], &AtomicBool::new(false), |done, i| {
-        seen.push((done, i));
-        true
-    });
-    assert_eq!(outcome, Dropped::Taken(15));
-    assert_eq!(seen.last(), Some(&(15, Some(1))));
-}
-
-#[test]
-fn a_drop_counts_what_failed() {
-    use std::sync::atomic::AtomicBool;
-    let (pulled, taken) = channel();
-    pulled.send(Pulled::Took(0, false)).unwrap();
-    pulled.send(Pulled::Took(1, true)).unwrap();
-    pulled.send(Pulled::Ended(true)).unwrap();
-    let outcome = follow_drop(&taken, &[1, 2, 3], &AtomicBool::new(false), |_, _| true);
-    assert_eq!(outcome, Dropped::Failed(1));
-}
-
-#[test]
-fn entries_the_shell_skipped_do_not_make_a_drop_fail() {
-    use std::sync::atomic::AtomicBool;
-    let (pulled, taken) = channel();
-    pulled.send(Pulled::Took(1, true)).unwrap();
-    pulled.send(Pulled::Ended(true)).unwrap();
-    let outcome = follow_drop(&taken, &[1, 2, 3], &AtomicBool::new(false), |_, _| true);
-    assert_eq!(outcome, Dropped::Taken(2));
-}
-
-#[test]
-fn a_drop_the_shell_gave_up_on_is_not_a_success() {
-    use std::sync::atomic::AtomicBool;
-    let (pulled, taken) = channel();
-    pulled.send(Pulled::Took(0, true)).unwrap();
-    pulled.send(Pulled::Ended(false)).unwrap();
-    let outcome = follow_drop(&taken, &[1, 2], &AtomicBool::new(false), |_, _| true);
-    assert_eq!(outcome, Dropped::Abandoned);
-    let (pulled, taken) = channel();
-    pulled.send(Pulled::Took(0, true)).unwrap();
-    drop(pulled);
-    let outcome = follow_drop(&taken, &[1, 2], &AtomicBool::new(false), |_, _| true);
-    assert_eq!(outcome, Dropped::Abandoned);
-}
-
-#[test]
-fn a_stopped_drop_is_not_waited_on() {
-    use std::sync::atomic::AtomicBool;
-    let (_pulled, taken) = channel::<Pulled>();
-    let outcome = follow_drop(&taken, &[1], &AtomicBool::new(true), |_, _| true);
-    assert_eq!(outcome, Dropped::Abandoned);
 }
 
 #[test]
