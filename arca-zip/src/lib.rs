@@ -285,6 +285,25 @@ pub fn copy_compressed<R: Read + Seek, W: Write + ?Sized>(
     Ok(n)
 }
 
+/// The DOS date and time in an entry's local header, as `(date, time)`, for
+/// `ZipWriter::copy_entry`.
+pub fn dos_stamp<R: Read + Seek>(source: &mut R, e: &Entry) -> Result<(u16, u16)> {
+    source.seek(SeekFrom::Start(e.offset))?;
+    let mut lfh = [0u8; LFH_FIXED];
+    source.read_exact(&mut lfh)?;
+    let mut c = Cursor::new(&lfh);
+    if c.u32le("local header signature")? != SIG_LFH {
+        return Err(Error::Format(format!(
+            "'{}': no local header at offset {}",
+            e.name, e.offset
+        )));
+    }
+    c.skip(6, "version, flags and method")?;
+    let time_val = c.u16le("time")?;
+    let date_val = c.u16le("date")?;
+    Ok((date_val, time_val))
+}
+
 // Reads the local header, checks it agrees with the central directory, and
 // hands back a reader stopped at the end of this entry's data.
 fn open_data<'a, R: Read + Seek>(
@@ -524,7 +543,7 @@ fn filetime_to_unix(ticks: u64) -> Option<i64> {
     Some((ticks / 10_000_000) as i64 - 11_644_473_600)
 }
 
-/// Reads the creation and access times out of an entry's extra fields.
+/// Reads the modification, creation and access times out of an entry's extra fields.
 ///
 /// Two spellings, because the two halves of the world that write zips do not
 /// agree. Windows writes 0x000A, a block of three Windows FILETIMEs; the unix
@@ -729,6 +748,7 @@ fn read_central_header(c: &mut Cursor<'_>) -> Result<Entry> {
         is_dir,
         mtime: times
             .modified
+            .filter(|t| *t > 0)
             .or_else(|| arca_core::dos_to_unix(date_val, time_val)),
         created: times.created,
         accessed: times.accessed,
@@ -907,6 +927,9 @@ impl<W: Write + Seek> ZipWriter<W> {
     // through, with whatever encryption is asked for now rather than whatever it
     // had before. `body` is handed the sink and streams into it; nothing is held
     // in memory, so a password can be taken off a large archive without it.
+    // `stamp` is the DOS date and time the entry had, from `dos_stamp`, kept
+    // as written: rebuilding them from the entry's time would move every
+    // entry whose exact time came from an extra field by the writer's zone.
     #[allow(clippy::too_many_arguments)]
     pub fn copy_entry<F>(
         &mut self,
@@ -914,14 +937,14 @@ impl<W: Write + Seek> ZipWriter<W> {
         crc_val: u32,
         uncompressed: u64,
         method_code: Method,
-        mtime: Option<i64>,
+        stamp: (u16, u16),
         password: Option<&str>,
         body: F,
     ) -> Result<()>
     where
         F: FnOnce(&mut dyn Write) -> Result<u64>,
     {
-        let (date_val, time_val) = arca_core::unix_to_dos(mtime.unwrap_or(0));
+        let (date_val, time_val) = stamp;
         let name_bytes = check_name(name_str)?;
         let offset = self.pos;
         let zip_code = method_code.code()?;
@@ -1546,7 +1569,8 @@ fn rewrite(
                 .ok_or_else(|| Error::Format("missing ZIP checksum".into()))?
         };
         let mut src = BufReader::with_capacity(STREAM_BUF, File::open(archive)?);
-        w.copy_entry(&name(e), crc, e.size, e.method, e.mtime, pw, |sink| {
+        let stamp = dos_stamp(&mut src, e)?;
+        w.copy_entry(&name(e), crc, e.size, e.method, stamp, pw, |sink| {
             copy_compressed(&mut src, e, sink, current)
         })?;
         bytes += e.size;
@@ -2109,7 +2133,8 @@ mod tests {
                 e.crc32.unwrap()
             };
             let mut src = IoCursor::new(buf.to_vec());
-            w.copy_entry(&e.name, crc, e.size, e.method, e.mtime, new, |sink| {
+            let stamp = dos_stamp(&mut src, e).unwrap();
+            w.copy_entry(&e.name, crc, e.size, e.method, stamp, new, |sink| {
                 copy_compressed(&mut src, e, sink, current)
             })
             .unwrap();
@@ -2139,12 +2164,13 @@ mod tests {
         let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
         for e in &entries {
             let mut src = IoCursor::new(buf.to_vec());
+            let stamp = dos_stamp(&mut src, e).unwrap();
             w.copy_entry(
                 &e.name,
                 e.crc32.unwrap(),
                 e.size,
                 e.method,
-                e.mtime,
+                stamp,
                 None,
                 |sink| copy_compressed(&mut src, e, sink, None),
             )
@@ -2185,6 +2211,62 @@ mod tests {
             let which: usize = name[1..2].parse().unwrap();
             assert_eq!(out, bodies[which], "{name}");
         }
+    }
+
+    // An entry whose exact time came from an extra field keeps the DOS date
+    // and time it was written with when the archive is rewritten around it,
+    // whatever its time says; the DOS fields are wall-clock time in the zone
+    // of whoever wrote them, which the reader does not know.
+    #[test]
+    fn a_rewrite_keeps_the_dos_time_of_every_entry_it_copies() {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        w.add("a.txt", &b"aaaa"[..], Codec::Store, Level::NORMAL, None)
+            .unwrap();
+        let buf = w.finish().unwrap().into_inner();
+        let mut entries = ZipArchive::open(IoCursor::new(buf.clone()))
+            .unwrap()
+            .entries()
+            .to_vec();
+        let before = dos_stamp(&mut IoCursor::new(buf.clone()), &entries[0]).unwrap();
+        entries[0].mtime = entries[0].mtime.map(|t| t + 7200);
+
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        let e = &entries[0];
+        let mut src = IoCursor::new(buf.clone());
+        let stamp = dos_stamp(&mut src, e).unwrap();
+        w.copy_entry(
+            &e.name,
+            e.crc32.unwrap(),
+            e.size,
+            e.method,
+            stamp,
+            None,
+            |sink| copy_compressed(&mut src, e, sink, None),
+        )
+        .unwrap();
+        let out = w.finish().unwrap().into_inner();
+        let copied = ZipArchive::open(IoCursor::new(out.clone()))
+            .unwrap()
+            .entries()[0]
+            .clone();
+        assert_eq!(dos_stamp(&mut IoCursor::new(out), &copied).unwrap(), before);
+    }
+
+    #[test]
+    fn a_dos_stamp_past_the_end_of_the_archive_is_an_error() {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        w.add("a.txt", &b"aaaa"[..], Codec::Store, Level::NORMAL, None)
+            .unwrap();
+        let buf = w.finish().unwrap().into_inner();
+        let mut e = ZipArchive::open(IoCursor::new(buf.clone()))
+            .unwrap()
+            .entries()[0]
+            .clone();
+        assert!(dos_stamp(&mut IoCursor::new(buf[..20].to_vec()), &e).is_err());
+        e.offset = 5;
+        assert!(dos_stamp(&mut IoCursor::new(buf.clone()), &e).is_err());
+        e.offset = u64::MAX - 4;
+        assert!(dos_stamp(&mut IoCursor::new(buf), &e).is_err());
     }
 
     #[test]
