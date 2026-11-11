@@ -184,8 +184,22 @@ mod linux {
         (files, cut)
     }
 
+    /// Asked by menus on every frame they are open, and each answer is a
+    /// round trip to the display server, so one answer stands for a moment.
     pub fn has_files() -> bool {
-        !files().is_empty()
+        use std::time::{Duration, Instant};
+        static LAST: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+        let Ok(mut last) = LAST.lock() else {
+            return !files().is_empty();
+        };
+        match *last {
+            Some((when, answer)) if when.elapsed() < Duration::from_millis(500) => answer,
+            _ => {
+                let answer = !files().is_empty();
+                *last = Some((Instant::now(), answer));
+                answer
+            }
+        }
     }
 
     pub fn sequence() -> Option<u32> {
