@@ -711,6 +711,7 @@ fn extract(
                         let mut f = BufWriter::with_capacity(BUF, File::create(path)?);
                         let w = arca_zip::extract_entry_with(&mut source, e, &mut f, password)?;
                         f.flush()?;
+                        arca_core::extraction::set_mtime(f.get_ref(), e.mtime);
                         Ok(w)
                     })
                     .collect::<Result<Vec<u64>>>()
@@ -723,7 +724,7 @@ fn extract(
             let name = arca_xz::output_name(archive);
             let written =
                 Destination::new(dest)
-                    .write_entry(&name, false, &mut source, &mut |_| conflict(policy))?;
+                    .write_entry(&name, false, None, &mut source, &mut |_| conflict(policy))?;
             if let Some(w) = written {
                 bytes = w;
                 n = 1;
@@ -737,9 +738,13 @@ fn extract(
             let mut destination = Destination::new(dest);
             while let Some(e) = r.next_entry()? {
                 let written = r.with_data(&e, |data| {
-                    destination.write_entry(&e.entry.name, e.entry.is_dir, data, &mut |_| {
-                        conflict(policy)
-                    })
+                    destination.write_entry(
+                        &e.entry.name,
+                        e.entry.is_dir,
+                        e.entry.mtime,
+                        data,
+                        &mut |_| conflict(policy),
+                    )
                 })?;
                 if let (Some(w), false) = (written, e.entry.is_dir) {
                     bytes += w;

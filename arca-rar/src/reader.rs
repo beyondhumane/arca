@@ -465,6 +465,7 @@ pub(super) fn extract(
         let mut output = tempfile::NamedTempFile::new_in(parent)?;
         let mut input = File::open(staging.path().join(i.to_string()))?;
         bytes += io::copy(&mut input, &mut output)?;
+        arca_core::extraction::set_mtime(output.as_file(), entry.mtime);
         output.as_file().sync_all()?;
         reject_links(&target)?;
         if overwrite {

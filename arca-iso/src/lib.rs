@@ -136,15 +136,18 @@ impl IsoArchive {
                 carry_on: &carry_on,
                 failure: None,
             };
-            let result =
-                destination.write_entry(&entry.name, entry.is_dir, &mut reader, &mut |path| {
-                    match conflict(path) {
-                        Conflict::Overwrite => extraction::Conflict::Overwrite,
-                        Conflict::Skip => extraction::Conflict::Skip,
-                        Conflict::Rename => extraction::Conflict::Rename,
-                        Conflict::Cancel => extraction::Conflict::Cancel,
-                    }
-                });
+            let result = destination.write_entry(
+                &entry.name,
+                entry.is_dir,
+                entry.mtime,
+                &mut reader,
+                &mut |path| match conflict(path) {
+                    Conflict::Overwrite => extraction::Conflict::Overwrite,
+                    Conflict::Skip => extraction::Conflict::Skip,
+                    Conflict::Rename => extraction::Conflict::Rename,
+                    Conflict::Cancel => extraction::Conflict::Cancel,
+                },
+            );
             match result {
                 Ok(bytes) => written += bytes.unwrap_or(0),
                 Err(e) => return Err(reader.failure.take().unwrap_or(e)),
