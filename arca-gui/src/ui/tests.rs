@@ -162,6 +162,34 @@ fn the_row_menu_only_offers_the_clipboard_where_there_is_one() {
 }
 
 #[test]
+fn a_paste_on_disk_moves_copies_or_duplicates_like_the_explorer() {
+    let roots = vec!["C:/a/one.txt".to_string(), "C:/b/two/".to_string()];
+    assert_eq!(
+        paste_plan(&roots, true, "C:/b/"),
+        PastePlan {
+            moved: vec!["C:/a/one.txt".into()],
+            ..PastePlan::default()
+        }
+    );
+    assert_eq!(
+        paste_plan(&roots, false, "C:/b/"),
+        PastePlan {
+            copied: vec!["C:/a/one.txt".into()],
+            duplicated: vec!["C:/b/two".into()],
+            ..PastePlan::default()
+        }
+    );
+    assert_eq!(
+        paste_plan(&roots, false, "c:/A/").duplicated,
+        vec!["C:/a/one.txt".to_string()]
+    );
+    let faded = cut_rows(&roots);
+    for row in ["C:/a/one.txt", "C:/b/two/", "C:/b/two"] {
+        assert!(faded.contains(row), "{row}");
+    }
+}
+
+#[test]
 fn the_menu_under_the_last_row_asks_for_nothing_that_needs_a_row() {
     // It is built with an index past the end, so an entry that reads the
     // row would do nothing at best, and act on a stale one at worst.

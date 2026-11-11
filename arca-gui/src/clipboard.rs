@@ -54,16 +54,55 @@ pub fn set_files(paths: &[PathBuf], cut: bool) -> Result<(), String> {
 /// The files the clipboard is carrying right now, if it is carrying any.
 #[cfg(windows)]
 pub fn files() -> Vec<PathBuf> {
-    use clipboard_win::{formats, Clipboard, Getter};
+    taken().0
+}
 
+/// The files on the clipboard, and whether whoever put them there cut them.
+///
+/// The Explorer says which in "Preferred DropEffect": a cut is a move, and
+/// pasting it has to take the files away from where they were.
+#[cfg(windows)]
+pub fn taken() -> (Vec<PathBuf>, bool) {
+    use clipboard_win::{formats, raw, Clipboard, Getter};
+
+    const MOVE: u32 = 2;
     let Ok(_clip) = Clipboard::new_attempts(10) else {
-        return Vec::new();
+        return (Vec::new(), false);
     };
     let mut out: Vec<String> = Vec::new();
     if formats::FileList.read_clipboard(&mut out).is_err() {
-        return Vec::new();
+        return (Vec::new(), false);
     }
-    out.into_iter().map(PathBuf::from).collect()
+    let mut effect = Vec::new();
+    let cut = raw::register_format("Preferred DropEffect")
+        .and_then(|fmt| raw::get_vec(fmt.get(), &mut effect).ok())
+        .and_then(|_| effect.get(..4))
+        .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        .is_some_and(|effect| effect & MOVE != 0);
+    (out.into_iter().map(PathBuf::from).collect(), cut)
+}
+
+/// Whether there are files to paste, asked without opening the clipboard, so
+/// a menu can ask it every time it is drawn.
+#[cfg(windows)]
+pub fn has_files() -> bool {
+    clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_HDROP)
+}
+
+/// A number that changes every time anything is put on the clipboard, by this
+/// program or any other.
+#[cfg(windows)]
+pub fn sequence() -> Option<u32> {
+    clipboard_win::raw::seq_num().map(|n| n.get())
+}
+
+/// Empties the clipboard, the way the Explorer does once a cut has been pasted:
+/// the files have moved, and the paths it held lead nowhere.
+#[cfg(windows)]
+pub fn clear() {
+    if let Ok(_clip) = clipboard_win::Clipboard::new_attempts(10) {
+        let _ = clipboard_win::raw::empty();
+    }
 }
 
 #[cfg(not(windows))]
@@ -75,3 +114,21 @@ pub fn set_files(_paths: &[PathBuf], _cut: bool) -> Result<(), String> {
 pub fn files() -> Vec<PathBuf> {
     Vec::new()
 }
+
+#[cfg(not(windows))]
+pub fn taken() -> (Vec<PathBuf>, bool) {
+    (Vec::new(), false)
+}
+
+#[cfg(not(windows))]
+pub fn has_files() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn sequence() -> Option<u32> {
+    None
+}
+
+#[cfg(not(windows))]
+pub fn clear() {}

@@ -207,6 +207,10 @@ pub(crate) struct Shell {
     device_format: Option<(Volume, usize, String)>,
     // What was cut or copied on the disk, as roots, and whether it was cut.
     disk_clip: Option<(Vec<String>, bool)>,
+    // The clipboard's sequence number right after a cut on the disk put its
+    // files there. Once it moves, something else owns the clipboard and the
+    // cut rows stop looking cut, as they do in the Explorer.
+    clip_seq: Option<u32>,
     // The roots to move into the folder being named, for "New folder with
     // selection".
     new_folder_with: Option<Vec<String>>,
@@ -290,6 +294,7 @@ impl Shell {
             device_label: None,
             device_format: None,
             disk_clip: None,
+            clip_seq: None,
             new_folder_with: None,
             name_value: String::new(),
             focus_name: false,
@@ -348,6 +353,11 @@ impl Shell {
         }
         if self.controller.state.cut_pending.is_some() {
             self.controller.cut_landed();
+        }
+        if self.clip_seq.is_some()
+            && (!self.controller.on_disk() || clipboard::sequence() != self.clip_seq)
+        {
+            self.forget_disk_cut();
         }
         self.notice_new_tasks();
         let state = &self.controller.state;
@@ -762,7 +772,12 @@ impl Shell {
 
     fn can_paste_files(&self) -> bool {
         if self.controller.on_disk() {
-            return self.background_idle() && self.disk_clip.is_some();
+            let something = if clipboard::AVAILABLE {
+                clipboard::has_files()
+            } else {
+                self.disk_clip.is_some()
+            };
+            return self.background_idle() && something;
         }
         clipboard_action_allowed(
             clipboard::AVAILABLE,
@@ -1221,9 +1236,22 @@ impl Shell {
         }
         if self.controller.on_disk() {
             let roots = self.controller.selected_roots();
-            if !roots.is_empty() {
-                self.disk_clip = Some((roots, cut));
+            if roots.is_empty() {
+                return;
             }
+            if clipboard::AVAILABLE {
+                let paths: Vec<PathBuf> = roots.iter().map(|root| disk_path(root)).collect();
+                if let Err(error) = clipboard::set_files(&paths, cut) {
+                    self.controller.set_notice(error, true);
+                    return;
+                }
+            }
+            self.forget_disk_cut();
+            if cut {
+                self.controller.state.cut_names = cut_rows(&roots);
+                self.clip_seq = clipboard::sequence();
+            }
+            self.disk_clip = Some((roots, cut));
             return;
         }
         if self.controller.state.archive.is_none() || self.selected_count() == 0 {
@@ -1246,20 +1274,61 @@ impl Shell {
         self.controller.dispatch(AppAction::Copy { cut });
     }
 
+    // A cut on the disk is over once it has been pasted, or once something
+    // else has taken the clipboard: the rows stop looking cut either way.
+    fn forget_disk_cut(&mut self) {
+        let was_cut = self.clip_seq.take().is_some() || matches!(self.disk_clip, Some((_, true)));
+        if was_cut {
+            if self.controller.on_disk() {
+                self.controller.state.cut_names.clear();
+            }
+            self.disk_clip = None;
+        }
+    }
+
     fn dispatch_paste(&mut self) {
         if self.typing() || !self.background_idle() {
             return;
         }
         if self.controller.on_disk() {
-            let Some((roots, cut)) = self.disk_clip.clone() else {
-                return;
-            };
-            let target = self.controller.state.active_pane().directory.clone();
-            if cut {
-                self.controller.move_on_disk(&roots, &target);
-                self.disk_clip = None;
+            // On Windows the system clipboard is the one that counts, so that
+            // files copied in the Explorer paste here and the other way round.
+            let (roots, cut) = if clipboard::AVAILABLE {
+                let (files, cut) = clipboard::taken();
+                let roots: Vec<String> = files
+                    .iter()
+                    .map(|path| {
+                        crate::controller::disk::disk_dir(path)
+                            .trim_end_matches('/')
+                            .to_string()
+                    })
+                    .collect();
+                (roots, cut)
             } else {
-                self.controller.copy_on_disk(&roots, &target);
+                let Some(clip) = self.disk_clip.clone() else {
+                    return;
+                };
+                clip
+            };
+            if roots.is_empty() {
+                self.controller
+                    .set_notice(self.controller.s().clipboard_empty, true);
+                return;
+            }
+            let target = self.controller.state.active_pane().directory.clone();
+            let plan = paste_plan(&roots, cut, &target);
+            if !plan.moved.is_empty() {
+                self.controller.move_on_disk(&plan.moved, &target);
+            }
+            if !plan.copied.is_empty() {
+                self.controller.copy_on_disk(&plan.copied, &target);
+            }
+            if !plan.duplicated.is_empty() {
+                self.controller.duplicate_on_disk(&plan.duplicated);
+            }
+            if cut {
+                self.forget_disk_cut();
+                clipboard::clear();
             }
             return;
         }
@@ -1825,6 +1894,44 @@ impl eframe::App for Shell {
         self.dialogs(&ctx);
         self.window_chrome(&ctx);
     }
+}
+
+/// The row paths a cut fades: a root as picked, and the same with the slash a
+/// folder's row carries.
+fn cut_rows(roots: &[String]) -> std::collections::HashSet<String> {
+    roots
+        .iter()
+        .flat_map(|root| {
+            let bare = root.trim_end_matches('/').to_string();
+            [format!("{bare}/"), bare]
+        })
+        .collect()
+}
+
+/// What a paste into `target` does with each root on the clipboard.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PastePlan {
+    moved: Vec<String>,
+    copied: Vec<String>,
+    // Copied into the folder they are already in: a second one beside the
+    // first, the way the Explorer does it, rather than nothing at all.
+    duplicated: Vec<String>,
+}
+
+fn paste_plan(roots: &[String], cut: bool, target: &str) -> PastePlan {
+    let mut plan = PastePlan::default();
+    for root in roots {
+        let bare = root.trim_end_matches('/');
+        let parent = bare.rfind('/').map_or("", |at| &bare[..=at]);
+        let here = parent.eq_ignore_ascii_case(target);
+        match (cut, here) {
+            (true, true) => {}
+            (true, false) => plan.moved.push(bare.to_string()),
+            (false, true) => plan.duplicated.push(bare.to_string()),
+            (false, false) => plan.copied.push(bare.to_string()),
+        }
+    }
+    plan
 }
 
 /// Which way the window would grow from a pointer at `pos`, if `pos` is on
