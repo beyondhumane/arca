@@ -1555,7 +1555,11 @@ impl Shell {
                         self.dispatch_paste();
                     }
                 }
-                egui::Event::Text(text) if !self.typing() && !self.background_blocked() => {
+                egui::Event::Text(text)
+                    if !self.typing()
+                        && !self.background_blocked()
+                        && !ctx.input(|input| input.modifiers.alt && !input.modifiers.ctrl) =>
+                {
                     self.jump_to(&text)
                 }
                 _ => {}
@@ -1737,12 +1741,33 @@ impl Shell {
         if !self.background_idle()
             && !matches!(
                 shortcut,
-                Shortcut::Shortcuts | Shortcut::Back | Shortcut::Forward | Shortcut::View
+                Shortcut::Shortcuts
+                    | Shortcut::Back
+                    | Shortcut::Forward
+                    | Shortcut::View
+                    | Shortcut::CloseWindow
+                    | Shortcut::TogglePreview
             )
         {
             return;
         }
         match shortcut {
+            Shortcut::Properties => {
+                let at = self.controller.state.active_pane().cursor;
+                self.row_action(RowAction::Properties, at.unwrap_or(usize::MAX));
+            }
+            Shortcut::NewFolder => self.row_action(RowAction::NewFolder, usize::MAX),
+            Shortcut::Up => {
+                if self.controller.can_go_up() {
+                    self.controller.dispatch(AppAction::Up);
+                }
+            }
+            Shortcut::CloseWindow => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Shortcut::TogglePreview => {
+                self.controller.update_settings(|settings| {
+                    settings.preview_visible = !settings.preview_visible
+                });
+            }
             Shortcut::Back => self.controller.dispatch(AppAction::Back),
             Shortcut::Forward => self.controller.dispatch(AppAction::Forward),
             Shortcut::EditPath => self.start_path_edit(),

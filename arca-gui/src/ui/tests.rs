@@ -380,6 +380,36 @@ fn history_shortcuts_yield_to_text_editing() {
 }
 
 #[test]
+fn the_explorer_shortcuts_mean_what_they_mean_there() {
+    let cases = [
+        (true, true, false, "n", Shortcut::NewFolder),
+        (true, false, false, "w", Shortcut::CloseWindow),
+        (false, false, true, "enter", Shortcut::Properties),
+        (false, false, true, "up", Shortcut::Up),
+        (false, false, true, "d", Shortcut::EditPath),
+        (false, false, true, "p", Shortcut::TogglePreview),
+        (false, false, false, "f4", Shortcut::EditPath),
+    ];
+    for (ctrl, shift, alt, key, action) in cases {
+        assert_eq!(
+            shortcut_for(ctrl, shift, alt, key, false),
+            Some(action),
+            "{key}"
+        );
+    }
+    // Ctrl+N stays Compress; only with Shift is it a folder.
+    assert_eq!(
+        shortcut_for(true, false, false, "n", false),
+        Some(Shortcut::Compress)
+    );
+    // Keys that would move a caret or open something while a name is being
+    // typed are left to the text box.
+    for (alt, key) in [(true, "enter"), (true, "up"), (false, "f4")] {
+        assert_eq!(shortcut_for(false, false, alt, key, true), None, "{key}");
+    }
+}
+
+#[test]
 fn context_destinations_name_the_clicked_folder_or_containing_directory() {
     let mut row = crate::up_row("parent/child/");
     for action in [RowAction::Paste, RowAction::NewFolder] {
