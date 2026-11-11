@@ -376,6 +376,18 @@ pub(crate) fn extract_one(
     let room = fs::canonicalize(std::env::temp_dir())?
         .join("Arca")
         .join(archive_stem(archive));
+    extract_one_into(&room, archive, entry, password, notify)
+}
+
+/// Extracts one entry under `room`, keeping its path inside the archive, and
+/// gives back where it landed.
+pub(crate) fn extract_one_into(
+    room: &Path,
+    archive: &Path,
+    entry: &Entry,
+    password: Option<&str>,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+) -> arca_core::Result<PathBuf> {
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported("unknown format".into()));
     };
@@ -385,7 +397,7 @@ pub(crate) fn extract_one(
             let index = listed_index(entry, a.entries(), "RAR")?;
             let mut wanted = vec![false; a.entries().len()];
             wanted[index] = true;
-            a.extract(&room, &wanted, password, notify, &|_| {
+            a.extract(room, &wanted, password, notify, &|_| {
                 arca_rar::Conflict::Overwrite
             })?;
             Ok(room.join(arca_core::safe_name(&entry.name)?))
@@ -395,7 +407,7 @@ pub(crate) fn extract_one(
             let index = listed_index(entry, a.entries(), "ISO")?;
             let mut wanted = vec![false; a.entries().len()];
             wanted[index] = true;
-            a.extract(&room, &wanted, &|_, _, _| true, &|_| {
+            a.extract(room, &wanted, &|_, _, _| true, &|_| {
                 arca_iso::Conflict::Overwrite
             })?;
             Ok(room.join(arca_core::safe_name(&entry.name)?))
@@ -404,7 +416,7 @@ pub(crate) fn extract_one(
             let path = room.join(arca_core::safe_name(&entry.name)?);
             let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
             let index = listed_index(entry, a.entries(), "7z")?;
-            let mut destination = arca_core::extraction::Destination::new(&room);
+            let mut destination = arca_core::extraction::Destination::new(room);
             a.extract(
                 &[index],
                 &mut |_, e, reader| {
@@ -418,7 +430,7 @@ pub(crate) fn extract_one(
         Container::Xz => {
             let path = room.join(arca_core::safe_name(&entry.name)?);
             let mut source = Paced::new(arca_xz::open(archive)?, &entry.name, notify);
-            let result = arca_core::extraction::Destination::new(&room).write_entry(
+            let result = arca_core::extraction::Destination::new(room).write_entry(
                 &entry.name,
                 false,
                 &mut source,

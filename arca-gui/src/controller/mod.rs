@@ -62,6 +62,76 @@ fn rename_destination(path: &str, name: &str) -> String {
     }
 }
 
+/// What the shell does with a drag out of an archive once it is dropped:
+/// it asks for each entry by index, every answer is extracted first, and
+/// then it says the drop is over and whether it went through.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) enum Pulled {
+    Taking(usize),
+    Took(usize, bool),
+    Ended(bool),
+}
+
+/// How a drop out of an archive turned out.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Dropped {
+    /// The bytes of every entry the shell took. Entries it chose not to take,
+    /// such as files the user skipped instead of replacing, are not missing.
+    Taken(u64),
+    /// How many entries could not be extracted.
+    Failed(usize),
+    /// The shell gave up on the drop, as when its own progress window is
+    /// cancelled.
+    Abandoned,
+}
+
+/// Follows a drop as the shell takes the entries, reporting the bytes taken so
+/// far and the entry being taken, until the shell says the drop is over or
+/// `stop` is set. A shell that asks for an entry twice, as some do, counts it
+/// once.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn follow_drop(
+    taken: &std::sync::mpsc::Receiver<Pulled>,
+    sizes: &[u64],
+    stop: &std::sync::atomic::AtomicBool,
+    mut report: impl FnMut(u64, Option<usize>) -> bool,
+) -> Dropped {
+    use std::sync::mpsc::RecvTimeoutError;
+    let mut outcome = vec![None::<bool>; sizes.len()];
+    let mut done = 0;
+    let mut current = None;
+    let mut through = false;
+    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+        match taken.recv_timeout(std::time::Duration::from_millis(200)) {
+            Ok(Pulled::Taking(i)) => current = Some(i),
+            Ok(Pulled::Took(i, ok)) => {
+                if let Some(slot @ None) = outcome.get_mut(i) {
+                    *slot = Some(ok);
+                    done += sizes[i];
+                }
+            }
+            Ok(Pulled::Ended(ok)) => {
+                through = ok;
+                break;
+            }
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+        if !report(done, current) {
+            break;
+        }
+    }
+    let failed = outcome.iter().filter(|o| **o == Some(false)).count();
+    if failed > 0 {
+        Dropped::Failed(failed)
+    } else if through || outcome.iter().all(Option::is_some) {
+        Dropped::Taken(done)
+    } else {
+        Dropped::Abandoned
+    }
+}
+
 fn worker_notify<'a>(
     tx: &'a Sender<Message>,
     stop: &'a std::sync::atomic::AtomicBool,
@@ -1228,32 +1298,38 @@ impl AppController {
     // hands it to whatever the system opens it with. It runs on its own thread
     // because the entry can be large, and reports through the same progress
     // window as everything else.
+    //
+    // What is carried is the rows the drag picked up, not the selection: a row
+    // dragged without being ticked first is the whole of what is meant. Each
+    // file keeps its path from the folder its root sits in, so a dragged
+    // folder lands as that folder.
     #[cfg(windows)]
-    pub(crate) fn dragged_files(&self) -> Vec<(Entry, String)> {
-        let base = &self.state.active_pane().directory;
+    pub(crate) fn dragged_files(&self, roots: &[String]) -> Vec<(Entry, String)> {
         self.state
             .entries
             .iter()
-            .zip(&self.state.active_pane().checked)
-            .filter(|(e, &on)| on && !e.is_dir)
-            .map(|(e, _)| {
+            .filter(|e| !e.is_dir)
+            .filter_map(|e| {
                 let full = e.name.replace('\\', "/");
-                let rel = full.strip_prefix(base.as_str()).unwrap_or(&full);
-                (e.clone(), rel.replace('/', "\\"))
+                let rel = roots.iter().find_map(|root| {
+                    let root = root.trim_end_matches('/');
+                    let inside = full == root || full.starts_with(&format!("{root}/"));
+                    let parent = root.rfind('/').map_or(0, |at| at + 1);
+                    inside.then(|| full[parent..].to_string())
+                })?;
+                Some((e.clone(), rel.replace('/', "\\")))
             })
             .filter(|(_, rel)| !rel.is_empty())
             .collect()
     }
 
-    // Dragging the selection out of the window. Blocks until it has been
-    // dropped or abandoned, because that is what `DoDragDrop` does: the window
-    // stops repainting for as long as the drag lasts, which nobody sees because
-    // the pointer is somewhere else by then.
+    // Dragging rows out of the window. The window waits while the pointer is
+    // carrying them, as any drag source does, and is free again at the drop.
     //
     // Nothing is extracted here. The shell is handed a list of names and sizes
-    // and asks for one file at a time while it is dropping, so a drag that is
-    // thought better of costs nothing, and a drag of six gigabytes starts as
-    // fast as a drag of one file.
+    // and, after the drop, asks for one file at a time on a thread of its own
+    // behind its own progress window, so a drag that is thought better of costs
+    // nothing, and a drag of six gigabytes starts as fast as a drag of one file.
     pub(crate) fn go_to(&mut self, path: String) {
         self.navigate_panes(path);
         self.record_pane_history();
@@ -1303,33 +1379,23 @@ impl AppController {
             Codec::Zstd => s.codec_zstd,
         }
     }
-    // Dragging the selection out of the window. Blocks until it has been
-    // dropped or abandoned, because that is what `DoDragDrop` does: the window
-    // stops repainting for as long as the drag lasts, which nobody sees because
-    // the pointer is somewhere else by then.
-    //
-    // Nothing is extracted here. The shell is handed a list of names and sizes
-    // and asks for one file at a time while it is dropping, so a drag that is
-    // thought better of costs nothing, and a drag of six gigabytes starts as
-    // fast as a drag of one file.
+    /// Drags the selection out of the window. Nothing is extracted here: the
+    /// shell is handed names and sizes, and once the drop has happened it asks
+    /// for one entry at a time, which is extracted then, into a folder of this
+    /// drag's own that goes when the drop is over. The drop gets a row in
+    /// Operations like any other extraction.
     #[cfg(windows)]
-    pub(crate) fn drag_out(&mut self) {
+    pub(crate) fn drag_out(&mut self, roots: &[String]) {
         if self.on_disk() {
-            let picked = self.disk_drag_items();
-            if picked.is_empty() {
-                return;
-            }
-            let items: Vec<arca_drag::Item> = picked
-                .iter()
-                .map(|(_, name, size, mtime)| arca_drag::Item {
-                    name: name.clone(),
-                    size: *size,
-                    mtime: *mtime,
-                })
-                .collect();
-            let paths: Vec<PathBuf> = picked.into_iter().map(|(path, ..)| path).collect();
-            let deliver = Box::new(move |i: usize| paths.get(i).cloned());
-            let _ = arca_drag::drag(items, deliver, false);
+            // Files that already exist go as themselves, the way the Explorer
+            // drags them: nothing is walked or read here, and whoever takes the
+            // drop copies or moves them with its own progress. The folder is
+            // read again whatever the drag says it did: a move the shell carries
+            // out itself reports no effect at all, so that the source does not
+            // delete what has already gone.
+            let paths = disk::drag_paths(roots);
+            arca_drag::drag_files(&paths);
+            self.dispatch(AppAction::Refresh);
             return;
         }
         let Some(archive) = self.state.archive.clone() else {
@@ -1339,7 +1405,7 @@ impl AppController {
             self.state.notice = self.s().sevenz_copy.to_string();
             return;
         }
-        let picked = self.dragged_files();
+        let picked = self.dragged_files(roots);
         if picked.is_empty() {
             return;
         }
@@ -1353,18 +1419,88 @@ impl AppController {
             .collect();
         let password = self.state.archive_password.clone();
         let entries: Vec<Entry> = picked.into_iter().map(|(e, _)| e).collect();
+        let sizes: Vec<u64> = entries.iter().map(|e| e.size).collect();
+        let total: u64 = sizes.iter().sum();
+        let names: Vec<String> = items.iter().map(|i| i.name.clone()).collect();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let room = std::env::temp_dir()
+            .join("Arca")
+            .join(format!("drag-{stamp:x}"));
+        let (pulled, taken) = channel::<Pulled>();
+        let s = self.s();
+        let leftover = room.clone();
+        let task = Task::new(
+            s.extracting,
+            archive_stem(&archive),
+            Box::new(move |tx, _, stop, _| {
+                let outcome = follow_drop(&taken, &sizes, &stop, |done, i| {
+                    let name = i.map(|i| names[i].clone()).unwrap_or_default();
+                    tx.send(Message::Progress(done as usize, total as usize, name))
+                        .is_ok()
+                });
+                // The shell may still be letting go of the last file it read.
+                if fs::remove_dir_all(&leftover).is_err() && leftover.exists() {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    let _ = fs::remove_dir_all(&leftover);
+                }
+                let _ = tx.send(match outcome {
+                    _ if stop.load(std::sync::atomic::Ordering::Relaxed) => {
+                        Message::Failed(arca_core::Error::Cancelled.to_string())
+                    }
+                    Dropped::Taken(bytes) => {
+                        Message::Done(fill(s.dragged_out, &[("size", &human(bytes))]))
+                    }
+                    Dropped::Failed(failed) => {
+                        Message::Failed(fill(s.drag_out_failed, &[("n", &failed.to_string())]))
+                    }
+                    Dropped::Abandoned => Message::Failed(arca_core::Error::Cancelled.to_string()),
+                });
+            }),
+        )
+        .reading([archive.clone()])
+        .total(total as usize);
+        let (stop, hold) = (task.stop.clone(), task.hold.clone());
+        let ended = {
+            let pulled = pulled.clone();
+            Box::new(move |through: bool| {
+                let _ = pulled.send(Pulled::Ended(through));
+            })
+        };
         let deliver = Box::new(move |i: usize| {
-            entries
-                .get(i)
-                .and_then(|e| extract_one(&archive, e, password.as_deref(), &|_, _, _| true).ok())
+            use std::sync::atomic::Ordering::Relaxed;
+            let entry = entries.get(i).ok_or(arca_drag::Refused::Failed)?;
+            let _ = pulled.send(Pulled::Taking(i));
+            let gate = |_: usize, _: usize, _: &str| {
+                while hold.load(Relaxed) && !stop.load(Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(60));
+                }
+                !stop.load(Relaxed)
+            };
+            let path = if gate(0, 0, "") {
+                extract_one_into(&room, &archive, entry, password.as_deref(), &gate)
+                    .map_err(|_| arca_drag::Refused::Failed)
+            } else {
+                Err(arca_drag::Refused::Cancelled)
+            };
+            let path = match path {
+                Err(_) if stop.load(Relaxed) => Err(arca_drag::Refused::Cancelled),
+                other => other,
+            };
+            let _ = pulled.send(Pulled::Took(i, path.is_ok()));
+            path
         });
-        // Copy only. Moving would mean taking the entries out of the archive,
-        // and the one gesture that does that already asks first.
-        let _ = arca_drag::drag(items, deliver, false);
+        if arca_drag::drag(items, deliver, ended) != arca_drag::Effect::None {
+            let mut task = task;
+            task.in_bytes = true;
+            self.enqueue(task);
+        }
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn drag_out(&mut self) {}
+    pub(crate) fn drag_out(&mut self, _roots: &[String]) {}
 
     /// Takes back a cut that has not been pasted, as Esc does in the Explorer:
     /// the rows stop fading and a paste no longer takes the entries out. A cut
@@ -1993,7 +2129,11 @@ impl AppController {
             }
         };
         let Some(archive) = self.state.archive.clone() else {
-            open_first(self, paths);
+            if self.on_disk() {
+                self.dropped_on_disk(paths);
+            } else {
+                open_first(self, paths);
+            }
             return;
         };
         let all_archives = paths.iter().all(|p| detect(p).is_some());

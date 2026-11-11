@@ -201,6 +201,11 @@ pub(crate) struct Shell {
     // Set when the pointer, not a navigation, made a pane active: the row
     // of panes then stays where it is instead of scrolling to it.
     pointer_focused: bool,
+    // Files dragged off the disk are moved by the Explorer on a thread of its
+    // own, after the drag has returned, so the folder is read once more when
+    // the window is next come back to.
+    reread_on_focus: bool,
+    had_focus: bool,
     last_pane_count: usize,
     // The pane whose filter row is open, and what is typed in it.
     pane_filter: Option<(usize, String)>,
@@ -243,6 +248,10 @@ pub(crate) struct Shell {
     theme_draft: Option<themes::Theme>,
     theme_error: Option<String>,
     carrying: bool,
+    // Rows on their way out of the window, held for one frame. The system drag
+    // blocks the window until it is over, so whatever was on screen stays on
+    // screen: it starts only once a frame without the in-window chip is shown.
+    leaving: Option<Vec<String>>,
     /// A drop waiting on the Move / Copy / Cancel menu.
     pending_drop: Option<PendingDrop>,
     /// The blank of a list under carried rows this frame: its folder and rect.
@@ -294,6 +303,8 @@ impl Shell {
             peek_seen: false,
             peek_loaded: None,
             pointer_focused: false,
+            reread_on_focus: false,
+            had_focus: true,
             last_pane_count: 0,
             pane_filter: None,
             device_label: None,
@@ -329,6 +340,7 @@ impl Shell {
             theme_draft: None,
             theme_error: None,
             carrying: false,
+            leaving: None,
             pending_drop: None,
             blank_drop: None,
             row_drop_hover: false,
@@ -1480,6 +1492,15 @@ impl Shell {
     }
 
     fn input(&mut self, ctx: &egui::Context) {
+        if let Some(roots) = self.leaving.take() {
+            self.reread_on_focus = self.controller.on_disk();
+            self.controller.drag_out(&roots);
+        }
+        let focused = ctx.input(|input| input.viewport().focused).unwrap_or(true);
+        if focused && !self.had_focus && std::mem::take(&mut self.reread_on_focus) {
+            self.controller.dispatch(AppAction::Refresh);
+        }
+        self.had_focus = focused;
         if ctx.input(|input| input.pointer.delta() != egui::Vec2::ZERO) {
             self.keyboard_drove = false;
         }
@@ -1564,12 +1585,14 @@ impl Shell {
             });
             if outside {
                 self.carrying = false;
+                // What the drag picked up, taken before it is cleared: a row
+                // dragged without being ticked is not in the selection.
+                let roots = egui::DragAndDrop::payload::<DraggedRows>(ctx)
+                    .map(|rows| rows.0.clone())
+                    .unwrap_or_default();
                 egui::DragAndDrop::clear_payload(ctx);
-                if self.controller.state.format == Format::SevenZ {
-                    self.controller.state.notice = self.controller.s().sevenz_copy.to_string();
-                } else {
-                    self.controller.drag_out();
-                }
+                self.leaving = Some(roots);
+                ctx.request_repaint();
             } else if !ctx.input(|input| input.pointer.primary_down()) {
                 self.carrying = false;
             }

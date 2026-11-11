@@ -13,7 +13,17 @@
 //! first says what is being dragged, and the second is asked for one item at a
 //! time, during the drop. So nothing is extracted until something is actually
 //! being dropped, and a drag that is abandoned costs nothing at all. It is what
-//! WinRAR and 7-Zip do, and there is no cheaper way to do it properly.
+//! the Explorer's own ZIP folders do: 7-Zip and WinRAR extract everything to a
+//! temporary folder first and hand over those paths instead.
+//!
+//! The object also takes the async capability, so the Explorer pulls the
+//! entries after the drop on a thread of its own, behind its own progress
+//! window with pause and cancel, and it lives in the multithreaded apartment so
+//! that extracting never runs on the window's thread.
+//!
+//! Files that already exist on disk are not described at all: [`drag_files`]
+//! hands the shell their paths and lets it build the data object the Explorer
+//! itself would, drag image and copy engine included.
 //!
 //! On anything that is not Windows this crate is empty.
 
@@ -21,7 +31,7 @@
 mod win;
 
 #[cfg(windows)]
-pub use win::{drag, Effect, Item};
+pub use win::{drag, drag_files, Effect, Item, Refused};
 
 /// What one entry looks like to the shell before anything has been extracted.
 #[cfg(not(windows))]
@@ -44,10 +54,26 @@ pub enum Effect {
 
 /// Always [`Effect::None`] away from Windows: there is no drag to start.
 #[cfg(not(windows))]
+pub fn drag_files(_paths: &[std::path::PathBuf]) -> Effect {
+    Effect::None
+}
+
+/// Why an entry was not handed over.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Refused {
+    Cancelled,
+    Failed,
+}
+
+/// Always [`Effect::None`] away from Windows: there is no drag to start, so
+/// `ended` hears at once that nothing went through.
+#[cfg(not(windows))]
 pub fn drag(
     _items: Vec<Item>,
-    _deliver: Box<dyn Fn(usize) -> Option<std::path::PathBuf>>,
-    _allow_move: bool,
+    _deliver: Box<dyn Fn(usize) -> Result<std::path::PathBuf, Refused> + Send + Sync>,
+    ended: Box<dyn FnOnce(bool) + Send>,
 ) -> Effect {
+    ended(false);
     Effect::None
 }
