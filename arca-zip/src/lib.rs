@@ -501,9 +501,12 @@ fn from_cp437(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// The two times a zip does not have room for in its header.
+/// The times a zip keeps outside its header: the creation and access times it
+/// has no room for, and the modification time again, exact and in UTC rather
+/// than as two-second wall-clock time in an unknown zone.
 #[derive(Default, PartialEq, Eq, Debug)]
 struct Times {
+    modified: Option<i64>,
     created: Option<i64>,
     accessed: Option<i64>,
 }
@@ -570,7 +573,9 @@ fn read_times(extra: &[u8]) -> Times {
                             break;
                         };
                         let mut t = Cursor::new(block);
-                        let _mtime = t.u64le("mtime");
+                        if let Ok(v) = t.u64le("mtime") {
+                            out.modified = filetime_to_unix(v);
+                        }
                         if let Ok(v) = t.u64le("atime") {
                             out.accessed = filetime_to_unix(v);
                         }
@@ -593,7 +598,9 @@ fn read_times(extra: &[u8]) -> Times {
                 };
                 let flags = first[0];
                 if flags & 1 != 0 && e.remaining() >= 4 {
-                    let _ = e.u32le("mtime");
+                    if let Ok(v) = e.u32le("mtime") {
+                        out.modified = Some(v as i32 as i64);
+                    }
                 }
                 if flags & 2 != 0 && e.remaining() >= 4 {
                     if let Ok(v) = e.u32le("atime") {
@@ -720,7 +727,9 @@ fn read_central_header(c: &mut Cursor<'_>) -> Result<Entry> {
         method,
         crc32: Some(crc_val),
         is_dir,
-        mtime: arca_core::dos_to_unix(date_val, time_val),
+        mtime: times
+            .modified
+            .or_else(|| arca_core::dos_to_unix(date_val, time_val)),
         created: times.created,
         accessed: times.accessed,
         // The low byte of the external attributes is the DOS byte, whatever
@@ -2733,6 +2742,7 @@ mod tests {
             ntfs.extend_from_slice(&ticks.to_le_bytes());
         }
         let got = read_times(&ntfs);
+        assert_eq!(got.modified, Some(base));
         assert_eq!(got.accessed, Some(base + 3600));
         assert_eq!(got.created, Some(base - 3600));
 
@@ -2747,6 +2757,7 @@ mod tests {
             ext.extend_from_slice(&(t as i32).to_le_bytes());
         }
         let got = read_times(&ext);
+        assert_eq!(got.modified, Some(base));
         assert_eq!(got.accessed, Some(base + 60));
         assert_eq!(got.created, Some(base - 60));
 
@@ -2765,6 +2776,11 @@ mod tests {
             read_times(&[0x0A, 0x00, 0xFF, 0xFF, 1, 2, 3]),
             Times::default()
         );
+        // A flag that promises a time the field is too short to hold is
+        // stepped over too.
+        let mut short = ext[..8].to_vec();
+        short[2] = 4;
+        assert_eq!(read_times(&short), Times::default());
     }
 
     // A name written with backslashes is the same name. Windows tools put them
