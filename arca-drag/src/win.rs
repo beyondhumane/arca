@@ -6,7 +6,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use windows::core::{implement, Interface, Result, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{
@@ -24,8 +24,8 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::{
-    IDropSource, OleDuplicateData, OleInitialize, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_LINK,
-    DROPEFFECT_MOVE, DROPEFFECT_NONE,
+    IDropSource, OleDuplicateData, OleInitialize, OleUninitialize, ReleaseStgMedium, DROPEFFECT,
+    DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE,
 };
 use windows::Win32::UI::Shell::{
     IDataObjectAsyncCapability, IDataObjectAsyncCapability_Impl, SHCreateStdEnumFmtEtc,
@@ -51,6 +51,14 @@ pub enum Effect {
     Move,
 }
 
+/// Why an entry was not handed over. The shell treats a cancel as the user's
+/// own choice and stops quietly; a failure it reports.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Refused {
+    Cancelled,
+    Failed,
+}
+
 fn effect_of(e: DROPEFFECT) -> Effect {
     if e.0 & DROPEFFECT_MOVE.0 != 0 {
         Effect::Move
@@ -72,7 +80,6 @@ struct Formats {
     descriptor: u16,
     contents: u16,
     preferred: u16,
-    performed: u16,
 }
 
 impl Formats {
@@ -81,7 +88,6 @@ impl Formats {
             descriptor: format("FileGroupDescriptorW"),
             contents: format("FileContents"),
             preferred: format("Preferred DropEffect"),
-            performed: format("Performed DropEffect"),
         }
     }
 }
@@ -113,19 +119,36 @@ struct Kept {
     handle: isize,
 }
 
-type Deliver = Box<dyn Fn(usize) -> Option<PathBuf> + Send + Sync>;
+type Deliver = Box<dyn Fn(usize) -> std::result::Result<PathBuf, Refused> + Send + Sync>;
+type Ended = Box<dyn FnOnce(bool) + Send>;
+
+/// Says once that the drop is over, and whether it went through. An async
+/// drop ends when the shell calls `EndOperation`; a sync one when the drag
+/// returns; and a drop the shell let go of without either, when the object
+/// goes.
+struct Ending {
+    started: AtomicBool,
+    call: Mutex<Option<Ended>>,
+}
+
+impl Ending {
+    fn finish(&self, through: bool) {
+        let call = self.call.lock().ok().and_then(|mut call| call.take());
+        if let Some(call) = call {
+            call(through);
+        }
+    }
+}
 
 #[implement(IDataObject, IDataObjectAsyncCapability)]
 struct Source {
     items: Vec<Item>,
     deliver: Deliver,
     formats: Formats,
-    /// Set by the shell through `SetData` when a move has gone through, which
-    /// is the only way it ever says so.
-    performed: Mutex<DROPEFFECT>,
     kept: Mutex<Vec<Kept>>,
     asynchronous: AtomicBool,
     running: AtomicBool,
+    ending: Arc<Ending>,
     /// Told when the last reference goes, so the thread keeping this object's
     /// apartment alive knows it can let go of it.
     gone: Mutex<Option<Sender<()>>>,
@@ -133,6 +156,7 @@ struct Source {
 
 impl Drop for Source {
     fn drop(&mut self) {
+        self.ending.finish(false);
         if let Ok(kept) = self.kept.get_mut() {
             for item in kept.drain(..) {
                 unsafe {
@@ -178,7 +202,14 @@ impl Source {
             // Filled to one side and assigned whole: the record is packed, so
             // taking a reference to the field inside it would be unaligned.
             let mut name = [0u16; 260];
-            let wide: Vec<u16> = item.name.encode_utf16().take(259).collect();
+            let mut wide: Vec<u16> = Vec::with_capacity(259);
+            for c in item.name.chars() {
+                if wide.len() + c.len_utf16() > 259 {
+                    break;
+                }
+                let mut unit = [0u16; 2];
+                wide.extend_from_slice(c.encode_utf16(&mut unit));
+            }
             name[..wide.len()].copy_from_slice(&wide);
             fd.cFileName = name;
             std::ptr::write_unaligned(
@@ -192,9 +223,30 @@ impl Source {
         to_global(&bytes)
     }
 
-    fn kept_handle(&self, format: u16) -> Option<isize> {
+    fn keeps(&self, format: u16) -> bool {
+        self.kept
+            .lock()
+            .is_ok_and(|kept| kept.iter().any(|k| k.format == format))
+    }
+
+    /// A copy of a block the shell parked here, made while the lock is held:
+    /// the shell's threads call in at the same time, and a `SetData` for the
+    /// same format frees the old block the moment it has the lock.
+    fn kept_copy(&self, format: u16) -> Option<Result<HGLOBAL>> {
         let kept = self.kept.lock().ok()?;
-        kept.iter().find(|k| k.format == format).map(|k| k.handle)
+        let handle = kept.iter().find(|k| k.format == format)?.handle;
+        let copy = unsafe {
+            OleDuplicateData(
+                HANDLE(handle as *mut _),
+                windows::Win32::System::Ole::CLIPBOARD_FORMAT(format),
+                GMEM_MOVEABLE,
+            )
+        };
+        Some(if copy.is_invalid() {
+            Err(windows::core::Error::from_win32())
+        } else {
+            Ok(HGLOBAL(copy.0))
+        })
     }
 }
 
@@ -222,10 +274,16 @@ impl IDataObject_Impl for Source_Impl {
             if which < 0 || which as usize >= self.items.len() {
                 return Err(DV_E_FORMATETC.into());
             }
-            let Some(path) = (self.deliver)(which as usize) else {
-                return Err(windows::core::Error::from(
-                    windows::Win32::Foundation::E_FAIL,
-                ));
+            let path = match (self.deliver)(which as usize) {
+                Ok(path) => path,
+                Err(Refused::Cancelled) => {
+                    return Err(windows::Win32::Foundation::ERROR_CANCELLED
+                        .to_hresult()
+                        .into())
+                }
+                Err(Refused::Failed) => {
+                    return Err(windows::Win32::Foundation::E_FAIL.into());
+                }
             };
             let wide: Vec<u16> = path
                 .as_os_str()
@@ -257,20 +315,8 @@ impl IDataObject_Impl for Source_Impl {
         }
 
         if request.tymed & TYMED_HGLOBAL.0 as u32 != 0 {
-            if let Some(handle) = self.kept_handle(wanted) {
-                // SAFETY: the handle is one this object owns until it is
-                // dropped; the copy belongs to whoever asked for it.
-                let copy = unsafe {
-                    OleDuplicateData(
-                        HANDLE(handle as *mut _),
-                        windows::Win32::System::Ole::CLIPBOARD_FORMAT(wanted),
-                        GMEM_MOVEABLE,
-                    )
-                };
-                if copy.is_invalid() {
-                    return Err(windows::core::Error::from_win32());
-                }
-                return Ok(hglobal_medium(HGLOBAL(copy.0)));
+            if let Some(copy) = self.kept_copy(wanted) {
+                return copy.map(hglobal_medium);
             }
         }
 
@@ -286,7 +332,7 @@ impl IDataObject_Impl for Source_Impl {
         let ours = request.cfFormat == self.formats.descriptor
             || request.cfFormat == self.formats.contents
             || request.cfFormat == self.formats.preferred;
-        if !ours && self.kept_handle(request.cfFormat).is_none() {
+        if !ours && !self.keeps(request.cfFormat) {
             return DV_E_FORMATETC;
         }
         let tymed = if request.cfFormat == self.formats.contents {
@@ -305,10 +351,10 @@ impl IDataObject_Impl for Source_Impl {
         DATA_S_SAMEFORMATETC
     }
 
-    /// After a move, the shell reports back through this what it actually
-    /// did. The drag helpers also park the drag image here, in formats of
-    /// their own, and read it back from the other side of the drop; refusing
-    /// them is what leaves a drag with no picture.
+    /// The drag helpers park the drag image here, in formats of their own,
+    /// and read it back from the other side of the drop; refusing them is
+    /// what leaves a drag with no picture. Whatever else the shell sets, such
+    /// as the effect it performed, is kept the same way.
     fn SetData(
         &self,
         request: *const FORMATETC,
@@ -316,31 +362,15 @@ impl IDataObject_Impl for Source_Impl {
         release: BOOL,
     ) -> Result<()> {
         let request = unsafe { *request };
-        let medium = unsafe { &*medium };
-        if medium.tymed != TYMED_HGLOBAL.0 as u32 {
+        let given = unsafe { &*medium };
+        if given.tymed != TYMED_HGLOBAL.0 as u32 {
             return Err(E_NOTIMPL.into());
         }
-        let handle = unsafe { medium.u.hGlobal };
-        if request.cfFormat == self.formats.performed || request.cfFormat == self.formats.preferred
-        {
-            unsafe {
-                let at = GlobalLock(handle);
-                if !at.is_null() {
-                    let value = std::ptr::read_unaligned(at.cast::<u32>());
-                    if let Ok(mut performed) = self.performed.lock() {
-                        *performed = DROPEFFECT(value);
-                    }
-                    let _ = GlobalUnlock(handle);
-                }
-                if release.as_bool() {
-                    let _ = GlobalFree(handle);
-                }
-            }
-            return Ok(());
-        }
-        // Owned from here on: taken as given when the caller hands it over,
-        // copied when it keeps its own.
-        let owned = if release.as_bool() {
+        let handle = unsafe { given.u.hGlobal };
+        // A block handed over with nothing else attached is taken as it is.
+        // Otherwise it is copied, and one that was handed over is let go of
+        // the way its owner asked, through `pUnkForRelease` when there is one.
+        let owned = if release.as_bool() && given.pUnkForRelease.is_none() {
             handle
         } else {
             let copy = unsafe {
@@ -350,6 +380,9 @@ impl IDataObject_Impl for Source_Impl {
                     GMEM_MOVEABLE,
                 )
             };
+            if release.as_bool() {
+                unsafe { ReleaseStgMedium(medium.cast_mut()) };
+            }
             if copy.is_invalid() {
                 return Err(windows::core::Error::from_win32());
             }
@@ -425,6 +458,7 @@ impl IDataObjectAsyncCapability_Impl for Source_Impl {
     }
 
     fn StartOperation(&self, _reserved: Option<&IBindCtx>) -> Result<()> {
+        self.ending.started.store(true, Ordering::SeqCst);
         self.running.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -435,11 +469,12 @@ impl IDataObjectAsyncCapability_Impl for Source_Impl {
 
     fn EndOperation(
         &self,
-        _result: HRESULT,
+        result: HRESULT,
         _reserved: Option<&IBindCtx>,
         _effect: u32,
     ) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
+        self.ending.finish(result.is_ok());
         Ok(())
     }
 }
@@ -458,23 +493,32 @@ struct Crossing(usize);
 /// after the drop, with its own progress window, and this returns at once.
 ///
 /// `deliver` is asked for one item at a time, by index, from whichever thread
-/// the shell's call arrives on.
-pub fn drag(items: Vec<Item>, deliver: Deliver, allow_move: bool) -> Effect {
+/// the shell's call arrives on. `ended` is called exactly once, when the drop
+/// is over, with whether it went through; for an async drop that is long after
+/// this returns. Entries are only ever copied out: moving would mean taking
+/// them out of the archive.
+pub fn drag(items: Vec<Item>, deliver: Deliver, ended: Ended) -> Effect {
+    let ending = Arc::new(Ending {
+        started: AtomicBool::new(false),
+        call: Mutex::new(Some(ended)),
+    });
     if items.is_empty() {
+        ending.finish(false);
         return Effect::None;
     }
     let (ready_tx, ready_rx) = channel::<Option<Crossing>>();
     let (gone_tx, gone_rx) = channel::<()>();
+    let shared = ending.clone();
     std::thread::spawn(move || unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let source: IDataObject = Source {
             items,
             deliver,
             formats: Formats::get(),
-            performed: Mutex::new(DROPEFFECT_NONE),
             kept: Mutex::new(Vec::new()),
             asynchronous: AtomicBool::new(true),
             running: AtomicBool::new(false),
+            ending: shared,
             gone: Mutex::new(Some(gone_tx)),
         }
         .into();
@@ -497,11 +541,7 @@ pub fn drag(items: Vec<Item>, deliver: Deliver, allow_move: bool) -> Effect {
     let Ok(Some(Crossing(raw))) = ready_rx.recv() else {
         return Effect::None;
     };
-    unsafe {
-        // The window toolkit already does this to be a drop target, and asking
-        // twice is harmless; without it on a thread that has not, the drag
-        // fails outright.
-        let _ = OleInitialize(None);
+    let effect = with_ole(|| unsafe {
         let stream = IStream::from_raw(raw as *mut _);
         let data: Result<IDataObject> = CoGetInterfaceAndReleaseStream(&stream);
         // The call above has released the stream itself.
@@ -509,17 +549,30 @@ pub fn drag(items: Vec<Item>, deliver: Deliver, allow_move: bool) -> Effect {
         let Ok(data) = data else {
             return Effect::None;
         };
-        let allowed = if allow_move {
-            DROPEFFECT(DROPEFFECT_COPY.0 | DROPEFFECT_MOVE.0)
-        } else {
-            DROPEFFECT_COPY
-        };
         // The shell's own drop source and drag image: the same picture and
         // cursors a drag out of the Explorer has.
-        SHDoDragDrop(None, &data, None::<&IDropSource>, allowed)
+        SHDoDragDrop(None, &data, None::<&IDropSource>, DROPEFFECT_COPY)
             .map(effect_of)
             .unwrap_or(Effect::None)
+    });
+    // A target that took the entries during the drop, rather than after it,
+    // is done with them by now.
+    if !ending.started.load(Ordering::SeqCst) {
+        ending.finish(effect != Effect::None);
     }
+    effect
+}
+
+/// Runs `f` with OLE initialized on this thread. The window toolkit already
+/// does this to be a drop target, and asking again only counts up; without it
+/// on a thread that has not, a drag fails outright.
+fn with_ole<T>(f: impl FnOnce() -> T) -> T {
+    let ours = unsafe { OleInitialize(None) }.is_ok();
+    let out = f();
+    if ours {
+        unsafe { OleUninitialize() };
+    }
+    out
 }
 
 /// Starts a drag of files that already exist, the way the Explorer does: the
@@ -534,8 +587,7 @@ pub fn drag_files(paths: &[PathBuf]) -> Effect {
         BHID_DataObject, IShellItemArray, SHCreateShellItemArrayFromIDLists, SHParseDisplayName,
     };
 
-    unsafe {
-        let _ = OleInitialize(None);
+    with_ole(|| unsafe {
         let mut pidls: Vec<*mut ITEMIDLIST> = Vec::with_capacity(paths.len());
         for path in paths {
             let wide: Vec<u16> = path
@@ -569,5 +621,5 @@ pub fn drag_files(paths: &[PathBuf]) -> Effect {
         SHDoDragDrop(None, &data, None::<&IDropSource>, allowed)
             .map(effect_of)
             .unwrap_or(Effect::None)
-    }
+    })
 }

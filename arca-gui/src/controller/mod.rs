@@ -63,30 +63,46 @@ fn rename_destination(path: &str, name: &str) -> String {
 }
 
 /// What the shell does with a drag out of an archive once it is dropped:
-/// it asks for each entry by index, and every answer is extracted first.
+/// it asks for each entry by index, every answer is extracted first, and
+/// then it says the drop is over and whether it went through.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) enum Pulled {
     Taking(usize),
     Took(usize, bool),
+    Ended(bool),
+}
+
+/// How a drop out of an archive turned out.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Dropped {
+    /// The bytes of every entry the shell took. Entries it chose not to take,
+    /// such as files the user skipped instead of replacing, are not missing.
+    Taken(u64),
+    /// How many entries could not be extracted.
+    Failed(usize),
+    /// The shell gave up on the drop, as when its own progress window is
+    /// cancelled.
+    Abandoned,
 }
 
 /// Follows a drop as the shell takes the entries, reporting the bytes taken so
-/// far and the entry being taken. It is over once every entry has been taken,
-/// when the shell lets go of the drag, or when `stop` is set; a shell that asks
-/// for an entry twice, as some do, counts it once. Gives back the bytes taken,
-/// or how many entries could not be extracted.
+/// far and the entry being taken, until the shell says the drop is over or
+/// `stop` is set. A shell that asks for an entry twice, as some do, counts it
+/// once.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn follow_drop(
     taken: &std::sync::mpsc::Receiver<Pulled>,
     sizes: &[u64],
     stop: &std::sync::atomic::AtomicBool,
     mut report: impl FnMut(u64, Option<usize>) -> bool,
-) -> Result<u64, usize> {
+) -> Dropped {
     use std::sync::mpsc::RecvTimeoutError;
     let mut outcome = vec![None::<bool>; sizes.len()];
     let mut done = 0;
     let mut current = None;
-    while !stop.load(std::sync::atomic::Ordering::Relaxed) && outcome.iter().any(Option::is_none) {
+    let mut through = false;
+    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
         match taken.recv_timeout(std::time::Duration::from_millis(200)) {
             Ok(Pulled::Taking(i)) => current = Some(i),
             Ok(Pulled::Took(i, ok)) => {
@@ -95,6 +111,10 @@ pub(crate) fn follow_drop(
                     done += sizes[i];
                 }
             }
+            Ok(Pulled::Ended(ok)) => {
+                through = ok;
+                break;
+            }
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
         }
@@ -102,9 +122,13 @@ pub(crate) fn follow_drop(
             break;
         }
     }
-    match outcome.iter().filter(|o| **o == Some(false)).count() {
-        0 => Ok(done),
-        failed => Err(failed),
+    let failed = outcome.iter().filter(|o| **o == Some(false)).count();
+    if failed > 0 {
+        Dropped::Failed(failed)
+    } else if through || outcome.iter().all(Option::is_some) {
+        Dropped::Taken(done)
+    } else {
+        Dropped::Abandoned
     }
 }
 
@@ -1346,15 +1370,11 @@ impl AppController {
             Codec::Zstd => s.codec_zstd,
         }
     }
-    // Dragging the selection out of the window. Blocks until it has been
-    // dropped or abandoned, because that is what `DoDragDrop` does: the window
-    // stops repainting for as long as the drag lasts, which nobody sees because
-    // the pointer is somewhere else by then.
-    //
-    // Nothing is extracted here. The shell is handed a list of names and sizes
-    // and asks for one file at a time while it is dropping, so a drag that is
-    // thought better of costs nothing, and a drag of six gigabytes starts as
-    // fast as a drag of one file.
+    /// Drags the selection out of the window. Nothing is extracted here: the
+    /// shell is handed names and sizes, and once the drop has happened it asks
+    /// for one entry at a time, which is extracted then, into a folder of this
+    /// drag's own that goes when the drop is over. The drop gets a row in
+    /// Operations like any other extraction.
     #[cfg(windows)]
     pub(crate) fn drag_out(&mut self, roots: &[String]) {
         if self.on_disk() {
@@ -1393,8 +1413,16 @@ impl AppController {
         let sizes: Vec<u64> = entries.iter().map(|e| e.size).collect();
         let total: u64 = sizes.iter().sum();
         let names: Vec<String> = items.iter().map(|i| i.name.clone()).collect();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let room = std::env::temp_dir()
+            .join("Arca")
+            .join(format!("drag-{stamp:x}"));
         let (pulled, taken) = channel::<Pulled>();
         let s = self.s();
+        let leftover = room.clone();
         let task = Task::new(
             s.extracting,
             archive_stem(&archive),
@@ -1404,23 +1432,37 @@ impl AppController {
                     tx.send(Message::Progress(done as usize, total as usize, name))
                         .is_ok()
                 });
+                // The shell may still be letting go of the last file it read.
+                if fs::remove_dir_all(&leftover).is_err() && leftover.exists() {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    let _ = fs::remove_dir_all(&leftover);
+                }
                 let _ = tx.send(match outcome {
                     _ if stop.load(std::sync::atomic::Ordering::Relaxed) => {
                         Message::Failed(arca_core::Error::Cancelled.to_string())
                     }
-                    Ok(bytes) => Message::Done(fill(s.dragged_out, &[("size", &human(bytes))])),
-                    Err(failed) => {
+                    Dropped::Taken(bytes) => {
+                        Message::Done(fill(s.dragged_out, &[("size", &human(bytes))]))
+                    }
+                    Dropped::Failed(failed) => {
                         Message::Failed(fill(s.drag_out_failed, &[("n", &failed.to_string())]))
                     }
+                    Dropped::Abandoned => Message::Failed(arca_core::Error::Cancelled.to_string()),
                 });
             }),
         )
         .reading([archive.clone()])
         .total(total as usize);
         let (stop, hold) = (task.stop.clone(), task.hold.clone());
+        let ended = {
+            let pulled = pulled.clone();
+            Box::new(move |through: bool| {
+                let _ = pulled.send(Pulled::Ended(through));
+            })
+        };
         let deliver = Box::new(move |i: usize| {
             use std::sync::atomic::Ordering::Relaxed;
-            let entry = entries.get(i)?;
+            let entry = entries.get(i).ok_or(arca_drag::Refused::Failed)?;
             let _ = pulled.send(Pulled::Taking(i));
             let gate = |_: usize, _: usize, _: &str| {
                 while hold.load(Relaxed) && !stop.load(Relaxed) {
@@ -1428,15 +1470,20 @@ impl AppController {
                 }
                 !stop.load(Relaxed)
             };
-            let path = gate(0, 0, "")
-                .then(|| extract_one(&archive, entry, password.as_deref(), &gate).ok())
-                .flatten();
-            let _ = pulled.send(Pulled::Took(i, path.is_some()));
+            let path = if gate(0, 0, "") {
+                extract_one_into(&room, &archive, entry, password.as_deref(), &gate)
+                    .map_err(|_| arca_drag::Refused::Failed)
+            } else {
+                Err(arca_drag::Refused::Cancelled)
+            };
+            let path = match path {
+                Err(_) if stop.load(Relaxed) => Err(arca_drag::Refused::Cancelled),
+                other => other,
+            };
+            let _ = pulled.send(Pulled::Took(i, path.is_ok()));
             path
         });
-        // Copy only. Moving would mean taking the entries out of the archive,
-        // and the one gesture that does that already asks first.
-        if arca_drag::drag(items, deliver, false) != arca_drag::Effect::None {
+        if arca_drag::drag(items, deliver, ended) != arca_drag::Effect::None {
             let mut task = task;
             task.in_bytes = true;
             self.enqueue(task);

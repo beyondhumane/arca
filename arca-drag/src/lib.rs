@@ -31,7 +31,7 @@
 mod win;
 
 #[cfg(windows)]
-pub use win::{drag, drag_files, Effect, Item};
+pub use win::{drag, drag_files, Effect, Item, Refused};
 
 /// What one entry looks like to the shell before anything has been extracted.
 #[cfg(not(windows))]
@@ -58,12 +58,22 @@ pub fn drag_files(_paths: &[std::path::PathBuf]) -> Effect {
     Effect::None
 }
 
-/// Always [`Effect::None`] away from Windows: there is no drag to start.
+/// Why an entry was not handed over.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Refused {
+    Cancelled,
+    Failed,
+}
+
+/// Always [`Effect::None`] away from Windows: there is no drag to start, so
+/// `ended` hears at once that nothing went through.
 #[cfg(not(windows))]
 pub fn drag(
     _items: Vec<Item>,
-    _deliver: Box<dyn Fn(usize) -> Option<std::path::PathBuf> + Send + Sync>,
-    _allow_move: bool,
+    _deliver: Box<dyn Fn(usize) -> Result<std::path::PathBuf, Refused> + Send + Sync>,
+    ended: Box<dyn FnOnce(bool) + Send>,
 ) -> Effect {
+    ended(false);
     Effect::None
 }

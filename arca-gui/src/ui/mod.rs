@@ -200,6 +200,11 @@ pub(crate) struct Shell {
     // Set when the pointer, not a navigation, made a pane active: the row
     // of panes then stays where it is instead of scrolling to it.
     pointer_focused: bool,
+    // Files dragged off the disk are moved by the Explorer on a thread of its
+    // own, after the drag has returned, so the folder is read once more when
+    // the window is next come back to.
+    reread_on_focus: bool,
+    had_focus: bool,
     last_pane_count: usize,
     // The pane whose filter row is open, and what is typed in it.
     pane_filter: Option<(usize, String)>,
@@ -289,6 +294,8 @@ impl Shell {
             peek_seen: false,
             peek_loaded: None,
             pointer_focused: false,
+            reread_on_focus: false,
+            had_focus: true,
             last_pane_count: 0,
             pane_filter: None,
             device_label: None,
@@ -1370,8 +1377,14 @@ impl Shell {
 
     fn input(&mut self, ctx: &egui::Context) {
         if let Some(roots) = self.leaving.take() {
+            self.reread_on_focus = self.controller.on_disk();
             self.controller.drag_out(&roots);
         }
+        let focused = ctx.input(|input| input.viewport().focused).unwrap_or(true);
+        if focused && !self.had_focus && std::mem::take(&mut self.reread_on_focus) {
+            self.controller.dispatch(AppAction::Refresh);
+        }
+        self.had_focus = focused;
         if ctx.input(|input| input.pointer.delta() != egui::Vec2::ZERO) {
             self.keyboard_drove = false;
         }
