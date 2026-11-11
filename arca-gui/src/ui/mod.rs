@@ -1861,7 +1861,7 @@ impl Shell {
                 self.controller.state.show_shortcuts = !self.controller.state.show_shortcuts;
             }
             Shortcut::Undo if self.controller.state.undo.is_some() => self.controller.undo_last(),
-            Shortcut::Rename if archive.is_some() => {
+            Shortcut::Rename => {
                 let rows = self.controller.visible_rows();
                 if let Some(row) = self
                     .controller
@@ -1869,6 +1869,7 @@ impl Shell {
                     .active_pane()
                     .cursor
                     .and_then(|i| rows.get(i))
+                    .filter(|row| !row.up)
                 {
                     let path = row.path.clone();
                     self.begin_rename(&path, false);

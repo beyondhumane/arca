@@ -25,7 +25,7 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>Ctrl+Shift+C</kbd> | Copy selected names as text |
 | <kbd>Ctrl+F</kbd> | Show and focus the active pane's filter |
 | <kbd>Ctrl+L</kbd> <kbd>Alt+D</kbd> <kbd>F4</kbd> | Type a path in the path bar |
-| <kbd>F2</kbd> | Rename the selected entry in a writable ZIP |
+| <kbd>F2</kbd> | Rename the selected file or folder, on disk or in a writable ZIP |
 | <kbd>F3</kbd> | Enable integrated preview for the cursor file |
 | <kbd>Ctrl+T</kbd> | Test the archive |
 | <kbd>Ctrl+I</kbd> | Invert visible selection in the active pane |

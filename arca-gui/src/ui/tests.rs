@@ -611,3 +611,57 @@ fn clipboard_notices_and_progress_read_in_each_language() {
     assert_ne!(es.preparing_copy, en.preparing_copy);
     assert_ne!(es.preparing_move, es.preparing_copy);
 }
+
+#[test]
+fn f2_starts_renaming_a_file_on_disk_too() {
+    let room = crate::test_support::Room::new();
+    std::fs::write(room.path("note.txt"), b"note").unwrap();
+    let ctx = egui::Context::default();
+    let mut shell = Shell::new(&ctx, crate::Startup::Browse(None));
+    shell.controller = crate::controller::AppController::new(crate::settings::Settings::default());
+    shell.controller.browse_disk(&room.path(""));
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while shell.controller.state.busy || shell.controller.working() {
+        shell.controller.receive();
+        assert!(std::time::Instant::now() < end, "listing did not finish");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let index = shell
+        .controller
+        .visible_rows()
+        .iter()
+        .position(|row| row.label == "note.txt")
+        .unwrap();
+    shell.controller.state.active_pane_mut().cursor = Some(index);
+    shell.shortcut(Shortcut::Rename);
+    let renaming = shell.controller.state.renaming.clone();
+    assert_eq!(
+        renaming.map(|(_, label)| label).as_deref(),
+        Some("note.txt")
+    );
+}
+
+#[test]
+fn f2_on_the_row_that_goes_up_renames_nothing() {
+    let room = crate::test_support::Room::new();
+    std::fs::create_dir(room.path("inner")).unwrap();
+    let ctx = egui::Context::default();
+    let mut shell = Shell::new(&ctx, crate::Startup::Browse(None));
+    shell.controller = crate::controller::AppController::new(crate::settings::Settings::default());
+    shell.controller.browse_disk(&room.path("inner"));
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while shell.controller.state.busy || shell.controller.working() {
+        shell.controller.receive();
+        assert!(std::time::Instant::now() < end, "listing did not finish");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let up = shell
+        .controller
+        .visible_rows()
+        .iter()
+        .position(|row| row.up)
+        .expect("a folder below the top has a row that goes up");
+    shell.controller.state.active_pane_mut().cursor = Some(up);
+    shell.shortcut(Shortcut::Rename);
+    assert!(shell.controller.state.renaming.is_none());
+}
