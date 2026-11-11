@@ -399,6 +399,48 @@ fn only_the_copy_that_staged_a_cut_can_arm_it() {
 }
 
 #[test]
+fn a_drop_is_followed_until_every_entry_has_been_taken_once() {
+    use std::sync::atomic::AtomicBool;
+    let (pulled, taken) = channel();
+    for event in [
+        Pulled::Taking(0),
+        Pulled::Took(0, true),
+        Pulled::Taking(0),
+        Pulled::Took(0, true),
+        Pulled::Taking(1),
+        Pulled::Took(1, true),
+    ] {
+        pulled.send(event).unwrap();
+    }
+    let mut seen = Vec::new();
+    let outcome = follow_drop(&taken, &[10, 5], &AtomicBool::new(false), |done, i| {
+        seen.push((done, i));
+        true
+    });
+    assert_eq!(outcome, Ok(15));
+    assert_eq!(seen.last(), Some(&(15, Some(1))));
+}
+
+#[test]
+fn a_drop_the_shell_lets_go_of_counts_what_failed() {
+    use std::sync::atomic::AtomicBool;
+    let (pulled, taken) = channel();
+    pulled.send(Pulled::Took(0, false)).unwrap();
+    pulled.send(Pulled::Took(1, true)).unwrap();
+    drop(pulled);
+    let outcome = follow_drop(&taken, &[1, 2, 3], &AtomicBool::new(false), |_, _| true);
+    assert_eq!(outcome, Err(1));
+}
+
+#[test]
+fn a_stopped_drop_is_not_waited_on() {
+    use std::sync::atomic::AtomicBool;
+    let (_pulled, taken) = channel::<Pulled>();
+    let outcome = follow_drop(&taken, &[1], &AtomicBool::new(true), |_, _| true);
+    assert_eq!(outcome, Ok(0));
+}
+
+#[test]
 fn a_rewrite_that_failed_behind_keeps_the_reread_of_the_one_before() {
     let room = Room::new();
     let archive = room.archive(None, false);

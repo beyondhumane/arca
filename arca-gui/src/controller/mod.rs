@@ -62,6 +62,52 @@ fn rename_destination(path: &str, name: &str) -> String {
     }
 }
 
+/// What the shell does with a drag out of an archive once it is dropped:
+/// it asks for each entry by index, and every answer is extracted first.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) enum Pulled {
+    Taking(usize),
+    Took(usize, bool),
+}
+
+/// Follows a drop as the shell takes the entries, reporting the bytes taken so
+/// far and the entry being taken. It is over once every entry has been taken,
+/// when the shell lets go of the drag, or when `stop` is set; a shell that asks
+/// for an entry twice, as some do, counts it once. Gives back the bytes taken,
+/// or how many entries could not be extracted.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn follow_drop(
+    taken: &std::sync::mpsc::Receiver<Pulled>,
+    sizes: &[u64],
+    stop: &std::sync::atomic::AtomicBool,
+    mut report: impl FnMut(u64, Option<usize>) -> bool,
+) -> Result<u64, usize> {
+    use std::sync::mpsc::RecvTimeoutError;
+    let mut outcome = vec![None::<bool>; sizes.len()];
+    let mut done = 0;
+    let mut current = None;
+    while !stop.load(std::sync::atomic::Ordering::Relaxed) && outcome.iter().any(Option::is_none) {
+        match taken.recv_timeout(std::time::Duration::from_millis(200)) {
+            Ok(Pulled::Taking(i)) => current = Some(i),
+            Ok(Pulled::Took(i, ok)) => {
+                if let Some(slot @ None) = outcome.get_mut(i) {
+                    *slot = Some(ok);
+                    done += sizes[i];
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+        if !report(done, current) {
+            break;
+        }
+    }
+    match outcome.iter().filter(|o| **o == Some(false)).count() {
+        0 => Ok(done),
+        failed => Err(failed),
+    }
+}
+
 fn worker_notify<'a>(
     tx: &'a Sender<Message>,
     stop: &'a std::sync::atomic::AtomicBool,
@@ -1344,14 +1390,57 @@ impl AppController {
             .collect();
         let password = self.state.archive_password.clone();
         let entries: Vec<Entry> = picked.into_iter().map(|(e, _)| e).collect();
+        let sizes: Vec<u64> = entries.iter().map(|e| e.size).collect();
+        let total: u64 = sizes.iter().sum();
+        let names: Vec<String> = items.iter().map(|i| i.name.clone()).collect();
+        let (pulled, taken) = channel::<Pulled>();
+        let s = self.s();
+        let task = Task::new(
+            s.extracting,
+            archive_stem(&archive),
+            Box::new(move |tx, _, stop, _| {
+                let outcome = follow_drop(&taken, &sizes, &stop, |done, i| {
+                    let name = i.map(|i| names[i].clone()).unwrap_or_default();
+                    tx.send(Message::Progress(done as usize, total as usize, name))
+                        .is_ok()
+                });
+                let _ = tx.send(match outcome {
+                    _ if stop.load(std::sync::atomic::Ordering::Relaxed) => {
+                        Message::Failed(arca_core::Error::Cancelled.to_string())
+                    }
+                    Ok(bytes) => Message::Done(fill(s.dragged_out, &[("size", &human(bytes))])),
+                    Err(failed) => {
+                        Message::Failed(fill(s.drag_out_failed, &[("n", &failed.to_string())]))
+                    }
+                });
+            }),
+        )
+        .reading([archive.clone()])
+        .total(total as usize);
+        let (stop, hold) = (task.stop.clone(), task.hold.clone());
         let deliver = Box::new(move |i: usize| {
-            entries
-                .get(i)
-                .and_then(|e| extract_one(&archive, e, password.as_deref(), &|_, _, _| true).ok())
+            use std::sync::atomic::Ordering::Relaxed;
+            let entry = entries.get(i)?;
+            let _ = pulled.send(Pulled::Taking(i));
+            let gate = |_: usize, _: usize, _: &str| {
+                while hold.load(Relaxed) && !stop.load(Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(60));
+                }
+                !stop.load(Relaxed)
+            };
+            let path = gate(0, 0, "")
+                .then(|| extract_one(&archive, entry, password.as_deref(), &gate).ok())
+                .flatten();
+            let _ = pulled.send(Pulled::Took(i, path.is_some()));
+            path
         });
         // Copy only. Moving would mean taking the entries out of the archive,
         // and the one gesture that does that already asks first.
-        let _ = arca_drag::drag(items, deliver, false);
+        if arca_drag::drag(items, deliver, false) != arca_drag::Effect::None {
+            let mut task = task;
+            task.in_bytes = true;
+            self.enqueue(task);
+        }
     }
 
     #[cfg(not(windows))]
