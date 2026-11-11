@@ -238,6 +238,10 @@ pub(crate) struct Shell {
     theme_draft: Option<themes::Theme>,
     theme_error: Option<String>,
     carrying: bool,
+    // Rows on their way out of the window, held for one frame. The system drag
+    // blocks the window until it is over, so whatever was on screen stays on
+    // screen: it starts only once a frame without the in-window chip is shown.
+    leaving: Option<Vec<String>>,
     /// A drop waiting on the Move / Copy / Cancel menu.
     pending_drop: Option<PendingDrop>,
     /// The blank of a list under carried rows this frame: its folder and rect.
@@ -319,6 +323,7 @@ impl Shell {
             theme_draft: None,
             theme_error: None,
             carrying: false,
+            leaving: None,
             pending_drop: None,
             blank_drop: None,
             row_drop_hover: false,
@@ -1364,6 +1369,9 @@ impl Shell {
     }
 
     fn input(&mut self, ctx: &egui::Context) {
+        if let Some(roots) = self.leaving.take() {
+            self.controller.drag_out(&roots);
+        }
         if ctx.input(|input| input.pointer.delta() != egui::Vec2::ZERO) {
             self.keyboard_drove = false;
         }
@@ -1421,7 +1429,8 @@ impl Shell {
                     .map(|rows| rows.0.clone())
                     .unwrap_or_default();
                 egui::DragAndDrop::clear_payload(ctx);
-                self.controller.drag_out(&roots);
+                self.leaving = Some(roots);
+                ctx.request_repaint();
             } else if !ctx.input(|input| input.pointer.primary_down()) {
                 self.carrying = false;
             }
