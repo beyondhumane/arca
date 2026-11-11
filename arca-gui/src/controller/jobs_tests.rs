@@ -392,6 +392,64 @@ fn only_the_copy_that_staged_a_cut_can_arm_it() {
 }
 
 #[test]
+fn a_cut_that_never_reached_the_clipboard_stops_fading_its_rows() {
+    let mut app = AppController::new(Settings::default());
+    let failing: Work = Box::new(|tx, _, _, _| {
+        let _ = tx.send(Message::Failed("disk full".into()));
+    });
+    let id = app.enqueue(Task::new("Cut", "a", failing));
+    app.state.cut_names.insert("a.txt".into());
+    app.state.cut_armed = Some((
+        id,
+        Cut {
+            archive: PathBuf::from("/tmp/cut.zip"),
+            paths: vec![PathBuf::from("/tmp/clip/a.txt")],
+            names: vec!["a.txt".into()],
+        },
+    ));
+    settle(&mut app);
+    assert!(app.state.cut_armed.is_none());
+    assert!(app.state.cut_pending.is_none());
+    assert!(app.state.cut_names.is_empty());
+}
+
+#[test]
+fn taking_back_a_cut_still_being_prepared_stops_it() {
+    let mut app = AppController::new(Settings::default());
+    let (work, release, started) = gate();
+    let id = app.enqueue(Task::new("Cut", "a", work));
+    started.recv().unwrap();
+    app.state.cut_armed = Some((
+        id,
+        Cut {
+            archive: PathBuf::from("/tmp/cut.zip"),
+            paths: vec![PathBuf::from("/tmp/clip/a.txt")],
+            names: vec!["a.txt".into()],
+        },
+    ));
+    assert!(app.cancel_cut().is_some());
+    let task = app.state.tasks.iter().find(|t| t.id == id).unwrap();
+    assert!(task.stop.load(std::sync::atomic::Ordering::Relaxed));
+    release.send(()).unwrap();
+    settle(&mut app);
+}
+
+#[test]
+fn leaving_for_the_disk_forgets_a_cut_out_of_the_archive() {
+    let room = Room::new();
+    let mut app = AppController::new(Settings::default());
+    app.state.cut_names.insert("a.txt".into());
+    app.state.cut_pending = Some(Cut {
+        archive: PathBuf::from("/tmp/cut.zip"),
+        paths: vec![PathBuf::from("/tmp/clip/a.txt")],
+        names: vec!["a.txt".into()],
+    });
+    app.browse_disk(&room.0);
+    assert!(app.state.cut_pending.is_none());
+    assert!(app.state.cut_names.is_empty());
+}
+
+#[test]
 fn a_rewrite_that_failed_behind_keeps_the_reread_of_the_one_before() {
     let room = Room::new();
     let archive = room.archive(None, false);

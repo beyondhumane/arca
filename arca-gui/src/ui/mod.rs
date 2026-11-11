@@ -32,6 +32,7 @@ const RECENT_MAX: usize = 10;
 // How often to look at work that runs on other threads while it runs. Nothing
 // is repainted on a clock once the window has nothing left to show.
 const TICK: Duration = Duration::from_millis(100);
+const CUT_CHECK: Duration = Duration::from_secs(1);
 
 enum DialogResult {
     Open(Option<PathBuf>),
@@ -254,6 +255,10 @@ pub(crate) struct Shell {
     conflict_all: bool,
     /// The password in the compress box shown in clear.
     add_show_password: bool,
+    // Whether this Ctrl+V already pasted, through the text egui saw on the
+    // clipboard, before V is let go of.
+    pasted_text: bool,
+    cut_checked: std::time::Instant,
     anchor: Option<(egui::Id, egui::Pos2)>,
     search: Option<search::Search>,
     decorated: bool,
@@ -330,6 +335,8 @@ impl Shell {
             conflict_name: None,
             conflict_all: false,
             add_show_password: false,
+            pasted_text: false,
+            cut_checked: std::time::Instant::now(),
             anchor: None,
             search: None,
             decorated: system_title_bar(&settings_now),
@@ -351,7 +358,8 @@ impl Shell {
                 }
             });
         }
-        if self.controller.state.cut_pending.is_some() {
+        if self.controller.state.cut_pending.is_some() && self.cut_checked.elapsed() >= CUT_CHECK {
+            self.cut_checked = std::time::Instant::now();
             self.controller.cut_landed();
         }
         if self.clip_seq.is_some()
@@ -366,7 +374,6 @@ impl Shell {
             || state.listing
             || state.channel.is_some()
             || state.update_rx.is_some()
-            || state.cut_pending.is_some()
             || matches!(state.preview.status, PreviewStatus::Loading)
             || state
                 .tasks
@@ -374,6 +381,10 @@ impl Shell {
                 .any(|task| matches!(task.status, TaskStatus::Queued | TaskStatus::Running));
         if waiting {
             ctx.request_repaint_after(TICK);
+        } else if state.cut_pending.is_some() {
+            // A cut is pasted somewhere else, so nothing here says when; it
+            // is looked for now and then, not on every frame.
+            ctx.request_repaint_after(CUT_CHECK);
         }
     }
 
@@ -1320,6 +1331,14 @@ impl Shell {
             // files copied in the Explorer paste here and the other way round.
             let (roots, cut) = if clipboard::AVAILABLE {
                 let (files, cut) = clipboard::taken();
+                if !files
+                    .iter()
+                    .all(|path| crate::controller::disk::reaches(path))
+                {
+                    self.controller
+                        .set_notice(self.controller.s().clipboard_network, true);
+                    return;
+                }
                 let roots: Vec<String> = files
                     .iter()
                     .map(|path| {
@@ -1478,7 +1497,29 @@ impl Shell {
                     }
                 }
                 egui::Event::Cut if !self.typing() => self.dispatch_clipboard(true),
-                egui::Event::Paste(_) if !self.typing() => self.dispatch_paste(),
+                egui::Event::Paste(_) => {
+                    self.pasted_text = true;
+                    if !self.typing() {
+                        self.dispatch_paste();
+                    }
+                }
+                // egui only turns Ctrl+V into a paste when the clipboard holds
+                // text, and swallows the key otherwise; files copied in the
+                // Explorer carry none. Letting go of V is still reported, and
+                // that is when a paste of files is noticed.
+                egui::Event::Key {
+                    key: egui::Key::V,
+                    pressed: false,
+                    modifiers,
+                    ..
+                } if modifiers.command => {
+                    if !std::mem::take(&mut self.pasted_text)
+                        && !self.typing()
+                        && !self.background_blocked()
+                    {
+                        self.dispatch_paste();
+                    }
+                }
                 egui::Event::Text(text) if !self.typing() && !self.background_blocked() => {
                     self.jump_to(&text)
                 }
@@ -1693,6 +1734,9 @@ impl Shell {
                 if self.carrying {
                     self.carrying = false;
                     egui::DragAndDrop::clear_payload(&self.ctx);
+                } else if egui::Popup::is_any_open(&self.ctx) {
+                    // A menu takes the Esc that closes it; the cut and the
+                    // selection behind it stay as they were.
                 } else if !self.cancel_cut() {
                     self.controller.dispatch(AppAction::ClearSelection);
                 }

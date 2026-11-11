@@ -225,6 +225,13 @@ pub(crate) fn could_not(
     format!("{what}: {error}")
 }
 
+/// Whether a path from elsewhere, such as the clipboard, can be named by a
+/// listing name at all. A network path such as `\\server\share` cannot: it
+/// would come back as a folder of the drive the window happens to be on.
+pub(crate) fn reaches(path: &Path) -> bool {
+    disk_path(&disk_dir(path)) == crate::clipboard::shell_path(path.to_path_buf())
+}
+
 /// The path on disk behind a listing name, folder or file.
 pub(crate) fn disk_path(name: &str) -> PathBuf {
     let name = name.trim_end_matches('/');
@@ -1119,6 +1126,9 @@ impl AppController {
         self.state.active_pane_mut().checked.clear();
         self.state.active_pane_mut().cursor = None;
         self.state.folders = tree::folders_of(&[]);
+        self.state.cut_armed = None;
+        self.state.cut_pending = None;
+        self.state.cut_names.clear();
         self.state.history.clear();
         self.state.here = 0;
         self.state.undo = None;

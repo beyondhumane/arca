@@ -58,6 +58,17 @@ fn disk_paths_round_trip_through_entry_names() {
 }
 
 #[test]
+fn only_paths_a_listing_can_name_are_pasted() {
+    let room = Room::new();
+    assert!(super::disk::reaches(&room.path("top.txt")));
+    #[cfg(windows)]
+    {
+        assert!(super::disk::reaches(Path::new(r"\\?\C:\Temp\a.txt")));
+        assert!(!super::disk::reaches(Path::new(r"\\server\share\a.txt")));
+    }
+}
+
+#[test]
 fn ancestors_walk_down_from_the_top() {
     assert_eq!(ancestors_of(""), vec![String::new()]);
     assert_eq!(

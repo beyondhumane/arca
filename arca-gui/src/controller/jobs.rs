@@ -344,6 +344,7 @@ impl AppController {
     pub(crate) fn poll_tasks(&mut self) -> bool {
         let mut close_window = false;
         let mut cut_ready = Vec::new();
+        let mut cut_failed = Vec::new();
         let mut installing = false;
         let mut settled = false;
         let words = self.s();
@@ -395,6 +396,7 @@ impl AppController {
                         settled = true;
                     }
                     Message::Failed(text) => {
+                        cut_failed.push(task.id);
                         let quit = text == arca_core::Error::Cancelled.to_string();
                         let text = if quit && task.stop_leaves_files {
                             words.stopped_partial.to_string()
@@ -479,6 +481,11 @@ impl AppController {
         if let Some((armed_by, _)) = &self.state.cut_armed {
             if cut_ready.contains(armed_by) {
                 self.state.cut_pending = self.state.cut_armed.take().map(|(_, cut)| cut);
+            } else if cut_failed.contains(armed_by) {
+                // Nothing reached the clipboard, so nothing is waiting to be
+                // pasted and the rows have no reason to stay faded.
+                self.state.cut_armed = None;
+                self.state.cut_names.clear();
             }
         }
         if settled {
