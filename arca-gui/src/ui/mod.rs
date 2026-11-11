@@ -1381,7 +1381,9 @@ impl Shell {
                     pressed: true,
                     ..
                 } => {
-                    if let Some(shortcut) = side_button(button) {
+                    if let Some(shortcut) =
+                        side_button(button).filter(|_| !self.background_blocked() && !self.typing())
+                    {
                         self.shortcut(shortcut);
                     }
                 }
