@@ -37,6 +37,7 @@ impl Lang {
 pub struct Strings {
     pub enter_folder: &'static str,
     pub focus_word: &'static str,
+    pub context_menu: &'static str,
     pub sort_word: &'static str,
     pub close_preview: &'static str,
     pub wrap_lines: &'static str,
@@ -465,6 +466,7 @@ pub struct Strings {
 const EN: Strings = Strings {
     enter_folder: "Enter folder",
     focus_word: "Move focus",
+    context_menu: "Menu of the row under the cursor",
     sort_word: "Sort",
     close_preview: "Close preview",
     wrap_lines: "Wrap lines",
@@ -890,6 +892,7 @@ const EN: Strings = Strings {
 const ES: Strings = Strings {
     enter_folder: "Entrar en la carpeta",
     focus_word: "Mover el foco",
+    context_menu: "Menú de la fila del cursor",
     sort_word: "Ordenar",
     close_preview: "Cerrar vista previa",
     wrap_lines: "Ajustar líneas",

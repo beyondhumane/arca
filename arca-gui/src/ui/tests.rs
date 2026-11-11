@@ -76,6 +76,16 @@ fn conflict_actions_answer_every_supported_choice() {
 }
 
 #[test]
+fn shift_f10_opens_the_row_menu_from_the_keyboard() {
+    assert_eq!(
+        shortcut_for(false, true, false, "f10", false),
+        Some(Shortcut::ContextMenu)
+    );
+    assert_eq!(shortcut_for(false, true, false, "f10", true), None);
+    assert_eq!(shortcut_for(false, false, false, "f10", false), None);
+}
+
+#[test]
 fn background_events_are_blocked_by_modals_and_native_pickers() {
     assert!(background_event_allowed(false, false));
     assert!(!background_event_allowed(true, false));

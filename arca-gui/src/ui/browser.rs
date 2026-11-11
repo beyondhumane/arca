@@ -575,6 +575,9 @@ impl Shell {
                                 cut: self.controller.state.cut_names.contains(&row.path)
                                     || carried(ui.ctx(), &row.path),
                             };
+                            if look.cursor {
+                                self.cursor_row = Some((rect, ui.layer_id(), index));
+                            }
                             paint_row_back(ui, rect, &response, &look, p);
                             let mut x = rect.left();
                             for (slot, column) in shown.iter().enumerate() {
@@ -779,7 +782,7 @@ impl Shell {
                     },
                 )
                 .response
-                .on_hover_text(s.sort_word);
+                .named_menu(s.sort_word);
                 if icon_button(ui, icon::ARROW_UP, s.up, can_go_up).clicked() {
                     self.pane_action = Some(PaneAction::Up(pane));
                 }
@@ -823,9 +826,10 @@ impl Shell {
                 );
                 let field = ui.add(
                     super::widgets::field(ui, &mut typed)
-                        .hint_text(hint)
+                        .hint_text(hint.clone())
                         .desired_width(width - 60.0),
                 );
+                super::widgets::named(&field, &hint);
                 if std::mem::take(&mut self.focus_filter) {
                     field.request_focus();
                 }
@@ -885,6 +889,9 @@ impl Shell {
                     cut: self.controller.state.cut_names.contains(&row.path)
                         || carried(ui.ctx(), &row.path),
                 };
+                if look.cursor {
+                    self.cursor_row = Some((rect, ui.layer_id(), index));
+                }
                 paint_row_back(ui, rect, &response, &look, p);
                 if self.renaming_here(row) && active {
                     self.rename_field(ui, rect.shrink2(Vec2::new(24.0, 1.0)));
@@ -973,6 +980,7 @@ impl Shell {
             rect,
             super::widgets::field(ui, &mut self.rename_value).desired_width(rect.width()),
         );
+        super::widgets::named(&response, self.controller.s().rename_word);
         if self.focus_rename {
             response.request_focus();
             self.focus_rename = false;
@@ -1104,7 +1112,7 @@ impl Shell {
         self.controller.state.settings.row_height()
     }
 
-    fn row_menu(&mut self, ui: &mut egui::Ui, row: Option<&Row>, index: usize) {
+    pub(super) fn row_menu(&mut self, ui: &mut egui::Ui, row: Option<&Row>, index: usize) {
         let s = self.controller.s();
         let idle = self.background_idle();
         let writable = self.controller.can_change();

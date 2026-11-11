@@ -418,6 +418,7 @@ pub(crate) enum OverflowAction {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Shortcut {
+    ContextMenu,
     Open,
     Compress,
     ExtractAll,
@@ -474,6 +475,9 @@ pub(crate) fn shortcut_for(
             "right" | "arrowright" if !typing => Some(Shortcut::Forward),
             _ => None,
         };
+    }
+    if shift && !secondary && !alt && key == "f10" && !typing {
+        return Some(Shortcut::ContextMenu);
     }
     if typing {
         return None;

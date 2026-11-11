@@ -359,6 +359,7 @@ fn tree(
             if context.renaming.as_deref() == Some(id.as_str()) {
                 let response =
                     ui.add(super::widgets::field(ui, rename.value).desired_width(f32::INFINITY));
+                super::widgets::named(&response, context.s.rename_word);
                 if *rename.focus {
                     response.request_focus();
                     *rename.focus = false;

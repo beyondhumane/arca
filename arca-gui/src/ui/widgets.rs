@@ -4,6 +4,28 @@ use eframe::egui::{
 };
 
 /// A square button holding one glyph, named for screen readers by its tip.
+/// Names a text field for screen readers. Its placeholder is read as a hint
+/// and is gone as soon as anything is typed, so it cannot be the name.
+pub(crate) fn named(response: &Response, name: &str) {
+    response
+        .ctx
+        .accesskit_node_builder(response.id, |node| node.set_label(name));
+}
+
+/// Gives a menu opened from an icon the name a screen reader reads and the
+/// tooltip a pointer shows; the glyph alone says nothing to either.
+pub(crate) trait NamedMenu {
+    fn named_menu(self, name: &str) -> Response;
+}
+
+impl NamedMenu for Response {
+    fn named_menu(self, name: &str) -> Response {
+        let spoken = name.to_string();
+        self.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &spoken));
+        self.on_hover_text(name)
+    }
+}
+
 pub(crate) fn icon_button(ui: &mut Ui, glyph: &str, tip: &str, enabled: bool) -> Response {
     icon_toggle(ui, glyph, tip, enabled, false)
 }

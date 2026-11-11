@@ -34,6 +34,7 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>Alt+W</kbd> | Extract here |
 | <kbd>+</kbd> <kbd>-</kbd> | Select or deselect by filename mask |
 | <kbd>Tab</kbd> <kbd>Shift+Tab</kbd> | Move between focusable controls and panes |
+| <kbd>Shift+F10</kbd> | Open the menu of the row under the cursor, or of the folder when there is none |
 | <kbd>F1</kbd> | Shortcut help |
 | <kbd>Esc</kbd> | Dismiss the active dialog or inline edit; otherwise clear selection |
 

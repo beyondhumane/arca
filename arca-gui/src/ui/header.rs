@@ -287,7 +287,7 @@ impl Shell {
             }
         })
         .response
-        .on_hover_text(s.view_group);
+        .named_menu(s.view_group);
     }
 
     fn remember_width(&mut self, width: f32, slot: impl Fn(&mut Settings) -> &mut f32) {
@@ -463,10 +463,11 @@ impl Shell {
         let response = ui.add(
             super::widgets::field(ui, &mut self.filter_value)
                 .id(id)
-                .hint_text(hint)
+                .hint_text(hint.clone())
                 .frame(egui::Frame::NONE)
                 .desired_width(ui.available_width()),
         );
+        super::widgets::named(&response, &hint);
         if self.focus_filter {
             response.request_focus();
             self.focus_filter = false;
@@ -733,7 +734,7 @@ impl Shell {
             }
         })
         .response
-        .on_hover_text(s.more_word);
+        .named_menu(s.more_word);
     }
 
     /// The new-version notice, in the status bar where it does not get in
