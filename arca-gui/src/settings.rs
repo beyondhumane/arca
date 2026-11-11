@@ -140,6 +140,8 @@ pub(crate) struct Settings {
     pub(crate) new_format: Format,
     pub(crate) new_codec: Codec,
     pub(crate) new_level: Level,
+    // Whether extracting makes a folder named after the archive first.
+    pub(crate) into_subfolder: bool,
     // Where the window was left and how big: x, y, width, height. None until it
     // has been opened once.
     pub(crate) window: Option<[f32; 4]>,
@@ -205,6 +207,7 @@ impl Default for Settings {
             new_format: Format::Zip,
             new_codec: Codec::Deflate,
             new_level: Level::NORMAL,
+            into_subfolder: false,
             window: None,
             recent: Vec::new(),
             last_folder: None,
@@ -322,6 +325,7 @@ impl Settings {
                         s.new_level = Level::new(n);
                     }
                 }
+                ("into_subfolder", v) => s.into_subfolder = flag(v).unwrap_or(s.into_subfolder),
                 // One line each, because a path can hold anything a filename
                 // can and there is no separator left that it could not.
                 ("recent", p) if !p.is_empty() => s.recent.push(p.to_string()),
@@ -490,6 +494,7 @@ impl Settings {
             Codec::Zstd => "new_codec = zstd\n",
         });
         out.push_str(&format!("new_level = {}\n", self.new_level.get()));
+        out.push_str(&format!("into_subfolder = {}\n", yes(self.into_subfolder)));
         out.push_str(&format!("columns = {}\n", columns.join(",")));
         out.push_str(&format!("widths = {}\n", widths.join(",")));
         out.push_str(&format!("sidebar = {:.1}\n", self.sidebar));
@@ -580,6 +585,24 @@ mod tests {
         assert_eq!(odd.new_format, Format::Zip);
         assert_eq!(odd.new_codec, Codec::Deflate);
         assert_eq!(odd.new_level, Level::BEST);
+    }
+
+    #[test]
+    fn extracting_into_a_subfolder_is_kept_and_defaults_to_off() {
+        assert!(!Settings::parse("").into_subfolder);
+        let on = Settings::parse(
+            "into_subfolder = yes
+",
+        );
+        assert!(on.into_subfolder);
+        assert!(Settings::parse(&on.text()).into_subfolder);
+        assert!(
+            !Settings::parse(
+                "into_subfolder = no
+"
+            )
+            .into_subfolder
+        );
     }
 
     #[test]
@@ -739,6 +762,7 @@ mod tests {
             "folders",
             "updates",
             "show_hidden",
+            "into_subfolder",
         ];
         for bad in ["maybe", "true", "false", "Yes", "NO", "1", "0", ""] {
             let malformed: String = keys.iter().map(|k| format!("{k} = {bad}\n")).collect();

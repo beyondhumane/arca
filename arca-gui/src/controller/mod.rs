@@ -537,6 +537,12 @@ impl AppController {
         }
     }
 
+    /// Saves whether extracting goes into a folder named after the archive.
+    pub(crate) fn set_into_subfolder(&mut self, on: bool) {
+        self.update_settings(|settings| settings.into_subfolder = on);
+        self.state.into_subfolder = on;
+    }
+
     /// Saves what new archives start out as and applies it to the next one.
     /// The format is left alone while an archive is being browsed, because
     /// then `state.format` is the format of what is open.
@@ -744,6 +750,7 @@ impl AppController {
     pub(crate) fn new(settings: Settings) -> Self {
         let format = Self::default_format(&settings);
         let (codec, level) = (settings.new_codec, settings.new_level);
+        let into_subfolder = settings.into_subfolder;
         AppController {
             volumes: Vec::new(),
             volumes_at: None,
@@ -765,7 +772,7 @@ impl AppController {
                 format,
                 codec,
                 level,
-                into_subfolder: false,
+                into_subfolder,
                 pending_inputs: Vec::new(),
                 output_name: String::new(),
                 output_dir: None,
@@ -2813,6 +2820,17 @@ mod compress_tests {
         controller.prepare_compress(vec![PathBuf::from("a.txt")]);
         assert_eq!(controller.state.format, Format::SevenZ);
         assert_eq!(controller.state.output_name, "a.7z");
+    }
+
+    #[test]
+    fn extracting_into_a_subfolder_is_remembered() {
+        let controller = AppController::new(Settings::parse(
+            "into_subfolder = yes
+",
+        ));
+        assert!(controller.state.into_subfolder);
+        let controller = AppController::new(Settings::default());
+        assert!(!controller.state.into_subfolder);
     }
 
     #[test]
