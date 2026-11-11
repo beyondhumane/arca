@@ -35,7 +35,7 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>+</kbd> <kbd>-</kbd> | Select or deselect by filename mask |
 | <kbd>Tab</kbd> <kbd>Shift+Tab</kbd> | Move between focusable controls and panes |
 | <kbd>F1</kbd> | Shortcut help |
-| <kbd>Esc</kbd> | Dismiss the active dialog or inline edit; otherwise clear selection |
+| <kbd>Esc</kbd> | Dismiss the active dialog or inline edit; otherwise take back a pending cut, and then clear the selection |
 
 Ctrl+click toggles a row; Shift+click selects a range. A plain folder click opens a child in Columns; Details uses a double-click. Right-click a row or empty pane space for its menu. Drag pane dividers to resize; use horizontal scrolling to reach ancestors.
 

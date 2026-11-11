@@ -325,6 +325,29 @@ fn an_extraction_fills_the_folder_it_extracts_into() {
 }
 
 #[test]
+fn a_cut_that_has_not_been_pasted_can_be_taken_back() {
+    let mut app = AppController::new(Settings::default());
+    assert!(app.cancel_cut().is_none());
+    let cut = |name: &str| Cut {
+        archive: PathBuf::from("/tmp/cut.zip"),
+        paths: vec![PathBuf::from(format!("/tmp/clip/{name}"))],
+        names: vec![name.into()],
+    };
+    app.state.cut_names.insert("a.txt".into());
+    app.state.cut_pending = Some(cut("a.txt"));
+    assert_eq!(
+        app.cancel_cut(),
+        Some(vec![PathBuf::from("/tmp/clip/a.txt")])
+    );
+    assert!(app.state.cut_pending.is_none());
+    assert!(app.state.cut_names.is_empty());
+    // One still being prepared is taken back too, so it cannot arm later.
+    app.state.cut_armed = Some((7, cut("b.txt")));
+    assert!(app.cancel_cut().is_some());
+    assert!(app.state.cut_armed.is_none());
+}
+
+#[test]
 fn only_the_copy_that_staged_a_cut_can_arm_it() {
     let mut app = AppController::new(Settings::default());
     let ready: fn() -> Work = || {

@@ -1274,6 +1274,31 @@ impl Shell {
         self.controller.dispatch(AppAction::Copy { cut });
     }
 
+    // Esc takes a pending cut back before it clears the selection, as in the
+    // Explorer. The clipboard is emptied only while it still holds what was
+    // cut here, so a copy made since in another program is left alone.
+    fn cancel_cut(&mut self) -> bool {
+        if let Some(paths) = self.controller.cancel_cut() {
+            if clipboard::files() == paths {
+                clipboard::clear();
+            }
+            return true;
+        }
+        let disk_cut = self.clip_seq.is_some() || matches!(self.disk_clip, Some((_, true)));
+        if !disk_cut {
+            return false;
+        }
+        let ours = match self.clip_seq {
+            Some(seq) => clipboard::sequence() == Some(seq),
+            None => clipboard::taken().1,
+        };
+        if ours {
+            clipboard::clear();
+        }
+        self.forget_disk_cut();
+        true
+    }
+
     // A cut on the disk is over once it has been pasted, or once something
     // else has taken the clipboard: the rows stop looking cut either way.
     fn forget_disk_cut(&mut self) {
@@ -1668,7 +1693,7 @@ impl Shell {
                 if self.carrying {
                     self.carrying = false;
                     egui::DragAndDrop::clear_payload(&self.ctx);
-                } else {
+                } else if !self.cancel_cut() {
                     self.controller.dispatch(AppAction::ClearSelection);
                 }
             }

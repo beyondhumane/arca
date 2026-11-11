@@ -1362,6 +1362,20 @@ impl AppController {
     // grew a step.
     // The names ticked right now, which is what every action that works on a
     // selection needs.
+    /// Takes back a cut that has not been pasted, as Esc does in the Explorer:
+    /// the rows stop fading and a paste no longer takes the entries out. Gives
+    /// back the copies the clipboard was handed, so the window can let go of
+    /// the clipboard if it still holds them.
+    pub(crate) fn cancel_cut(&mut self) -> Option<Vec<PathBuf>> {
+        let cut = self
+            .state
+            .cut_pending
+            .take()
+            .or_else(|| self.state.cut_armed.take().map(|(_, cut)| cut))?;
+        self.state.cut_names.clear();
+        Some(cut.paths)
+    }
+
     pub(crate) fn cut_landed(&mut self) {
         let Some(cut) = &self.state.cut_pending else {
             return;
