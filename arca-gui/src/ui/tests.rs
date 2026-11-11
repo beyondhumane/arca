@@ -149,9 +149,10 @@ fn the_row_menu_only_offers_the_clipboard_where_there_is_one() {
     // copy, cut and paste are left out rather than greyed out.
     let offered: Vec<bool> = RowAction::ALL.iter().map(|a| a.offered(false)).collect();
     assert!(RowAction::ALL.iter().all(|a| a.offered(true)));
-    for action in [RowAction::Copy, RowAction::Cut, RowAction::Paste] {
+    for action in [RowAction::Copy, RowAction::Paste] {
         assert_eq!(offered[action as usize], clipboard::AVAILABLE);
     }
+    assert_eq!(offered[RowAction::Cut as usize], clipboard::CUTS);
     assert!(offered[RowAction::Open as usize]);
     assert!(offered[RowAction::Delete as usize]);
     // The element id of each menu row is built from `action as usize`, so

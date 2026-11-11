@@ -1268,6 +1268,9 @@ impl Shell {
         if self.controller.state.archive.is_none() || self.selected_count() == 0 {
             return;
         }
+        if cut && !clipboard::CUTS {
+            return;
+        }
         if !clipboard::AVAILABLE {
             self.controller
                 .set_notice(self.controller.s().clipboard_windows_only, true);

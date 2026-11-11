@@ -11,16 +11,24 @@
 //! reads to tell a cut from a copy. Without it a cut still pastes, but the
 //! Explorer treats it as a copy and leaves the temporary file behind.
 //!
-//! Only Windows has this. The X11 and Wayland side of the same idea is
-//! text/uri-list on a selection, which is a different mechanism with different
-//! owners, and nothing here pretends otherwise: the other platforms get a
-//! stub that says so, and the window turns the menu entries off.
+//! On Linux the same idea is text/uri-list on the CLIPBOARD selection, which
+//! every file manager reads and arboard already speaks on X11 (and on Wayland
+//! through XWayland). What Linux lacks is one agreed way of saying "cut": GNOME
+//! and Thunar have theirs, KDE another, and arboard writes neither, so to the
+//! other programs a cut here is a copy. Within the window a cut still moves,
+//! because the window remembers what it cut. Other platforms get a stub, and
+//! the window turns the menu entries off.
 
 use std::path::PathBuf;
 
 /// Whether this build can put files on the clipboard at all. The menu asks so
 /// it can leave the entries out rather than offer something that only fails.
-pub const AVAILABLE: bool = cfg!(windows);
+pub const AVAILABLE: bool = cfg!(any(windows, target_os = "linux"));
+
+/// Whether other programs can tell a cut from a copy. Cutting out of an archive
+/// only takes the entries out once whoever pastes has moved the files, so
+/// where nobody can be told to move them there is no cut to offer.
+pub const CUTS: bool = cfg!(windows);
 
 /// A path the way the shell reads one. `fs::canonicalize` hands back paths
 /// with the `\\?\` prefix on Windows, and the Explorer takes a CF_HDROP made of
@@ -124,32 +132,103 @@ pub fn clear() {
     }
 }
 
-#[cfg(not(windows))]
-pub fn set_files(_paths: &[PathBuf], _cut: bool) -> Result<(), String> {
-    Err("putting files on the clipboard is Windows only for now".into())
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::PathBuf;
+    use std::sync::{Mutex, OnceLock};
+
+    // On X11 the program that set the clipboard is the one that hands it out
+    // when somebody pastes, so the handle that set it has to outlive the call.
+    fn with<T>(use_it: impl FnOnce(&mut arboard::Clipboard) -> T) -> Result<T, String> {
+        static HANDLE: OnceLock<Mutex<Option<arboard::Clipboard>>> = OnceLock::new();
+        let mut held = HANDLE
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .map_err(|e| e.to_string())?;
+        if held.is_none() {
+            *held = Some(arboard::Clipboard::new().map_err(|e| e.to_string())?);
+        }
+        match held.as_mut() {
+            Some(clipboard) => Ok(use_it(clipboard)),
+            None => Err("no clipboard".into()),
+        }
+    }
+
+    // What this window last cut, since the clipboard itself cannot say.
+    fn last_cut() -> &'static Mutex<Option<Vec<PathBuf>>> {
+        static CUT: OnceLock<Mutex<Option<Vec<PathBuf>>>> = OnceLock::new();
+        CUT.get_or_init(|| Mutex::new(None))
+    }
+
+    pub fn set_files(paths: &[PathBuf], cut: bool) -> Result<(), String> {
+        if paths.is_empty() {
+            return Err("nothing to copy".into());
+        }
+        with(|clipboard| clipboard.set().file_list(paths).map_err(|e| e.to_string()))??;
+        if let Ok(mut last) = last_cut().lock() {
+            *last = cut.then(|| paths.to_vec());
+        }
+        Ok(())
+    }
+
+    pub fn files() -> Vec<PathBuf> {
+        with(|clipboard| clipboard.get().file_list().unwrap_or_default()).unwrap_or_default()
+    }
+
+    pub fn taken() -> (Vec<PathBuf>, bool) {
+        let files = files();
+        let cut = !files.is_empty()
+            && last_cut()
+                .lock()
+                .is_ok_and(|last| last.as_ref() == Some(&files));
+        (files, cut)
+    }
+
+    pub fn has_files() -> bool {
+        !files().is_empty()
+    }
+
+    pub fn sequence() -> Option<u32> {
+        None
+    }
+
+    pub fn clear() {
+        let _ = with(|clipboard| clipboard.clear());
+        if let Ok(mut last) = last_cut().lock() {
+            *last = None;
+        }
+    }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub use linux::*;
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn set_files(_paths: &[PathBuf], _cut: bool) -> Result<(), String> {
+    Err("putting files on the clipboard is not available on this system yet".into())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn files() -> Vec<PathBuf> {
     Vec::new()
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn taken() -> (Vec<PathBuf>, bool) {
     (Vec::new(), false)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn has_files() -> bool {
     false
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn sequence() -> Option<u32> {
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn clear() {}
 
 #[cfg(test)]

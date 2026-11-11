@@ -227,9 +227,11 @@ impl RowAction {
     /// On the disk the shell keeps its own list of what was cut or copied,
     /// so the three are always there.
     pub(crate) fn offered(self, on_disk: bool) -> bool {
-        !matches!(self, RowAction::Copy | RowAction::Cut | RowAction::Paste)
-            || on_disk
-            || clipboard::AVAILABLE
+        match self {
+            RowAction::Cut => on_disk || clipboard::CUTS,
+            RowAction::Copy | RowAction::Paste => on_disk || clipboard::AVAILABLE,
+            _ => true,
+        }
     }
 
     /// Whether the entry makes sense where the list is showing: the disk has

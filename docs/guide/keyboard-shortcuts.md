@@ -21,7 +21,7 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>a…z</kbd> | Jump by filename prefix |
 | <kbd>Alt+Left</kbd> <kbd>Alt+Right</kbd> | Back and forward in history |
 | <kbd>Ctrl+O</kbd> <kbd>Ctrl+N</kbd> <kbd>Ctrl+E</kbd> | Open archive, create archive, extract all |
-| <kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd> | File copy, cut, paste (Windows integration) |
+| <kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd> | Copy, cut and paste files, shared with the system file manager on Windows and Linux |
 | <kbd>Ctrl+Shift+C</kbd> | Copy selected names as text |
 | <kbd>Ctrl+F</kbd> | Show and focus the active pane's filter |
 | <kbd>F2</kbd> | Rename the selected entry in a writable ZIP |
