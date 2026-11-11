@@ -53,6 +53,7 @@ impl<W: Write> Write for Watched<'_, W> {
 // any other failure, takes the half-written file away with it.
 fn unpack(
     path: &Path,
+    mtime: Option<i64>,
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     progress: (usize, usize, &str),
     fill: impl FnOnce(&mut dyn Write) -> arca_core::Result<u64>,
@@ -75,6 +76,7 @@ fn unpack(
     } else {
         result.and_then(|n| {
             inner.flush()?;
+            arca_core::extraction::set_mtime(inner.get_ref(), mtime);
             Ok(n)
         })
     };
@@ -421,6 +423,7 @@ pub(crate) fn extract_one(
             let result = arca_core::extraction::Destination::new(&room).write_entry(
                 &entry.name,
                 false,
+                None,
                 &mut source,
                 &mut |_| arca_core::extraction::Conflict::Overwrite,
             );
@@ -433,7 +436,7 @@ pub(crate) fn extract_one(
                 fs::create_dir_all(parent)?;
             }
             let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
-            unpack(&path, notify, (0, 1, &entry.name), |out| {
+            unpack(&path, entry.mtime, notify, (0, 1, &entry.name), |out| {
                 arca_zip::extract_entry_with(&mut source, entry, out, password)
             })?;
             Ok(path)
@@ -448,9 +451,13 @@ pub(crate) fn extract_one(
             let mut r = TarReader::new(open_source(archive, format)?);
             while let Some(e) = r.next_entry()? {
                 if e.entry.name == entry.name && !e.entry.is_dir {
-                    unpack(&path, notify, (0, 1, &entry.name), |mut out| {
-                        r.copy_data(&e, &mut out)
-                    })?;
+                    unpack(
+                        &path,
+                        entry.mtime,
+                        notify,
+                        (0, 1, &entry.name),
+                        |mut out| r.copy_data(&e, &mut out),
+                    )?;
                     return Ok(path);
                 }
                 r.skip_data(&e)?;
@@ -640,19 +647,27 @@ fn write_sevenz_entry(
     ask: &dyn Fn(&Path) -> Answer,
 ) -> arca_core::Result<u64> {
     // This callback runs only after encrypted content has been validated.
-    write_entry(destination, &entry.name, entry.is_dir, reader, ask)
+    write_entry(
+        destination,
+        &entry.name,
+        entry.is_dir,
+        entry.mtime,
+        reader,
+        ask,
+    )
 }
 
 fn write_entry(
     destination: &mut arca_core::extraction::Destination,
     name: &str,
     is_dir: bool,
+    mtime: Option<i64>,
     reader: &mut dyn Read,
     ask: &dyn Fn(&Path) -> Answer,
 ) -> arca_core::Result<u64> {
     use arca_core::extraction::Conflict;
     destination
-        .write_entry(name, is_dir, reader, &mut |path| match ask(path) {
+        .write_entry(name, is_dir, mtime, reader, &mut |path| match ask(path) {
             Answer::Replace | Answer::ReplaceAll => Conflict::Overwrite,
             Answer::Skip | Answer::SkipAll => Conflict::Skip,
             Answer::Rename | Answer::RenameAll => Conflict::Rename,
@@ -744,7 +759,7 @@ pub(crate) fn extract(
                 .map(|(e, path)| {
                     let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
                     let at = (done.load(Ordering::Relaxed), total, e.name.as_str());
-                    let w = unpack(path, notify, at, |out| {
+                    let w = unpack(path, e.mtime, notify, at, |out| {
                         arca_zip::extract_entry_with(&mut source, e, out, password)
                     })?;
                     if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &e.name) {
@@ -761,7 +776,7 @@ pub(crate) fn extract(
                 let name = arca_xz::output_name(archive);
                 let mut source = Paced::new(arca_xz::open(archive)?, &name, notify);
                 let mut destination = arca_core::extraction::Destination::new(dest);
-                let result = write_entry(&mut destination, &name, false, &mut source, ask);
+                let result = write_entry(&mut destination, &name, false, None, &mut source, ask);
                 bytes = source.check(result)?;
             }
             let _ = notify(1, 1, "");
@@ -785,7 +800,7 @@ pub(crate) fn extract(
                 match dest_path(dest, &e.entry.name, e.entry.is_dir, ask, &mut claimed)? {
                     Some(path) => {
                         let at = (i, total, e.entry.name.as_str());
-                        bytes += unpack(&path, notify, at, |out| {
+                        bytes += unpack(&path, e.entry.mtime, notify, at, |out| {
                             r.with_data(&e, |data| Ok(std::io::copy(data, out)?))
                         })?;
                     }
@@ -1411,6 +1426,42 @@ mod tests {
                 arca_core::Error::Format("ISO entry changed since listing".into()).to_string()
             );
         }
+    }
+
+    #[test]
+    fn extracted_files_keep_the_time_the_archive_recorded() {
+        let dir = room("mtime");
+        let archive = dir.join("dated.zip");
+        let when = 1_600_000_000;
+        let mut zip = arca_zip::ZipWriter::new(File::create(&archive).unwrap());
+        zip.add(
+            "dated.txt",
+            &b"dated"[..],
+            Codec::Store,
+            Level::STORE,
+            Some(when),
+        )
+        .unwrap();
+        zip.finish().unwrap();
+        let dest = dir.join("out");
+        extract(
+            &archive,
+            &dest,
+            &[],
+            &|_, _, _| true,
+            &|_| Answer::Cancel,
+            None,
+        )
+        .unwrap();
+        let modified = fs::metadata(dest.join("dated.txt"))
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(modified, when as u64);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

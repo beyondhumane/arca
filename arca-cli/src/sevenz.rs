@@ -130,6 +130,7 @@ pub(super) fn extract(
             if let Some(written) = destination.write_entry(
                 &entry.name,
                 entry.is_dir,
+                entry.mtime,
                 reader,
                 &mut |_| match policy {
                     OnConflict::Overwrite => Conflict::Overwrite,
