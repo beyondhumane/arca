@@ -79,6 +79,15 @@ fn worker_notify<'a>(
     }
 }
 
+/// Whether copying this much out of an archive for the clipboard can go
+/// without a row in Operations. A few megabytes are extracted before a bar
+/// would have finished appearing; gigabytes take long enough that progress,
+/// pause and cancel are owed, as for any other extraction.
+pub(crate) fn copies_quietly(bytes: u64) -> bool {
+    const QUIET_BELOW: u64 = 64 << 20;
+    bytes < QUIET_BELOW
+}
+
 fn password_error(error: &arca_core::Error) -> bool {
     arca_7z::password_required(error)
         || matches!(error, arca_core::Error::BadPassword)
@@ -1499,6 +1508,16 @@ impl AppController {
 
         let wanted = self.state.active_pane().checked.clone();
         let total = wanted.iter().filter(|b| **b).count();
+        let bytes: u64 = self
+            .state
+            .entries
+            .iter()
+            .zip(&wanted)
+            .filter(|(_, on)| **on)
+            .map(|(e, _)| e.size)
+            .sum();
+        let quiet = copies_quietly(bytes);
+        let ready = fill(s.on_clipboard, &[("n", &roots.len().to_string())]);
         let pw = self.state.archive_password.clone();
         self.state.close_when_done = false;
         let source = archive.clone();
@@ -1520,16 +1539,15 @@ impl AppController {
                     let _ = fs::remove_dir_all(old);
                 }
                 let _ = tx.send(match outcome {
-                    // Nothing to say. Copying somewhere else does not announce
-                    // itself either, and the rows a cut is holding are already
-                    // faded; what is worth a line is the entries leaving the
-                    // archive, and that has its own. An empty message hands the
-                    // status bar back to the summary of what is open.
+                    // A small copy says nothing: copying somewhere else does not
+                    // announce itself either, and an empty message hands the
+                    // status bar back to the summary of what is open. A large one
+                    // had a row in Operations, and the row says it is done.
                     Ok(_) => {
                         if cut {
                             let _ = tx.send(Message::CutReady);
                         }
-                        Message::Done(String::new())
+                        Message::Done(if quiet { String::new() } else { ready })
                     }
                     Err(why) => Message::Failed(fill(s.clipboard_failed, &[("why", &why)])),
                 });
@@ -1538,9 +1556,7 @@ impl AppController {
         .reading([source])
         .writing([clipboard])
         .total(total);
-        // The one job that runs without saying so: it is over before a bar
-        // has finished appearing.
-        task.quiet = true;
+        task.quiet = quiet;
         let id = self.enqueue(task);
         self.state.cut_armed = armed.map(|cut| (id, cut));
     }

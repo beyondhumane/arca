@@ -325,6 +325,14 @@ fn an_extraction_fills_the_folder_it_extracts_into() {
 }
 
 #[test]
+fn only_a_large_copy_to_the_clipboard_gets_a_row_in_operations() {
+    assert!(super::copies_quietly(0));
+    assert!(super::copies_quietly(5 << 20));
+    assert!(!super::copies_quietly(64 << 20));
+    assert!(!super::copies_quietly(3 << 30));
+}
+
+#[test]
 fn a_cut_that_has_not_been_pasted_can_be_taken_back() {
     let mut app = AppController::new(Settings::default());
     assert!(app.cancel_cut().is_none());
