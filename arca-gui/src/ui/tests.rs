@@ -41,6 +41,21 @@ fn breadcrumbs_keep_root_and_nearest_folders() {
 }
 
 #[test]
+fn one_click_selects_a_folder_unless_panes_follow_it() {
+    let mut folder = crate::up_row("parent/child/");
+    folder.up = false;
+    folder.is_dir = true;
+    assert!(!super::browser::click_opens_folder(&folder, false, false));
+    assert!(super::browser::click_opens_folder(&folder, false, true));
+    assert!(!super::browser::click_opens_folder(&folder, true, true));
+    let mut file = folder.clone();
+    file.is_dir = false;
+    assert!(!super::browser::click_opens_folder(&file, false, true));
+    let up = crate::up_row("parent/");
+    assert!(!super::browser::click_opens_folder(&up, false, true));
+}
+
+#[test]
 fn conflict_actions_answer_every_supported_choice() {
     let answers = [
         Answer::Replace,

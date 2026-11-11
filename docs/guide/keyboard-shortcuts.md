@@ -37,7 +37,7 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>F1</kbd> | Shortcut help |
 | <kbd>Esc</kbd> | Dismiss the active dialog or inline edit; otherwise clear selection |
 
-Ctrl+click toggles a row; Shift+click selects a range. A plain folder click opens a child in Columns; Details uses a double-click. Right-click a row or empty pane space for its menu. Drag pane dividers to resize; use horizontal scrolling to reach ancestors.
+Ctrl+click toggles a row; Shift+click selects a range. A click selects a row and a double-click or Enter opens it; with **Open folders in the next pane** on, one click on a folder shows it in the next pane. Right-click a row or empty pane space for its menu. Drag pane dividers to resize; use horizontal scrolling to reach ancestors.
 
 The preview's close button returns focus. In narrow windows preview can remain temporarily suspended until there is room for it. The sidebar button cycles expanded, rail and hidden modes.
 
