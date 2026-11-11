@@ -551,6 +551,16 @@ fn closing_the_window_removes_the_version_kept_for_undo() {
 }
 
 #[test]
+fn the_version_kept_for_undo_stays_when_it_is_the_only_copy_left() {
+    let room = Room::new();
+    let (mut app, archive) = edited_archive(&room);
+    let kept = crate::archive_ops::undo_path(&archive);
+    std::fs::remove_file(&archive).unwrap();
+    app.drop_undo();
+    assert!(kept.exists());
+}
+
+#[test]
 fn a_second_edit_keeps_one_step_to_undo() {
     let room = Room::new();
     let (mut app, archive) = edited_archive(&room);

@@ -920,10 +920,14 @@ impl AppController {
         }
     }
     // The version kept for undo is a whole copy of the archive beside it, so
-    // it goes as soon as the window stops offering to put it back.
+    // it goes as soon as the window stops offering to put it back. Unless the
+    // archive itself is missing: a rewrite whose last rename failed leaves the
+    // old version only there, and it is the one copy left.
     pub(crate) fn drop_undo(&mut self) {
         if let Some((archive, _)) = self.state.undo.take() {
-            let _ = fs::remove_file(undo_path(&archive));
+            if archive.exists() {
+                let _ = fs::remove_file(undo_path(&archive));
+            }
         }
     }
 
