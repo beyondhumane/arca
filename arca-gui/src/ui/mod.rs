@@ -20,7 +20,7 @@ use crate::tree::children_of;
 use crate::*;
 use actions::*;
 use eframe::egui;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
@@ -800,6 +800,7 @@ impl Shell {
         {
             return;
         }
+        let beside = picker_start(self.controller.state.archive.as_deref());
         let (tx, rx) = channel();
         self.dialog = Some(rx);
         let ctx = self.ctx.clone();
@@ -823,10 +824,17 @@ impl Shell {
                 DialogKind::PickOutputDir => {
                     DialogResult::OutputDir(rfd::FileDialog::new().pick_folder())
                 }
-                DialogKind::Extract { only_checked } => DialogResult::Extract {
-                    only_checked,
-                    destination: rfd::FileDialog::new().pick_folder(),
-                },
+                DialogKind::Extract { only_checked } => {
+                    let picker = rfd::FileDialog::new();
+                    let picker = match &beside {
+                        Some(directory) => picker.set_directory(directory),
+                        None => picker,
+                    };
+                    DialogResult::Extract {
+                        only_checked,
+                        destination: picker.pick_folder(),
+                    }
+                }
                 DialogKind::AddFiles { folders } => DialogResult::AddFiles(if folders {
                     rfd::FileDialog::new().pick_folders()
                 } else {
@@ -1825,6 +1833,15 @@ impl eframe::App for Shell {
         self.dialogs(&ctx);
         self.window_chrome(&ctx);
     }
+}
+
+/// The folder the extraction picker opens in: the one holding the archive,
+/// where most extractions go, rather than wherever the system last left it.
+fn picker_start(archive: Option<&Path>) -> Option<PathBuf> {
+    archive
+        .and_then(Path::parent)
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .map(Path::to_path_buf)
 }
 
 /// Which way the window would grow from a pointer at `pos`, if `pos` is on
