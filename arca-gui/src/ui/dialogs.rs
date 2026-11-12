@@ -1586,6 +1586,11 @@ impl Shell {
                     lang == Some(Lang::Es),
                     Lang::Es.label(),
                 ),
+                SettingsControl::LangUk => (
+                    SettingsSection::General,
+                    lang == Some(Lang::Uk),
+                    Lang::Uk.label(),
+                ),
                 SettingsControl::ThemeSystem => (
                     SettingsSection::Appearance,
                     theme == ThemePreference::System,
@@ -2138,6 +2143,9 @@ impl Shell {
             SettingsControl::LangEs => self
                 .controller
                 .dispatch(AppAction::SetLanguage(Some(Lang::Es))),
+            SettingsControl::LangUk => self
+                .controller
+                .dispatch(AppAction::SetLanguage(Some(Lang::Uk))),
             SettingsControl::ThemeSystem => self.set_theme(ThemePreference::System),
             SettingsControl::ThemeLight => self.set_theme(ThemePreference::Light),
             SettingsControl::ThemeDark => self.set_theme(ThemePreference::Dark),

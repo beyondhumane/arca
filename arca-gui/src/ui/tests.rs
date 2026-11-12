@@ -448,7 +448,7 @@ fn context_destinations_name_the_clicked_folder_or_containing_directory() {
             Some("parent/".into())
         );
         assert_eq!(action.destination(None, ""), Some(String::new()));
-        for lang in [super::super::Lang::En, super::super::Lang::Es] {
+        for lang in super::super::Lang::ALL {
             let s = crate::i18n::strings(lang);
             let (label, _) = action.label(s);
             // Inside the folder being shown the entry says only what it does;
@@ -482,10 +482,10 @@ fn every_settings_control_has_its_own_slot_in_draw_order() {
 
 #[test]
 fn empty_folder_label_is_not_reported_as_archive_contents() {
-    // Both languages, because the point of the label is that it says the
+    // Every language, because the point of the label is that it says the
     // folder is empty rather than that the archive is unreadable, and a
     // translation that loses the difference is the same bug in Spanish.
-    for lang in [super::super::Lang::En, super::super::Lang::Es] {
+    for lang in super::super::Lang::ALL {
         let s = crate::i18n::strings(lang);
         assert_eq!(empty_state_aria_label(false, "", s), s.empty_folder);
         assert_eq!(empty_state_aria_label(false, "  ", s), s.empty_folder);

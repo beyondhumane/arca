@@ -269,6 +269,7 @@ pub(crate) enum SettingsControl {
     LangSystem,
     LangEn,
     LangEs,
+    LangUk,
     ThemeSystem,
     ThemeLight,
     ThemeDark,
@@ -277,10 +278,11 @@ pub(crate) enum SettingsControl {
 }
 
 impl SettingsControl {
-    pub(crate) const ALL: [SettingsControl; 8] = [
+    pub(crate) const ALL: [SettingsControl; 9] = [
         SettingsControl::LangSystem,
         SettingsControl::LangEn,
         SettingsControl::LangEs,
+        SettingsControl::LangUk,
         SettingsControl::ThemeSystem,
         SettingsControl::ThemeLight,
         SettingsControl::ThemeDark,
