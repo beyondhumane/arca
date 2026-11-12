@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.10.0](https://github.com/beyondhumane/arca/compare/v0.9.0...v0.10.0) (2026-11-12)
+
+
+### Features
+
+* **arca-drag:** drag out the way the Explorer does ([a1021e7](https://github.com/beyondhumane/arca/commit/a1021e7911d0012702cce35a8af6984494932801))
+* **arca-gui:** add Ukrainian ([75c0ded](https://github.com/beyondhumane/arca/commit/75c0ded6c30c71a9f79b8f2a620c9ad268b71d94))
+* **arca-gui:** answer the Explorer's keyboard shortcuts ([523237b](https://github.com/beyondhumane/arca/commit/523237b34c0ef074153d354e2135dcc888ab35fe))
+* **arca-gui:** copy and paste files through the Linux clipboard ([9368e52](https://github.com/beyondhumane/arca/commit/9368e529922eee8060bdf7c2058157b1f32efca2))
+* **arca-gui:** go back and forward with the mouse's side buttons ([062bbe5](https://github.com/beyondhumane/arca/commit/062bbe5389daa0a5cb33cbf1b46b7306966064b4))
+* **arca-gui:** open in the details view by default ([8e67bdb](https://github.com/beyondhumane/arca/commit/8e67bdb9f9b198a254bd2341ceddf5ef44031e97))
+* **arca-gui:** select a folder with one click and open it with two ([8309634](https://github.com/beyondhumane/arca/commit/83096349ac2067d050a1a7a5f5680fb23d694cc4))
+* **arca-gui:** show drags out of an archive in Operations ([0851ca6](https://github.com/beyondhumane/arca/commit/0851ca66702e47001acf9768854c4e36363d6bde))
+* **arca-gui:** show large clipboard copies in Operations ([6332c74](https://github.com/beyondhumane/arca/commit/6332c7476b2c70b80a0c9408472e75dc1652c940))
+* **site:** list every release file and show sizes in MiB ([#61](https://github.com/beyondhumane/arca/issues/61)) ([ec8403a](https://github.com/beyondhumane/arca/commit/ec8403a6b562351d151038aa7d1f9e73ff602719))
+* **zip:** add ExtractionReader with buffer-preserving seeks ([e95e796](https://github.com/beyondhumane/arca/commit/e95e796146f2c991ec865dc7e64e3a533cbb4147))
+
+
+### Bug fixes
+
+* **arca-core:** read and write ZIP times in the local time zone ([4471e99](https://github.com/beyondhumane/arca/commit/4471e996d44713dbbcd0d65e98cb89b0b01daa53))
+* **arca-drag:** end drags out of an archive cleanly ([3183f4a](https://github.com/beyondhumane/arca/commit/3183f4a5e7b856bec59559f1d2d187312118b9bf))
+* **arca-gui:** build the drag-out texts away from Windows without warnings ([b8a2fab](https://github.com/beyondhumane/arca/commit/b8a2fab9cd0c8b332d33ea0f17df6707716eebf9))
+* **arca-gui:** do not rename the parent folder with F2 on ".." ([c2b2bf5](https://github.com/beyondhumane/arca/commit/c2b2bf5b3d09939a661233969f2451f49bb8ac3a))
+* **arca-gui:** drag rows out without ticking them and drop files on disk ([aac3991](https://github.com/beyondhumane/arca/commit/aac3991dfbdf19bf35407602da060077490683db))
+* **arca-gui:** hide the drag chip before the system drag takes over ([0b5b246](https://github.com/beyondhumane/arca/commit/0b5b2463e9c0aba1b7dbe0b4a9bbf01781aa3f56))
+* **arca-gui:** keep Alt shortcuts from jumping to a row ([77dfdd9](https://github.com/beyondhumane/arca/commit/77dfdd9152cab30c0ff5f1e5f131a8cbc700ab57))
+* **arca-gui:** keep the mouse side buttons out of dialogs and typing ([233edfe](https://github.com/beyondhumane/arca/commit/233edfe6c810306c77c4735c1aeed646b145242f))
+* **arca-gui:** keep the real error when an AppImage update fails ([#77](https://github.com/beyondhumane/arca/issues/77)) ([33e5229](https://github.com/beyondhumane/arca/commit/33e5229eda61ac738ba280e8112a4c9294ddb294))
+* **arca-gui:** keep the undo copy when it is the only one left ([3c21ed5](https://github.com/beyondhumane/arca/commit/3c21ed5dfd1afbcf61345080579ca9e542ba2bc7))
+* **arca-gui:** leave the parent-folder row out of the visible count ([4372ff6](https://github.com/beyondhumane/arca/commit/4372ff6d1d2b5a1b959df8288d355d087e8c2ff8))
+* **arca-gui:** leave the top of the tree out of a drag on Linux too ([6a0c7a3](https://github.com/beyondhumane/arca/commit/6a0c7a3fd7979c6cf4e8099c6d225c80e6167aba))
+* **arca-gui:** let the keyboard work the Shift+F10 menu ([b426ef8](https://github.com/beyondhumane/arca/commit/b426ef85149d9ffdd6253f3b3568a0c6fd7543ad))
+* **arca-gui:** make copy, cut and paste hold up ([a3c732a](https://github.com/beyondhumane/arca/commit/a3c732a4d9d401a71c258593a8aec981ecab6188))
+* **arca-gui:** make the window usable with a screen reader and the keyboard ([b70fb0b](https://github.com/beyondhumane/arca/commit/b70fb0bec8bbaad4b2919b0fd7631c534ed9f318))
+* **arca-gui:** never truncate the archive when saving a copy onto it ([b552621](https://github.com/beyondhumane/arca/commit/b55262134a47fda1adcfd92fdf7ac4267f8dc544))
+* **arca-gui:** open the extraction folder picker beside the archive ([016740c](https://github.com/beyondhumane/arca/commit/016740c21dc118b334753ff4bc2b12a0b4d7cc79))
+* **arca-gui:** paste copies from an archive in the Explorer ([f81fad6](https://github.com/beyondhumane/arca/commit/f81fad6e9980dbc5ac7986c624eeb59a770f1ffe))
+* **arca-gui:** persist the defaults for new archives ([#68](https://github.com/beyondhumane/arca/issues/68)) ([0d32b70](https://github.com/beyondhumane/arca/commit/0d32b70850a441b08ee99cdb7ba62952a461d9cb))
+* **arca-gui:** remember extracting into a subfolder ([0bcebfc](https://github.com/beyondhumane/arca/commit/0bcebfc1c5c943c0966a04e40d7f7072302434cd))
+* **arca-gui:** remove the copy kept for undo once it cannot be used ([49912e8](https://github.com/beyondhumane/arca/commit/49912e883d32ad2094808063354e73ad9277cd43))
+* **arca-gui:** rename with F2 in folders on disk too ([7121be0](https://github.com/beyondhumane/arca/commit/7121be03974f8263cd55327ab8cea88fed40ac78))
+* **arca-gui:** report a cancelled conflict prompt as a stop ([#65](https://github.com/beyondhumane/arca/issues/65)) ([0ff16cc](https://github.com/beyondhumane/arca/commit/0ff16cc999075ed5fd5d462e6a83359db099a9b8))
+* **arca-gui:** say why a disk copy or move failed ([#67](https://github.com/beyondhumane/arca/issues/67)) ([2445b1a](https://github.com/beyondhumane/arca/commit/2445b1a40d193584cfe51726baf43871d259a749))
+* **arca-gui:** share copy, cut and paste on disk with the Explorer ([86fce0b](https://github.com/beyondhumane/arca/commit/86fce0b09037d233814d9f49461c574001381519))
+* **arca-gui:** show dates in local time ([be58999](https://github.com/beyondhumane/arca/commit/be589990aa93b54a4249a8245e39962af03d55cf))
+* **arca-gui:** spell the Spanish interface with its accents and counts ([064099f](https://github.com/beyondhumane/arca/commit/064099f3d9d4d354634cac690600a504dbd9f24f))
+* **arca-gui:** start drags and selection boxes with the left button only ([b48377d](https://github.com/beyondhumane/arca/commit/b48377dab6fa02531dfa87b88a07e4d8f0a7c096))
+* **arca-gui:** take a pending cut back with Esc ([d7db35c](https://github.com/beyondhumane/arca/commit/d7db35c5e2ba4b80e28230358e67ab55c756bc0a))
+* **arca-setup:** report best-effort step failures and uninstall leftovers ([#81](https://github.com/beyondhumane/arca/issues/81)) ([1068edf](https://github.com/beyondhumane/arca/commit/1068edf157a66c857173b9c1deda22b520b9a059))
+* **arca-zip:** keep each entry's DOS time when rewriting an archive ([887c834](https://github.com/beyondhumane/arca/commit/887c83434649128c2709e8daf16f031fa02eeb61))
+* **arca-zip:** read the exact modification time from extra fields ([31eec41](https://github.com/beyondhumane/arca/commit/31eec418e0b0c1c855f9f807568bf8ff69c89ddb))
+* restore modification times when extracting ([8b62c9f](https://github.com/beyondhumane/arca/commit/8b62c9fa08811d65917ae74fecc9825beb96ab6a))
+
+
+### Performance
+
+* **arca-gui:** ask the Linux clipboard for files at most twice a second ([9d64264](https://github.com/beyondhumane/arca/commit/9d6426480ea5b4b5ace74b6fba40237a3565604e))
+* **cli:** reuse one ZIP reader per chunk and skip repeated directory work ([ca0440d](https://github.com/beyondhumane/arca/commit/ca0440d30782a88e6fd98e46f50e765518dc8794))
+
 ## [0.9.0](https://github.com/beyondhumane/arca/compare/v0.8.2...v0.9.0) (2026-10-17)
 
 
