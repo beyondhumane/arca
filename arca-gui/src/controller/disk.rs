@@ -1928,7 +1928,8 @@ fn iso_utc(secs: i64) -> String {
 pub(crate) fn drag_paths(roots: &[String]) -> Vec<PathBuf> {
     roots
         .iter()
-        .map(|root| disk_path(root.trim_end_matches('/')))
-        .filter(|path| !path.as_os_str().is_empty())
+        .map(|root| root.trim_end_matches('/'))
+        .filter(|root| !root.is_empty())
+        .map(disk_path)
         .collect()
 }
