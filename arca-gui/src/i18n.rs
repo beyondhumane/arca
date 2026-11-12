@@ -183,7 +183,10 @@ pub struct Strings {
     pub compressing: &'static str,
     pub testing: &'static str,
     pub extracted_to: &'static str,
+    // Only a drag out of an archive says these, and only Windows has one.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub dragged_out: &'static str,
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub drag_out_failed: &'static str,
     pub created: &'static str,
     pub verified_ok: &'static str,
