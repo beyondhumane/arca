@@ -318,7 +318,60 @@ pub fn crc32(data: &[u8]) -> u32 {
     h.finalize()
 }
 
+/// The zone this machine is set to, read once. A machine whose zone cannot be
+/// read is treated as being on UTC.
+fn local_zone() -> &'static jiff::tz::TimeZone {
+    static ZONE: std::sync::OnceLock<jiff::tz::TimeZone> = std::sync::OnceLock::new();
+    ZONE.get_or_init(|| jiff::tz::TimeZone::try_system().unwrap_or(jiff::tz::TimeZone::UTC))
+}
+
+/// An instant as the wall clock here showed it, counted in seconds as if that
+/// wall-clock time were UTC: the form `dos_to_unix` and a date on screen use.
+pub fn to_local_wall(ts: i64) -> i64 {
+    wall_in(ts, local_zone())
+}
+
+fn wall_in(ts: i64, zone: &jiff::tz::TimeZone) -> i64 {
+    match jiff::Timestamp::from_second(ts) {
+        Ok(at) => ts + i64::from(zone.to_offset(at).seconds()),
+        Err(_) => ts,
+    }
+}
+
+/// The instant a wall-clock time here stands for, the other way round from
+/// `to_local_wall`. A time that happens twice when the clocks go back is the
+/// first; one skipped when they go forward is read as the hour after.
+fn instant_in(wall: i64, zone: &jiff::tz::TimeZone) -> i64 {
+    let Ok(at) = jiff::Timestamp::from_second(wall) else {
+        return wall;
+    };
+    let civil = jiff::tz::TimeZone::UTC.to_datetime(at);
+    zone.to_ambiguous_timestamp(civil)
+        .compatible()
+        .map_or(wall, |instant| instant.as_second())
+}
+
+/// A ZIP's DOS date and time as an instant. They are wall-clock time where
+/// the archive was written, which is taken to be the zone this machine is in:
+/// it is what every other tool does, and the archive says nothing better.
 pub fn dos_to_unix(date: u16, time: u16) -> Option<i64> {
+    dos_to_unix_in(date, time, local_zone())
+}
+
+fn dos_to_unix_in(date: u16, time: u16, zone: &jiff::tz::TimeZone) -> Option<i64> {
+    dos_wall(date, time).map(|wall| instant_in(wall, zone))
+}
+
+/// An instant as a DOS date and time, in the wall-clock time of this machine.
+pub fn unix_to_dos(ts: i64) -> (u16, u16) {
+    unix_to_dos_in(ts, local_zone())
+}
+
+fn unix_to_dos_in(ts: i64, zone: &jiff::tz::TimeZone) -> (u16, u16) {
+    wall_to_dos(wall_in(ts, zone))
+}
+
+fn dos_wall(date: u16, time: u16) -> Option<i64> {
     let year = 1980i64 + ((date >> 9) & 0x7f) as i64;
     let month = ((date >> 5) & 0x0f) as i64;
     let day = (date & 0x1f) as i64;
@@ -338,7 +391,7 @@ pub fn dos_to_unix(date: u16, time: u16) -> Option<i64> {
     Some(days * 86_400 + h * 3600 + m * 60 + s)
 }
 
-pub fn unix_to_dos(ts: i64) -> (u16, u16) {
+fn wall_to_dos(ts: i64) -> (u16, u16) {
     let days = ts.div_euclid(86_400);
     let rest = ts.rem_euclid(86_400);
     let z = days + 719_468;
@@ -428,5 +481,40 @@ mod tests {
         let (f, h) = unix_to_dos(ts);
         let back = dos_to_unix(f, h).unwrap();
         assert!((back - ts).abs() <= 2, "{back} vs {ts}");
+    }
+
+    // A DOS time is the wall clock where the archive was written. In Madrid
+    // that is an hour ahead of UTC in winter and two in summer, and the same
+    // DOS fields read in UTC are that much later.
+    #[test]
+    fn dos_times_are_wall_clock_time_in_the_local_zone() {
+        let madrid = jiff::tz::TimeZone::get("Europe/Madrid").unwrap();
+        let utc = jiff::tz::TimeZone::UTC;
+        // 2024-01-15 12:00:00 and 2024-07-15 12:00:00 in UTC.
+        let (winter, summer) = (1_705_320_000i64, 1_721_044_800i64);
+        for (ts, offset) in [(winter, 3600), (summer, 7200)] {
+            let (date, time) = unix_to_dos_in(ts, &madrid);
+            assert_eq!((date, time), unix_to_dos_in(ts + offset, &utc));
+            assert_eq!(dos_to_unix_in(date, time, &madrid), Some(ts));
+            assert_eq!(dos_to_unix_in(date, time, &utc), Some(ts + offset));
+        }
+    }
+
+    #[test]
+    fn a_wall_clock_time_that_happens_twice_is_the_first() {
+        let madrid = jiff::tz::TimeZone::get("Europe/Madrid").unwrap();
+        // 2024-10-27 02:30 happened at 00:30 and again at 01:30 UTC.
+        let wall = 1_729_996_200i64;
+        assert_eq!(instant_in(wall, &madrid), wall - 7200);
+        assert_eq!(wall_in(wall - 7200, &madrid), wall);
+        assert_eq!(wall_in(wall - 3600, &madrid), wall);
+    }
+
+    #[test]
+    fn a_time_out_of_range_is_left_as_it_is() {
+        let madrid = jiff::tz::TimeZone::get("Europe/Madrid").unwrap();
+        assert_eq!(wall_in(i64::MAX, &madrid), i64::MAX);
+        assert_eq!(instant_in(i64::MIN, &madrid), i64::MIN);
+        assert_eq!(dos_to_unix_in(0, 0, &madrid), None);
     }
 }
