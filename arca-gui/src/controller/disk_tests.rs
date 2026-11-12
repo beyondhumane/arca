@@ -58,6 +58,17 @@ fn disk_paths_round_trip_through_entry_names() {
 }
 
 #[test]
+fn only_paths_a_listing_can_name_are_pasted() {
+    let room = Room::new();
+    assert!(super::disk::reaches(&room.path("top.txt")));
+    #[cfg(windows)]
+    {
+        assert!(super::disk::reaches(Path::new(r"\\?\C:\Temp\a.txt")));
+        assert!(!super::disk::reaches(Path::new(r"\\server\share\a.txt")));
+    }
+}
+
+#[test]
 fn ancestors_walk_down_from_the_top() {
     assert_eq!(ancestors_of(""), vec![String::new()]);
     assert_eq!(
@@ -433,4 +444,63 @@ fn only_volumes_that_are_not_the_system_count_as_devices() {
     assert!(found[1].mount.is_none() && found[1].removable);
     assert_eq!(found[1].place(), std::path::PathBuf::from("/dev/sdb1"));
     assert_eq!(found[2].name("volume"), "Elements 1.8T");
+}
+
+#[test]
+fn a_file_dropped_from_another_program_is_copied_into_the_folder_shown() {
+    let room = Room::new();
+    std::fs::create_dir_all(room.path("elsewhere")).unwrap();
+    std::fs::create_dir_all(room.path("shown")).unwrap();
+    std::fs::write(room.path("elsewhere/note.txt"), b"note").unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.browse_disk(&room.path("shown"));
+    settle(&mut app);
+    app.dropped(vec![room.path("elsewhere/note.txt")]);
+    settle(&mut app);
+    assert!(!app.state.error, "{}", app.state.notice);
+    assert!(app.state.archive.is_none());
+    assert_eq!(std::fs::read(room.path("shown/note.txt")).unwrap(), b"note");
+    assert!(room.path("elsewhere/note.txt").exists());
+}
+
+#[test]
+fn an_archive_dropped_back_on_its_own_folder_opens() {
+    let room = Room::new();
+    std::fs::write(room.path("inside.txt"), b"inside").unwrap();
+    let archive = room.path("here.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[room.path("inside.txt")],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.browse_disk(&room.0);
+    settle(&mut app);
+    app.dropped(vec![archive.clone()]);
+    settle(&mut app);
+    assert_eq!(app.state.archive.as_deref(), Some(archive.as_path()));
+}
+
+#[test]
+fn dragging_out_hands_over_each_dragged_row_as_itself() {
+    let room = populated();
+    let top = disk_dir(&room.path("top.txt"))
+        .trim_end_matches('/')
+        .to_string();
+    let nested = disk_dir(&room.path("nested"));
+    let paths = super::disk::drag_paths(&[top, nested, String::new()]);
+    assert_eq!(paths.len(), 2);
+    assert_eq!(
+        std::fs::canonicalize(&paths[0]).unwrap(),
+        std::fs::canonicalize(room.path("top.txt")).unwrap()
+    );
+    assert_eq!(
+        std::fs::canonicalize(&paths[1]).unwrap(),
+        std::fs::canonicalize(room.path("nested")).unwrap()
+    );
 }

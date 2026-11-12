@@ -287,7 +287,7 @@ impl Shell {
             }
         })
         .response
-        .on_hover_text(s.view_group);
+        .named_menu(s.view_group);
     }
 
     fn remember_width(&mut self, width: f32, slot: impl Fn(&mut Settings) -> &mut f32) {
@@ -463,10 +463,11 @@ impl Shell {
         let response = ui.add(
             super::widgets::field(ui, &mut self.filter_value)
                 .id(id)
-                .hint_text(hint)
+                .hint_text(hint.clone())
                 .frame(egui::Frame::NONE)
                 .desired_width(ui.available_width()),
         );
+        super::widgets::named(&response, &hint);
         if self.focus_filter {
             response.request_focus();
             self.focus_filter = false;
@@ -669,7 +670,9 @@ impl Shell {
                 }
                 if ui
                     .add_enabled(
-                        self.can_copy_files() && writable,
+                        self.can_copy_files()
+                            && writable
+                            && (self.controller.on_disk() || clipboard::CUTS),
                         egui::Button::new(s.cut_word),
                     )
                     .clicked()
@@ -733,7 +736,7 @@ impl Shell {
             }
         })
         .response
-        .on_hover_text(s.more_word);
+        .named_menu(s.more_word);
     }
 
     /// The new-version notice, in the status bar where it does not get in
@@ -819,13 +822,19 @@ impl Shell {
                     }
                 }
                 if self.controller.state.archive.is_some() || self.controller.on_disk() {
-                    let visible = self.controller.visible_rows().len();
-                    let counts = format!(
-                        "{visible} {} {} \u{b7} {} {}",
-                        s.visible_of,
-                        self.controller.folder_total(),
-                        self.selected_count(),
-                        s.checked
+                    let visible = self
+                        .controller
+                        .visible_rows()
+                        .iter()
+                        .filter(|row| !row.up)
+                        .count();
+                    let counts = fill(
+                        s.counts,
+                        &[
+                            ("visible", &visible.to_string()),
+                            ("total", &self.controller.folder_total().to_string()),
+                            ("checked", &self.selected_count().to_string()),
+                        ],
                     );
                     ui.label(RichText::new(counts).small().color(hex(p.muted)));
                 }

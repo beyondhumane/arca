@@ -34,10 +34,39 @@ fn dialogs_fit_compact_and_normal_viewports() {
 }
 
 #[test]
+fn the_side_buttons_of_the_mouse_go_back_and_forward() {
+    assert_eq!(
+        side_button(egui::PointerButton::Extra1),
+        Some(Shortcut::Back)
+    );
+    assert_eq!(
+        side_button(egui::PointerButton::Extra2),
+        Some(Shortcut::Forward)
+    );
+    assert_eq!(side_button(egui::PointerButton::Primary), None);
+    assert_eq!(side_button(egui::PointerButton::Middle), None);
+}
+
+#[test]
 fn breadcrumbs_keep_root_and_nearest_folders() {
     assert_eq!(breadcrumb_indices(4, 1000.), ((0..4).collect(), Vec::new()));
     assert_eq!(breadcrumb_indices(6, 1000.), (vec![0, 2, 3, 4, 5], vec![1]));
     assert_eq!(breadcrumb_indices(6, 800.), (vec![0, 4, 5], vec![1, 2, 3]));
+}
+
+#[test]
+fn one_click_selects_a_folder_unless_panes_follow_it() {
+    let mut folder = crate::up_row("parent/child/");
+    folder.up = false;
+    folder.is_dir = true;
+    assert!(!super::browser::click_opens_folder(&folder, false, false));
+    assert!(super::browser::click_opens_folder(&folder, false, true));
+    assert!(!super::browser::click_opens_folder(&folder, true, true));
+    let mut file = folder.clone();
+    file.is_dir = false;
+    assert!(!super::browser::click_opens_folder(&file, false, true));
+    let up = crate::up_row("parent/");
+    assert!(!super::browser::click_opens_folder(&up, false, true));
 }
 
 #[test]
@@ -76,11 +105,30 @@ fn conflict_actions_answer_every_supported_choice() {
 }
 
 #[test]
+fn shift_f10_opens_the_row_menu_from_the_keyboard() {
+    assert_eq!(
+        shortcut_for(false, true, false, "f10", false),
+        Some(Shortcut::ContextMenu)
+    );
+    assert_eq!(shortcut_for(false, true, false, "f10", true), None);
+    assert_eq!(shortcut_for(false, false, false, "f10", false), None);
+}
+
+#[test]
 fn background_events_are_blocked_by_modals_and_native_pickers() {
     assert!(background_event_allowed(false, false));
     assert!(!background_event_allowed(true, false));
     assert!(!background_event_allowed(false, true));
     assert!(!background_event_allowed(true, true));
+}
+
+#[test]
+fn the_extraction_picker_opens_beside_the_archive() {
+    let folder = std::env::temp_dir().join("picker");
+    let archive = folder.join("a.zip");
+    assert_eq!(picker_start(Some(&archive)), Some(folder));
+    assert_eq!(picker_start(Some(Path::new("a.zip"))), None);
+    assert_eq!(picker_start(None), None);
 }
 
 #[test]
@@ -149,15 +197,44 @@ fn the_row_menu_only_offers_the_clipboard_where_there_is_one() {
     // copy, cut and paste are left out rather than greyed out.
     let offered: Vec<bool> = RowAction::ALL.iter().map(|a| a.offered(false)).collect();
     assert!(RowAction::ALL.iter().all(|a| a.offered(true)));
-    for action in [RowAction::Copy, RowAction::Cut, RowAction::Paste] {
+    for action in [RowAction::Copy, RowAction::Paste] {
         assert_eq!(offered[action as usize], clipboard::AVAILABLE);
     }
+    assert_eq!(offered[RowAction::Cut as usize], clipboard::CUTS);
     assert!(offered[RowAction::Open as usize]);
     assert!(offered[RowAction::Delete as usize]);
     // The element id of each menu row is built from `action as usize`, so
     // an action added out of order would silently share an id.
     for (index, action) in RowAction::ALL.iter().enumerate() {
         assert_eq!(*action as usize, index);
+    }
+}
+
+#[test]
+fn a_paste_on_disk_moves_copies_or_duplicates_like_the_explorer() {
+    let roots = vec!["C:/a/one.txt".to_string(), "C:/b/two/".to_string()];
+    assert_eq!(
+        paste_plan(&roots, true, "C:/b/"),
+        PastePlan {
+            moved: vec!["C:/a/one.txt".into()],
+            ..PastePlan::default()
+        }
+    );
+    assert_eq!(
+        paste_plan(&roots, false, "C:/b/"),
+        PastePlan {
+            copied: vec!["C:/a/one.txt".into()],
+            duplicated: vec!["C:/b/two".into()],
+            ..PastePlan::default()
+        }
+    );
+    assert_eq!(
+        paste_plan(&roots, false, "c:/A/").duplicated,
+        vec!["C:/a/one.txt".to_string()]
+    );
+    let faded = cut_rows(&roots);
+    for row in ["C:/a/one.txt", "C:/b/two/", "C:/b/two"] {
+        assert!(faded.contains(row), "{row}");
     }
 }
 
@@ -322,6 +399,36 @@ fn history_shortcuts_yield_to_text_editing() {
 }
 
 #[test]
+fn the_explorer_shortcuts_mean_what_they_mean_there() {
+    let cases = [
+        (true, true, false, "n", Shortcut::NewFolder),
+        (true, false, false, "w", Shortcut::CloseWindow),
+        (false, false, true, "enter", Shortcut::Properties),
+        (false, false, true, "up", Shortcut::Up),
+        (false, false, true, "d", Shortcut::EditPath),
+        (false, false, true, "p", Shortcut::TogglePreview),
+        (false, false, false, "f4", Shortcut::EditPath),
+    ];
+    for (ctrl, shift, alt, key, action) in cases {
+        assert_eq!(
+            shortcut_for(ctrl, shift, alt, key, false),
+            Some(action),
+            "{key}"
+        );
+    }
+    // Ctrl+N stays Compress; only with Shift is it a folder.
+    assert_eq!(
+        shortcut_for(true, false, false, "n", false),
+        Some(Shortcut::Compress)
+    );
+    // Keys that would move a caret or open something while a name is being
+    // typed are left to the text box.
+    for (alt, key) in [(true, "enter"), (true, "up"), (false, "f4")] {
+        assert_eq!(shortcut_for(false, false, alt, key, true), None, "{key}");
+    }
+}
+
+#[test]
 fn context_destinations_name_the_clicked_folder_or_containing_directory() {
     let mut row = crate::up_row("parent/child/");
     for action in [RowAction::Paste, RowAction::NewFolder] {
@@ -341,7 +448,7 @@ fn context_destinations_name_the_clicked_folder_or_containing_directory() {
             Some("parent/".into())
         );
         assert_eq!(action.destination(None, ""), Some(String::new()));
-        for lang in [super::super::Lang::En, super::super::Lang::Es] {
+        for lang in super::super::Lang::ALL {
             let s = crate::i18n::strings(lang);
             let (label, _) = action.label(s);
             // Inside the folder being shown the entry says only what it does;
@@ -375,10 +482,10 @@ fn every_settings_control_has_its_own_slot_in_draw_order() {
 
 #[test]
 fn empty_folder_label_is_not_reported_as_archive_contents() {
-    // Both languages, because the point of the label is that it says the
+    // Every language, because the point of the label is that it says the
     // folder is empty rather than that the archive is unreadable, and a
     // translation that loses the difference is the same bug in Spanish.
-    for lang in [super::super::Lang::En, super::super::Lang::Es] {
+    for lang in super::super::Lang::ALL {
         let s = crate::i18n::strings(lang);
         assert_eq!(empty_state_aria_label(false, "", s), s.empty_folder);
         assert_eq!(empty_state_aria_label(false, "  ", s), s.empty_folder);
@@ -503,4 +610,58 @@ fn clipboard_notices_and_progress_read_in_each_language() {
     assert_ne!(es.preparing_move, en.preparing_move);
     assert_ne!(es.preparing_copy, en.preparing_copy);
     assert_ne!(es.preparing_move, es.preparing_copy);
+}
+
+#[test]
+fn f2_starts_renaming_a_file_on_disk_too() {
+    let room = crate::test_support::Room::new();
+    std::fs::write(room.path("note.txt"), b"note").unwrap();
+    let ctx = egui::Context::default();
+    let mut shell = Shell::new(&ctx, crate::Startup::Browse(None));
+    shell.controller = crate::controller::AppController::new(crate::settings::Settings::default());
+    shell.controller.browse_disk(&room.path(""));
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while shell.controller.state.busy || shell.controller.working() {
+        shell.controller.receive();
+        assert!(std::time::Instant::now() < end, "listing did not finish");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let index = shell
+        .controller
+        .visible_rows()
+        .iter()
+        .position(|row| row.label == "note.txt")
+        .unwrap();
+    shell.controller.state.active_pane_mut().cursor = Some(index);
+    shell.shortcut(Shortcut::Rename);
+    let renaming = shell.controller.state.renaming.clone();
+    assert_eq!(
+        renaming.map(|(_, label)| label).as_deref(),
+        Some("note.txt")
+    );
+}
+
+#[test]
+fn f2_on_the_row_that_goes_up_renames_nothing() {
+    let room = crate::test_support::Room::new();
+    std::fs::create_dir(room.path("inner")).unwrap();
+    let ctx = egui::Context::default();
+    let mut shell = Shell::new(&ctx, crate::Startup::Browse(None));
+    shell.controller = crate::controller::AppController::new(crate::settings::Settings::default());
+    shell.controller.browse_disk(&room.path("inner"));
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while shell.controller.state.busy || shell.controller.working() {
+        shell.controller.receive();
+        assert!(std::time::Instant::now() < end, "listing did not finish");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let up = shell
+        .controller
+        .visible_rows()
+        .iter()
+        .position(|row| row.up)
+        .expect("a folder below the top has a row that goes up");
+    shell.controller.state.active_pane_mut().cursor = Some(up);
+    shell.shortcut(Shortcut::Rename);
+    assert!(shell.controller.state.renaming.is_none());
 }

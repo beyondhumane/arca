@@ -1,7 +1,7 @@
 use arca_core::extraction::{Conflict, Destination};
 use arca_core::{Codec, Container, Error, Format, Level, Result};
 use arca_tar::{TarReader, TarWriter};
-use arca_zip::ZipArchive;
+use arca_zip::{ExtractionReader, ZipArchive};
 use clap::{Parser, Subcommand, ValueEnum};
 use rayon::prelude::*;
 use std::collections::HashSet;
@@ -605,12 +605,38 @@ fn free_name(path: &Path, claimed: &HashSet<PathBuf>) -> PathBuf {
     path.to_path_buf()
 }
 
+// Small entries are decompressed into one reused buffer and written with a
+// single call. The bound keeps an entry that lies about its size from growing
+// the buffer past the size its header declared.
+struct Bounded<'a> {
+    buf: &'a mut Vec<u8>,
+    left: usize,
+}
+
+impl Write for Bounded<'_> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        if data.len() > self.left {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "entry produced more bytes than its header declared",
+            ));
+        }
+        self.left -= data.len();
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 fn resolve_conflict(
     path: PathBuf,
     policy: OnConflict,
     claimed: &mut HashSet<PathBuf>,
 ) -> Option<PathBuf> {
-    let taken = path.exists() || claimed.contains(&path);
+    let taken =
+        claimed.contains(&path) || (!matches!(policy, OnConflict::Overwrite) && path.exists());
     let chosen = if !taken {
         path
     } else {
@@ -683,15 +709,21 @@ fn extract(
             // threads racing on create_dir_all or on picking a free name would
             // give a result that depends on who won.
             let mut claimed: HashSet<PathBuf> = HashSet::new();
+            let mut created: HashSet<PathBuf> = HashSet::new();
             let mut jobs: Vec<(arca_core::Entry, PathBuf)> = Vec::new();
             for e in a.entries() {
                 let path = dest.join(arca_core::safe_name(&e.name)?);
                 if e.is_dir {
-                    fs::create_dir_all(&path)?;
+                    if created.insert(path.clone()) {
+                        fs::create_dir_all(&path)?;
+                    }
                     continue;
                 }
                 if let Some(p) = path.parent() {
-                    fs::create_dir_all(p)?;
+                    if !created.contains(p) {
+                        fs::create_dir_all(p)?;
+                        created.insert(p.to_path_buf());
+                    }
                 }
                 let Some(path) = resolve_conflict(path, policy, &mut claimed) else {
                     continue;
@@ -704,18 +736,43 @@ fn extract(
                 .num_threads(threads)
                 .build()
                 .map_err(|e| Error::Format(format!("cannot start the thread pool: {e}")))?;
+            let chunk = (jobs.len() / (threads * 8)).max(1);
             let written: Vec<u64> = pool.install(|| {
-                jobs.par_iter()
-                    .map(|(e, path)| {
-                        let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
-                        let mut f = BufWriter::with_capacity(BUF, File::create(path)?);
-                        let w = arca_zip::extract_entry_with(&mut source, e, &mut f, password)?;
-                        f.flush()?;
-                        Ok(w)
+                jobs.par_chunks(chunk)
+                    .map(|batch| {
+                        let mut source =
+                            ExtractionReader::with_capacity(BUF, File::open(archive)?)?;
+                        let mut staging = Vec::new();
+                        let mut total = 0u64;
+                        for (e, path) in batch {
+                            let mut f = File::create(path)?;
+                            if e.size <= BUF as u64 {
+                                staging.clear();
+                                let mut bounded = Bounded {
+                                    buf: &mut staging,
+                                    left: e.size as usize,
+                                };
+                                total += arca_zip::extract_entry_with(
+                                    &mut source,
+                                    e,
+                                    &mut bounded,
+                                    password,
+                                )?;
+                                f.write_all(&staging)?;
+                                arca_core::extraction::set_mtime(&f, e.mtime);
+                            } else {
+                                let mut f = BufWriter::with_capacity(BUF, f);
+                                total +=
+                                    arca_zip::extract_entry_with(&mut source, e, &mut f, password)?;
+                                f.flush()?;
+                                arca_core::extraction::set_mtime(f.get_ref(), e.mtime);
+                            }
+                        }
+                        Ok(total)
                     })
                     .collect::<Result<Vec<u64>>>()
             })?;
-            n = written.len() as u64;
+            n = jobs.len() as u64;
             bytes = written.iter().sum();
         }
         Container::Xz => {
@@ -723,7 +780,7 @@ fn extract(
             let name = arca_xz::output_name(archive);
             let written =
                 Destination::new(dest)
-                    .write_entry(&name, false, &mut source, &mut |_| conflict(policy))?;
+                    .write_entry(&name, false, None, &mut source, &mut |_| conflict(policy))?;
             if let Some(w) = written {
                 bytes = w;
                 n = 1;
@@ -737,9 +794,13 @@ fn extract(
             let mut destination = Destination::new(dest);
             while let Some(e) = r.next_entry()? {
                 let written = r.with_data(&e, |data| {
-                    destination.write_entry(&e.entry.name, e.entry.is_dir, data, &mut |_| {
-                        conflict(policy)
-                    })
+                    destination.write_entry(
+                        &e.entry.name,
+                        e.entry.is_dir,
+                        e.entry.mtime,
+                        data,
+                        &mut |_| conflict(policy),
+                    )
                 })?;
                 if let (Some(w), false) = (written, e.entry.is_dir) {
                     bytes += w;

@@ -22,8 +22,10 @@ pub(crate) enum BrowserView {
     /// Side-by-side panes. With `next_pane` on, picking a folder opens
     /// it in the pane beside, Miller-column style; off, each pane browses
     /// on its own.
-    #[default]
     Panes,
+    /// One list with columns for size, date and type: what a file manager
+    /// shows first, and so what a new install opens in.
+    #[default]
     Details,
 }
 
@@ -138,6 +140,8 @@ pub(crate) struct Settings {
     pub(crate) new_format: Format,
     pub(crate) new_codec: Codec,
     pub(crate) new_level: Level,
+    // Whether extracting makes a folder named after the archive first.
+    pub(crate) into_subfolder: bool,
     // Where the window was left and how big: x, y, width, height. None until it
     // has been opened once.
     pub(crate) window: Option<[f32; 4]>,
@@ -203,6 +207,7 @@ impl Default for Settings {
             new_format: Format::Zip,
             new_codec: Codec::Deflate,
             new_level: Level::NORMAL,
+            into_subfolder: false,
             window: None,
             recent: Vec::new(),
             last_folder: None,
@@ -320,6 +325,7 @@ impl Settings {
                         s.new_level = Level::new(n);
                     }
                 }
+                ("into_subfolder", v) => s.into_subfolder = flag(v).unwrap_or(s.into_subfolder),
                 // One line each, because a path can hold anything a filename
                 // can and there is no separator left that it could not.
                 ("recent", p) if !p.is_empty() => s.recent.push(p.to_string()),
@@ -488,6 +494,7 @@ impl Settings {
             Codec::Zstd => "new_codec = zstd\n",
         });
         out.push_str(&format!("new_level = {}\n", self.new_level.get()));
+        out.push_str(&format!("into_subfolder = {}\n", yes(self.into_subfolder)));
         out.push_str(&format!("columns = {}\n", columns.join(",")));
         out.push_str(&format!("widths = {}\n", widths.join(",")));
         out.push_str(&format!("sidebar = {:.1}\n", self.sidebar));
@@ -519,10 +526,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_use_panes_and_visible_expanded_panels() {
+    fn defaults_use_details_and_visible_expanded_panels() {
         let s = Settings::parse("");
-        assert_eq!(BrowserView::default(), BrowserView::Panes);
-        assert_eq!(s.browser_view, BrowserView::Panes);
+        assert_eq!(BrowserView::default(), BrowserView::Details);
+        assert_eq!(s.browser_view, BrowserView::Details);
+        assert_eq!(
+            Settings::parse("browser_view = panes").browser_view,
+            BrowserView::Panes
+        );
         assert!(!s.flat);
         assert!(s.folders);
         assert_eq!(s.sidebar, 200.0);
@@ -577,6 +588,24 @@ mod tests {
     }
 
     #[test]
+    fn extracting_into_a_subfolder_is_kept_and_defaults_to_off() {
+        assert!(!Settings::parse("").into_subfolder);
+        let on = Settings::parse(
+            "into_subfolder = yes
+",
+        );
+        assert!(on.into_subfolder);
+        assert!(Settings::parse(&on.text()).into_subfolder);
+        assert!(
+            !Settings::parse(
+                "into_subfolder = no
+"
+            )
+            .into_subfolder
+        );
+    }
+
+    #[test]
     fn the_update_channel_is_kept_and_defaults_to_stable() {
         assert_eq!(Settings::parse("").channel, Channel::Stable);
         let s = Settings::parse("channel = preview\n");
@@ -619,7 +648,7 @@ mod tests {
         assert_eq!(Settings::parse(&s.text()).text(), s.text());
         assert_eq!(
             Settings::parse("flat = no").browser_view,
-            BrowserView::Panes
+            BrowserView::Details
         );
         assert!(Settings::parse("tree = no").folders);
         assert!(!s.next_pane);
@@ -693,7 +722,7 @@ mod tests {
                 let forward = Settings::parse(&lines.join("\n"));
                 let reverse =
                     Settings::parse(&lines.iter().rev().cloned().collect::<Vec<_>>().join("\n"));
-                let expected = if flat == "yes" || view == "details" {
+                let expected = if flat == "yes" || view != "columns" {
                     BrowserView::Details
                 } else {
                     BrowserView::Panes
@@ -733,6 +762,7 @@ mod tests {
             "folders",
             "updates",
             "show_hidden",
+            "into_subfolder",
         ];
         for bad in ["maybe", "true", "false", "Yes", "NO", "1", "0", ""] {
             let malformed: String = keys.iter().map(|k| format!("{k} = {bad}\n")).collect();

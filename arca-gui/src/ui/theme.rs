@@ -244,6 +244,10 @@ fn visuals(p: Palette, dark: bool) -> Visuals {
     v.panel_fill = hex(p.background);
     v.window_fill = hex(p.surface);
     v.extreme_bg_color = hex(p.surface);
+    // A text field has no outline until it has the focus, so its own fill is
+    // what shows where it is: on the surface of a dialog the surface colour
+    // made an empty field invisible.
+    v.text_edit_bg_color = Some(hex(p.background));
     v.faint_bg_color = hex(p.surface);
     v.code_bg_color = hex(p.raised);
     v.window_stroke = Stroke::new(1.0, hex(p.border));
@@ -374,6 +378,15 @@ mod tests {
                 }
                 assert!(contrast(p.focus, ground) >= 3.0, "{name}: focus");
                 assert!(contrast(p.spark, ground) >= 3.0, "{name}: progress");
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_text_field_stands_out_from_the_dialog_it_is_in() {
+        for (name, p) in themes::builtin().into_iter().map(|t| (t.name, t.palette)) {
+            for ground in [p.surface, p.raised] {
+                assert_ne!(p.background, ground, "{name}: {ground:06x}");
             }
         }
     }

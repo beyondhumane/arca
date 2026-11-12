@@ -113,6 +113,112 @@ fn two_readers_of_one_archive_do_not_wait_for_each_other() {
     settle(&mut app);
 }
 
+#[cfg(windows)]
+#[test]
+fn dragging_out_of_an_archive_carries_the_dragged_rows_not_the_selection() {
+    let room = Room::new();
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("a.txt"), b"first").unwrap();
+    fs::write(source.join("b.txt"), b"second").unwrap();
+    let archive = room.path("drag.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.open_with_password(archive, None);
+    settle(&mut app);
+    let named = |picked: Vec<(Entry, String)>| {
+        let mut names: Vec<String> = picked.into_iter().map(|(_, name)| name).collect();
+        names.sort();
+        names
+    };
+    assert_eq!(
+        named(app.dragged_files(&["source/b.txt".into()])),
+        ["b.txt"]
+    );
+    assert_eq!(
+        named(app.dragged_files(&["source/".into()])),
+        [r"source\a.txt", r"source\b.txt"]
+    );
+    assert!(app.dragged_files(&["source/c.txt".into()]).is_empty());
+}
+
+#[test]
+fn a_drop_is_followed_until_the_shell_says_it_is_over() {
+    use std::sync::atomic::AtomicBool;
+    let (pulled, taken) = channel();
+    for event in [
+        Pulled::Taking(0),
+        Pulled::Took(0, true),
+        Pulled::Taking(0),
+        Pulled::Took(0, true),
+        Pulled::Taking(1),
+        Pulled::Took(1, true),
+        Pulled::Ended(true),
+    ] {
+        pulled.send(event).unwrap();
+    }
+    let mut seen = Vec::new();
+    let outcome = follow_drop(&taken, &[10, 5], &AtomicBool::new(false), |done, i| {
+        seen.push((done, i));
+        true
+    });
+    assert_eq!(outcome, Dropped::Taken(15));
+    assert_eq!(seen.last(), Some(&(15, Some(1))));
+}
+
+#[test]
+fn a_drop_counts_what_failed() {
+    use std::sync::atomic::AtomicBool;
+    let (pulled, taken) = channel();
+    pulled.send(Pulled::Took(0, false)).unwrap();
+    pulled.send(Pulled::Took(1, true)).unwrap();
+    pulled.send(Pulled::Ended(true)).unwrap();
+    let outcome = follow_drop(&taken, &[1, 2, 3], &AtomicBool::new(false), |_, _| true);
+    assert_eq!(outcome, Dropped::Failed(1));
+}
+
+#[test]
+fn entries_the_shell_skipped_do_not_make_a_drop_fail() {
+    use std::sync::atomic::AtomicBool;
+    let (pulled, taken) = channel();
+    pulled.send(Pulled::Took(1, true)).unwrap();
+    pulled.send(Pulled::Ended(true)).unwrap();
+    let outcome = follow_drop(&taken, &[1, 2, 3], &AtomicBool::new(false), |_, _| true);
+    assert_eq!(outcome, Dropped::Taken(2));
+}
+
+#[test]
+fn a_drop_the_shell_gave_up_on_is_not_a_success() {
+    use std::sync::atomic::AtomicBool;
+    let (pulled, taken) = channel();
+    pulled.send(Pulled::Took(0, true)).unwrap();
+    pulled.send(Pulled::Ended(false)).unwrap();
+    let outcome = follow_drop(&taken, &[1, 2], &AtomicBool::new(false), |_, _| true);
+    assert_eq!(outcome, Dropped::Abandoned);
+    let (pulled, taken) = channel();
+    pulled.send(Pulled::Took(0, true)).unwrap();
+    drop(pulled);
+    let outcome = follow_drop(&taken, &[1, 2], &AtomicBool::new(false), |_, _| true);
+    assert_eq!(outcome, Dropped::Abandoned);
+}
+
+#[test]
+fn a_stopped_drop_is_not_waited_on() {
+    use std::sync::atomic::AtomicBool;
+    let (_pulled, taken) = channel::<Pulled>();
+    let outcome = follow_drop(&taken, &[1], &AtomicBool::new(true), |_, _| true);
+    assert_eq!(outcome, Dropped::Abandoned);
+}
+
 #[test]
 fn stopping_one_row_leaves_the_other_alone() {
     let mut app = AppController::new(Settings::default());
@@ -325,6 +431,37 @@ fn an_extraction_fills_the_folder_it_extracts_into() {
 }
 
 #[test]
+fn only_a_large_copy_to_the_clipboard_gets_a_row_in_operations() {
+    assert!(super::copies_quietly(0));
+    assert!(super::copies_quietly(5 << 20));
+    assert!(!super::copies_quietly(64 << 20));
+    assert!(!super::copies_quietly(3 << 30));
+}
+
+#[test]
+fn a_cut_that_has_not_been_pasted_can_be_taken_back() {
+    let mut app = AppController::new(Settings::default());
+    assert!(app.cancel_cut().is_none());
+    let cut = |name: &str| Cut {
+        archive: PathBuf::from("/tmp/cut.zip"),
+        paths: vec![PathBuf::from(format!("/tmp/clip/{name}"))],
+        names: vec![name.into()],
+    };
+    app.state.cut_names.insert("a.txt".into());
+    app.state.cut_pending = Some(cut("a.txt"));
+    assert_eq!(
+        app.cancel_cut(),
+        Some(vec![PathBuf::from("/tmp/clip/a.txt")])
+    );
+    assert!(app.state.cut_pending.is_none());
+    assert!(app.state.cut_names.is_empty());
+    // One still being prepared is taken back too, so it cannot arm later.
+    app.state.cut_armed = Some((7, cut("b.txt")));
+    assert!(app.cancel_cut().is_some());
+    assert!(app.state.cut_armed.is_none());
+}
+
+#[test]
 fn only_the_copy_that_staged_a_cut_can_arm_it() {
     let mut app = AppController::new(Settings::default());
     let ready: fn() -> Work = || {
@@ -358,6 +495,64 @@ fn only_the_copy_that_staged_a_cut_can_arm_it() {
         app.state.cut_pending.as_ref().map(|c| c.names.clone()),
         Some(vec!["a.txt".to_string()])
     );
+}
+
+#[test]
+fn a_cut_that_never_reached_the_clipboard_stops_fading_its_rows() {
+    let mut app = AppController::new(Settings::default());
+    let failing: Work = Box::new(|tx, _, _, _| {
+        let _ = tx.send(Message::Failed("disk full".into()));
+    });
+    let id = app.enqueue(Task::new("Cut", "a", failing));
+    app.state.cut_names.insert("a.txt".into());
+    app.state.cut_armed = Some((
+        id,
+        Cut {
+            archive: PathBuf::from("/tmp/cut.zip"),
+            paths: vec![PathBuf::from("/tmp/clip/a.txt")],
+            names: vec!["a.txt".into()],
+        },
+    ));
+    settle(&mut app);
+    assert!(app.state.cut_armed.is_none());
+    assert!(app.state.cut_pending.is_none());
+    assert!(app.state.cut_names.is_empty());
+}
+
+#[test]
+fn taking_back_a_cut_still_being_prepared_stops_it() {
+    let mut app = AppController::new(Settings::default());
+    let (work, release, started) = gate();
+    let id = app.enqueue(Task::new("Cut", "a", work));
+    started.recv().unwrap();
+    app.state.cut_armed = Some((
+        id,
+        Cut {
+            archive: PathBuf::from("/tmp/cut.zip"),
+            paths: vec![PathBuf::from("/tmp/clip/a.txt")],
+            names: vec!["a.txt".into()],
+        },
+    ));
+    assert!(app.cancel_cut().is_some());
+    let task = app.state.tasks.iter().find(|t| t.id == id).unwrap();
+    assert!(task.stop.load(std::sync::atomic::Ordering::Relaxed));
+    release.send(()).unwrap();
+    settle(&mut app);
+}
+
+#[test]
+fn leaving_for_the_disk_forgets_a_cut_out_of_the_archive() {
+    let room = Room::new();
+    let mut app = AppController::new(Settings::default());
+    app.state.cut_names.insert("a.txt".into());
+    app.state.cut_pending = Some(Cut {
+        archive: PathBuf::from("/tmp/cut.zip"),
+        paths: vec![PathBuf::from("/tmp/clip/a.txt")],
+        names: vec!["a.txt".into()],
+    });
+    app.browse_disk(&room.0);
+    assert!(app.state.cut_pending.is_none());
+    assert!(app.state.cut_names.is_empty());
 }
 
 #[test]
@@ -486,4 +681,89 @@ fn an_edit_can_still_be_undone_after_the_archive_is_read_again() {
     app.undo_last();
     settle(&mut app);
     assert_eq!(app.state.entries.len(), before);
+}
+
+fn edited_archive(room: &Room) -> (AppController, PathBuf) {
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("a.txt"), b"first contents").unwrap();
+    fs::write(source.join("b.txt"), b"second contents").unwrap();
+    let archive = room.path("edit.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.open_with_password(archive.clone(), None);
+    settle(&mut app);
+    delete_named(&mut app, &archive, "a.txt");
+    (app, archive)
+}
+
+fn delete_named(app: &mut AppController, archive: &Path, leaf: &str) {
+    let name = app
+        .state
+        .entries
+        .iter()
+        .find(|entry| entry.name.ends_with(leaf))
+        .unwrap()
+        .name
+        .clone();
+    app.run_job(Job::Delete {
+        archive: archive.to_path_buf(),
+        names: vec![name],
+        password: None,
+    });
+    settle(app);
+}
+
+#[test]
+fn leaving_an_edited_archive_removes_the_version_kept_for_undo() {
+    let room = Room::new();
+    let (mut app, archive) = edited_archive(&room);
+    let kept = crate::archive_ops::undo_path(&archive);
+    assert!(kept.exists());
+    app.browse_disk(&room.path(""));
+    assert!(app.state.undo.is_none());
+    assert!(!kept.exists());
+    assert!(archive.exists());
+}
+
+#[test]
+fn closing_the_window_removes_the_version_kept_for_undo() {
+    let room = Room::new();
+    let (mut app, archive) = edited_archive(&room);
+    let kept = crate::archive_ops::undo_path(&archive);
+    assert!(kept.exists());
+    app.drop_undo();
+    assert!(!kept.exists());
+}
+
+#[test]
+fn the_version_kept_for_undo_stays_when_it_is_the_only_copy_left() {
+    let room = Room::new();
+    let (mut app, archive) = edited_archive(&room);
+    let kept = crate::archive_ops::undo_path(&archive);
+    std::fs::remove_file(&archive).unwrap();
+    app.drop_undo();
+    assert!(kept.exists());
+}
+
+#[test]
+fn a_second_edit_keeps_one_step_to_undo() {
+    let room = Room::new();
+    let (mut app, archive) = edited_archive(&room);
+    let after_first = app.state.entries.len();
+    delete_named(&mut app, &archive, "b.txt");
+    assert!(crate::archive_ops::undo_path(&archive).exists());
+    app.undo_last();
+    settle(&mut app);
+    assert_eq!(app.state.entries.len(), after_first);
+    assert!(!crate::archive_ops::undo_path(&archive).exists());
 }

@@ -20,7 +20,7 @@ use crate::tree::children_of;
 use crate::*;
 use actions::*;
 use eframe::egui;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
@@ -32,6 +32,7 @@ const RECENT_MAX: usize = 10;
 // How often to look at work that runs on other threads while it runs. Nothing
 // is repainted on a clock once the window has nothing left to show.
 const TICK: Duration = Duration::from_millis(100);
+const CUT_CHECK: Duration = Duration::from_secs(1);
 
 enum DialogResult {
     Open(Option<PathBuf>),
@@ -200,6 +201,11 @@ pub(crate) struct Shell {
     // Set when the pointer, not a navigation, made a pane active: the row
     // of panes then stays where it is instead of scrolling to it.
     pointer_focused: bool,
+    // Files dragged off the disk are moved by the Explorer on a thread of its
+    // own, after the drag has returned, so the folder is read once more when
+    // the window is next come back to.
+    reread_on_focus: bool,
+    had_focus: bool,
     last_pane_count: usize,
     // The pane whose filter row is open, and what is typed in it.
     pane_filter: Option<(usize, String)>,
@@ -207,6 +213,10 @@ pub(crate) struct Shell {
     device_format: Option<(Volume, usize, String)>,
     // What was cut or copied on the disk, as roots, and whether it was cut.
     disk_clip: Option<(Vec<String>, bool)>,
+    // The clipboard's sequence number right after a cut on the disk put its
+    // files there. Once it moves, something else owns the clipboard and the
+    // cut rows stop looking cut, as they do in the Explorer.
+    clip_seq: Option<u32>,
     // The roots to move into the folder being named, for "New folder with
     // selection".
     new_folder_with: Option<Vec<String>>,
@@ -238,6 +248,10 @@ pub(crate) struct Shell {
     theme_draft: Option<themes::Theme>,
     theme_error: Option<String>,
     carrying: bool,
+    // Rows on their way out of the window, held for one frame. The system drag
+    // blocks the window until it is over, so whatever was on screen stays on
+    // screen: it starts only once a frame without the in-window chip is shown.
+    leaving: Option<Vec<String>>,
     /// A drop waiting on the Move / Copy / Cancel menu.
     pending_drop: Option<PendingDrop>,
     /// The blank of a list under carried rows this frame: its folder and rect.
@@ -250,7 +264,17 @@ pub(crate) struct Shell {
     conflict_all: bool,
     /// The password in the compress box shown in clear.
     add_show_password: bool,
+    // Whether this Ctrl+V already pasted, through the text egui saw on the
+    // clipboard, before V is let go of.
+    pasted_text: bool,
+    cut_checked: std::time::Instant,
     anchor: Option<(egui::Id, egui::Pos2)>,
+    // Where the row under the keyboard cursor was drawn this frame, so a menu
+    // opened from the keyboard has somewhere to open.
+    cursor_row: Option<(egui::Rect, egui::LayerId, usize)>,
+    // Set by Shift+F10: the menu it opens takes the keyboard, starting at its
+    // first entry, so the arrows and Enter work the menu and not the list.
+    focus_menu: bool,
     search: Option<search::Search>,
     decorated: bool,
 }
@@ -285,11 +309,14 @@ impl Shell {
             peek_seen: false,
             peek_loaded: None,
             pointer_focused: false,
+            reread_on_focus: false,
+            had_focus: true,
             last_pane_count: 0,
             pane_filter: None,
             device_label: None,
             device_format: None,
             disk_clip: None,
+            clip_seq: None,
             new_folder_with: None,
             name_value: String::new(),
             focus_name: false,
@@ -319,13 +346,18 @@ impl Shell {
             theme_draft: None,
             theme_error: None,
             carrying: false,
+            leaving: None,
             pending_drop: None,
             blank_drop: None,
             row_drop_hover: false,
             conflict_name: None,
             conflict_all: false,
             add_show_password: false,
+            pasted_text: false,
+            cut_checked: std::time::Instant::now(),
             anchor: None,
+            cursor_row: None,
+            focus_menu: false,
             search: None,
             decorated: system_title_bar(&settings_now),
         }
@@ -346,8 +378,14 @@ impl Shell {
                 }
             });
         }
-        if self.controller.state.cut_pending.is_some() {
+        if self.controller.state.cut_pending.is_some() && self.cut_checked.elapsed() >= CUT_CHECK {
+            self.cut_checked = std::time::Instant::now();
             self.controller.cut_landed();
+        }
+        if self.clip_seq.is_some()
+            && (!self.controller.on_disk() || clipboard::sequence() != self.clip_seq)
+        {
+            self.forget_disk_cut();
         }
         self.notice_new_tasks();
         let state = &self.controller.state;
@@ -356,7 +394,6 @@ impl Shell {
             || state.listing
             || state.channel.is_some()
             || state.update_rx.is_some()
-            || state.cut_pending.is_some()
             || matches!(state.preview.status, PreviewStatus::Loading)
             || state
                 .tasks
@@ -364,6 +401,10 @@ impl Shell {
                 .any(|task| matches!(task.status, TaskStatus::Queued | TaskStatus::Running));
         if waiting {
             ctx.request_repaint_after(TICK);
+        } else if state.cut_pending.is_some() {
+            // A cut is pasted somewhere else, so nothing here says when; it
+            // is looked for now and then, not on every frame.
+            ctx.request_repaint_after(CUT_CHECK);
         }
     }
 
@@ -599,6 +640,39 @@ impl Shell {
         }
     }
 
+    /// The row menu opened with Shift+F10, beside the row under the keyboard
+    /// cursor, or the menu of the folder itself when no row has it.
+    fn key_menu(&mut self, ctx: &egui::Context) {
+        let id = key_menu_id();
+        if !egui::Popup::is_id_open(ctx, id) {
+            self.focus_menu = false;
+            return;
+        }
+        let (anchor, layer, index) = self.cursor_row.unwrap_or_else(|| {
+            let middle = ctx.content_rect().center();
+            (
+                egui::Rect::from_center_size(middle, egui::Vec2::ZERO),
+                egui::LayerId::background(),
+                usize::MAX,
+            )
+        });
+        let row = self
+            .controller
+            .visible_rows()
+            .get(index)
+            .cloned()
+            .filter(|row| !row.up);
+        egui::Popup::new(
+            id,
+            ctx.clone(),
+            egui::PopupAnchor::ParentRect(anchor),
+            layer,
+        )
+        .kind(egui::PopupKind::Menu)
+        .open_memory(None)
+        .show(|ui| self.row_menu(ui, row.as_ref(), index));
+    }
+
     /// The shadow that follows the pointer while rows are carried: icon,
     /// name (or a count) and what letting go would do.
     fn drag_shadow(&self, ctx: &egui::Context) {
@@ -762,7 +836,12 @@ impl Shell {
 
     fn can_paste_files(&self) -> bool {
         if self.controller.on_disk() {
-            return self.background_idle() && self.disk_clip.is_some();
+            let something = if clipboard::AVAILABLE {
+                clipboard::has_files()
+            } else {
+                self.disk_clip.is_some()
+            };
+            return self.background_idle() && something;
         }
         clipboard_action_allowed(
             clipboard::AVAILABLE,
@@ -800,6 +879,7 @@ impl Shell {
         {
             return;
         }
+        let beside = picker_start(self.controller.state.archive.as_deref());
         let (tx, rx) = channel();
         self.dialog = Some(rx);
         let ctx = self.ctx.clone();
@@ -823,10 +903,17 @@ impl Shell {
                 DialogKind::PickOutputDir => {
                     DialogResult::OutputDir(rfd::FileDialog::new().pick_folder())
                 }
-                DialogKind::Extract { only_checked } => DialogResult::Extract {
-                    only_checked,
-                    destination: rfd::FileDialog::new().pick_folder(),
-                },
+                DialogKind::Extract { only_checked } => {
+                    let picker = rfd::FileDialog::new();
+                    let picker = match &beside {
+                        Some(directory) => picker.set_directory(directory),
+                        None => picker,
+                    };
+                    DialogResult::Extract {
+                        only_checked,
+                        destination: picker.pick_folder(),
+                    }
+                }
                 DialogKind::AddFiles { folders } => DialogResult::AddFiles(if folders {
                     rfd::FileDialog::new().pick_folders()
                 } else {
@@ -1221,12 +1308,28 @@ impl Shell {
         }
         if self.controller.on_disk() {
             let roots = self.controller.selected_roots();
-            if !roots.is_empty() {
-                self.disk_clip = Some((roots, cut));
+            if roots.is_empty() {
+                return;
             }
+            if clipboard::AVAILABLE {
+                let paths: Vec<PathBuf> = roots.iter().map(|root| disk_path(root)).collect();
+                if let Err(error) = clipboard::set_files(&paths, cut) {
+                    self.controller.set_notice(error, true);
+                    return;
+                }
+            }
+            self.forget_disk_cut();
+            if cut {
+                self.controller.state.cut_names = cut_rows(&roots);
+                self.clip_seq = clipboard::sequence();
+            }
+            self.disk_clip = Some((roots, cut));
             return;
         }
         if self.controller.state.archive.is_none() || self.selected_count() == 0 {
+            return;
+        }
+        if cut && !clipboard::CUTS {
             return;
         }
         if !clipboard::AVAILABLE {
@@ -1246,20 +1349,94 @@ impl Shell {
         self.controller.dispatch(AppAction::Copy { cut });
     }
 
+    // Esc takes a pending cut back before it clears the selection, as in the
+    // Explorer. The clipboard is emptied only while it still holds what was
+    // cut here, so a copy made since in another program is left alone.
+    fn cancel_cut(&mut self) -> bool {
+        if let Some(paths) = self.controller.cancel_cut() {
+            if clipboard::files() == paths {
+                clipboard::clear();
+            }
+            return true;
+        }
+        let disk_cut = self.clip_seq.is_some() || matches!(self.disk_clip, Some((_, true)));
+        if !disk_cut {
+            return false;
+        }
+        let ours = match self.clip_seq {
+            Some(seq) => clipboard::sequence() == Some(seq),
+            None => clipboard::taken().1,
+        };
+        if ours {
+            clipboard::clear();
+        }
+        self.forget_disk_cut();
+        true
+    }
+
+    // A cut on the disk is over once it has been pasted, or once something
+    // else has taken the clipboard: the rows stop looking cut either way.
+    fn forget_disk_cut(&mut self) {
+        let was_cut = self.clip_seq.take().is_some() || matches!(self.disk_clip, Some((_, true)));
+        if was_cut {
+            if self.controller.on_disk() {
+                self.controller.state.cut_names.clear();
+            }
+            self.disk_clip = None;
+        }
+    }
+
     fn dispatch_paste(&mut self) {
         if self.typing() || !self.background_idle() {
             return;
         }
         if self.controller.on_disk() {
-            let Some((roots, cut)) = self.disk_clip.clone() else {
-                return;
-            };
-            let target = self.controller.state.active_pane().directory.clone();
-            if cut {
-                self.controller.move_on_disk(&roots, &target);
-                self.disk_clip = None;
+            // On Windows the system clipboard is the one that counts, so that
+            // files copied in the Explorer paste here and the other way round.
+            let (roots, cut) = if clipboard::AVAILABLE {
+                let (files, cut) = clipboard::taken();
+                if !files
+                    .iter()
+                    .all(|path| crate::controller::disk::reaches(path))
+                {
+                    self.controller
+                        .set_notice(self.controller.s().clipboard_network, true);
+                    return;
+                }
+                let roots: Vec<String> = files
+                    .iter()
+                    .map(|path| {
+                        crate::controller::disk::disk_dir(path)
+                            .trim_end_matches('/')
+                            .to_string()
+                    })
+                    .collect();
+                (roots, cut)
             } else {
-                self.controller.copy_on_disk(&roots, &target);
+                let Some(clip) = self.disk_clip.clone() else {
+                    return;
+                };
+                clip
+            };
+            if roots.is_empty() {
+                self.controller
+                    .set_notice(self.controller.s().clipboard_empty, true);
+                return;
+            }
+            let target = self.controller.state.active_pane().directory.clone();
+            let plan = paste_plan(&roots, cut, &target);
+            if !plan.moved.is_empty() {
+                self.controller.move_on_disk(&plan.moved, &target);
+            }
+            if !plan.copied.is_empty() {
+                self.controller.copy_on_disk(&plan.copied, &target);
+            }
+            if !plan.duplicated.is_empty() {
+                self.controller.duplicate_on_disk(&plan.duplicated);
+            }
+            if cut {
+                self.forget_disk_cut();
+                clipboard::clear();
             }
             return;
         }
@@ -1364,6 +1541,15 @@ impl Shell {
     }
 
     fn input(&mut self, ctx: &egui::Context) {
+        if let Some(roots) = self.leaving.take() {
+            self.reread_on_focus = self.controller.on_disk();
+            self.controller.drag_out(&roots);
+        }
+        let focused = ctx.input(|input| input.viewport().focused).unwrap_or(true);
+        if focused && !self.had_focus && std::mem::take(&mut self.reread_on_focus) {
+            self.controller.dispatch(AppAction::Refresh);
+        }
+        self.had_focus = focused;
         if ctx.input(|input| input.pointer.delta() != egui::Vec2::ZERO) {
             self.keyboard_drove = false;
         }
@@ -1376,6 +1562,17 @@ impl Shell {
                     modifiers,
                     ..
                 } => self.key_down(key, modifiers),
+                egui::Event::PointerButton {
+                    button,
+                    pressed: true,
+                    ..
+                } => {
+                    if let Some(shortcut) =
+                        side_button(button).filter(|_| !self.background_blocked() && !self.typing())
+                    {
+                        self.shortcut(shortcut);
+                    }
+                }
                 egui::Event::Copy if !self.typing() => {
                     if ctx.input(|input| input.modifiers.shift) {
                         self.shortcut(Shortcut::CopyNames);
@@ -1384,8 +1581,34 @@ impl Shell {
                     }
                 }
                 egui::Event::Cut if !self.typing() => self.dispatch_clipboard(true),
-                egui::Event::Paste(_) if !self.typing() => self.dispatch_paste(),
-                egui::Event::Text(text) if !self.typing() && !self.background_blocked() => {
+                egui::Event::Paste(_) => {
+                    self.pasted_text = true;
+                    if !self.typing() {
+                        self.dispatch_paste();
+                    }
+                }
+                // egui only turns Ctrl+V into a paste when the clipboard holds
+                // text, and swallows the key otherwise; files copied in the
+                // Explorer carry none. Letting go of V is still reported, and
+                // that is when a paste of files is noticed.
+                egui::Event::Key {
+                    key: egui::Key::V,
+                    pressed: false,
+                    modifiers,
+                    ..
+                } if modifiers.command => {
+                    if !std::mem::take(&mut self.pasted_text)
+                        && !self.typing()
+                        && !self.background_blocked()
+                    {
+                        self.dispatch_paste();
+                    }
+                }
+                egui::Event::Text(text)
+                    if !self.typing()
+                        && !self.background_blocked()
+                        && !ctx.input(|input| input.modifiers.alt && !input.modifiers.ctrl) =>
+                {
                     self.jump_to(&text)
                 }
                 _ => {}
@@ -1415,12 +1638,14 @@ impl Shell {
             });
             if outside {
                 self.carrying = false;
+                // What the drag picked up, taken before it is cleared: a row
+                // dragged without being ticked is not in the selection.
+                let roots = egui::DragAndDrop::payload::<DraggedRows>(ctx)
+                    .map(|rows| rows.0.clone())
+                    .unwrap_or_default();
                 egui::DragAndDrop::clear_payload(ctx);
-                if self.controller.state.format == Format::SevenZ {
-                    self.controller.state.notice = self.controller.s().sevenz_copy.to_string();
-                } else {
-                    self.controller.drag_out();
-                }
+                self.leaving = Some(roots);
+                ctx.request_repaint();
             } else if !ctx.input(|input| input.pointer.primary_down()) {
                 self.carrying = false;
             }
@@ -1565,12 +1790,33 @@ impl Shell {
         if !self.background_idle()
             && !matches!(
                 shortcut,
-                Shortcut::Shortcuts | Shortcut::Back | Shortcut::Forward | Shortcut::View
+                Shortcut::Shortcuts
+                    | Shortcut::Back
+                    | Shortcut::Forward
+                    | Shortcut::View
+                    | Shortcut::CloseWindow
+                    | Shortcut::TogglePreview
             )
         {
             return;
         }
         match shortcut {
+            Shortcut::Properties => {
+                let at = self.controller.state.active_pane().cursor;
+                self.row_action(RowAction::Properties, at.unwrap_or(usize::MAX));
+            }
+            Shortcut::NewFolder => self.row_action(RowAction::NewFolder, usize::MAX),
+            Shortcut::Up => {
+                if self.controller.can_go_up() {
+                    self.controller.dispatch(AppAction::Up);
+                }
+            }
+            Shortcut::CloseWindow => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Shortcut::TogglePreview => {
+                self.controller.update_settings(|settings| {
+                    settings.preview_visible = !settings.preview_visible
+                });
+            }
             Shortcut::Back => self.controller.dispatch(AppAction::Back),
             Shortcut::Forward => self.controller.dispatch(AppAction::Forward),
             Shortcut::EditPath => self.start_path_edit(),
@@ -1593,13 +1839,20 @@ impl Shell {
                     }));
                 }
             }
+            Shortcut::ContextMenu => {
+                self.focus_menu = true;
+                egui::Popup::open_id(&self.ctx, key_menu_id());
+            }
             Shortcut::Refresh => self.controller.dispatch(AppAction::Refresh),
             Shortcut::Invert => self.controller.dispatch(AppAction::InvertVisible),
             Shortcut::ClearSelection => {
                 if self.carrying {
                     self.carrying = false;
                     egui::DragAndDrop::clear_payload(&self.ctx);
-                } else {
+                } else if egui::Popup::is_any_open(&self.ctx) {
+                    // A menu takes the Esc that closes it; the cut and the
+                    // selection behind it stay as they were.
+                } else if !self.cancel_cut() {
                     self.controller.dispatch(AppAction::ClearSelection);
                 }
             }
@@ -1608,7 +1861,7 @@ impl Shell {
                 self.controller.state.show_shortcuts = !self.controller.state.show_shortcuts;
             }
             Shortcut::Undo if self.controller.state.undo.is_some() => self.controller.undo_last(),
-            Shortcut::Rename if archive.is_some() => {
+            Shortcut::Rename => {
                 let rows = self.controller.visible_rows();
                 if let Some(row) = self
                     .controller
@@ -1616,6 +1869,7 @@ impl Shell {
                     .active_pane()
                     .cursor
                     .and_then(|i| rows.get(i))
+                    .filter(|row| !row.up)
                 {
                     let path = row.path.clone();
                     self.begin_rename(&path, false);
@@ -1813,6 +2067,7 @@ impl eframe::App for Shell {
         self.sync_window(&ctx);
         self.input(&ctx);
         self.width = ui.available_width();
+        self.cursor_row = None;
         let only_form = self.controller.state.one_shot && self.modal_kind() == Some(ModalKind::Add);
         if !only_form {
             self.workspace(ui);
@@ -1820,11 +2075,63 @@ impl eframe::App for Shell {
         // After the lists, so every row has had its say about a drop.
         self.settle_blank_drop(&ctx);
         self.drag_shadow(&ctx);
+        self.key_menu(&ctx);
         self.drop_menu(&ctx);
         self.jobs(&ctx);
         self.dialogs(&ctx);
         self.window_chrome(&ctx);
     }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.controller.drop_undo();
+    }
+}
+
+/// The row paths a cut fades: a root as picked, and the same with the slash a
+/// folder's row carries.
+fn cut_rows(roots: &[String]) -> std::collections::HashSet<String> {
+    roots
+        .iter()
+        .flat_map(|root| {
+            let bare = root.trim_end_matches('/').to_string();
+            [format!("{bare}/"), bare]
+        })
+        .collect()
+}
+
+/// What a paste into `target` does with each root on the clipboard.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PastePlan {
+    moved: Vec<String>,
+    copied: Vec<String>,
+    // Copied into the folder they are already in: a second one beside the
+    // first, the way the Explorer does it, rather than nothing at all.
+    duplicated: Vec<String>,
+}
+
+fn paste_plan(roots: &[String], cut: bool, target: &str) -> PastePlan {
+    let mut plan = PastePlan::default();
+    for root in roots {
+        let bare = root.trim_end_matches('/');
+        let parent = bare.rfind('/').map_or("", |at| &bare[..=at]);
+        let here = parent.eq_ignore_ascii_case(target);
+        match (cut, here) {
+            (true, true) => {}
+            (true, false) => plan.moved.push(bare.to_string()),
+            (false, true) => plan.duplicated.push(bare.to_string()),
+            (false, false) => plan.copied.push(bare.to_string()),
+        }
+    }
+    plan
+}
+
+/// The folder the extraction picker opens in: the one holding the archive,
+/// where most extractions go, rather than wherever the system last left it.
+fn picker_start(archive: Option<&Path>) -> Option<PathBuf> {
+    archive
+        .and_then(Path::parent)
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .map(Path::to_path_buf)
 }
 
 /// Which way the window would grow from a pointer at `pos`, if `pos` is on
@@ -1922,4 +2229,8 @@ pub(crate) fn cursor_step(key: &str, current: Option<usize>, last: usize) -> Opt
         "end" => Some(last),
         _ => None,
     }
+}
+
+fn key_menu_id() -> egui::Id {
+    egui::Id::new("arca-key-menu")
 }

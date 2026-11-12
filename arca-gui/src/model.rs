@@ -53,13 +53,17 @@ pub(crate) fn saved_of(r: &Row) -> f64 {
     }
 }
 
-// A Unix timestamp as a date somebody can read. Done by hand rather than with
-// a date crate: the archive formats store civil time with no zone, so there is
-// nothing here worth a dependency that knows about leap seconds and Tokyo.
+/// A Unix timestamp as the date and time the clock here showed then, the way
+/// the Explorer and every file manager shows them.
 pub(crate) fn when(mtime: Option<i64>) -> String {
-    let Some(t) = mtime.filter(|t| *t > 0) else {
-        return String::new();
-    };
+    match mtime.filter(|t| *t > 0) {
+        Some(t) => civil(arca_core::to_local_wall(t)),
+        None => String::new(),
+    }
+}
+
+/// Seconds counted as if the wall clock were UTC, as a date and a time.
+pub(crate) fn civil(t: i64) -> String {
     let days = t.div_euclid(86_400);
     let secs = t.rem_euclid(86_400);
     // Days since 1970 to a civil date, by Howard Hinnant's method: shift the

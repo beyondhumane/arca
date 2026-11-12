@@ -225,6 +225,13 @@ pub(crate) fn could_not(
     format!("{what}: {error}")
 }
 
+/// Whether a path from elsewhere, such as the clipboard, can be named by a
+/// listing name at all. A network path such as `\\server\share` cannot: it
+/// would come back as a folder of the drive the window happens to be on.
+pub(crate) fn reaches(path: &Path) -> bool {
+    disk_path(&disk_dir(path)) == crate::clipboard::shell_path(path.to_path_buf())
+}
+
 /// The path on disk behind a listing name, folder or file.
 pub(crate) fn disk_path(name: &str) -> PathBuf {
     let name = name.trim_end_matches('/');
@@ -945,6 +952,29 @@ impl AppController {
             .all(|root| volume_of(&disk_path(root.trim_end_matches('/'))) == into)
     }
 
+    /// Files dropped on the window from another program while it shows a
+    /// folder on the disk go into that folder, as a copy, which is what the
+    /// window tells the program it did. Only a drop that would copy nothing,
+    /// like an archive dropped back on the folder it is already in, opens it.
+    pub(crate) fn dropped_on_disk(&mut self, paths: Vec<PathBuf>) {
+        let target = self.state.active_pane().directory.clone();
+        let roots: Vec<String> = paths
+            .iter()
+            .map(|path| disk_dir(path).trim_end_matches('/').to_string())
+            .collect();
+        let arriving = roots.iter().any(|root| {
+            let parent = root.rfind('/').map_or("", |at| &root[..=at]);
+            !parent.eq_ignore_ascii_case(&target)
+        });
+        if target.is_empty() || !arriving {
+            if let Some(first) = paths.into_iter().find(|path| detect(path).is_some()) {
+                self.open(first);
+            }
+            return;
+        }
+        self.copy_on_disk(&roots, &target);
+    }
+
     /// Dragging rows onto a folder with a copy asked for, or across volumes.
     pub(crate) fn copy_on_disk(&mut self, roots: &[String], target: &str) {
         self.transfer_on_disk(roots, target, true);
@@ -1017,45 +1047,6 @@ impl AppController {
         self.enqueue(task);
     }
 
-    /// What a drag out of a disk folder carries: every picked file, and the
-    /// files under every picked folder with their path from that folder, so
-    /// the shell can rebuild the tree where it drops.
-    #[cfg(windows)]
-    pub(crate) fn disk_drag_items(&self) -> Vec<(PathBuf, String, u64, Option<i64>)> {
-        const MOST: usize = 50_000;
-        let mut out = Vec::new();
-        for root in self.selected_roots() {
-            let trimmed = root.trim_end_matches('/');
-            let leaf = trimmed.rsplit('/').next().unwrap_or(trimmed).to_string();
-            let mut stack = vec![(disk_path(trimmed), leaf)];
-            while let Some((path, name)) = stack.pop() {
-                if out.len() >= MOST {
-                    return out;
-                }
-                let Ok(meta) = fs::metadata(&path) else {
-                    continue;
-                };
-                if meta.is_dir() {
-                    let Ok(items) = fs::read_dir(&path) else {
-                        continue;
-                    };
-                    for item in items.flatten() {
-                        let child = item.file_name().to_string_lossy().to_string();
-                        stack.push((item.path(), format!("{name}\\{child}")));
-                    }
-                } else {
-                    let mtime = meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs() as i64);
-                    out.push((path, name, meta.len(), mtime));
-                }
-            }
-        }
-        out
-    }
-
     pub(crate) fn root_label(&self) -> &'static str {
         if self.on_disk() {
             self.s().computer_word
@@ -1119,9 +1110,12 @@ impl AppController {
         self.state.active_pane_mut().checked.clear();
         self.state.active_pane_mut().cursor = None;
         self.state.folders = tree::folders_of(&[]);
+        self.state.cut_armed = None;
+        self.state.cut_pending = None;
+        self.state.cut_names.clear();
         self.state.history.clear();
         self.state.here = 0;
-        self.state.undo = None;
+        self.drop_undo();
         self.state.renaming = None;
         self.state.archive_password = None;
         self.state.waiting_on_password = None;
@@ -1926,4 +1920,16 @@ fn iso_utc(secs: i64) -> String {
         rest % 3600 / 60,
         rest % 60
     )
+}
+
+/// The paths on disk behind dragged rows, one for each, folders included as
+/// themselves rather than as everything inside them.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn drag_paths(roots: &[String]) -> Vec<PathBuf> {
+    roots
+        .iter()
+        .map(|root| root.trim_end_matches('/'))
+        .filter(|root| !root.is_empty())
+        .map(disk_path)
+        .collect()
 }

@@ -11,6 +11,10 @@ description = "Tipos comunes y lectura acotada para Arca"
 crc32fast.workspace = true
 cap-std = "4.0.3"
 cap-fs-ext = "4.0.3"
+# The zone this machine is set to, with its daylight saving rules: a ZIP keeps
+# its times as wall-clock time and nothing else, so turning them into instants
+# and back needs the zone's history, which no format here carries.
+jiff = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

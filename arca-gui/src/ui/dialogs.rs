@@ -44,6 +44,10 @@ pub(crate) fn shortcut_rows(s: &'static Strings) -> [Vec<ShortcutRow>; 2] {
             (&["+", "-"], s.select_group),
             (&["f2"], s.rename_word),
             (&["delete"], s.delete_word),
+            (&["ctrl-shift-n"], s.new_folder),
+            (&["alt-enter"], s.properties_word),
+            (&["alt-p"], s.preview_panel),
+            (&["ctrl-w"], s.close_window),
         ],
         vec![
             (&["f1"], s.shortcuts_title),
@@ -51,10 +55,10 @@ pub(crate) fn shortcut_rows(s: &'static Strings) -> [Vec<ShortcutRow>; 2] {
             (&["ctrl-x"], s.cut_word),
             (&["ctrl-v"], s.paste_word),
             (&["ctrl-shift-c"], s.copy_names),
-            (&["ctrl-l"], s.edit_path),
+            (&["ctrl-l", "alt-d", "f4"], s.edit_path),
             (&["ctrl-k"], s.search_word),
             (&["enter"], s.open_word),
-            (&["backspace", "left"], s.up),
+            (&["backspace", "left", "alt-up"], s.up),
             (&["right"], s.enter_folder),
             (&["alt-left"], s.back),
             (&["alt-right"], s.forward),
@@ -62,6 +66,7 @@ pub(crate) fn shortcut_rows(s: &'static Strings) -> [Vec<ShortcutRow>; 2] {
             (&["home", "end"], s.move_word),
             (&["pageup", "pagedown"], s.move_word),
             (&["tab"], s.focus_word),
+            (&["shift-f10"], s.context_menu),
             (&["a"], s.jump_word),
         ],
     ]
@@ -285,6 +290,10 @@ impl Shell {
                 .password(true)
                 .desired_width(f32::INFINITY),
         );
+        super::widgets::named(&field, hint);
+        // Read before the focus is handed back below: once the field has it
+        // again, egui no longer counts it as lost and Enter would do nothing.
+        let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if ui.memory(|m| m.focused().is_none()) {
             field.request_focus();
         }
@@ -292,7 +301,6 @@ impl Shell {
             self.controller
                 .dispatch(AppAction::SetPasswordInput(value.clone()));
         }
-        let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let mut submit = entered;
         let mut cancel = false;
         let mut remove = false;
@@ -400,7 +408,7 @@ impl Shell {
             ui.label(s.new_name);
             if let Some((_, name)) = self.conflict_name.as_mut() {
                 let wide = field(ui, name).desired_width(f32::INFINITY);
-                ui.add(wide);
+                super::widgets::named(&ui.add(wide), s.new_name);
             }
         });
         ui.add_space(6.0);
@@ -817,10 +825,11 @@ impl Shell {
         let mut auto = self.controller.state.auto_extension;
         let mut auto_changed = false;
         card(ui, s.output_name, None, false, |ui| {
-            ui.add(
+            let name = ui.add(
                 super::widgets::field(ui, &mut self.controller.state.output_name)
                     .desired_width(f32::INFINITY),
             );
+            super::widgets::named(&name, s.output_name);
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 auto_changed = switch(ui, &mut auto, &auto_label).changed();
@@ -848,9 +857,10 @@ impl Shell {
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     browse = icon_button(ui, icon::FOLDER_OPEN, s.browse_word, true).clicked();
-                    typed = ui
-                        .add(super::widgets::field(ui, &mut place).desired_width(f32::INFINITY))
-                        .changed();
+                    let field =
+                        ui.add(super::widgets::field(ui, &mut place).desired_width(f32::INFINITY));
+                    super::widgets::named(&field, s.save_in);
+                    typed = field.changed();
                 });
             });
         });
@@ -943,11 +953,12 @@ impl Shell {
                         let eye = if show { icon::EYE_SLASH } else { icon::EYE };
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             toggle = icon_button(ui, eye, s.show_password_word, true).clicked();
-                            ui.add(
+                            let field = ui.add(
                                 super::widgets::field(ui, &mut self.controller.state.add_password)
                                     .password(!show)
                                     .desired_width(f32::INFINITY),
                             );
+                            super::widgets::named(&field, s.password_word);
                         });
                     });
                     if format == Format::SevenZ {
@@ -1182,6 +1193,7 @@ impl Shell {
         ui.add_space(6.0);
         let field =
             ui.add(super::widgets::field(ui, &mut self.name_value).desired_width(f32::INFINITY));
+        super::widgets::named(&field, title);
         if self.focus_name {
             field.request_focus();
             self.focus_name = false;
@@ -1227,7 +1239,8 @@ impl Shell {
         });
         ui.add_space(4.0);
         ui.label(RichText::new(s.label_hint).color(hex(p.muted)));
-        ui.add(super::widgets::field(ui, &mut label).desired_width(f32::INFINITY));
+        let field = ui.add(super::widgets::field(ui, &mut label).desired_width(f32::INFINITY));
+        super::widgets::named(&field, s.label_hint);
         let mut go = false;
         let mut cancel = false;
         Self::footer_buttons(ui, |ui| {
@@ -1328,21 +1341,23 @@ impl Shell {
         rail.spacing_mut().item_spacing.y = 2.0;
         if compact {
             rail.menu_button(theme::icon_text(icon::MAGNIFYING_GLASS).size(16.0), |ui| {
-                ui.add(
+                let field = ui.add(
                     super::widgets::field(ui, &mut self.settings_query)
                         .hint_text(s.settings_search)
                         .desired_width(200.0),
                 );
+                super::widgets::named(&field, s.settings_search);
             })
             .response
             .on_hover_text(s.settings_search);
         } else {
-            rail.add(
+            let field = rail.add(
                 super::widgets::field(ui, &mut self.settings_query)
                     .hint_text(format!("{}  {}", icon::MAGNIFYING_GLASS, s.settings_search))
                     .margin(egui::vec2(8.0, 5.0))
                     .desired_width(f32::INFINITY),
             );
+            super::widgets::named(&field, s.settings_search);
         }
         rail.add_space(10.0);
         if matching.is_empty() && !compact {
@@ -1571,6 +1586,11 @@ impl Shell {
                     lang == Some(Lang::Es),
                     Lang::Es.label(),
                 ),
+                SettingsControl::LangUk => (
+                    SettingsSection::General,
+                    lang == Some(Lang::Uk),
+                    Lang::Uk.label(),
+                ),
                 SettingsControl::ThemeSystem => (
                     SettingsSection::Appearance,
                     theme == ThemePreference::System,
@@ -1632,12 +1652,13 @@ impl Shell {
         ui.add_space(12.0);
         section_title(ui, s.library_section);
         ui.horizontal(|ui| {
-            ui.add(
+            let field = ui.add(
                 super::widgets::field(ui, &mut self.theme_query)
                     .hint_text(s.search_themes)
                     .background_color(hex(p.raised))
                     .desired_width(240.0),
             );
+            super::widgets::named(&field, s.search_themes);
             let f = self.theme_filter;
             if let Some(i) = segmented(
                 ui,
@@ -1902,11 +1923,12 @@ impl Shell {
                 ui.set_width(ui.available_width());
                 ui.label(egui::RichText::new(s.add_theme).strong());
                 ui.add_space(4.0);
-                ui.add(
+                let field = ui.add(
                     super::widgets::field(ui, &mut draft.name)
                         .hint_text(s.theme_name)
                         .desired_width(f32::INFINITY),
                 );
+                super::widgets::named(&field, s.theme_name);
                 ui.add_space(4.0);
                 if let Some(i) = segmented(
                     ui,
@@ -2121,6 +2143,9 @@ impl Shell {
             SettingsControl::LangEs => self
                 .controller
                 .dispatch(AppAction::SetLanguage(Some(Lang::Es))),
+            SettingsControl::LangUk => self
+                .controller
+                .dispatch(AppAction::SetLanguage(Some(Lang::Uk))),
             SettingsControl::ThemeSystem => self.set_theme(ThemePreference::System),
             SettingsControl::ThemeLight => self.set_theme(ThemePreference::Light),
             SettingsControl::ThemeDark => self.set_theme(ThemePreference::Dark),
@@ -2134,7 +2159,8 @@ impl Shell {
                 }
             }
             SettingsControl::Subfolder => {
-                self.controller.state.into_subfolder = !self.controller.state.into_subfolder;
+                let on = !self.controller.state.into_subfolder;
+                self.controller.set_into_subfolder(on);
             }
         }
     }
@@ -2199,29 +2225,13 @@ fn pretty_bytes(n: u64) -> String {
     }
 }
 
-/// Local-agnostic `YYYY-MM-DD HH:MM` from a system time, without a dates
-/// crate: days to civil date after Howard Hinnant.
+/// A file's time as the date and time the clock here showed then.
 fn stamp(when: std::time::SystemTime) -> String {
     let secs = when
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let days = secs.div_euclid(86_400);
-    let rest = secs.rem_euclid(86_400);
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02} {:02}:{:02}",
-        rest / 3600,
-        (rest % 3600) / 60
-    )
+    crate::model::civil(arca_core::to_local_wall(secs))
 }
 
 fn rwx(mode: u32) -> String {

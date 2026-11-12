@@ -322,10 +322,13 @@ c76ecf12e8e05b8f4730fb9933450ea121fe1ce3699ab9b7d20b058f872815f4 *arca-setup-0.6
     // noticing: a date is either right or plausible, and plausible is worse.
     #[test]
     fn timestamps_become_the_dates_they_are() {
+        // No date recorded, or one before the epoch, which tar can hold.
+        for secs in [None, Some(0_i64), Some(-1)] {
+            assert_eq!(when(secs), "", "{secs:?}");
+        }
+        // The arithmetic, without the zone this machine happens to be in.
         for (secs, text) in [
-            (0_i64, ""), // no date recorded
-            (-1, ""),    // before the epoch: tar can hold these
-            (1, "1970-01-01 00:00"),
+            (1_i64, "1970-01-01 00:00"),
             (951_827_696, "2000-02-29 12:34"), // leap day of a leap century
             (1_078_012_800, "2004-02-29 00:00"), // ordinary leap year
             (1_709_164_800, "2024-02-29 00:00"),
@@ -334,9 +337,12 @@ c76ecf12e8e05b8f4730fb9933450ea121fe1ce3699ab9b7d20b058f872815f4 *arca-setup-0.6
             (1_767_225_599, "2025-12-31 23:59"),
             (2_208_988_800, "2040-01-01 00:00"), // past a 32-bit second count
         ] {
-            assert_eq!(when(Some(secs)), text, "{secs}");
+            assert_eq!(crate::model::civil(secs), text, "{secs}");
         }
-        assert_eq!(when(None), "");
+        assert_eq!(
+            when(Some(1_709_251_199)),
+            crate::model::civil(arca_core::to_local_wall(1_709_251_199))
+        );
     }
 
     // A folder keeps its whole name and a file loses its extension, and the

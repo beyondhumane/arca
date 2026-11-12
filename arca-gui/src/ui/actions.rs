@@ -134,7 +134,7 @@ impl RowAction {
             RowAction::Duplicate => (s.duplicate_word, "ctrl-d"),
             RowAction::MoveTo => (s.move_to, ""),
             RowAction::CopyTo => (s.copy_to, ""),
-            RowAction::Properties => (s.properties_word, ""),
+            RowAction::Properties => (s.properties_word, "alt-enter"),
             RowAction::Trash => (s.trash_word, "delete"),
             RowAction::OpenInPane => (s.open_in_pane, ""),
             RowAction::ExtractSelection => (s.extract_selected, ""),
@@ -148,7 +148,7 @@ impl RowAction {
             RowAction::Paste => (s.paste_word, "ctrl-v"),
             RowAction::CopyNames => (s.copy_names, "ctrl-shift-c"),
             RowAction::SelectAll => (s.select_all, "ctrl-a"),
-            RowAction::NewFolder => (s.new_folder, ""),
+            RowAction::NewFolder => (s.new_folder, "ctrl-shift-n"),
             RowAction::Compress => (s.compress_selection, "ctrl-n"),
             RowAction::CopyPath => (s.copy_path, ""),
             RowAction::Pin => (s.pin_word, ""),
@@ -227,9 +227,11 @@ impl RowAction {
     /// On the disk the shell keeps its own list of what was cut or copied,
     /// so the three are always there.
     pub(crate) fn offered(self, on_disk: bool) -> bool {
-        !matches!(self, RowAction::Copy | RowAction::Cut | RowAction::Paste)
-            || on_disk
-            || clipboard::AVAILABLE
+        match self {
+            RowAction::Cut => on_disk || clipboard::CUTS,
+            RowAction::Copy | RowAction::Paste => on_disk || clipboard::AVAILABLE,
+            _ => true,
+        }
     }
 
     /// Whether the entry makes sense where the list is showing: the disk has
@@ -267,6 +269,7 @@ pub(crate) enum SettingsControl {
     LangSystem,
     LangEn,
     LangEs,
+    LangUk,
     ThemeSystem,
     ThemeLight,
     ThemeDark,
@@ -275,10 +278,11 @@ pub(crate) enum SettingsControl {
 }
 
 impl SettingsControl {
-    pub(crate) const ALL: [SettingsControl; 8] = [
+    pub(crate) const ALL: [SettingsControl; 9] = [
         SettingsControl::LangSystem,
         SettingsControl::LangEn,
         SettingsControl::LangEs,
+        SettingsControl::LangUk,
         SettingsControl::ThemeSystem,
         SettingsControl::ThemeLight,
         SettingsControl::ThemeDark,
@@ -418,6 +422,7 @@ pub(crate) enum OverflowAction {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Shortcut {
+    ContextMenu,
     Open,
     Compress,
     ExtractAll,
@@ -437,6 +442,11 @@ pub(crate) enum Shortcut {
     Search,
     /// A mask that picks names, or one that drops them.
     PickGroup(bool),
+    Properties,
+    NewFolder,
+    Up,
+    CloseWindow,
+    TogglePreview,
 }
 
 /// Reading a key press, with no state and no side effects, so the table of
@@ -451,8 +461,14 @@ pub(crate) fn shortcut_for(
     key: &str,
     typing: bool,
 ) -> Option<Shortcut> {
+    // The ones the Explorer has taught everybody (Ctrl+Shift+N, Alt+Enter,
+    // Alt+Up, Alt+D, F4, Ctrl+W, Alt+P) mean here what they mean there.
     if secondary && shift {
-        return (key == "c").then_some(Shortcut::CopyNames);
+        return match key {
+            "c" => Some(Shortcut::CopyNames),
+            "n" => Some(Shortcut::NewFolder),
+            _ => None,
+        };
     }
     if secondary {
         return match key {
@@ -463,6 +479,7 @@ pub(crate) fn shortcut_for(
             "l" => Some(Shortcut::EditPath),
             "k" => Some(Shortcut::Search),
             "i" => Some(Shortcut::Invert),
+            "w" => Some(Shortcut::CloseWindow),
             "z" if !typing => Some(Shortcut::Undo),
             _ => None,
         };
@@ -470,10 +487,17 @@ pub(crate) fn shortcut_for(
     if alt {
         return match key {
             "w" => Some(Shortcut::ExtractHere),
+            "d" => Some(Shortcut::EditPath),
+            "p" => Some(Shortcut::TogglePreview),
+            "enter" if !typing => Some(Shortcut::Properties),
+            "up" | "arrowup" if !typing => Some(Shortcut::Up),
             "left" | "arrowleft" if !typing => Some(Shortcut::Back),
             "right" | "arrowright" if !typing => Some(Shortcut::Forward),
             _ => None,
         };
+    }
+    if shift && !secondary && !alt && key == "f10" && !typing {
+        return Some(Shortcut::ContextMenu);
     }
     if typing {
         return None;
@@ -482,6 +506,7 @@ pub(crate) fn shortcut_for(
         "f1" => Some(Shortcut::Shortcuts),
         "f2" => Some(Shortcut::Rename),
         "f3" => Some(Shortcut::View),
+        "f4" => Some(Shortcut::EditPath),
         "f5" => Some(Shortcut::Refresh),
         "escape" => Some(Shortcut::ClearSelection),
         // The keypad plus and minus, where WinRAR has kept picking a group by
@@ -539,5 +564,15 @@ pub(crate) fn shell_size(compact: bool) -> (f32, f32) {
         COMPACT_SIZE
     } else {
         NORMAL_SIZE
+    }
+}
+
+/// The side buttons of a mouse go back and forward through the folders, as
+/// they do in the Explorer and in every browser.
+pub(crate) fn side_button(button: eframe::egui::PointerButton) -> Option<Shortcut> {
+    match button {
+        eframe::egui::PointerButton::Extra1 => Some(Shortcut::Back),
+        eframe::egui::PointerButton::Extra2 => Some(Shortcut::Forward),
+        _ => None,
     }
 }

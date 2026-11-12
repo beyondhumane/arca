@@ -191,6 +191,7 @@ impl Shell {
                     .hint_text(s.password_needed)
                     .desired_width(f32::INFINITY),
             );
+            super::widgets::named(&field, s.password_needed);
             let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if primary_button(ui, s.continue_word, true).clicked() || entered {
                 let password = std::mem::take(&mut self.preview_password);

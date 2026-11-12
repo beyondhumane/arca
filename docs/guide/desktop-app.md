@@ -19,13 +19,13 @@ Double-clicking an archive (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.xz`, 
 
 ## Panes, details and the sidebar
 
-The **Panes** view (the default) puts one folder in each vertical pane. Each pane has its own header with **Reload**, **Up**, **Sort**, **Filter** and **Close**, and its own cursor, selection, scrolling, filter and sort order. Three settings in **Settings > Views** (also in the **View** menu) decide how panes behave:
+The **Panes** view puts one folder in each vertical pane. Each pane has its own header with **Reload**, **Up**, **Sort**, **Filter** and **Close**, and its own cursor, selection, scrolling, filter and sort order. Three settings in **Settings > Views** (also in the **View** menu) decide how panes behave:
 
 - **Open folders in the next pane** (`next_pane`, off by default): on, selecting a folder opens it in the pane to the right and the ancestors stay to the left, Miller-column style; off, each pane navigates on its own and **Open in a new pane** in the context menu adds one.
 - **Peek into folders on hover** (`folder_peek`, off by default): resting the pointer on a folder row shows a card with its first entries without opening it.
 - **Focus follows the pointer** (`pointer_focus`, on by default): the pane under the pointer is the active one, so the path bar, filter, shortcuts and actions act on it, without a click and without moving the panes. Any key hands control to the keyboard until the pointer moves again; **Tab**, **Shift+Tab**, **←** and **→** walk the panes. The row of panes scrolls only when navigation opens a pane out of view, with its scrollbar, or with **Shift+wheel**.
 
-**Details** is a sortable table; right-click its header to choose the columns. **Flat view** lists everything under the current folder without the hierarchy. **Filter** (**Ctrl+F**) belongs to the pane in Panes and to the whole list in Details.
+**Details** (the default) is a sortable table; right-click its header to choose the columns. **Flat view** lists everything under the current folder without the hierarchy. **Filter** (**Ctrl+F**) belongs to the pane in Panes and to the whole list in Details.
 
 The sidebar button shows or hides the sidebar; when the window leaves too little room for the folders beside it, the sidebar shrinks to a column of icons on its own and comes back when there is room again. Drag the dividers to resize the sidebar, the panes and the preview; every width is remembered.
 
@@ -81,8 +81,11 @@ and check it, and a stopped or failed creation leaves no half-written archive.
 
 Adding, deleting, renaming and changing passwords in an existing archive remain
 ZIP-only; 7z and RAR can be created but not modified afterwards. 7z virtual-file drag-out is disabled to avoid repeatedly decoding solid
-blocks; use Copy or Extract instead. Copying to the system file clipboard is
-platform-dependent.
+blocks; use Copy or Extract instead. Copy, cut and paste use the system clipboard on
+Windows and Linux, so files move between Arca and the Explorer, Thunar, Dolphin
+or Nautilus. On Linux the other programs cannot tell a cut from a copy, so a
+cut pasted there arrives as a copy, and cutting out of an archive is offered on
+Windows only.
 
 ## Jobs and keyboard access
 

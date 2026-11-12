@@ -13,18 +13,19 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | --- | --- |
 | <kbd>Up</kbd> <kbd>Down</kbd> <kbd>PageUp</kbd> <kbd>PageDown</kbd> <kbd>Home</kbd> <kbd>End</kbd> | Move the cursor |
 | <kbd>Right</kbd> | Enter the cursor folder |
-| <kbd>Left</kbd> <kbd>Backspace</kbd> | Go to the parent folder |
+| <kbd>Left</kbd> <kbd>Backspace</kbd> <kbd>Alt+Up</kbd> | Go to the parent folder |
 | <kbd>Enter</kbd> | Enter a folder or explicitly open a file with its system application |
 | <kbd>Space</kbd> | Toggle the cursor row's selection |
 | <kbd>Shift+Up</kbd> <kbd>Shift+Down</kbd> | Extend the selection |
 | <kbd>Ctrl+A</kbd> | Select visible rows in the active pane |
 | <kbd>a…z</kbd> | Jump by filename prefix |
-| <kbd>Alt+Left</kbd> <kbd>Alt+Right</kbd> | Back and forward in history |
+| <kbd>Alt+Left</kbd> <kbd>Alt+Right</kbd> | Back and forward in history; the mouse's side buttons do the same |
 | <kbd>Ctrl+O</kbd> <kbd>Ctrl+N</kbd> <kbd>Ctrl+E</kbd> | Open archive, create archive, extract all |
-| <kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd> | File copy, cut, paste (Windows integration) |
+| <kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd> | Copy, cut and paste files, shared with the system file manager on Windows and Linux |
 | <kbd>Ctrl+Shift+C</kbd> | Copy selected names as text |
 | <kbd>Ctrl+F</kbd> | Show and focus the active pane's filter |
-| <kbd>F2</kbd> | Rename the selected entry in a writable ZIP |
+| <kbd>Ctrl+L</kbd> <kbd>Alt+D</kbd> <kbd>F4</kbd> | Type a path in the path bar |
+| <kbd>F2</kbd> | Rename the selected file or folder, on disk or in a writable ZIP |
 | <kbd>F3</kbd> | Enable integrated preview for the cursor file |
 | <kbd>Ctrl+T</kbd> | Test the archive |
 | <kbd>Ctrl+I</kbd> | Invert visible selection in the active pane |
@@ -32,12 +33,17 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>Delete</kbd> | Confirm deletion of selected entries in a writable ZIP |
 | <kbd>Ctrl+Z</kbd> | Undo the last supported archive modification |
 | <kbd>Alt+W</kbd> | Extract here |
+| <kbd>Ctrl+Shift+N</kbd> | New folder |
+| <kbd>Alt+Enter</kbd> | Properties of the cursor row, or of the folder when there is none (on disk) |
+| <kbd>Alt+P</kbd> | Show or hide the preview panel |
+| <kbd>Ctrl+W</kbd> | Close the window |
 | <kbd>+</kbd> <kbd>-</kbd> | Select or deselect by filename mask |
 | <kbd>Tab</kbd> <kbd>Shift+Tab</kbd> | Move between focusable controls and panes |
+| <kbd>Shift+F10</kbd> | Open the menu of the row under the cursor, or of the folder when there is none |
 | <kbd>F1</kbd> | Shortcut help |
-| <kbd>Esc</kbd> | Dismiss the active dialog or inline edit; otherwise clear selection |
+| <kbd>Esc</kbd> | Dismiss the active dialog or inline edit; otherwise take back a pending cut, and then clear the selection |
 
-Ctrl+click toggles a row; Shift+click selects a range. A plain folder click opens a child in Columns; Details uses a double-click. Right-click a row or empty pane space for its menu. Drag pane dividers to resize; use horizontal scrolling to reach ancestors.
+Ctrl+click toggles a row; Shift+click selects a range. A click selects a row and a double-click or Enter opens it; with **Open folders in the next pane** on, one click on a folder shows it in the next pane. Right-click a row or empty pane space for its menu. Drag pane dividers to resize; use horizontal scrolling to reach ancestors.
 
 The preview's close button returns focus. In narrow windows preview can remain temporarily suspended until there is room for it. The sidebar button cycles expanded, rail and hidden modes.
 

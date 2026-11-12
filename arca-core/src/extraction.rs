@@ -62,6 +62,7 @@ impl Destination {
         &mut self,
         name: &str,
         is_dir: bool,
+        mtime: Option<i64>,
         reader: &mut dyn Read,
         ask: &mut dyn FnMut(&Path) -> Conflict,
     ) -> Result<Option<u64>> {
@@ -102,12 +103,26 @@ impl Destination {
         let mut writer = BufWriter::with_capacity(256 * 1024, file);
         let bytes = io::copy(reader, &mut writer)?;
         writer.flush()?;
-        drop(writer);
+        let file = writer.into_inner().map_err(|e| e.into_error())?;
+        set_mtime(&file.into_std(), mtime);
         exists_without_link(parent, Path::new(&name))?;
         // Rename replaces the directory entry without following it, even if it changed.
         parent.rename(&staged.name, parent, &name)?;
         staged.committed = true;
         Ok(Some(bytes))
+    }
+}
+
+/// Gives an extracted file the modification time its archive recorded.
+///
+/// Best effort: a file system that refuses the time still has every byte, and
+/// failing the extraction over a date would lose more than it saves.
+pub fn set_mtime(file: &std::fs::File, mtime: Option<i64>) {
+    let Some(seconds) = mtime.and_then(|t| u64::try_from(t).ok()).filter(|t| *t > 0) else {
+        return;
+    };
+    if let Some(when) = std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(seconds)) {
+        let _ = file.set_modified(when);
     }
 }
 
@@ -236,7 +251,9 @@ mod tests {
         assert!(!path.exists());
         for name in ["", ".", "../outside", "a/../../outside"] {
             assert!(dest
-                .write_entry(name, false, &mut io::empty(), &mut |_| Conflict::Overwrite)
+                .write_entry(name, false, None, &mut io::empty(), &mut |_| {
+                    Conflict::Overwrite
+                })
                 .is_err());
         }
         assert!(!path.exists());
@@ -248,12 +265,16 @@ mod tests {
         let mut dest = Destination::new(room.path());
         fs::write(room.path().join("file"), b"original").unwrap();
         assert_eq!(
-            dest.write_entry("file", false, &mut &b"skip"[..], &mut |_| Conflict::Skip)
-                .unwrap(),
+            dest.write_entry("file", false, None, &mut &b"skip"[..], &mut |_| {
+                Conflict::Skip
+            })
+            .unwrap(),
             None
         );
         assert!(matches!(
-            dest.write_entry("file", false, &mut io::empty(), &mut |_| Conflict::Cancel),
+            dest.write_entry("file", false, None, &mut io::empty(), &mut |_| {
+                Conflict::Cancel
+            }),
             Err(Error::Cancelled)
         ));
         struct Broken;
@@ -263,17 +284,19 @@ mod tests {
             }
         }
         assert!(dest
-            .write_entry("file", false, &mut Broken, &mut |_| Conflict::Overwrite)
+            .write_entry("file", false, None, &mut Broken, &mut |_| {
+                Conflict::Overwrite
+            })
             .is_err());
         assert_eq!(fs::read(room.path().join("file")).unwrap(), b"original");
         assert_eq!(fs::read_dir(room.path()).unwrap().count(), 1);
-        dest.write_entry("file", false, &mut &b"renamed"[..], &mut |_| {
+        dest.write_entry("file", false, None, &mut &b"renamed"[..], &mut |_| {
             Conflict::Rename
         })
         .unwrap();
         assert_eq!(fs::read(room.path().join("file (1)")).unwrap(), b"renamed");
         fs::hard_link(room.path().join("file"), room.path().join("other-link")).unwrap();
-        dest.write_entry("file", false, &mut &b"replacement"[..], &mut |_| {
+        dest.write_entry("file", false, None, &mut &b"replacement"[..], &mut |_| {
             Conflict::Overwrite
         })
         .unwrap();
@@ -282,6 +305,32 @@ mod tests {
             fs::read(room.path().join("other-link")).unwrap(),
             b"original"
         );
+    }
+
+    #[test]
+    fn written_files_take_the_time_the_archive_recorded() {
+        let room = room();
+        let mut dest = Destination::new(room.path());
+        let when = 1_600_000_000;
+        dest.write_entry("dated", false, Some(when), &mut &b"x"[..], &mut |_| {
+            Conflict::Overwrite
+        })
+        .unwrap();
+        dest.write_entry("undated", false, None, &mut &b"x"[..], &mut |_| {
+            Conflict::Overwrite
+        })
+        .unwrap();
+        let modified = |name: &str| {
+            fs::metadata(room.path().join(name))
+                .unwrap()
+                .modified()
+                .unwrap()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        };
+        assert_eq!(modified("dated"), when as u64);
+        assert!(modified("undated") > when as u64);
     }
 
     #[test]
@@ -303,6 +352,7 @@ mod tests {
         dest.write_entry(
             "nested/empty",
             true,
+            None,
             &mut io::empty(),
             &mut |_| unreachable!(),
         )
@@ -310,6 +360,7 @@ mod tests {
         dest.write_entry(
             "nested/file",
             false,
+            None,
             &mut &b"contents"[..],
             &mut |_| unreachable!(),
         )
@@ -329,12 +380,24 @@ mod tests {
         fs::create_dir(&outside).unwrap();
         let path = room.path().join("out");
         let mut dest = Destination::new(&path);
-        dest.write_entry("child", true, &mut io::empty(), &mut |_| unreachable!())
-            .unwrap();
+        dest.write_entry(
+            "child",
+            true,
+            None,
+            &mut io::empty(),
+            &mut |_| unreachable!(),
+        )
+        .unwrap();
         fs::rename(path.join("child"), path.join("original")).unwrap();
         std::os::unix::fs::symlink(&outside, path.join("child")).unwrap();
         assert!(dest
-            .write_entry("child/new", true, &mut io::empty(), &mut |_| unreachable!())
+            .write_entry(
+                "child/new",
+                true,
+                None,
+                &mut io::empty(),
+                &mut |_| unreachable!()
+            )
             .is_err());
         assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
     }
@@ -360,6 +423,7 @@ mod tests {
                 .write_entry(
                     "child/new",
                     is_dir,
+                    None,
                     &mut &b"contents"[..],
                     &mut |_| unreachable!()
                 )
@@ -407,8 +471,9 @@ mod tests {
                 done: false,
             };
             let result =
-                Destination::new(&path)
-                    .write_entry("file", false, &mut reader, &mut |_| Conflict::Overwrite);
+                Destination::new(&path).write_entry("file", false, None, &mut reader, &mut |_| {
+                    Conflict::Overwrite
+                });
             assert_eq!(result.is_err(), fail);
             assert_eq!(fs::read(outside.join("file")).unwrap(), b"outside");
             assert_eq!(fs::read_dir(outside).unwrap().count(), 1);
