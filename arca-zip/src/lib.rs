@@ -17,6 +17,7 @@ const SIG_EOCD64: u32 = 0x0606_4b50;
 const SIG_LOC64: u32 = 0x0706_4b50;
 const SIG_CD: u32 = 0x0201_4b50;
 const SIG_LFH: u32 = 0x0403_4b50;
+const SIG_DESCRIPTOR: u32 = 0x0807_4b50;
 
 const EOCD_MIN: usize = 22;
 const CD_FIXED: usize = 46;
@@ -59,6 +60,53 @@ impl<W: Write> Write for CrcWriter<W> {
 pub struct ZipArchive<R: Read + Seek> {
     source: R,
     entries_list: Vec<Entry>,
+    kept: Vec<Kept>,
+}
+
+/// What the central directory says about an entry beyond what `Entry` holds,
+/// carried through a rewrite so an entry nobody touched comes out the way it
+/// went in: its attributes, its flags, and every extra field except the Zip64
+/// one, whose offset stops being true the moment anything moves.
+#[derive(Clone, Debug, Default)]
+struct Kept {
+    made_by: u16,
+    needed: u16,
+    flags: u16,
+    method: u16,
+    time: u16,
+    date: u16,
+    internal: u16,
+    external: u32,
+    extra: Vec<u8>,
+    comment: Vec<u8>,
+}
+
+const EXTRA_ZIP64: u16 = 0x0001;
+const EXTRA_UNICODE_PATH: u16 = 0x7075;
+
+/// The extra fields of `extra` without the ones `drop` names. A field whose
+/// declared length runs past the end is where the parse stops, and it is not
+/// kept: no reader could have made sense of it either.
+fn strip_extra(extra: &[u8], drop: &[u16]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(extra.len());
+    let mut at = 0usize;
+    while extra.len() - at >= 4 {
+        let id = u16::from_le_bytes([extra[at], extra[at + 1]]);
+        let len = u16::from_le_bytes([extra[at + 2], extra[at + 3]]) as usize;
+        let end = at + 4 + len;
+        if end > extra.len() {
+            break;
+        }
+        if !drop.contains(&id) {
+            out.extend_from_slice(&extra[at..end]);
+        }
+        at = end;
+    }
+    out
+}
+
+fn has_extra(extra: &[u8], id: u16) -> bool {
+    strip_extra(extra, &[id]).len() != strip_extra(extra, &[]).len()
 }
 
 impl<R: Read + Seek> ZipArchive<R> {
@@ -126,6 +174,7 @@ impl<R: Read + Seek> ZipArchive<R> {
         source.read_exact(&mut cd)?;
 
         let mut entries_list = Vec::with_capacity(n_entries.min(4096) as usize);
+        let mut kept = Vec::with_capacity(entries_list.capacity());
         let mut c = Cursor::new(&cd);
         // Every header the directory holds, not only as many as the end record
         // counts: a writer that stores more than 65,535 entries without Zip64
@@ -136,8 +185,11 @@ impl<R: Read + Seek> ZipArchive<R> {
             if i as u64 >= limits::MAX_ENTRIES {
                 return Err(Error::Limit(format!("more than {i} entries")));
             }
-            match read_central_header(&mut c) {
-                Ok(e) => entries_list.push(e),
+            match read_central(&mut c) {
+                Ok((e, k)) => {
+                    entries_list.push(e);
+                    kept.push(k);
+                }
                 Err(e) => {
                     return Err(Error::Format(format!(
                         "entry {i} of the central directory: {e}"
@@ -156,6 +208,7 @@ impl<R: Read + Seek> ZipArchive<R> {
         Ok(ZipArchive {
             source,
             entries_list,
+            kept,
         })
     }
 
@@ -685,11 +738,17 @@ fn read_times(extra: &[u8]) -> Times {
     out
 }
 
+#[cfg(test)]
 fn read_central_header(c: &mut Cursor<'_>) -> Result<Entry> {
+    read_central(c).map(|(e, _)| e)
+}
+
+fn read_central(c: &mut Cursor<'_>) -> Result<(Entry, Kept)> {
     if c.u32le("central directory signature")? != SIG_CD {
         return Err(Error::Format("invalid entry signature".into()));
     }
-    c.skip(4, "versions")?;
+    let made_by = c.u16le("version made by")?;
+    let needed = c.u16le("version needed")?;
     let flags = c.u16le("flags")?;
     let method_code = c.u16le("method")?;
     let time_val = c.u16le("time")?;
@@ -700,7 +759,8 @@ fn read_central_header(c: &mut Cursor<'_>) -> Result<Entry> {
     let n_len = c.u16le("name length")? as usize;
     let x_len = c.u16le("extra field length")? as usize;
     let k_len = c.u16le("comment length")? as usize;
-    c.skip(4, "disk and internal attributes")?;
+    c.skip(2, "disk number")?;
+    let internal = c.u16le("internal attributes")?;
     let ext_attr = c.u32le("external attributes")?;
     let mut offset = c.u32le("local offset")? as u64;
 
@@ -713,7 +773,7 @@ fn read_central_header(c: &mut Cursor<'_>) -> Result<Entry> {
 
     let name_bytes = c.bytes(n_len, "name")?;
     let extra = c.bytes(x_len, "extra field")?;
-    c.skip(k_len, "comment")?;
+    let comment = c.bytes(k_len, "comment")?;
 
     if uncompressed == 0xFFFF_FFFF || comp_size == 0xFFFF_FFFF || offset == 0xFFFF_FFFF {
         let mut x = Cursor::new(extra);
@@ -784,7 +844,7 @@ fn read_central_header(c: &mut Cursor<'_>) -> Result<Entry> {
     let is_dir = name.ends_with('/') || name.ends_with('\\');
     let times = read_times(extra);
 
-    Ok(Entry {
+    let entry = Entry {
         name,
         raw_name: name_bytes.to_vec(),
         utf8,
@@ -805,7 +865,20 @@ fn read_central_header(c: &mut Cursor<'_>) -> Result<Entry> {
         offset,
         encrypted,
         zipcrypto,
-    })
+    };
+    let kept = Kept {
+        made_by,
+        needed,
+        flags,
+        method: method_code,
+        time: time_val,
+        date: date_val,
+        internal,
+        external: ext_attr,
+        extra: strip_extra(extra, &[EXTRA_ZIP64]),
+        comment: comment.to_vec(),
+    };
+    Ok((entry, kept))
 }
 
 struct Record {
@@ -820,6 +893,9 @@ struct Record {
     is_directory: bool,
     encrypted: bool,
     real_method: u16,
+    // Set when the entry came out of another archive, and then it wins over
+    // everything above that the central directory would otherwise make up.
+    kept: Option<Kept>,
 }
 
 pub struct ZipWriter<W: Write + Seek> {
@@ -1042,6 +1118,125 @@ impl<W: Write + Seek> ZipWriter<W> {
         )
     }
 
+    // Copies an entry of another archive across as it stands: its local header,
+    // its compressed and possibly encrypted bytes, and what the central
+    // directory said about it. Nothing is decrypted, so no password is needed
+    // and an entry under the old PKWARE cipher stays under it. With `rename`
+    // the name is the one thing that changes.
+    //
+    // An entry streamed with a data descriptor keeps flag bit 3: when it is set
+    // the old cipher checks a password against the time instead of the CRC.
+    // The descriptor is written afresh from the central directory's values
+    // rather than parsed out of the source.
+    fn copy_raw<R: Read + Seek>(
+        &mut self,
+        source: &mut R,
+        e: &Entry,
+        kept: &Kept,
+        rename: Option<&str>,
+    ) -> Result<()> {
+        source.seek(SeekFrom::Start(e.offset))?;
+        let mut lfh = [0u8; LFH_FIXED];
+        source.read_exact(&mut lfh)?;
+        let mut c = Cursor::new(&lfh);
+        if c.u32le("local header signature")? != SIG_LFH {
+            return Err(Error::Format(format!(
+                "'{}': no local header at offset {}",
+                e.name, e.offset
+            )));
+        }
+        c.skip(2, "version")?;
+        let local_flags = c.u16le("flags")?;
+        c.skip(18, "method, time, checksum and sizes")?;
+        let n_len = c.u16le("name length")? as usize;
+        let x_len = c.u16le("extra field length")? as usize;
+        let mut tail = vec![0u8; n_len + x_len];
+        source.read_exact(&mut tail)?;
+        let local_extra = &tail[n_len..];
+
+        let (header, name_bytes, flags, cd_extra) = match rename {
+            None => {
+                let mut h = lfh.to_vec();
+                h.extend_from_slice(&tail);
+                (h, e.raw_name.clone(), kept.flags, kept.extra.clone())
+            }
+            Some(n) => {
+                let name_bytes = check_name(n)?;
+                let x = strip_extra(local_extra, &[EXTRA_UNICODE_PATH]);
+                let mut h = lfh[..26].to_vec();
+                h[6..8].copy_from_slice(&(local_flags | 0x800).to_le_bytes());
+                h.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+                h.extend_from_slice(&(x.len() as u16).to_le_bytes());
+                h.extend_from_slice(&name_bytes);
+                h.extend_from_slice(&x);
+                let cd_extra = strip_extra(&kept.extra, &[EXTRA_UNICODE_PATH]);
+                (h, name_bytes, kept.flags | 0x800, cd_extra)
+            }
+        };
+
+        let offset = self.pos;
+        self.out.write_all(&header)?;
+        let copied = io::copy(&mut source.take(e.compressed_size), &mut self.out)?;
+        if copied != e.compressed_size {
+            return Err(Error::Format(format!(
+                "'{}': the archive ends inside this entry",
+                e.name
+            )));
+        }
+        let crc_val = e.crc32.unwrap_or(0);
+        let mut written = header.len() as u64 + copied;
+        if local_flags & 8 != 0 {
+            let mut d = Vec::with_capacity(24);
+            d.extend_from_slice(&SIG_DESCRIPTOR.to_le_bytes());
+            d.extend_from_slice(&crc_val.to_le_bytes());
+            if has_extra(local_extra, EXTRA_ZIP64) {
+                d.extend_from_slice(&e.compressed_size.to_le_bytes());
+                d.extend_from_slice(&e.size.to_le_bytes());
+            } else {
+                d.extend_from_slice(&(e.compressed_size as u32).to_le_bytes());
+                d.extend_from_slice(&(e.size as u32).to_le_bytes());
+            }
+            self.out.write_all(&d)?;
+            written += d.len() as u64;
+        }
+        self.pos = offset + written;
+        self.registros.push(Record {
+            name_str: name_bytes,
+            crc_val,
+            comp_size: e.compressed_size,
+            uncompressed: e.size,
+            offset,
+            method_code: kept.method,
+            date_val: kept.date,
+            time_val: kept.time,
+            is_directory: e.is_dir,
+            encrypted: false,
+            real_method: kept.method,
+            kept: Some(Kept {
+                flags,
+                extra: cd_extra,
+                ..kept.clone()
+            }),
+        });
+        Ok(())
+    }
+
+    // Gives the entry just written the attributes, extra fields and comment
+    // `kept` carried in another archive, for an entry that had to be copied
+    // through `copy_entry` because its encryption changed. Its flags and its
+    // AES field are the new ones.
+    fn keep_metadata(&mut self, kept: &Kept) {
+        if let Some(r) = self.registros.last_mut() {
+            r.kept = Some(Kept {
+                needed: 45,
+                flags: if r.encrypted { 0x0801 } else { 0x0800 },
+                method: r.method_code,
+                extra: strip_extra(&kept.extra, &[EXTRA_ZIP64, aes::EXTRA_AE]),
+                ..kept.clone()
+            });
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn put_block(
         &mut self,
@@ -1143,6 +1338,7 @@ impl<W: Write + Seek> ZipWriter<W> {
             is_directory,
             encrypted,
             real_method: method_code.code()?,
+            kept: None,
         });
         Ok(())
     }
@@ -1213,15 +1409,41 @@ impl<W: Write + Seek> ZipWriter<W> {
             // The reader looks the AES field up in the central directory, so it
             // has to be here too and not only in the local header.
             let mut extra = extra;
+            let zip64 = !extra.is_empty();
             if r.encrypted {
                 extra.extend_from_slice(&aes::extra_field(r.real_method));
             }
-            let flags: u16 = if r.encrypted { 0x0801 } else { 0x0800 };
+            let (made_by, needed, flags, internal, external, comment) = match &r.kept {
+                Some(k) => {
+                    extra.extend_from_slice(&k.extra);
+                    let needed = if zip64 { k.needed.max(45) } else { k.needed };
+                    (
+                        k.made_by,
+                        needed,
+                        k.flags,
+                        k.internal,
+                        k.external,
+                        &k.comment[..],
+                    )
+                }
+                None => {
+                    let mode: u32 = if r.is_directory { 0o040755 } else { 0o100644 };
+                    let external = (mode << 16) | if r.is_directory { 0x10 } else { 0 };
+                    let flags: u16 = if r.encrypted { 0x0801 } else { 0x0800 };
+                    (0x031E, 45, flags, 0, external, &[][..])
+                }
+            };
+            if extra.len() > u16::MAX as usize {
+                return Err(Error::Limit(format!(
+                    "extra field of {} bytes",
+                    extra.len()
+                )));
+            }
 
             let mut h = Vec::with_capacity(CD_FIXED + r.name_str.len() + extra.len());
             h.extend_from_slice(&SIG_CD.to_le_bytes());
-            h.extend_from_slice(&(0x031Eu16).to_le_bytes());
-            h.extend_from_slice(&45u16.to_le_bytes());
+            h.extend_from_slice(&made_by.to_le_bytes());
+            h.extend_from_slice(&needed.to_le_bytes());
             h.extend_from_slice(&flags.to_le_bytes());
             h.extend_from_slice(&r.method_code.to_le_bytes());
             h.extend_from_slice(&r.time_val.to_le_bytes());
@@ -1231,16 +1453,14 @@ impl<W: Write + Seek> ZipWriter<W> {
             h.extend_from_slice(&(r.uncompressed.min(0xFFFF_FFFF) as u32).to_le_bytes());
             h.extend_from_slice(&(r.name_str.len() as u16).to_le_bytes());
             h.extend_from_slice(&(extra.len() as u16).to_le_bytes());
+            h.extend_from_slice(&(comment.len() as u16).to_le_bytes());
             h.extend_from_slice(&0u16.to_le_bytes());
-            h.extend_from_slice(&0u16.to_le_bytes());
-            h.extend_from_slice(&0u16.to_le_bytes());
-            let mode: u32 = if r.is_directory { 0o040755 } else { 0o100644 };
-            h.extend_from_slice(
-                &((mode << 16) | if r.is_directory { 0x10 } else { 0 }).to_le_bytes(),
-            );
+            h.extend_from_slice(&internal.to_le_bytes());
+            h.extend_from_slice(&external.to_le_bytes());
             h.extend_from_slice(&(r.offset.min(0xFFFF_FFFF) as u32).to_le_bytes());
             h.extend_from_slice(&r.name_str);
             h.extend_from_slice(&extra);
+            h.extend_from_slice(comment);
 
             self.out.write_all(&h)?;
             cd_size += h.len() as u64;
@@ -1592,19 +1812,37 @@ fn rewrite(
     use std::fs::File;
     use std::io::{BufReader, BufWriter};
 
-    let entries: Vec<Entry> = ZipArchive::open(File::open(archive)?)?
-        .entries()
-        .iter()
-        .filter(|e| keep(e))
-        .cloned()
+    let source = ZipArchive::open(File::open(archive)?)?;
+    // When the password stays what it was, every entry that survives is copied
+    // as it stands, encrypted or not: a plain entry in an archive with a
+    // password stays plain, an old PKWARE one is not turned into AES, and
+    // nothing has to be decrypted to move it. The password, if there is one,
+    // is only for the files being added, so it has to be the right one.
+    let raw = current == new;
+    if let (true, Some(pw)) = (raw, current) {
+        check_password(&mut File::open(archive)?, &source.entries_list, pw)?;
+    }
+    let entries: Vec<(Entry, Kept)> = source
+        .entries_list
+        .into_iter()
+        .zip(source.kept)
+        .filter(|(e, _)| keep(e))
         .collect();
     let total = entries.len() + extra.len();
     let mut w = ZipWriter::new(BufWriter::with_capacity(STREAM_BUF, File::create(out)?));
     let mut bytes = 0u64;
+    let mut src = BufReader::with_capacity(STREAM_BUF, File::open(archive)?);
 
-    for (i, e) in entries.iter().enumerate() {
+    for (i, (e, k)) in entries.iter().enumerate() {
         if !notify(i, total, &e.name) {
             return Err(Error::Cancelled);
+        }
+        if raw {
+            let renamed = name(e);
+            let rename = (renamed != e.name).then_some(renamed.as_str());
+            w.copy_raw(&mut src, e, k, rename)?;
+            bytes += e.size;
+            continue;
         }
         // Directories hold nothing, and no other tool encrypts them either.
         let pw = if e.is_dir { None } else { new };
@@ -1615,11 +1853,11 @@ fn rewrite(
             e.crc32
                 .ok_or_else(|| Error::Format("missing ZIP checksum".into()))?
         };
-        let mut src = BufReader::with_capacity(STREAM_BUF, File::open(archive)?);
         let stamp = dos_stamp(&mut src, e)?;
         w.copy_entry(&name(e), crc, e.size, e.method, stamp, pw, |sink| {
             copy_compressed(&mut src, e, sink, current)
         })?;
+        w.keep_metadata(k);
         bytes += e.size;
     }
 
@@ -1677,8 +1915,18 @@ fn rewrite(
         .filter(|e| !e.is_dir)
         .cloned()
         .collect();
+    // An encrypted entry copied across without a password cannot be opened to
+    // check; what can be checked is that its header is where the directory
+    // says and that all of its bytes are there.
     written.par_iter().try_for_each(|e| -> Result<()> {
         let mut source = BufReader::with_capacity(STREAM_BUF, File::open(out)?);
+        if e.encrypted && new.is_none() {
+            let (mut bounded, _) = open_data(&mut source, e)?;
+            if io::copy(&mut bounded, &mut io::sink())? != e.compressed_size {
+                return Err(Error::Format(format!("'{}' came out short", e.name)));
+            }
+            return Ok(());
+        }
         extract_entry_with(&mut source, e, io::sink(), new)?;
         Ok(())
     })?;
@@ -2298,6 +2546,172 @@ mod tests {
         let long = "a".repeat(limits::MAX_NAME + 1);
         let r = w.add(&long, &b"x"[..], Codec::Store, Level::STORE, None);
         assert!(matches!(r, Err(Error::Limit(_))), "{r:?}");
+    }
+
+    fn through_files(
+        tag: &str,
+        buf: &[u8],
+        run: impl FnOnce(&std::path::Path, &std::path::Path) -> Result<u64>,
+    ) -> Vec<u8> {
+        let room = std::env::temp_dir().join(format!("arca-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&room).unwrap();
+        let (from, to) = (room.join("a.zip"), room.join("b.zip"));
+        std::fs::write(&from, buf).unwrap();
+        run(&from, &to).unwrap();
+        let out = std::fs::read(&to).unwrap();
+        std::fs::remove_dir_all(&room).unwrap();
+        out
+    }
+
+    const EXEC: u32 = 0o100755 << 16;
+
+    // An archive made somewhere else: a Unix host byte, an executable mode, a
+    // name in code page 437 without the UTF-8 flag, a time extra field, a
+    // Unicode path field, and a comment on the entry.
+    fn foreign_archive() -> Vec<u8> {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        let mut extra = vec![0x55, 0x54, 5, 0, 1];
+        extra.extend_from_slice(&1_600_000_000u32.to_le_bytes());
+        extra.extend_from_slice(&[0x75, 0x70, 3, 0, 1, 0, 0]);
+        for name in ["run.sh", "gone.txt"] {
+            w.add(
+                name,
+                &b"#!/bin/sh\n"[..],
+                Codec::Deflate,
+                Level::NORMAL,
+                None,
+            )
+            .unwrap();
+            let r = w.registros.last_mut().unwrap();
+            if name == "run.sh" {
+                r.name_str = b"caf\x82.sh".to_vec();
+            }
+            r.kept = Some(Kept {
+                made_by: 0x0314,
+                needed: 20,
+                flags: 0,
+                method: r.method_code,
+                time: r.time_val,
+                date: r.date_val,
+                internal: 1,
+                external: EXEC,
+                extra: extra.clone(),
+                comment: b"keep me".to_vec(),
+            });
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn removing_and_renaming_keep_what_the_survivors_carried() {
+        let buf = foreign_archive();
+        let removed = through_files("keep-remove", &buf, |a, b| {
+            remove_entries(a, b, None, &|e| e.name != "gone.txt", &|_, _, _| true)
+        });
+        let mut a = ZipArchive::open(IoCursor::new(removed)).unwrap();
+        assert_eq!(a.len(), 1);
+        let (e, k) = (a.entries_list[0].clone(), a.kept[0].clone());
+        assert_eq!(e.raw_name, b"caf\x82.sh");
+        assert!(!e.utf8);
+        assert_eq!((k.made_by, k.internal, k.external), (0x0314, 1, EXEC));
+        assert_eq!(k.comment, b"keep me");
+        assert!(has_extra(&k.extra, 0x5455));
+        assert!(has_extra(&k.extra, EXTRA_UNICODE_PATH));
+        let mut out = Vec::new();
+        a.extract_to(0, &mut out).unwrap();
+        assert_eq!(out, b"#!/bin/sh\n");
+
+        let renamed = through_files("keep-rename", &buf, |a, b| {
+            rename_entries(a, b, None, &|e| format!("bin/{}", e.name), &|_, _, _| true)
+        });
+        let a = ZipArchive::open(IoCursor::new(renamed)).unwrap();
+        let (e, k) = (&a.entries_list[0], &a.kept[0]);
+        assert_eq!(e.name, "bin/caf\u{e9}.sh");
+        assert!(e.utf8);
+        assert_eq!(k.external, EXEC);
+        assert!(has_extra(&k.extra, 0x5455));
+        assert!(!has_extra(&k.extra, EXTRA_UNICODE_PATH));
+    }
+
+    #[test]
+    fn a_streamed_zipcrypto_entry_survives_a_rename_without_its_password() {
+        let plain = b"old tools wrote this to a pipe".repeat(10);
+        let buf = zipcrypto_archive_with("old.txt", &plain, "secret", true);
+        assert_eq!(only_entry(&buf, Some("secret")).0, plain);
+
+        let renamed = through_files("zipcrypto-rename", &buf, |a, b| {
+            rename_entries(a, b, None, &|_| "new.txt".into(), &|_, _, _| true)
+        });
+        let a = ZipArchive::open(IoCursor::new(renamed.clone())).unwrap();
+        assert!(a.entries()[0].zipcrypto);
+        assert_eq!(a.entries()[0].name, "new.txt");
+        assert_eq!(only_entry(&renamed, Some("secret")).0, plain);
+    }
+
+    #[test]
+    fn removing_from_a_mixed_archive_leaves_plain_entries_plain() {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        w.add(
+            "plain.txt",
+            &b"open"[..],
+            Codec::Deflate,
+            Level::NORMAL,
+            None,
+        )
+        .unwrap();
+        for name in ["secret.txt", "gone.txt"] {
+            w.add_with_password(
+                name,
+                &b"closed"[..],
+                Codec::Deflate,
+                Level::NORMAL,
+                None,
+                Some("pw"),
+            )
+            .unwrap();
+        }
+        let buf = w.finish().unwrap().into_inner();
+        for password in [Some("pw"), None] {
+            let out = through_files("mixed", &buf, |a, b| {
+                remove_entries(a, b, password, &|e| e.name != "gone.txt", &|_, _, _| true)
+            });
+            let mut a = ZipArchive::open(IoCursor::new(out)).unwrap();
+            let flags: Vec<(&str, bool)> = a
+                .entries()
+                .iter()
+                .map(|e| (e.name.as_str(), e.encrypted))
+                .collect();
+            assert_eq!(flags, [("plain.txt", false), ("secret.txt", true)]);
+            let mut got = Vec::new();
+            a.extract_to_with(1, &mut got, Some("pw")).unwrap();
+            assert_eq!(got, b"closed");
+        }
+        let wrong = std::env::temp_dir().join(format!("arca-wrong-{}", std::process::id()));
+        std::fs::create_dir_all(&wrong).unwrap();
+        std::fs::write(wrong.join("a.zip"), &buf).unwrap();
+        let r = remove_entries(
+            &wrong.join("a.zip"),
+            &wrong.join("b.zip"),
+            Some("nope"),
+            &|_| true,
+            &|_, _, _| true,
+        );
+        std::fs::remove_dir_all(&wrong).unwrap();
+        assert!(r.is_err(), "a wrong password must not add files under it");
+    }
+
+    #[test]
+    fn extra_fields_that_run_off_the_end_are_dropped_without_a_panic() {
+        let whole = [0x55, 0x54, 1, 0, 9];
+        assert_eq!(strip_extra(&whole, &[]), whole);
+        assert!(strip_extra(&whole, &[0x5455]).is_empty());
+        let mut cut = whole.to_vec();
+        cut.extend_from_slice(&[0x01, 0x00, 0xFF, 0xFF, 1, 2]);
+        assert_eq!(strip_extra(&cut, &[]), whole);
+        for n in 0..cut.len() {
+            let _ = strip_extra(&cut[..n], &[EXTRA_ZIP64]);
+            let _ = has_extra(&cut[..n], EXTRA_ZIP64);
+        }
     }
 
     // Taking entries out is the one operation with no undo, so whatever
@@ -3248,26 +3662,50 @@ mod tests {
     // the bytes out by hand the way the old tools do: a stored entry whose data
     // is the 12 byte header and the plaintext, encrypted as one run.
     fn zipcrypto_archive(name: &str, plain: &[u8], password: &str) -> Vec<u8> {
+        zipcrypto_archive_with(name, plain, password, false)
+    }
+
+    // `streamed` lays the entry out the way a tool writing to a pipe does: flag
+    // bit 3, zeros in the local header, a data descriptor after the data, and
+    // the password check byte taken from the time instead of the CRC.
+    fn zipcrypto_archive_with(name: &str, plain: &[u8], password: &str, streamed: bool) -> Vec<u8> {
         let crc = crc32fast::hash(plain);
+        let time: u16 = if streamed { 0x6B21 } else { 0 };
         let mut body = vec![0u8; zipcrypto::HEADER];
-        body[zipcrypto::HEADER - 1] = (crc >> 24) as u8;
+        body[zipcrypto::HEADER - 1] = if streamed {
+            (time >> 8) as u8
+        } else {
+            (crc >> 24) as u8
+        };
         body.extend_from_slice(plain);
         zipcrypto::Keys::new(password.as_bytes()).encrypt(&mut body);
 
-        let flags: u16 = 0x0801;
+        let flags: u16 = if streamed { 0x0809 } else { 0x0801 };
+        let (lfh_crc, lfh_comp, lfh_size) = if streamed {
+            (0, 0, 0)
+        } else {
+            (crc, body.len() as u32, plain.len() as u32)
+        };
         let mut out = Vec::new();
         out.extend_from_slice(&SIG_LFH.to_le_bytes());
         out.extend_from_slice(&20u16.to_le_bytes());
         out.extend_from_slice(&flags.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
-        out.extend_from_slice(&0u32.to_le_bytes());
-        out.extend_from_slice(&crc.to_le_bytes());
-        out.extend_from_slice(&(body.len() as u32).to_le_bytes());
-        out.extend_from_slice(&(plain.len() as u32).to_le_bytes());
+        out.extend_from_slice(&time.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&lfh_crc.to_le_bytes());
+        out.extend_from_slice(&lfh_comp.to_le_bytes());
+        out.extend_from_slice(&lfh_size.to_le_bytes());
         out.extend_from_slice(&(name.len() as u16).to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
         out.extend_from_slice(name.as_bytes());
         out.extend_from_slice(&body);
+        if streamed {
+            out.extend_from_slice(&SIG_DESCRIPTOR.to_le_bytes());
+            out.extend_from_slice(&crc.to_le_bytes());
+            out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(plain.len() as u32).to_le_bytes());
+        }
 
         let cd_at = out.len();
         out.extend_from_slice(&SIG_CD.to_le_bytes());
@@ -3275,7 +3713,8 @@ mod tests {
         out.extend_from_slice(&20u16.to_le_bytes());
         out.extend_from_slice(&flags.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
-        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&time.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
         out.extend_from_slice(&crc.to_le_bytes());
         out.extend_from_slice(&(body.len() as u32).to_le_bytes());
         out.extend_from_slice(&(plain.len() as u32).to_le_bytes());
