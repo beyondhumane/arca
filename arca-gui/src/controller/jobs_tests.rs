@@ -908,3 +908,25 @@ fn opening_an_archive_can_be_given_up_on() {
     assert!(app.on_disk(), "the window went back to the folder");
     assert_ne!(app.state.archive.as_ref(), Some(&archive));
 }
+
+#[test]
+fn stopping_a_task_that_waits_on_a_question_lets_it_go() {
+    let mut app = AppController::new(Settings::default());
+    let (answered_tx, answered_rx) = channel();
+    let asker: Work = Box::new(move |tx, replies, _, _| {
+        let _ = tx.send(Message::Conflict("there.txt".into()));
+        let answer = replies.recv().unwrap_or(Answer::Cancel);
+        let _ = answered_tx.send(answer);
+        let _ = tx.send(Message::Failed(arca_core::Error::Cancelled.to_string()));
+    });
+    let asking = app.enqueue(Task::new("Extract", "a", asker));
+    settle_until(&mut app, |app| app.conflict().is_some());
+    app.cancel_task(asking);
+    assert!(app.conflict().is_none());
+    assert_eq!(
+        answered_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+        Answer::Cancel
+    );
+    settle(&mut app);
+    assert_eq!(status(&app, asking), TaskStatus::Stopped);
+}

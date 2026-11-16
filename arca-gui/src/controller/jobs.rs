@@ -326,6 +326,14 @@ impl AppController {
         };
         task.stop.store(true, Ordering::Relaxed);
         task.hold.store(false, Ordering::Relaxed);
+        // A task waiting on an answer about a conflict is not looking at the
+        // stop flag; the answer it is waiting for is the way to stop it.
+        if task.conflict.take().is_some() {
+            task.conflict_from = None;
+            if let Some(replies) = &task.replies {
+                let _ = replies.send(Answer::Cancel);
+            }
+        }
         if task.status == TaskStatus::Queued {
             task.status = TaskStatus::Stopped;
             task.result = stopped;
