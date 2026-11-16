@@ -132,6 +132,18 @@ pub fn clear() {
     }
 }
 
+/// A path out of a text/uri-list without the carriage return that ends its
+/// line. The list is CRLF by its RFC, and Nautilus and Dolphin write it so,
+/// but arboard splits it at the line feed alone and leaves the return on the
+/// path, which then names a file that does not exist.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn without_line_end(path: PathBuf) -> PathBuf {
+    match path.to_str() {
+        Some(text) if text.ends_with('\r') => PathBuf::from(text.trim_end_matches('\r')),
+        _ => path,
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use super::PathBuf;
@@ -172,7 +184,11 @@ mod linux {
     }
 
     pub fn files() -> Vec<PathBuf> {
-        with(|clipboard| clipboard.get().file_list().unwrap_or_default()).unwrap_or_default()
+        with(|clipboard| clipboard.get().file_list().unwrap_or_default())
+            .unwrap_or_default()
+            .into_iter()
+            .map(super::without_line_end)
+            .collect()
     }
 
     pub fn taken() -> (Vec<PathBuf>, bool) {
@@ -247,7 +263,7 @@ pub fn clear() {}
 
 #[cfg(test)]
 mod tests {
-    use super::shell_path;
+    use super::{shell_path, without_line_end};
     use std::path::PathBuf;
 
     #[test]
@@ -263,5 +279,17 @@ mod tests {
         );
         assert_eq!(plain(r"C:\Temp\a.txt"), PathBuf::from(r"C:\Temp\a.txt"));
         assert_eq!(plain("/tmp/a.txt"), PathBuf::from("/tmp/a.txt"));
+    }
+
+    #[test]
+    fn a_uri_list_written_with_crlf_still_names_the_files() {
+        assert_eq!(
+            without_line_end(PathBuf::from("/home/me/a b.txt\r")),
+            PathBuf::from("/home/me/a b.txt")
+        );
+        assert_eq!(
+            without_line_end(PathBuf::from("/home/me/plain.txt")),
+            PathBuf::from("/home/me/plain.txt")
+        );
     }
 }
