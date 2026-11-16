@@ -93,7 +93,7 @@ pub(crate) fn open_source(archive: &Path, format: Format) -> arca_core::Result<B
     }
     let f = BufReader::with_capacity(BUF, File::open(archive)?);
     Ok(match format {
-        Format::TarGz => Box::new(flate2::read::GzDecoder::new(f)),
+        Format::TarGz => Box::new(flate2::read::MultiGzDecoder::new(f)),
         _ => Box::new(f),
     })
 }

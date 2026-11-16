@@ -66,6 +66,24 @@ for f in t.tar t.tar.gz; do
   H=$(cd y/src && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
   [ "$H" = "$REF" ] && ok "Arca extracts tar's $f without losing a byte" || ko "Arca mis-extracts $f"
 done
+# Names past ustar's 100 bytes, in both ways tar spells them, archived from
+# inside the folder so every name starts with ./ as GitHub release tarballs
+# do, and a .tar.gz split across two gzip members as pigz writes them.
+LONG="long/$(printf 'd%.0s' {1..120})/$(printf 'e%.0s' {1..90})"
+mkdir -p "$LONG" && cp -r src "$LONG/"
+LREF=$(cd long && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+tar --format=gnu -czf out/long-gnu.tar.gz -C long .
+tar --format=pax -czf out/long-pax.tar.gz -C long .
+tar --format=gnu -cf out/long.tar -C long .
+head -c 4096 out/long.tar | gzip -c > out/long-split.tar.gz
+tail -c +4097 out/long.tar | gzip -c >> out/long-split.tar.gz
+for f in long-gnu long-pax long-split; do
+  rm -rf y; mkdir y
+  $ARCA extract out/$f.tar.gz -o y >/dev/null 2>&1 || { ko "arca extract $f.tar.gz"; continue; }
+  H=$(cd y && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+  [ "$H" = "$LREF" ] && ok "Arca extracts $f.tar.gz with its long names" || ko "Arca mis-extracts $f.tar.gz"
+done
+rm -rf long
 7z a -tzip -mx5 out/s7.zip src >/dev/null 2>&1
 rm -rf y; mkdir y; $ARCA extract out/s7.zip -o y >/dev/null 2>&1
 H=$(cd y/src && find . -type f|sort|xargs sha256sum|sha256sum|cut -d' ' -f1)

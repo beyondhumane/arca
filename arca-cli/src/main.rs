@@ -174,7 +174,7 @@ fn tar_source(archive: &Path, format_kind: Format) -> Result<Box<dyn Read>> {
         _ => {
             let f = BufReader::with_capacity(BUF, File::open(archive)?);
             if format_kind == Format::TarGz {
-                Box::new(flate2::read::GzDecoder::new(f))
+                Box::new(flate2::read::MultiGzDecoder::new(f))
             } else {
                 Box::new(f)
             }
