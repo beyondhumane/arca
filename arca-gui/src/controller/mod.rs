@@ -2096,7 +2096,7 @@ impl AppController {
             .entries
             .iter()
             .enumerate()
-            .map(|(i, e)| (e.name.replace('\\', "/"), i))
+            .map(|(i, e)| (tree::normalized(e), i))
             .collect();
         index.sort_unstable();
         let index = std::rc::Rc::new(index);

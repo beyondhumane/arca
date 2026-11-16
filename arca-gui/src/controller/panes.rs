@@ -742,4 +742,29 @@ mod tests {
             built.len()
         );
     }
+
+    // 7z names an empty folder without the slash ZIP gives it, and its row
+    // still has to be one that can be ticked.
+    #[test]
+    fn an_empty_folder_named_without_a_slash_can_be_picked() {
+        let mut c = controller();
+        let mut empty = entry("empty");
+        empty.is_dir = true;
+        c.state.entries.push(empty);
+        c.entries_changed();
+        c.state.active_pane_mut().checked = vec![false; c.state.entries.len()];
+        let row = c
+            .visible_rows()
+            .iter()
+            .find(|r| r.path == "empty/")
+            .cloned()
+            .expect("the empty folder has a row");
+        assert!(!c.is_checked(&row));
+        c.dispatch(AppAction::SetChecked {
+            row: row.clone(),
+            value: true,
+        });
+        assert!(c.is_checked(&row));
+        assert!(*c.state.active_pane().checked.last().unwrap());
+    }
 }
