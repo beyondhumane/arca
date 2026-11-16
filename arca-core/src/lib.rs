@@ -437,12 +437,13 @@ pub fn safe_name(name: &str) -> Result<std::path::PathBuf> {
                 }
                 // On NTFS `file:stream` writes into a hidden stream of `file`,
                 // which may be a file outside anything the archive created.
+                // The colon becomes `_`, as other Windows tools do, so a name
+                // like `10:30.log` from elsewhere still comes out.
                 if cfg!(windows) && p.contains(':') {
-                    return Err(Error::Format(format!(
-                        "entry '{name}' names an NTFS stream"
-                    )));
+                    out.push(p.replace(':', "_"));
+                } else {
+                    out.push(p);
                 }
-                out.push(p);
             }
         }
     }
@@ -476,9 +477,15 @@ mod tests {
         assert!(safe_name("..\\..\\windows\\system32").is_err());
         assert!(safe_name("C:/tmp/x").is_err());
         assert!(safe_name("a/b/c.txt").is_ok());
-        assert_eq!(safe_name("dir/notes.txt:hidden").is_err(), cfg!(windows));
         assert!(safe_name("x:y/file").is_err());
-        assert_eq!(safe_name("dir/a:b/file").is_err(), cfg!(windows));
+        let stream = safe_name("dir/notes.txt:hidden").unwrap();
+        let wanted = if cfg!(windows) {
+            "dir/notes.txt_hidden"
+        } else {
+            "dir/notes.txt:hidden"
+        };
+        assert_eq!(stream, std::path::PathBuf::from(wanted));
+        assert!(safe_name("logs/2024-01-01T10:30.log").is_ok());
         assert_eq!(
             safe_name("./a//b.txt").unwrap(),
             std::path::PathBuf::from("a/b.txt")
