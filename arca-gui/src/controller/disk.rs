@@ -1594,7 +1594,18 @@ pub(crate) fn duplicate_target(path: &Path) -> Option<PathBuf> {
 /// Moves a file or folder to the Trash the way the desktop does it.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn trash_item(path: &Path) -> Result<(), String> {
-    let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
+    // The folder is made absolute, the item itself is not: a link is trashed
+    // as the link, never as whatever it points at.
+    let leaf_name = path
+        .file_name()
+        .ok_or_else(|| "nothing to trash".to_string())?;
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let path = fs::canonicalize(parent)
+        .map_err(|e| e.to_string())?
+        .join(leaf_name);
     let data = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())

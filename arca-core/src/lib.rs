@@ -435,6 +435,13 @@ pub fn safe_name(name: &str) -> Result<std::path::PathBuf> {
                         "entry '{name}' carries a drive letter"
                     )));
                 }
+                // On NTFS `file:stream` writes into a hidden stream of `file`,
+                // which may be a file outside anything the archive created.
+                if cfg!(windows) && p.contains(':') {
+                    return Err(Error::Format(format!(
+                        "entry '{name}' names an NTFS stream"
+                    )));
+                }
                 out.push(p);
             }
         }
@@ -469,6 +476,9 @@ mod tests {
         assert!(safe_name("..\\..\\windows\\system32").is_err());
         assert!(safe_name("C:/tmp/x").is_err());
         assert!(safe_name("a/b/c.txt").is_ok());
+        assert_eq!(safe_name("dir/notes.txt:hidden").is_err(), cfg!(windows));
+        assert!(safe_name("x:y/file").is_err());
+        assert_eq!(safe_name("dir/a:b/file").is_err(), cfg!(windows));
         assert_eq!(
             safe_name("./a//b.txt").unwrap(),
             std::path::PathBuf::from("a/b.txt")
