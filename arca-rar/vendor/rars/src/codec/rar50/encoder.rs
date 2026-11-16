@@ -499,6 +499,12 @@ pub struct EncodeOptions {
     pub lazy_lookahead: usize,
     pub max_match_distance: usize,
     pub optimal_parse: bool,
+    /// Arca: the length at which a match is taken without looking further,
+    /// [`NICE_MATCH_LENGTH`] unless a level asks for less.
+    pub nice_length: usize,
+    /// Arca: how many times the optimal parse prices a block, at most
+    /// [`OPTIMAL_PARSE_PASSES`].
+    pub parse_passes: usize,
 }
 
 impl EncodeOptions {
@@ -509,7 +515,21 @@ impl EncodeOptions {
             lazy_lookahead: 1,
             max_match_distance: MAX_ENCODER_MATCH_OFFSET,
             optimal_parse: false,
+            nice_length: NICE_MATCH_LENGTH,
+            parse_passes: OPTIMAL_PARSE_PASSES,
         }
+    }
+
+    /// Arca: a shorter nice length searches and prices less per position.
+    pub const fn with_nice_length(mut self, length: usize) -> Self {
+        self.nice_length = if length < 8 { 8 } else { length };
+        self
+    }
+
+    /// Arca: fewer passes reprice each block fewer times.
+    pub const fn with_parse_passes(mut self, passes: usize) -> Self {
+        self.parse_passes = if passes == 0 { 1 } else { passes };
+        self
     }
 
     pub const fn with_optimal_parse(mut self, enabled: bool) -> Self {
@@ -751,7 +771,6 @@ pub(crate) fn streaming_blocks_with_allowance<B: Budget>(
 
     let mut at = start;
     let mut output = Buffer::with_capacity(blocks.len(), allowance)?;
-    let mut first = 0;
     // Block ends are offsets into `data`, so the bytes a block covers are the
     // step from the end before it. Reporting them as they land is what keeps a
     // progress bar moving: a whole member can be one run, and a run that
@@ -765,37 +784,27 @@ pub(crate) fn streaming_blocks_with_allowance<B: Budget>(
             None => true,
         }
     };
-    if start == 0 && options.optimal_parse && !blocks.is_empty() {
-        let (end, is_last) = blocks[0];
-        output.push_admitted(encode_lz_block_with_allowance(
-            &combined[..end],
-            0..end,
-            MemberSearch::Fresh,
-            algorithm_version,
-            &[],
-            options,
-            is_last,
-            None,
-            allowance,
-        )?);
-        at = end;
-        first = 1;
-        if !report(end, &mut block_done) {
-            return Err(Error::Cancelled);
-        }
-    }
-    if first == blocks.len() {
+    // Arca: a member with no history keeps the tree finder for every block,
+    // not only the first. The tree is what makes searching at every position
+    // affordable, and the blocks arrive in order, which is all it asks.
+    if blocks.is_empty() {
         return Ok(output);
     }
-    let finder = member_finder_with_allowance(&combined, at, options, allowance)?;
-    let mut search = if options.optimal_parse {
-        SharedMemberSearch::Optimal(OptimalCollector {
-            finder: CollectorFinder::Chains(finder),
-        })
+    let mut search = if start == 0 && options.optimal_parse {
+        SharedMemberSearch::Optimal(OptimalCollector::with_allowance(
+            &combined, 0, options, allowance,
+        )?)
     } else {
-        SharedMemberSearch::Lazy(finder)
+        let finder = member_finder_with_allowance(&combined, at, options, allowance)?;
+        if options.optimal_parse {
+            SharedMemberSearch::Optimal(OptimalCollector {
+                finder: CollectorFinder::Chains(finder),
+            })
+        } else {
+            SharedMemberSearch::Lazy(finder)
+        }
     };
-    for &(end, is_last) in &blocks[first..] {
+    for &(end, is_last) in blocks {
         let end = start + end;
         output.push_admitted(encode_lz_block_with_allowance(
             &combined,
@@ -1371,7 +1380,7 @@ impl<B: Budget> OptimalCollector<B> {
                     // alternatives. A match that reaches that far is measured
                     // out to its real end, which is the length the parse
                     // commits to and steps over.
-                    let len_limit = avail.min(NICE_MATCH_LENGTH);
+                    let len_limit = avail.min(options.nice_length);
                     tree.matches(
                         combined,
                         pos,
@@ -1404,7 +1413,7 @@ impl<B: Budget> OptimalCollector<B> {
                     let mut candidate = finder.first(combined, pos);
                     while candidate != match_finder::NO_POSITION
                         && longest < max_length
-                        && longest < NICE_MATCH_LENGTH
+                        && longest < options.nice_length
                     {
                         if candidate >= pos {
                             candidate = finder.previous(candidate);
@@ -1438,7 +1447,7 @@ impl<B: Budget> OptimalCollector<B> {
                 let reach = (length as usize)
                     .min(block.end - pos)
                     .min(MAX_ENCODER_MATCH_LENGTH);
-                if reach >= NICE_MATCH_LENGTH {
+                if reach >= options.nice_length {
                     committed_through = pos + reach;
                 }
             }
@@ -2391,7 +2400,7 @@ fn price_optimal_paths(
             .iter()
             .map(|&(_, end, _)| end)
             .max()
-            .filter(|&length| length >= NICE_MATCH_LENGTH);
+            .filter(|&length| length >= options.nice_length);
         for &(run_start, run_end, distance) in reaches.iter() {
             let mut length = run_start.max(4);
             if let Some(committed) = committed_reach {
@@ -2427,7 +2436,7 @@ fn price_optimal_paths(
         // their encoder tables, so the endpoint has already been priced.
         let longest_reach = reaches.iter().map(|&(_, length, _)| length).max();
         if let Some(reach) = longest_reach {
-            if reach >= NICE_MATCH_LENGTH {
+            if reach >= options.nice_length {
                 committed_through = index + reach;
             }
         }
@@ -2630,7 +2639,7 @@ fn encode_tokens_with_allowance<B: Budget>(
         let passes = if !B::LIMITED && matches.runs.is_empty() {
             1
         } else {
-            OPTIMAL_PARSE_PASSES
+            options.parse_passes
         };
         let mut best = None;
         for _ in 1..passes {
@@ -2829,7 +2838,7 @@ fn best_match<B: Budget>(
         consider_match_candidate(&mut best, state, distance_size, length, distance);
     }
     if let Some(best) = best {
-        if best.length == max_length || best.length >= NICE_MATCH_LENGTH {
+        if best.length == max_length || best.length >= options.nice_length {
             return Some(best);
         }
     }
@@ -2848,7 +2857,7 @@ fn best_match<B: Budget>(
             consider_match_candidate(&mut best, state, distance_size, length, distance);
         }
         if let Some(best) = best {
-            if best.length == max_length || best.length >= NICE_MATCH_LENGTH {
+            if best.length == max_length || best.length >= options.nice_length {
                 break;
             }
         }

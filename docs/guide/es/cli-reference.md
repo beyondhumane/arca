@@ -42,7 +42,7 @@ Crea un archivo. El formato se toma de la extensión del archivo de salida.
 | `<INPUTS>...` | obligatorio | Archivos o directorios a incluir. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
 | `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto usa Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz y el compresor RAR en .rar (solo auto o store). |
-| `-j, --threads <N>` | 0 | Hilos ZIP y XZ; 0 usa todos los núcleos. XZ, y 7z al margen de esta opción, usan tantos como quepan en 2 GiB. La creación RAR es secuencial; .rar rechaza N mayor que 1. |
+| `-j, --threads <N>` | 0 | Hilos ZIP y XZ; 0 usa todos los núcleos. XZ usa tantos como quepan en 2 GiB; 7z y RAR usan todos los núcleos que permite su presupuesto de memoria, diga lo que diga esta opción. |
 | `-p, --password <PASSWORD>` | ninguna | Cifra con AES-256 (.zip, .7z). Otras herramientas la pedirán para abrir el archivo. Se rechaza en .rar. |
 | `--hide-names` | desactivado | Solo 7z: cifra cabeceras; exige una contraseña no vacía. |
 

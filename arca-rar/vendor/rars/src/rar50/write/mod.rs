@@ -2226,6 +2226,7 @@ mod tests {
             None,
         )
         .unwrap();
+        let original = data.clone();
 
         let source = EntrySource::from_bytes(Arc::<[u8]>::from(data));
         let required = streaming_lz_workspace(
@@ -2251,7 +2252,14 @@ mod tests {
         .unwrap();
         let mut parallel = Vec::new();
         prepared[0].packed.copy_to(&mut parallel).unwrap();
-        assert_eq!(parallel, serial);
+        // Arca: the streaming writer keeps the tree finder across a member's
+        // blocks where this per-block reference starts each block afresh, so
+        // the two no longer match byte for byte. What has to hold is that the
+        // writer's stream decodes to the input and packs no worse.
+        let decoded =
+            crate::codec::rar50::decode_lz(&parallel, algorithm_version, original.len()).unwrap();
+        assert!(decoded == original);
+        assert!(parallel.len() <= serial.len(), "{} > {}", parallel.len(), serial.len());
     }
 
     #[test]

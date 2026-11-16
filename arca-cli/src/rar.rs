@@ -50,14 +50,14 @@ pub(super) fn create(
     inputs: &[PathBuf],
     level: Level,
     codec: CodecArg,
-    requested_threads: usize,
+    _requested_threads: usize,
     password: Option<&str>,
     hide_names: bool,
 ) -> Result<()> {
     if cfg!(not(feature = "rar")) {
         return create_rar(out, &[], &CreateOptions::default(), &|_, _, _| true);
     }
-    let options = options(level, codec, requested_threads, password, hide_names)?;
+    let options = options(level, codec, password, hide_names)?;
     let cancelled = interruption()?;
     let walk = collect(out, inputs, Bounds::WRITER, &cancelled)?;
     let t0 = Instant::now();
@@ -65,12 +65,13 @@ pub(super) fn create(
         !cancelled.load(Ordering::SeqCst)
     })?;
     println!(
-        "{}: {} files, {} -> {} in {:.3} s (sequential)",
+        "{}: {} files, {} -> {} in {:.3} s \u{b7} {} threads",
         out.display(),
         walk.files,
         human(walk.bytes),
         human(fs::metadata(out)?.len()),
-        t0.elapsed().as_secs_f64()
+        t0.elapsed().as_secs_f64(),
+        rayon::current_num_threads()
     );
     Ok(())
 }
@@ -80,7 +81,6 @@ pub(super) fn create(
 fn options(
     level: Level,
     codec: CodecArg,
-    requested_threads: usize,
     password: Option<&str>,
     hide_names: bool,
 ) -> Result<CreateOptions> {
@@ -92,11 +92,6 @@ fn options(
     if password.is_some() {
         return Err(Error::Unsupported(
             ".rar creation does not support encryption; use .zip or .7z for a password".into(),
-        ));
-    }
-    if requested_threads > 1 {
-        return Err(Error::Unsupported(
-            ".rar creation is sequential; leave --threads at 0 or 1".into(),
         ));
     }
     let level = match codec {

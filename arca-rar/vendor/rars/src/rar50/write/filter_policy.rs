@@ -182,7 +182,7 @@ fn match_candidates_for_level(level: u8) -> Result<usize> {
         0 => Ok(0),
         1 => Ok(8),
         2 => Ok(32),
-        3 => Ok(128),
+        3 => Ok(32),
         4 => Ok(256),
         5 => Ok(512),
         _ => Err(Error::InvalidArgument(
@@ -241,8 +241,22 @@ pub(super) fn encode_options_for_level(
         // quick, it already beats WinRAR's own level 1 by 2.71%, and it is the
         // only place left to go when the parse is too slow for the job.
         .with_optimal_parse(level >= 2)
-        .with_max_match_distance(max_match_distance))
+        .with_max_match_distance(max_match_distance)
+        // Arca: levels 2 and 3 stop looking at 64 bytes and price each block
+        // once or twice rather than three times. On Arca's 144 MiB mixed corpus
+        // that took level 3 from about 130 s to about 25 s for 3% more output;
+        // levels 4 and 5 keep the full parse for the smallest archive.
+        .with_nice_length(if matches!(level, 2 | 3) { 64 } else { NICE_LENGTH_FULL })
+        .with_parse_passes(match level {
+            2 => 1,
+            3 => 2,
+            _ => PARSE_PASSES_FULL,
+        }))
 }
+
+/// What levels 4 and 5 keep: the encoder's own defaults.
+const NICE_LENGTH_FULL: usize = EncodeOptions::new(0).nice_length;
+const PARSE_PASSES_FULL: usize = EncodeOptions::new(0).parse_passes;
 
 /// The encoder settings to try for a level, smallest output kept.
 ///

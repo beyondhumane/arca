@@ -17,6 +17,14 @@ TARGETS = (
     "aarch64-apple-darwin",
 )
 LEGAL_NAMES = ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE")
+# Third-party crates copied into the tree and patched; their notices are
+# published like any other dependency's.
+VENDOR = ROOT / "arca-rar" / "vendor"
+VENDORED = "vendored in arca-rar/vendor from registry+https://github.com/rust-lang/crates.io-index"
+
+
+def vendored(package):
+    return Path(package["manifest_path"]).resolve().is_relative_to(VENDOR.resolve())
 
 
 def cargo(*args):
@@ -37,7 +45,7 @@ def render():
 
     packages = sorted(
         (p for p in metadata["packages"]
-         if p["source"] and (p["name"], p["version"]) in selected),
+         if (p["source"] or vendored(p)) and (p["name"], p["version"]) in selected),
         key=lambda p: (p["name"], p["version"]),
     )
     assert any(p["name"] == "rars" for p in packages), "missing RAR backend"
@@ -66,7 +74,7 @@ def render():
             files = sorted(set(files) | {source / package["license_file"]})
         assert files, f"no published license files for {name}"
         output += [name, f"Declared license: {package['license']}",
-                   f"Source: {package['source']}"]
+                   f"Source: {package['source'] or VENDORED}"]
         for path in files:
             content = path.read_bytes()
             digest = hashlib.sha256(content).hexdigest()

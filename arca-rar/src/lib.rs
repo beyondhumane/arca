@@ -29,7 +29,11 @@ pub mod create_limits {
     pub const MAX_HEADER_BYTES: u64 = 64 * MIB;
     /// Managed writer memory: compression workspace, retained headers and
     /// spool bookkeeping. Not a process-RAM limit; see `rars::WriterResources`.
-    pub const WRITER_MEMORY_BYTES: u64 = 256 * MIB;
+    /// The writer charges each compression job about 260 MiB however little
+    /// it uses, and admits as many jobs as fit, so this is what lets the cores
+    /// work side by side: sixteen jobs on 144 MiB of mixed files stayed under
+    /// 230 MiB resident in all.
+    pub const WRITER_MEMORY_BYTES: u64 = 4096 * MIB;
     /// Logical bytes the writer may spool to disk beside the output.
     pub const MAX_SPOOL_BYTES: u64 = 16 * 1024 * MIB;
 }

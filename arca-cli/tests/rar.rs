@@ -91,7 +91,10 @@ fn help_mentions_rar_creation() {
     assert!(result.status.success());
     let help = stdout(&result);
     assert!(help.contains(".rar"), "{help}");
-    assert!(help.contains(".rar creation is sequential"), "{help}");
+    assert!(
+        help.contains(".7z and .rar always use every core"),
+        "{help}"
+    );
 }
 
 #[cfg(not(feature = "rar"))]
@@ -240,8 +243,6 @@ fn unsupported_options_are_refused_before_any_output() {
         (vec!["-c", "deflate"], "--codec"),
         (vec!["--codec", "zstd"], "--codec"),
         (vec!["--codec", "lzma2"], "--codec"),
-        (vec!["-j", "2"], "--threads"),
-        (vec!["--threads", "8", "-l", "best"], "--threads"),
     ] {
         let mut full: Vec<&std::ffi::OsStr> =
             vec!["create".as_ref(), out.as_os_str(), input.as_os_str()];

@@ -45,7 +45,7 @@ enum Cmd {
             short = 'j',
             long,
             default_value_t = 0,
-            help = "Threads to use. 0 means every core. .rar creation is sequential; .xz and .tar.xz use as many as fit in 2 GiB, and .7z always does"
+            help = "Threads to use. 0 means every core. .xz and .tar.xz use as many as fit in 2 GiB; .7z and .rar always use every core their memory budget allows"
         )]
         threads: usize,
         #[arg(
