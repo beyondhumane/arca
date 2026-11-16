@@ -127,9 +127,14 @@ impl<R: Read + Seek> ZipArchive<R> {
 
         let mut entries_list = Vec::with_capacity(n_entries.min(4096) as usize);
         let mut c = Cursor::new(&cd);
-        for i in 0..n_entries {
-            if c.remaining() < CD_FIXED {
-                break;
+        // Every header the directory holds, not only as many as the end record
+        // counts: a writer that stores more than 65,535 entries without Zip64
+        // records the count modulo 65,536, and an archive listed short would
+        // lose the rest the first time it is rewritten.
+        while c.remaining() >= CD_FIXED {
+            let i = entries_list.len();
+            if i as u64 >= limits::MAX_ENTRIES {
+                return Err(Error::Limit(format!("more than {i} entries")));
             }
             match read_central_header(&mut c) {
                 Ok(e) => entries_list.push(e),
@@ -140,6 +145,13 @@ impl<R: Read + Seek> ZipArchive<R> {
                 }
             }
         }
+        let found = entries_list.len() as u64;
+        if found != n_entries && found % 0x1_0000 != n_entries % 0x1_0000 {
+            return Err(Error::Format(format!(
+                "the central directory holds {found} entries where its end record says {n_entries}"
+            )));
+        }
+        reject_overlaps(&entries_list)?;
 
         Ok(ZipArchive {
             source,
@@ -413,11 +425,11 @@ fn extract_inner<R: Read + Seek, W: Write>(
     if let Crypt::Zip { check } = crypt {
         let pw = need_password(e, password)?;
         let reader = zipcrypto::open(&mut bounded, pw, check, &e.name)?;
-        decompress_into(reader, e.method, &mut cw)?;
+        decompress_into(reader, e.method, &mut cw, e.size)?;
     } else if matches!(crypt, Crypt::Aes) {
         let (keys, cipher_len) = unlock(&mut bounded, e, password)?;
         let reader = aes::AesReader::new(&mut bounded, &keys, cipher_len)?;
-        let reader = decompress_into(reader, e.method, &mut cw)?;
+        let reader = decompress_into(reader, e.method, &mut cw, e.size)?;
         let computed = reader.finish()?;
 
         // The authentication code sits after the ciphertext, so it can only be
@@ -432,21 +444,53 @@ fn extract_inner<R: Read + Seek, W: Write>(
             });
         }
     } else {
-        decompress_into(bounded, e.method, &mut cw)?;
+        decompress_into(bounded, e.method, &mut cw, e.size)?;
     }
 
     let (_, crc_val, written) = cw.finalize();
     Ok((crc_val, written))
 }
 
+/// Refuses entries whose data share bytes. No writer produces them; they are
+/// how a few kilobytes are made to extract to terabytes, every entry naming
+/// the same compressed data. Each entry spans at least its fixed local header
+/// and its compressed size from where it starts.
+fn reject_overlaps(entries: &[Entry]) -> Result<()> {
+    let mut spans: Vec<(u64, u64)> = entries
+        .iter()
+        .map(|e| {
+            let end = e
+                .offset
+                .saturating_add(LFH_FIXED as u64)
+                .saturating_add(e.compressed_size);
+            (e.offset, end)
+        })
+        .collect();
+    spans.sort_unstable();
+    for pair in spans.windows(2) {
+        if pair[1].0 < pair[0].1 {
+            return Err(Error::Format(format!(
+                "two entries share the data at offset {}",
+                pair[1].0
+            )));
+        }
+    }
+    Ok(())
+}
+
 // Hands the reader back afterwards, which is what lets the encrypted path get
 // its AES reader out to ask it for the authentication code. A decompressor may
 // stop before the end of its input, so the reader is not necessarily drained.
+// Nothing past one byte more than the entry declares is decompressed: that
+// byte is enough to tell the entry lied, and a bomb stops there instead of
+// when the disk is full.
 fn decompress_into<Rd: Read, W: Write>(
     src: Rd,
     method_code: Method,
     cw: &mut CrcWriter<W>,
+    declared: u64,
 ) -> Result<Rd> {
+    let limit = declared.saturating_add(1);
     match method_code {
         Method::Lzma | Method::Lzma2 | Method::Bzip2 | Method::Other7z => {
             Err(Error::Unsupported(format!("{} in ZIP", method_code.name())))
@@ -456,19 +500,19 @@ fn decompress_into<Rd: Read, W: Write>(
         )),
         Method::Store => {
             let mut a = src;
-            io::copy(&mut a, cw)?;
+            io::copy(&mut (&mut a).take(limit), cw)?;
             Ok(a)
         }
         Method::Deflate => {
             let mut dec = flate2::read::DeflateDecoder::new(src);
-            io::copy(&mut dec, cw)?;
+            io::copy(&mut (&mut dec).take(limit), cw)?;
             Ok(dec.into_inner())
         }
         Method::Zstd => {
             #[cfg(feature = "codecs-native")]
             {
                 let mut dec = zstd::stream::read::Decoder::new(src).map_err(Error::Io)?;
-                io::copy(&mut dec, cw)?;
+                io::copy(&mut (&mut dec).take(limit), cw)?;
                 Ok(dec.finish().into_inner())
             }
             #[cfg(not(feature = "codecs-native"))]
@@ -1204,7 +1248,7 @@ impl<W: Write + Seek> ZipWriter<W> {
 
         let n = self.registros.len() as u64;
         let necesita_z64 =
-            n > u16::MAX as u64 || cd_offset >= 0xFFFF_FFFF || cd_size >= 0xFFFF_FFFF;
+            n >= u16::MAX as u64 || cd_offset >= 0xFFFF_FFFF || cd_size >= 0xFFFF_FFFF;
 
         if necesita_z64 {
             let z_off = cd_offset + cd_size;
@@ -1343,8 +1387,8 @@ fn compress_stream<R: Read, S: Write>(
 
 fn check_name(name_str: &str) -> Result<Vec<u8>> {
     let b = name_str.as_bytes().to_vec();
-    if b.len() > u16::MAX as usize {
-        return Err(Error::Limit("name too long for ZIP".into()));
+    if b.len() > limits::MAX_NAME {
+        return Err(Error::Limit(format!("name of {} bytes", b.len())));
     }
     Ok(b)
 }
@@ -2180,6 +2224,80 @@ mod tests {
             .unwrap();
         }
         w.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn an_entry_that_inflates_past_its_size_stops_one_byte_later() {
+        let body = vec![0u8; 1 << 20];
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        w.add("big.bin", &body[..], Codec::Deflate, Level::NORMAL, None)
+            .unwrap();
+        let buf = w.finish().unwrap().into_inner();
+        let a = ZipArchive::open(IoCursor::new(buf.clone())).unwrap();
+        let mut e = a.entries()[0].clone();
+        e.size = 1000;
+        let mut out = Vec::new();
+        let r = extract_entry(&mut IoCursor::new(buf), &e, &mut out);
+        assert!(r.is_err(), "{r:?}");
+        assert_eq!(out.len(), 1001);
+    }
+
+    fn eocd_field(buf: &[u8], at: usize) -> usize {
+        let p = buf.len() - EOCD_MIN + at;
+        u32::from_le_bytes(buf[p..p + 4].try_into().unwrap()) as usize
+    }
+
+    #[test]
+    fn entries_sharing_their_data_are_rejected() {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        w.add("a.txt", &b"payload"[..], Codec::Store, Level::STORE, None)
+            .unwrap();
+        let buf = w.finish().unwrap().into_inner();
+        let cd_size = eocd_field(&buf, 12);
+        let cd_offset = eocd_field(&buf, 16);
+        let header = &buf[cd_offset..cd_offset + cd_size];
+
+        let mut bomb = buf[..cd_offset].to_vec();
+        bomb.extend_from_slice(header);
+        bomb.extend_from_slice(header);
+        let mut eocd = buf[buf.len() - EOCD_MIN..].to_vec();
+        eocd[8..10].copy_from_slice(&2u16.to_le_bytes());
+        eocd[10..12].copy_from_slice(&2u16.to_le_bytes());
+        eocd[12..16].copy_from_slice(&(2 * cd_size as u32).to_le_bytes());
+        bomb.extend_from_slice(&eocd);
+
+        let r = ZipArchive::open(IoCursor::new(bomb));
+        assert!(matches!(r, Err(Error::Format(_))), "{:?}", r.err());
+    }
+
+    #[test]
+    fn a_count_that_disagrees_with_the_directory_is_rejected() {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        for name in ["a.txt", "b.txt"] {
+            w.add(name, &b"x"[..], Codec::Store, Level::STORE, None)
+                .unwrap();
+        }
+        let buf = w.finish().unwrap().into_inner();
+        let end = buf.len() - EOCD_MIN;
+        for claimed in [1u16, 3] {
+            let mut bad = buf.clone();
+            bad[end + 8..end + 10].copy_from_slice(&claimed.to_le_bytes());
+            bad[end + 10..end + 12].copy_from_slice(&claimed.to_le_bytes());
+            let r = ZipArchive::open(IoCursor::new(bad));
+            assert!(
+                matches!(r, Err(Error::Format(_))),
+                "{claimed}: {:?}",
+                r.err()
+            );
+        }
+    }
+
+    #[test]
+    fn names_the_reader_would_refuse_are_not_written() {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        let long = "a".repeat(limits::MAX_NAME + 1);
+        let r = w.add(&long, &b"x"[..], Codec::Store, Level::STORE, None);
+        assert!(matches!(r, Err(Error::Limit(_))), "{r:?}");
     }
 
     // Taking entries out is the one operation with no undo, so whatever
