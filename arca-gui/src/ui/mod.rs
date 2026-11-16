@@ -2075,6 +2075,9 @@ impl eframe::App for Shell {
         self.width = ui.available_width();
         self.cursor_row = None;
         let only_form = self.controller.state.one_shot && self.modal_kind() == Some(ModalKind::Add);
+        if !only_form && self.controller.refresh_volumes() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         if !only_form {
             self.workspace(ui);
         }

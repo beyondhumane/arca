@@ -52,6 +52,8 @@ pub(crate) struct AppController {
     pub(crate) volumes: Vec<disk::Volume>,
     volumes_at: Option<std::time::Instant>,
     volume_job: Option<disk::DeviceJob>,
+    survey: disk::Survey,
+    survey_job: Option<disk::SurveyJob>,
     // Bumped by every change to `state.entries`; the rows built from them
     // are kept until it moves. See `entries_changed`.
     entries_gen: u64,
@@ -777,6 +779,8 @@ impl AppController {
             volumes: Vec::new(),
             volumes_at: None,
             volume_job: None,
+            survey: Default::default(),
+            survey_job: None,
             entries_gen: 0,
             rows: Default::default(),
             state: AppState {

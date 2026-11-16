@@ -57,7 +57,6 @@ impl Shell {
         let mut relabel: Option<Volume> = None;
         let mut format: Option<Volume> = None;
         let free = self.controller.state.browser.free;
-        self.controller.refresh_volumes();
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {

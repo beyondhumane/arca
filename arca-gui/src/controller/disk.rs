@@ -458,6 +458,47 @@ fn mounted_volumes() -> Vec<PathBuf> {
 /// The outcome a device job in the background leaves for the window.
 pub(crate) type DeviceJob = Arc<Mutex<Option<Result<String, String>>>>;
 
+/// What the sidebar shows of the machine, read on a thread of its own: a
+/// drive letter that names a network share nobody is answering for blocks
+/// the call that looks at it for as long as the network takes to give up,
+/// and that call has no business on the thread that draws the window.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Survey {
+    pub(crate) home: Option<PathBuf>,
+    pub(crate) folders: Vec<(PlaceKind, PathBuf)>,
+    pub(crate) drives: Vec<PathBuf>,
+}
+
+pub(crate) type SurveyJob = Arc<Mutex<Option<(Survey, Vec<Volume>)>>>;
+
+pub(crate) fn survey() -> Survey {
+    let mut out = Survey {
+        home: home_dir(),
+        ..Survey::default()
+    };
+    if let Some(home) = &out.home {
+        let known = user_dirs(home);
+        for (kind, name) in [
+            (PlaceKind::Desktop, "Desktop"),
+            (PlaceKind::Documents, "Documents"),
+            (PlaceKind::Downloads, "Downloads"),
+            (PlaceKind::Pictures, "Pictures"),
+            (PlaceKind::Music, "Music"),
+            (PlaceKind::Videos, "Videos"),
+        ] {
+            let path = known.get(name).cloned().unwrap_or_else(|| home.join(name));
+            if path.is_dir() && path != *home {
+                out.folders.push((kind, path));
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        out.drives = drives();
+    }
+    out
+}
+
 /// A storage volume the sidebar can offer: a partition with a file system
 /// that is not part of the running system.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1356,30 +1397,27 @@ impl AppController {
     pub(crate) fn places(&self) -> Vec<Place> {
         let s = self.s();
         let mut out = Vec::new();
-        if let Some(home) = home_dir() {
+        if let Some(home) = &self.survey.home {
             out.push(Place {
                 kind: PlaceKind::Home,
                 label: s.home_word.to_string(),
                 path: home.clone(),
             });
-            let known = user_dirs(&home);
-            for (kind, name, label) in [
-                (PlaceKind::Desktop, "Desktop", s.desktop_word),
-                (PlaceKind::Documents, "Documents", s.documents_word),
-                (PlaceKind::Downloads, "Downloads", s.downloads_word),
-                (PlaceKind::Pictures, "Pictures", s.pictures_word),
-                (PlaceKind::Music, "Music", s.music_word),
-                (PlaceKind::Videos, "Videos", s.videos_word),
-            ] {
-                let path = known.get(name).cloned().unwrap_or_else(|| home.join(name));
-                if path.is_dir() && path != home {
-                    out.push(Place {
-                        kind,
-                        label: label.to_string(),
-                        path,
-                    });
-                }
-            }
+        }
+        for (kind, path) in &self.survey.folders {
+            let label = match kind {
+                PlaceKind::Desktop => s.desktop_word,
+                PlaceKind::Documents => s.documents_word,
+                PlaceKind::Downloads => s.downloads_word,
+                PlaceKind::Pictures => s.pictures_word,
+                PlaceKind::Music => s.music_word,
+                _ => s.videos_word,
+            };
+            out.push(Place {
+                kind: *kind,
+                label: label.to_string(),
+                path: path.clone(),
+            });
         }
         out
     }
@@ -1404,15 +1442,33 @@ impl AppController {
             .collect()
     }
 
-    /// Re-reads the volumes every few seconds and collects what a format
-    /// job in the background has to say.
-    pub(crate) fn refresh_volumes(&mut self) {
+    /// Re-reads places, drives and volumes every few seconds on a thread, and
+    /// collects what a format job in the background has to say. Answers
+    /// whether a reading is still on its way, so the window knows to look
+    /// again soon.
+    pub(crate) fn refresh_volumes(&mut self) -> bool {
+        let read = self
+            .survey_job
+            .as_ref()
+            .and_then(|job| job.lock().ok().and_then(|mut slot| slot.take()));
+        if let Some((survey, volumes)) = read {
+            self.survey_job = None;
+            self.survey = survey;
+            self.volumes = volumes;
+        }
         let due = self
             .volumes_at
             .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(3));
-        if due {
-            self.volumes = volumes();
+        if due && self.survey_job.is_none() {
+            let slot: SurveyJob = Arc::new(Mutex::new(None));
+            self.survey_job = Some(slot.clone());
             self.volumes_at = Some(std::time::Instant::now());
+            std::thread::spawn(move || {
+                let read = (survey(), volumes());
+                if let Ok(mut slot) = slot.lock() {
+                    *slot = Some(read);
+                }
+            });
         }
         let finished = self
             .volume_job
@@ -1423,6 +1479,7 @@ impl AppController {
             self.volumes_at = None;
             self.report_device(outcome);
         }
+        self.survey_job.is_some()
     }
 
     pub(crate) fn volume_at(&self, path: &Path) -> Option<&Volume> {
@@ -1515,12 +1572,11 @@ impl AppController {
                 label: s.computer_word.to_string(),
                 path: PathBuf::new(),
             });
-            #[cfg(windows)]
-            for root in drives() {
+            for root in &self.survey.drives {
                 out.push(Place {
                     kind: PlaceKind::Drive,
                     label: root.to_string_lossy().trim_end_matches('\\').to_string(),
-                    path: root,
+                    path: root.clone(),
                 });
             }
         } else {
