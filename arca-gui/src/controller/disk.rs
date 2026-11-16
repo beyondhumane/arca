@@ -798,7 +798,10 @@ impl AppController {
     pub(crate) fn rename_on_disk(&mut self, from: &str, to: &str) {
         let s = self.s();
         let (a, b) = (disk_path(from), disk_path(to));
-        if b.exists() {
+        // On a disk that ignores case, `b` exists when only the case of the
+        // name is changing, and that one it is: renaming it is the point.
+        let same = arca_core::extraction::claim_key(&a) == arca_core::extraction::claim_key(&b);
+        if b.exists() && !same {
             let name = b
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
