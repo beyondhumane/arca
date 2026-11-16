@@ -187,6 +187,18 @@ pub struct TarEntry {
     /// The Unix permission bits, `0o755` for a program. Zero when the field
     /// cannot be read, which only ever costs the execute bit.
     pub mode: u32,
+    /// The typeflag: `0` or NUL a file, `5` a folder, `1` a hard link, `2` a
+    /// symbolic link, `3` to `6` devices and pipes, `V` a volume label.
+    pub kind: u8,
+}
+
+impl TarEntry {
+    /// Whether extracting the entry means writing a file or making a folder.
+    /// Links, devices, pipes and volume labels have no data of their own, and
+    /// writing them as files would leave empty files where a tar puts links.
+    pub fn is_plain(&self) -> bool {
+        self.entry.is_dir || matches!(self.kind, b'0' | 0 | b'7')
+    }
 }
 
 pub struct TarReader<R: Read> {
@@ -220,17 +232,16 @@ impl<R: Read> TarReader<R> {
             let mut longer = Longer::default();
             let header = loop {
                 let mut header = [0u8; BLOCK];
-                match self.source.read_exact(&mut header) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                        self.finished = true;
-                        return if longer.is_empty() {
-                            Ok(None)
-                        } else {
-                            Err(dangling())
-                        };
-                    }
-                    Err(e) => return Err(Error::Io(e)),
+                // A tar that simply stops where a header would start is read as
+                // ended, as tar itself does; one that stops inside a header, or
+                // whose decompressor reports it cut short, is not.
+                if fill(&mut self.source, &mut header)? == 0 {
+                    self.finished = true;
+                    return if longer.is_empty() {
+                        Ok(None)
+                    } else {
+                        Err(dangling())
+                    };
                 }
                 self.pos += BLOCK as u64;
 
@@ -313,6 +324,16 @@ impl<R: Read> TarReader<R> {
             None => number(&header[136..148], "mtime")?,
         };
         let kind = header[156];
+        if matches!(kind, b'S' | b'M') {
+            return Err(Error::Unsupported(format!(
+                "'{name}' is a GNU tar {} entry",
+                if kind == b'S' {
+                    "sparse"
+                } else {
+                    "multivolume"
+                }
+            )));
+        }
         let is_dir = kind == b'5' || name.ends_with('/');
 
         let entry = Entry {
@@ -340,6 +361,7 @@ impl<R: Read> TarReader<R> {
             entry,
             data: if is_dir { 0 } else { size },
             mode: octal(&header[100..108], "mode").map_or(0, |m| (m & 0o7777) as u32),
+            kind,
         }))
     }
 
@@ -378,6 +400,9 @@ impl<R: Read> TarReader<R> {
     pub fn copy_data<W: Write>(&mut self, e: &TarEntry, dest: &mut W) -> Result<u64> {
         let n = io::copy(&mut (&mut self.source).take(e.data), dest)?;
         self.pos += n;
+        if n != e.data {
+            return Err(Error::Io(truncated()));
+        }
         let padding = (BLOCK - (e.data as usize % BLOCK)) % BLOCK;
         if padding > 0 {
             let mut discard = vec![0u8; padding];
@@ -448,6 +473,24 @@ impl<R: Read> Read for Exact<'_, R> {
 
 fn truncated() -> io::Error {
     io::Error::new(io::ErrorKind::UnexpectedEof, "the TAR entry is truncated")
+}
+
+/// Reads a whole block, or nothing at all: gives back 0 when the source ends
+/// before the block starts and an error when it ends, or fails, inside it.
+fn fill<R: Read>(source: &mut R, block: &mut [u8; BLOCK]) -> Result<usize> {
+    let mut filled = 0;
+    while filled < BLOCK {
+        match source.read(&mut block[filled..]) {
+            Ok(0) if filled == 0 => return Ok(0),
+            Ok(0) => {
+                return Err(Error::Format("the TAR archive ends inside a header".into()));
+            }
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(Error::Io(e)),
+        }
+    }
+    Ok(filled)
 }
 
 pub struct TarWriter<W: Write> {
@@ -942,5 +985,50 @@ mod tests {
         assert_eq!(got[1].0, "next.txt");
         let mut w = TarWriter::new(Vec::new());
         assert!(w.add("short.txt", 5, 0, 0o644, &b"ab"[..]).is_err());
+    }
+
+    // A tar that stops where a header would start is ended; one that stops
+    // inside a header or inside an entry's data is cut, even when the data
+    // is a whole number of blocks and so has no padding to trip over.
+    #[test]
+    fn truncation_is_an_error_and_a_missing_end_is_not() {
+        let mut w = TarWriter::new(Vec::new());
+        w.add("a.bin", 1024, 0, 0o644, &[7u8; 1024][..]).unwrap();
+        let tar = w.finish().unwrap();
+        let entry = BLOCK + 1024;
+        assert_eq!(names(&tar[..entry]).unwrap().len(), 1);
+        assert!(names(&tar[..entry + 100]).is_err());
+        assert!(names(&tar[..BLOCK + 512]).is_err());
+        assert!(names(&tar[..300]).is_err());
+    }
+
+    // Links, devices and pipes are listed but are not files to write, and a
+    // sparse or multivolume entry is refused rather than written wrong.
+    #[test]
+    fn entry_kinds_are_told_apart() {
+        let mut tar = header("link", b'2', 0);
+        tar.extend(header("hard", b'1', 0));
+        tar.extend(header("file", b'0', 0));
+        tar.extend(header("dir/", b'5', 0));
+        tar.extend(end());
+        let mut r = TarReader::new(&tar[..]);
+        let mut plain = Vec::new();
+        while let Some(e) = r.next_entry().unwrap() {
+            plain.push((e.entry.name.clone(), e.is_plain()));
+        }
+        assert_eq!(
+            plain,
+            [
+                ("link".to_string(), false),
+                ("hard".to_string(), false),
+                ("file".to_string(), true),
+                ("dir/".to_string(), true),
+            ]
+        );
+        for &kind in b"SM" {
+            let mut tar = header("odd", kind, 0);
+            tar.extend(end());
+            assert!(matches!(names(&tar), Err(Error::Unsupported(_))));
+        }
     }
 }

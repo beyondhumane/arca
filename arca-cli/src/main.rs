@@ -810,6 +810,12 @@ fn extract(
             let mut r = TarReader::new(tar_source(archive, format_kind)?);
             let mut destination = Destination::new(dest);
             while let Some(e) = r.next_entry()? {
+                // Links and devices have no data to write, and a file in their
+                // place would be an empty one where a link belongs.
+                if !e.is_plain() {
+                    r.skip_data(&e)?;
+                    continue;
+                }
                 let written = r.with_data(&e, |data| {
                     destination.write_file(
                         &e.entry.name,

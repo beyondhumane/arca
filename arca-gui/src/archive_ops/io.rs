@@ -468,7 +468,7 @@ pub(crate) fn extract_one_into(
             // the ones before it.
             let mut r = TarReader::new(open_source(archive, format)?);
             while let Some(e) = r.next_entry()? {
-                if e.entry.name == entry.name && !e.entry.is_dir {
+                if e.entry.name == entry.name && !e.entry.is_dir && e.is_plain() {
                     unpack(
                         &path,
                         (entry.mtime, Some(e.mode)),
@@ -817,7 +817,7 @@ pub(crate) fn extract(
                 if !notify(i, total, &e.entry.name) {
                     return Err(arca_core::Error::Cancelled);
                 }
-                if !wanted.is_empty() && !wanted.get(i).copied().unwrap_or(true) {
+                if !e.is_plain() || !wanted.is_empty() && !wanted.get(i).copied().unwrap_or(true) {
                     r.skip_data(&e)?;
                     i += 1;
                     continue;
