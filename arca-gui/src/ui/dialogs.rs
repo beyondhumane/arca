@@ -508,7 +508,9 @@ impl Shell {
         });
         ui.add_space(10.0);
         let at_least = |text: String| {
-            if props.capped {
+            if props.counting {
+                "\u{2026}".to_string()
+            } else if props.capped {
                 format!("≥ {text}")
             } else {
                 text
@@ -792,15 +794,24 @@ impl Shell {
         let p = palette_of(ui.ctx());
         let inputs = self.controller.state.pending_inputs.clone();
         let count = inputs.len();
-        let sizes: Vec<Option<u64>> = inputs
-            .iter()
-            .map(|path| {
-                std::fs::metadata(path)
-                    .ok()
-                    .filter(|m| m.is_file())
-                    .map(|m| m.len())
-            })
-            .collect();
+        let facts = match &self.input_facts {
+            Some((read_for, facts)) if *read_for == inputs => facts.clone(),
+            _ => {
+                let facts: super::InputFacts = std::rc::Rc::new(
+                    inputs
+                        .iter()
+                        .map(|path| {
+                            let meta = std::fs::metadata(path).ok();
+                            let size = meta.as_ref().filter(|m| m.is_file()).map(|m| m.len());
+                            (size, meta.is_some_and(|m| m.is_dir()))
+                        })
+                        .collect(),
+                );
+                self.input_facts = Some((inputs.clone(), facts.clone()));
+                facts
+            }
+        };
+        let sizes: Vec<Option<u64>> = facts.iter().map(|(size, _)| *size).collect();
         let total: u64 = sizes.iter().flatten().sum();
         ui.horizontal(|ui| {
             ui.label(
@@ -1016,12 +1027,21 @@ impl Shell {
                     });
                     return;
                 }
-                egui::ScrollArea::vertical()
-                    .max_height(180.0)
-                    .show(ui, |ui| {
-                        for (index, path) in inputs.iter().enumerate() {
+                // The height of the remove button, the tallest thing in a row.
+                let row_height = 28.0;
+                egui::ScrollArea::vertical().max_height(180.0).show_rows(
+                    ui,
+                    row_height,
+                    count,
+                    |ui, shown| {
+                        for (index, path) in inputs
+                            .iter()
+                            .enumerate()
+                            .skip(shown.start)
+                            .take(shown.len())
+                        {
                             ui.horizontal(|ui| {
-                                let is_dir = sizes[index].is_none() && path.is_dir();
+                                let is_dir = facts[index].1;
                                 let glyph = if is_dir { icon::FOLDER } else { icon::FILE };
                                 ui.label(
                                     super::theme::icon_text(glyph)
@@ -1055,7 +1075,8 @@ impl Shell {
                                 );
                             });
                         }
-                    });
+                    },
+                );
             });
         if let Some(index) = remove {
             self.controller.state.pending_inputs.remove(index);

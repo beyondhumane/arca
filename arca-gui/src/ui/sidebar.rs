@@ -259,7 +259,7 @@ impl Shell {
         }
         if let Some(path) = props {
             let pinned = self.controller.is_pinned(&path);
-            self.properties = Some(super::inspect(&path, pinned));
+            self.show_properties(path, pinned);
         }
         if let Some(path) = forget {
             self.controller

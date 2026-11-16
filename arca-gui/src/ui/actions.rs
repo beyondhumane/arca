@@ -406,6 +406,11 @@ pub(crate) enum DialogKind {
         name: String,
         directory: PathBuf,
     },
+    /// Where the picked files on the disk are moved or copied to.
+    CarryTo {
+        roots: Vec<String>,
+        copy: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

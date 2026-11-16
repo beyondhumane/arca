@@ -671,3 +671,23 @@ fn f2_on_the_row_that_goes_up_renames_nothing() {
     shell.shortcut(Shortcut::Rename);
     assert!(shell.controller.state.renaming.is_none());
 }
+
+// Properties opens on one look at the path; a folder is walked separately,
+// and only the walk answers for its size and what it holds.
+#[test]
+fn properties_of_a_folder_wait_for_the_walk_to_give_a_size() {
+    let room = crate::test_support::Room::new();
+    let dir = room.path("tree");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("a.txt"), b"12345").unwrap();
+    std::fs::write(dir.join("sub/b.txt"), b"678").unwrap();
+    let glance = inspect(&dir, false, false);
+    assert!(glance.is_dir && glance.counting);
+    assert_eq!((glance.files, glance.size), (0, 0));
+    let walked = inspect(&dir, false, true);
+    assert!(!walked.counting);
+    assert_eq!((walked.files, walked.folders, walked.size), (2, 1, 8));
+    let file = inspect(&dir.join("a.txt"), false, false);
+    assert!(!file.counting);
+    assert_eq!(file.size, 5);
+}
