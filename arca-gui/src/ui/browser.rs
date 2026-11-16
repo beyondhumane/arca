@@ -338,17 +338,51 @@ impl Shell {
         });
     }
 
+    /// What the list shows while an archive is being read: the mark breathing
+    /// in and out over the name of what is being opened, so a large archive
+    /// does not look like an empty one.
+    fn opening_state(&self, ui: &mut egui::Ui) {
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        let time = ui.input(|i| i.time);
+        let alpha = 0.55 + 0.45 * (time * std::f64::consts::TAU / 1.6).cos() as f32;
+        ui.vertical_centered(|ui| {
+            ui.add_space((ui.available_height() / 2.0 - 90.0).max(24.0));
+            ui.add(
+                egui::Image::from_bytes("bytes://arca-mark.svg", crate::assets::MARK)
+                    .fit_to_exact_size(Vec2::splat(96.0))
+                    .tint(egui::Color32::WHITE.gamma_multiply(alpha)),
+            );
+            ui.add_space(12.0);
+            ui.label(RichText::new(format!("{}\u{2026}", s.opening)).font(theme::display(20.0)));
+            let name = self
+                .controller
+                .state
+                .archive
+                .as_ref()
+                .and_then(|a| a.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            ui.add(egui::Label::new(RichText::new(name).color(hex(p.muted))).truncate());
+        });
+        ui.ctx().request_repaint();
+    }
+
     fn empty_state(&self, ui: &mut egui::Ui) {
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
         let state = &self.controller.state;
+        if state.listing {
+            self.opening_state(ui);
+            return;
+        }
         let text = if state.archive.is_some()
             && state.entries.is_empty()
             && state.active_pane().filter.trim().is_empty()
         {
             s.empty_archive
         } else {
-            empty_state_aria_label(state.error, &state.active_pane().filter, s)
+            empty_state_aria_label(false, state.error, &state.active_pane().filter, s)
         };
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
@@ -856,6 +890,12 @@ impl Shell {
             }
         }
         let rows = self.controller.pane_rows(pane);
+        if rows.is_empty() && self.controller.state.listing {
+            if pane == self.controller.state.browser.active {
+                self.opening_state(ui);
+            }
+            return;
+        }
         if rows.is_empty() {
             ui.label(RichText::new(s.empty_folder).color(hex(p.muted)));
             self.empty_space(ui, Some(pane));

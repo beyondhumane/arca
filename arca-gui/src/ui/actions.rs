@@ -535,12 +535,17 @@ pub(crate) fn clipboard_action_allowed(
     available && idle && has_archive && (!needs_selection || selected > 0)
 }
 
+/// What an empty list says. An archive still being read has no rows yet, and
+/// saying the folder is empty then is saying something false.
 pub(crate) fn empty_state_aria_label(
+    listing: bool,
     error: bool,
     filter: &str,
     s: &'static Strings,
 ) -> &'static str {
-    if error {
+    if listing {
+        s.opening
+    } else if error {
         s.cannot_open
     } else if filter.trim().is_empty() {
         s.empty_folder

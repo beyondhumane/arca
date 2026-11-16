@@ -488,10 +488,15 @@ fn empty_folder_label_is_not_reported_as_archive_contents() {
     // translation that loses the difference is the same bug in Spanish.
     for lang in super::super::Lang::ALL {
         let s = crate::i18n::strings(lang);
-        assert_eq!(empty_state_aria_label(false, "", s), s.empty_folder);
-        assert_eq!(empty_state_aria_label(false, "  ", s), s.empty_folder);
-        assert_eq!(empty_state_aria_label(false, "zip", s), s.no_matches);
-        assert_eq!(empty_state_aria_label(true, "", s), s.cannot_open);
+        assert_eq!(empty_state_aria_label(false, false, "", s), s.empty_folder);
+        assert_eq!(
+            empty_state_aria_label(false, false, "  ", s),
+            s.empty_folder
+        );
+        assert_eq!(empty_state_aria_label(false, false, "zip", s), s.no_matches);
+        assert_eq!(empty_state_aria_label(false, true, "", s), s.cannot_open);
+        assert_eq!(empty_state_aria_label(true, false, "", s), s.opening);
+        assert_ne!(s.opening, s.empty_folder);
         assert_ne!(s.empty_folder, s.cannot_open);
     }
 }
