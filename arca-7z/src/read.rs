@@ -300,7 +300,10 @@ impl<R: Read + Seek> SevenZArchive<R> {
             }
             Ok(())
         };
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get() as u32);
+        // One thread: the multithreaded LZMA2 reader decodes a whole run between
+        // dictionary resets into memory, and a stream with no resets is a whole
+        // block, which an archive can make as large as it likes.
+        let threads = 1;
         for (block, &needed) in blocks.iter().enumerate() {
             if !needed {
                 continue;

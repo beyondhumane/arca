@@ -78,7 +78,7 @@ Las cabeceras ocultas la exigen incluso para listar. El listado no verifica el
 contenido: usa `test`. Solo el primer miembro de un bloque sólido muestra su
 tamaño comprimido; los ratios por fichero no son medidas independientes.
 
-La extracción 7z descomprime cada bloque con todos los núcleos cuando el bloque se escribió por trozos, como lo escriben Arca y `7z -mmt`; los bloques se descomprimen uno tras otro. Hay que
+La extracción 7z es secuencial, también para selecciones en la ventana. Hay que
 descomprimir los datos sólidos omitidos. Para cualquier 7z cifrado, Arca valida
 todo el contenido antes de crear o sustituir ficheros o directorios de destino,
 y extrae lo seleccionado en una segunda pasada. Una contraseña incorrecta o un
