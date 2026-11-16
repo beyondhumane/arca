@@ -192,10 +192,14 @@ fn conflict(policy: OnConflict) -> Conflict {
 
 // Built under a temporary name beside `out` and renamed only once complete, so
 // a failed or interrupted run never leaves a half-written archive behind.
-fn staged<T>(out: &Path, write: impl FnOnce(BufWriter<File>) -> Result<T>) -> Result<T> {
+fn staged_path(out: &Path) -> PathBuf {
     let mut name = out.file_name().unwrap_or_default().to_os_string();
     name.push(".arca-new");
-    let temp = out.with_file_name(name);
+    out.with_file_name(name)
+}
+
+fn staged<T>(out: &Path, write: impl FnOnce(BufWriter<File>) -> Result<T>) -> Result<T> {
+    let temp = staged_path(out);
     let result = File::create(&temp)
         .map_err(Error::from)
         .and_then(|f| write(BufWriter::with_capacity(BUF, f)));
@@ -378,7 +382,9 @@ fn create(
     }
     let codec = resolve_codec(if xz { CodecArg::Auto } else { codec_arg }, format_kind)?;
     let mut threads = resolve_threads(requested_threads);
-    let raw_list = collect_files(inputs)?;
+    let own = arca_core::extraction::OwnOutput::new(out);
+    let mut raw_list = collect_files(inputs)?;
+    raw_list.retain(|(path, _)| !own.is_own(path));
     if raw_list.is_empty() {
         return Err(Error::Format("there is nothing to add".into()));
     }
@@ -404,9 +410,15 @@ fn create(
         // Nothing to report while it runs -- the summary is printed at the end
         // -- so the answer to "carry on?" is always yes.
         Container::Rar | Container::Iso => return Err(format_kind.read_only()),
-        Container::Zip => arca_zip::create_zip(out, &files, threads, password, &|_, _, _| true)?,
-        Container::Tar | Container::TarGz => {
-            let f = BufWriter::with_capacity(BUF, File::create(out)?);
+        Container::Zip => {
+            let temp = staged_path(out);
+            arca_zip::create_zip(&temp, &files, threads, password, &|_, _, _| true)?;
+            if let Err(e) = fs::rename(&temp, out) {
+                let _ = fs::remove_file(&temp);
+                return Err(e.into());
+            }
+        }
+        Container::Tar | Container::TarGz => staged(out, |f| {
             let dest: Box<dyn Write> = if format_kind == Format::TarGz {
                 Box::new(flate2::write::GzEncoder::new(
                     f,
@@ -422,9 +434,9 @@ fn create(
                 let entrada = BufReader::with_capacity(BUF, file);
                 w.add(&s.name, s.size, s.mtime, mode, entrada)?;
             }
-            let mut d = w.finish()?;
-            d.flush()?;
-        }
+            w.finish()?.flush()?;
+            Ok(())
+        })?,
         Container::TarXz => {
             threads = staged(out, |f| {
                 let e = arca_xz::encoder(f, level, requested_threads)?;

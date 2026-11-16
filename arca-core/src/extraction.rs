@@ -332,9 +332,64 @@ impl Drop for StagedFile<'_> {
     }
 }
 
+/// The files a new archive must not take in: itself, when it is written into
+/// a folder being archived, and the temporary it is built under. Without this
+/// an archive replacing an older one swallows the older one, or reads itself
+/// while it grows.
+pub struct OwnOutput {
+    names: Vec<OsString>,
+    dir: Option<PathBuf>,
+}
+
+impl OwnOutput {
+    pub fn new(out: &Path) -> Self {
+        let name = out.file_name().unwrap_or_default().to_os_string();
+        let mut staged = name.clone();
+        staged.push(".arca-new");
+        let parent = match out.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => Path::new("."),
+        };
+        Self {
+            names: vec![name, staged],
+            dir: std::fs::canonicalize(parent).ok(),
+        }
+    }
+
+    pub fn is_own(&self, path: &Path) -> bool {
+        let Some(name) = path.file_name() else {
+            return false;
+        };
+        let key = claim_key(Path::new(name));
+        if !self.names.iter().any(|n| claim_key(Path::new(n)) == key) {
+            return false;
+        }
+        let parent = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => Path::new("."),
+        };
+        match (&self.dir, std::fs::canonicalize(parent)) {
+            (Some(dir), Ok(found)) => *dir == found,
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_archive_written_into_its_own_input_does_not_take_itself_in() {
+        let room = room();
+        let out = room.path().join("sub").join("pack.zip");
+        fs::create_dir_all(out.parent().unwrap()).unwrap();
+        let own = OwnOutput::new(&out);
+        assert!(own.is_own(&room.path().join("sub/./pack.zip")));
+        assert!(own.is_own(&room.path().join("sub/pack.zip.arca-new")));
+        assert!(!own.is_own(&room.path().join("pack.zip")));
+        assert!(!own.is_own(&room.path().join("sub/other.zip")));
+    }
     use std::fs;
 
     fn room() -> tempfile::TempDir {

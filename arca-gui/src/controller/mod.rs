@@ -2443,7 +2443,7 @@ impl AppController {
                 let created = if let Job::Compress {
                     out,
                     password,
-                    format: format @ (Format::SevenZ | Format::Rar),
+                    format,
                     ..
                 } = &mut job
                 {

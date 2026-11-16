@@ -1203,7 +1203,9 @@ pub(crate) fn compress(
         let final_size = fs::metadata(out).map(|m| m.len()).unwrap_or(0);
         return Ok((source_bytes, final_size));
     }
-    let files = collect_sources(inputs, format == Format::SevenZ)?;
+    let own = arca_core::extraction::OwnOutput::new(out);
+    let mut files = collect_sources(inputs, format == Format::SevenZ)?;
+    files.retain(|(path, name)| name.ends_with('/') || !own.is_own(path));
     if format == Format::Xz && !(inputs.len() == 1 && files.len() == 1 && inputs[0].is_file()) {
         return Err(arca_core::Error::Unsupported(
             "an .xz holds exactly one file; make a .tar.xz to keep several".into(),
@@ -1251,35 +1253,52 @@ pub(crate) fn compress(
                     level,
                 });
             }
-            arca_zip::create_zip(out, &sources, 0, password, notify)?;
+            let temp = staged_path(out);
+            arca_zip::create_zip(&temp, &sources, 0, password, notify)?;
+            if let Err(e) = fs::rename(&temp, out) {
+                let _ = fs::remove_file(&temp);
+                return Err(e.into());
+            }
         }
         Container::Tar | Container::TarGz => {
-            let raw = BufWriter::with_capacity(BUF, File::create(out)?);
-            let sink: Box<dyn Write> = if format == Format::TarGz {
-                Box::new(flate2::write::GzEncoder::new(
-                    raw,
-                    flate2::Compression::new(level.to_flate2()),
-                ))
-            } else {
-                Box::new(raw)
-            };
-            let mut w = TarWriter::new(sink);
-            for (i, (path, name)) in files.iter().enumerate() {
-                if !notify(i, total, name) {
-                    return Err(arca_core::Error::Cancelled);
+            fn tar_into<W: Write>(
+                sink: W,
+                files: &[(PathBuf, String)],
+                notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+                bytes: &mut u64,
+            ) -> arca_core::Result<W> {
+                let mut w = TarWriter::new(sink);
+                for (i, (path, name)) in files.iter().enumerate() {
+                    if !notify(i, files.len(), name) {
+                        return Err(arca_core::Error::Cancelled);
+                    }
+                    let meta = fs::metadata(path)?;
+                    let f = BufReader::with_capacity(BUF, File::open(path)?);
+                    w.add(
+                        name,
+                        meta.len(),
+                        mtime_of(&meta),
+                        arca_tar::mode_of(&meta),
+                        f,
+                    )?;
+                    *bytes += meta.len();
                 }
-                let meta = fs::metadata(path)?;
-                let f = BufReader::with_capacity(BUF, File::open(path)?);
-                w.add(
-                    name,
-                    meta.len(),
-                    mtime_of(&meta),
-                    arca_tar::mode_of(&meta),
-                    f,
-                )?;
-                source_bytes += meta.len();
+                w.finish()
             }
-            w.finish()?;
+            staged(out, |raw| {
+                if format == Format::TarGz {
+                    let gz = flate2::write::GzEncoder::new(
+                        raw,
+                        flate2::Compression::new(level.to_flate2()),
+                    );
+                    tar_into(gz, &files, notify, &mut source_bytes)?
+                        .finish()?
+                        .flush()?;
+                } else {
+                    tar_into(raw, &files, notify, &mut source_bytes)?.flush()?;
+                }
+                Ok(())
+            })?;
         }
         Container::TarXz => staged(out, |f| {
             let mut w = TarWriter::new(arca_xz::encoder(f, level, 0)?);
