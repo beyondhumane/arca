@@ -189,10 +189,77 @@ pub fn register_associations(dir: &Path) -> Res<()> {
         r"Software\RegisteredApplications",
         "Arca",
         r"Software\Arca\Capabilities",
+    )?;
+    own_zip()
+}
+
+/// An archive with nothing in it: the end-of-central-directory record alone.
+const EMPTY_ZIP: [u8; 22] = [
+    0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+];
+
+const ZIP_CLASS: &str = r"Software\Classes\.zip";
+/// Where the type .zip had before Arca took it, so that uninstalling hands
+/// it back. Kept outside `Software\Arca`, which is removed first.
+const ZIP_BEFORE: &str = r"Software\Classes\Arca.zip.previous";
+
+/// The Explorer's New menu has one entry per extension, named after the type
+/// the extension belongs to, so Arca's entry needs `.zip` to be Arca's. Only
+/// for this user: the machine-wide type, usually Windows' or another
+/// archiver's, stays as it is and comes back when Arca goes.
+fn own_zip() -> Res<()> {
+    let current = hkcu()
+        .open_subkey(ZIP_CLASS)
+        .and_then(|key| key.get_value::<String, _>(""))
+        .ok();
+    if current.as_deref() != Some("Arca.zip") {
+        delete_tree(ZIP_BEFORE)?;
+        if let Some(before) = current.filter(|before| !before.is_empty()) {
+            set(ZIP_BEFORE, "", &before)?;
+        } else {
+            set(ZIP_BEFORE, "", "")?;
+        }
+    }
+    let name = crate::i18n::Lang::from_system().strings().zip_type;
+    set(r"Software\Classes\Arca.zip", "", name)?;
+    set(ZIP_CLASS, "", "Arca.zip")?;
+    let (key, _) = hkcu()
+        .create_subkey(format!(r"{ZIP_CLASS}\Arca.zip\ShellNew"))
+        .map_err(ctx("registry key .zip\\Arca.zip\\ShellNew"))?;
+    key.set_raw_value(
+        "Data",
+        &RegValue {
+            bytes: EMPTY_ZIP.to_vec().into(),
+            vtype: REG_BINARY,
+        },
     )
+    .map_err(ctx("registry value ShellNew\\Data"))
+}
+
+/// Hands `.zip` back to whatever had it before `own_zip`, or to the
+/// machine-wide type when this user had none of their own.
+fn give_back_zip() -> Res<()> {
+    delete_tree(&format!(r"{ZIP_CLASS}\Arca.zip"))?;
+    let ours = hkcu()
+        .open_subkey(ZIP_CLASS)
+        .and_then(|key| key.get_value::<String, _>(""))
+        .is_ok_and(|current| current == "Arca.zip");
+    if ours {
+        let before = hkcu()
+            .open_subkey(ZIP_BEFORE)
+            .and_then(|key| key.get_value::<String, _>(""))
+            .ok()
+            .filter(|before| !before.is_empty());
+        match before {
+            Some(before) => set(ZIP_CLASS, "", &before)?,
+            None => delete_value(ZIP_CLASS, "")?,
+        }
+    }
+    delete_tree(ZIP_BEFORE)
 }
 
 pub fn unregister_associations() -> Res<()> {
+    give_back_zip()?;
     for (extension, progid, _) in ASSOCIATIONS {
         delete_tree(&format!(r"Software\Classes\{progid}"))?;
         delete_value(
