@@ -49,11 +49,16 @@ pub(super) fn create(
     let t0 = Instant::now();
     create_7z(out, &sources, &options, &mut |_| true)?;
     println!(
-        "{}: {files} files, {} -> {} in {:.3} s (sequential)",
+        "{}: {files} files, {} -> {} in {:.3} s \u{b7} {} threads",
         out.display(),
         human(bytes),
         human(fs::metadata(out)?.len()),
-        t0.elapsed().as_secs_f64()
+        t0.elapsed().as_secs_f64(),
+        if options.level == Level::STORE {
+            1
+        } else {
+            arca_7z::workers(options.level)
+        }
     );
     Ok(())
 }

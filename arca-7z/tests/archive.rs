@@ -215,12 +215,21 @@ fn empty_and_unicode_roundtrip_all_levels_and_password_modes() {
         let mut archive = SevenZArchive::open(fs::File::open(path).unwrap(), password).unwrap();
         assert_eq!(archive.has_encrypted_header(), hide_names);
         assert_eq!(archive.has_encrypted(), password.is_some());
-        assert_eq!(archive.entries()[1].name, sources[1].name);
-        assert!(archive.entries()[0].is_dir);
-        assert!(!archive.entries()[2].is_dir);
-        assert_eq!(archive.read_entry(2, 0, &mut |_| true).unwrap(), b"");
+        // Entries are grouped by kind for solid compression, as 7-Zip does,
+        // so they are found by name rather than by the order they were given.
+        let at = |name: &str| {
+            archive
+                .entries()
+                .iter()
+                .position(|e| e.name == name)
+                .unwrap()
+        };
+        let (folder, data, empty) = (at("folder"), at(&sources[1].name), at("empty"));
+        assert!(archive.entries()[folder].is_dir);
+        assert!(!archive.entries()[empty].is_dir);
+        assert_eq!(archive.read_entry(empty, 0, &mut |_| true).unwrap(), b"");
         assert_eq!(
-            archive.read_entry(1, 100, &mut |_| true).unwrap(),
+            archive.read_entry(data, 100, &mut |_| true).unwrap(),
             b"hello compressed world"
         );
         archive.test(&mut |_| true).unwrap();
@@ -670,4 +679,128 @@ fn malformed_header_mutations_never_panic() {
             }
         }
     }
+}
+
+/// Bytes that look like x86 code and compress like a program: the same few
+/// call instructions with targets that drift, which BCJ is there to smooth.
+fn machine_code(len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len);
+    let mut target = 0x1000u32;
+    while out.len() < len {
+        out.push(0xE8);
+        out.extend_from_slice(&target.wrapping_sub(out.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"\x48\x89\xc7\x90");
+        target = target.wrapping_add(16);
+    }
+    out.truncate(len);
+    out
+}
+
+/// Text that varies enough to need several multithreaded LZMA2 chunks.
+fn prose(len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len);
+    let mut n = 0u64;
+    while out.len() < len {
+        n = n.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        out.extend_from_slice(format!("line {} of the archive, {}\n", n % 977, n >> 50).as_bytes());
+    }
+    out.truncate(len);
+    out
+}
+
+// Solid blocks, executables in a block of their own behind the BCJ filter,
+// more files than a block could hold open at once, and data large enough to
+// be cut into chunks by every LZMA2 thread: all of it reads back, with and
+// without a password.
+#[test]
+fn solid_blocks_with_executables_and_many_files_round_trip() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut sources = Vec::new();
+    let mut expected = Vec::new();
+    let mut add = |name: String, data: Vec<u8>| {
+        let path = temp.path().join(format!("f{}", sources.len()));
+        fs::write(&path, &data).unwrap();
+        sources.push(Source {
+            path,
+            name: name.clone(),
+        });
+        expected.push((name, data));
+    };
+    add("app/program.exe".into(), machine_code(300_000));
+    add("app/library.DLL".into(), machine_code(120_000));
+    add("big.txt".into(), prose(7 << 20));
+    for i in 0..1500 {
+        add(
+            format!("many/{i:04}.txt"),
+            format!("file number {i}\n").repeat(i % 7 + 1).into_bytes(),
+        );
+    }
+    for (level, password) in [
+        (Level::FAST, None),
+        (Level::FAST, Some("secret")),
+        (Level::STORE, None),
+    ] {
+        let path = temp.path().join("out.7z");
+        create_7z(
+            &path,
+            &sources,
+            &CreateOptions {
+                level,
+                password,
+                hide_names: false,
+            },
+            &mut |_| true,
+        )
+        .unwrap();
+        let mut archive = SevenZArchive::open(fs::File::open(&path).unwrap(), password).unwrap();
+        assert_eq!(archive.entries().len(), expected.len());
+        archive.test(&mut |_| true).unwrap();
+        let checked = [
+            "app/program.exe",
+            "app/library.DLL",
+            "big.txt",
+            "many/0000.txt",
+            "many/1499.txt",
+        ];
+        for (name, data) in expected
+            .iter()
+            .filter(|(n, _)| checked.contains(&n.as_str()))
+        {
+            let index = archive
+                .entries()
+                .iter()
+                .position(|e| &e.name == name)
+                .unwrap();
+            let read = archive.read_entry(index, 32 << 20, &mut |_| true).unwrap();
+            assert!(&read == data, "{name} at {level:?}");
+        }
+    }
+}
+
+// A source that grows while a solid block reads it fails the whole archive
+// instead of writing an entry whose recorded size is wrong.
+#[test]
+fn a_source_that_changes_size_in_a_solid_block_fails() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("a.txt");
+    fs::write(&path, b"abc").unwrap();
+    let sources = vec![Source {
+        path: path.clone(),
+        name: "a.txt".into(),
+    }];
+    let mut grown = false;
+    let result = create_7z(
+        &temp.path().join("out.7z"),
+        &sources,
+        &CreateOptions::default(),
+        &mut |p| {
+            if !grown && p.name == "a.txt" {
+                fs::write(&path, b"abcdef").unwrap();
+                grown = true;
+            }
+            true
+        },
+    );
+    assert!(result.is_err());
+    assert!(!temp.path().join("out.7z").exists());
 }

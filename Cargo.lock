@@ -261,6 +261,7 @@ name = "arca-7z"
 version = "0.10.0"
 dependencies = [
  "arca-core",
+ "arca-xz",
  "crc32fast",
  "getrandom 0.4.3",
  "sevenz-rust2",

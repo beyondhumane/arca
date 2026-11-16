@@ -78,7 +78,7 @@ Hidden headers require one even to list. Listing does not validate file contents
 use `test` for that. In a solid block, only the first member reports the packed
 size, so per-file ratios are not independent compression measurements.
 
-7z extraction is sequential, including selected entries in the desktop window.
+7z extraction decodes each block on every core where the block was written in chunks, as Arca and `7z -mmt` write them; blocks themselves are decoded one after another.
 Skipped solid data still has to be decoded. For any encrypted 7z, Arca validates
 all contents before any destination directory/file creation or replacement, then
 extracts selected contents in a second pass. A wrong password or failed encrypted

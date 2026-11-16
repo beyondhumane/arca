@@ -120,6 +120,10 @@ pub fn add_decoder<I: Read>(
                 });
             }
 
+            // Each thread holds a dictionary of its own: an archive that names a
+            // large one gets fewer threads, so all of them together stay within
+            // four times the single-thread limit.
+            let threads = threads.min((4 * max_mem_limit_kb / mem_size.max(1)) as u32);
             let lz = if threads < 2 {
                 Decoder::Lzma2(Box::new(Lzma2Reader::new(input, dic_size, None)))
             } else {

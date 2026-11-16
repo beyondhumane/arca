@@ -91,10 +91,7 @@ fn help_mentions_rar_creation() {
     assert!(result.status.success());
     let help = stdout(&result);
     assert!(help.contains(".rar"), "{help}");
-    assert!(
-        help.contains(".7z and .rar creation is sequential"),
-        "{help}"
-    );
+    assert!(help.contains(".rar creation is sequential"), "{help}");
 }
 
 #[cfg(not(feature = "rar"))]

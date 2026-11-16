@@ -15,7 +15,7 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | --- | --- | --- | --- |
 | `-l, --level` | store · fast · normal · best | normal | Compression level. |
 | `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, the RAR compressor in .rar (auto or store only). |
-| `-j, --threads` | a number | 0 | ZIP and XZ thread limit. 0 means every core; 7z and RAR are sequential. |
+| `-j, --threads` | a number | 0 | ZIP and XZ thread limit. 0 means every core; 7z uses as many as fit in 2 GiB and RAR is sequential. |
 | `-p, --password` | text | none | Encrypt ZIP or 7z with AES-256. Refused for .rar. |
 | `--hide-names` | flag | off | Encrypt 7z headers too; requires a nonempty password. |
 
@@ -65,8 +65,11 @@ and 9. `-c store` overrides the level. Only `auto`, `store` and `lzma2` are
 accepted for 7z; explicit Deflate/Zstandard codec selection applies to ZIP,
 not 7z. TAR ignores those codec choices and `.tar.gz` always uses gzip;
 `lzma2` is rejected outside 7z.
-Creation is sequential regardless of `-j`, with one independent block per file,
-not solid compression. Reading existing solid archives is supported.
+Files are compressed together in solid blocks of up to 256 MiB, grouped by
+extension the way 7-Zip does; x86 executables (`.exe`, `.dll` and the like) go
+in blocks of their own behind the BCJ filter, which makes machine code smaller.
+LZMA2 runs on as many cores as fit in 2 GiB (every core at `fast` and `normal`,
+one at `best`), and entries are listed in that grouped order.
 
 7z includes empty files and directories and rejects symlink/reparse-point and
 special-file inputs rather than following them. Creation writes a temporary

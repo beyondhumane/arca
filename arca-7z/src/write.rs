@@ -7,7 +7,7 @@ use std::{
 use arca_core::{Error, Level, Result};
 use sevenz_rust2::{
     encoder_options::{AesEncoderOptions, Lzma2Options},
-    ArchiveEntry, ArchiveWriter, EncoderConfiguration, EncoderMethod, Password,
+    ArchiveEntry, ArchiveWriter, EncoderConfiguration, EncoderMethod, Password, SourceReader,
 };
 
 use crate::{entry_path, upstream, Phase, Progress};
@@ -98,9 +98,8 @@ pub fn create_7z(
     let mut writer = ArchiveWriter::new(io::BufWriter::new(temporary.as_file_mut()))
         .map_err(|e| upstream(e, false))?;
     writer.set_encrypt_header(options.hide_names);
-    let mut bytes = 0;
-    for (index, (source, meta)) in sources.iter().zip(&metadata).enumerate() {
-        writer.set_content_methods(methods(options)?);
+    let entry_of = |index: usize| {
+        let (source, meta) = (&sources[index], &metadata[index]);
         let mut entry = if meta.is_dir() {
             ArchiveEntry::new_directory(&source.name)
         } else {
@@ -113,45 +112,69 @@ pub fn create_7z(
             entry.has_last_modified_date = true;
             entry.last_modified_date = time;
         }
-        let progress = Progress {
+        entry
+    };
+    // Folders and empty files have no data and go in first, outside any block.
+    let (empty, full): (Vec<usize>, Vec<usize>) =
+        (0..sources.len()).partition(|&i| metadata[i].is_dir() || metadata[i].len() == 0);
+    for &index in &empty {
+        if !notify(Progress {
             phase: Phase::Create,
             entries_done: index,
             entries_total: sources.len(),
-            bytes_done: bytes,
-            name: &source.name,
-        };
-        if !notify(progress) {
+            bytes_done: 0,
+            name: &sources[index].name,
+        }) {
             return Err(Error::Cancelled);
         }
-        if meta.is_dir() || meta.len() == 0 {
-            entry.has_stream = false;
-            writer
-                .push_archive_entry::<io::Empty>(entry, None)
-                .map_err(|e| upstream(e, false))?;
-        } else {
-            let file = fs::File::open(&source.path)?;
-            let mut input = Input {
-                file,
-                notify,
-                progress,
-                cancelled: false,
-                bytes: 0,
-            };
-            let result = writer.push_archive_entry(entry, Some(&mut input));
-            if input.cancelled {
-                return Err(Error::Cancelled);
-            }
-            result.map_err(|e| upstream(e, false))?;
-            if input.bytes != meta.len() {
-                return Err(Error::Io(io::Error::other(
-                    "7z source changed size during creation",
-                )));
-            }
-            bytes += input.bytes;
-        }
+        let mut entry = entry_of(index);
+        entry.has_stream = false;
+        writer
+            .push_archive_entry::<io::Empty>(entry, None)
+            .map_err(|e| upstream(e, false))?;
     }
+    let tracker = std::cell::RefCell::new(Tracker {
+        notify,
+        total: sources.len(),
+        done: empty.len(),
+        bytes: 0,
+        cancelled: false,
+        changed: false,
+    });
+    let workers = workers(options.level);
+    for block in solid_blocks(sources, &metadata, &full) {
+        writer.set_content_methods(methods(options, block.executables, workers)?);
+        let entries = block.files.iter().map(|&i| entry_of(i)).collect();
+        let readers = block
+            .files
+            .iter()
+            .map(|&i| {
+                SourceReader::new(Lazy {
+                    path: &sources[i].path,
+                    name: &sources[i].name,
+                    expected: metadata[i].len(),
+                    file: None,
+                    read: 0,
+                    tracker: &tracker,
+                })
+            })
+            .collect();
+        let result = writer.push_archive_entries(entries, readers);
+        let state = tracker.borrow();
+        if state.cancelled {
+            return Err(Error::Cancelled);
+        }
+        if state.changed {
+            return Err(Error::Io(io::Error::other(
+                "7z source changed size during creation",
+            )));
+        }
+        drop(state);
+        result.map_err(|e| upstream(e, false))?;
+    }
+    let Tracker { notify, bytes, .. } = tracker.into_inner();
     // A header must never reuse the last file's AES salt and IV.
-    writer.set_content_methods(methods(options)?);
+    writer.set_content_methods(methods(options, false, 1)?);
     writer.finish()?.flush()?;
     if !notify(Progress {
         phase: Phase::Create,
@@ -167,7 +190,73 @@ pub fn create_7z(
     Ok(())
 }
 
-fn methods(options: &CreateOptions<'_>) -> Result<Vec<EncoderConfiguration>> {
+/// The most a solid block holds. Reading one entry decodes everything before
+/// it in its block, so a block of the whole archive would make opening one
+/// file of a large archive as slow as extracting all of it.
+const SOLID_BYTES: u64 = 256 << 20;
+
+/// Extensions of x86 and x64 machine code, which the BCJ filter makes much
+/// easier to compress by turning relative call targets into absolute ones.
+/// 7-Zip picks them the same way, by name.
+const EXECUTABLE: [&str; 9] = [
+    "exe", "dll", "sys", "ocx", "cpl", "scr", "drv", "efi", "mui",
+];
+
+struct Block {
+    files: Vec<usize>,
+    executables: bool,
+}
+
+/// Groups the files with data into solid blocks, executables apart so that
+/// only they go through the filter, each group sorted by extension and then
+/// by name so that similar files sit next to each other in the stream.
+fn solid_blocks(sources: &[Source], metadata: &[fs::Metadata], files: &[usize]) -> Vec<Block> {
+    let extension = |i: usize| {
+        Path::new(&sources[i].name)
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    let (mut executables, mut rest): (Vec<usize>, Vec<usize>) = files
+        .iter()
+        .partition(|&&i| EXECUTABLE.contains(&extension(i).as_str()));
+    let mut blocks = Vec::new();
+    for (group, filtered) in [(&mut rest, false), (&mut executables, true)] {
+        group.sort_by_cached_key(|&i| (extension(i), sources[i].name.to_lowercase()));
+        let mut block = Vec::new();
+        let mut size = 0u64;
+        for &i in group.iter() {
+            if !block.is_empty() && size + metadata[i].len() > SOLID_BYTES {
+                blocks.push(Block {
+                    files: std::mem::take(&mut block),
+                    executables: filtered,
+                });
+                size = 0;
+            }
+            size += metadata[i].len();
+            block.push(i);
+        }
+        if !block.is_empty() {
+            blocks.push(Block {
+                files: block,
+                executables: filtered,
+            });
+        }
+    }
+    blocks
+}
+
+/// LZMA2 threads for `level`, as many cores as fit in the same memory budget
+/// the .xz encoder keeps to.
+pub fn workers(level: Level) -> usize {
+    arca_xz::workers(level, 0)
+}
+
+fn methods(
+    options: &CreateOptions<'_>,
+    executables: bool,
+    workers: usize,
+) -> Result<Vec<EncoderConfiguration>> {
     let mut methods = Vec::new();
     if let Some(password) = options.password {
         let mut iv = [0; 16];
@@ -185,31 +274,80 @@ fn methods(options: &CreateOptions<'_>) -> Result<Vec<EncoderConfiguration>> {
             .into(),
         );
     }
-    methods.push(match options.level.get() {
-        0 => EncoderMethod::COPY.into(),
-        n => Lzma2Options::from_level(u32::from(n)).into(),
+    let level = u32::from(options.level.get());
+    if level == 0 {
+        methods.push(EncoderMethod::COPY.into());
+        return Ok(methods);
+    }
+    let preset = arca_xz::preset(options.level);
+    methods.push(if workers > 1 {
+        Lzma2Options::from_level_mt(level, workers as u32, arca_xz::block_size(preset)).into()
+    } else {
+        Lzma2Options::from_level(level).into()
     });
+    // The last method is the first applied to the data.
+    if executables {
+        methods.push(EncoderMethod::BCJ_X86_FILTER.into());
+    }
     Ok(methods)
 }
 
-struct Input<'a> {
-    file: fs::File,
-    notify: &'a mut dyn FnMut(Progress<'_>) -> bool,
-    progress: Progress<'a>,
-    cancelled: bool,
+/// What every file of a solid block shares while the block is written: the
+/// caller's progress, and whether reading stopped and why.
+struct Tracker<'n> {
+    notify: &'n mut dyn FnMut(Progress<'_>) -> bool,
+    total: usize,
+    done: usize,
     bytes: u64,
+    cancelled: bool,
+    changed: bool,
 }
 
-impl Read for Input<'_> {
+/// A file of a solid block, opened when the block first reads from it so that
+/// a block of thousands of files never holds thousands of handles.
+struct Lazy<'a, 'n> {
+    path: &'a Path,
+    name: &'a str,
+    expected: u64,
+    file: Option<fs::File>,
+    read: u64,
+    tracker: &'a std::cell::RefCell<Tracker<'n>>,
+}
+
+impl Read for Lazy<'_, '_> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let mut progress = self.progress;
-        progress.bytes_done += self.bytes;
-        if !(self.notify)(progress) {
-            self.cancelled = true;
+        let mut tracker = self.tracker.borrow_mut();
+        let progress = Progress {
+            phase: Phase::Create,
+            entries_done: tracker.done,
+            entries_total: tracker.total,
+            bytes_done: tracker.bytes,
+            name: self.name,
+        };
+        if !(tracker.notify)(progress) {
+            tracker.cancelled = true;
             return Err(io::Error::other("cancelled"));
         }
-        let size = self.file.read(buffer)?;
-        self.bytes += size as u64;
+        if self.file.is_none() {
+            self.file = Some(fs::File::open(self.path)?);
+        }
+        let size = match self.file.as_mut() {
+            Some(file) => file.read(buffer)?,
+            None => 0,
+        };
+        self.read += size as u64;
+        tracker.bytes += size as u64;
+        if size == 0 {
+            if self.read != self.expected {
+                tracker.changed = true;
+                return Err(io::Error::other("7z source changed size during creation"));
+            }
+            self.file = None;
+            tracker.done += 1;
+        } else if self.read > self.expected {
+            tracker.changed = true;
+            return Err(io::Error::other("7z source changed size during creation"));
+        }
         Ok(size)
     }
 }

@@ -195,7 +195,8 @@ fi
 
 echo
 echo "G) 7z: Arca writes, 7-Zip verifies and extracts"
-python3 - <<'PY'
+python3 - "$ARCA" <<'PY'
+import sys
 from pathlib import Path
 root = Path('src7')
 (root / 'nested' / 'empty-dir').mkdir(parents=True)
@@ -203,6 +204,15 @@ root = Path('src7')
 (root / 'first.txt').write_bytes(b'first solid contents\n' * 2000)
 (root / 'second.txt').write_bytes(b'second solid contents\n' * 2000)
 (root / 'nested' / '\u00f1-\U0001f680.txt').write_bytes(bytes(range(256)) * 16)
+# Executables go in a block of their own behind the BCJ filter, so 7-Zip has
+# to undo that filter too; the program is the binary under test, the library
+# made-up x86 calls.
+(root / 'bin').mkdir()
+(root / 'bin' / 'arca.exe').write_bytes(Path(sys.argv[1]).read_bytes())
+calls = bytearray()
+for i in range(40000):
+    calls += b'\xe8' + ((0x1000 + 16 * i - len(calls)) & 0xffffffff).to_bytes(4, 'little') + b'\x48\x89\xc7\x90'
+(root / 'bin' / 'helper.dll').write_bytes(bytes(calls))
 PY
 compare_trees() {
   python3 - "$1" "$2" <<'PY'

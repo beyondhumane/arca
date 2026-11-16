@@ -30,6 +30,9 @@ Local changes:
   encrypted headers without a verifiable nonempty stream.
 - Populate the format's default substream mapping when its optional section is
   absent; reject unused pack streams and inconsistent file/substream counts.
+- Cap the threads of a multithreaded LZMA2 decoder so that one dictionary per
+  thread stays within four times the single-thread memory limit, since the
+  dictionary size comes from the archive.
 
 No new compression or cryptography is implemented. Upstream's existing bounded
 AES work factor (max power 24) and single-entry KDF cache are unchanged. Arca

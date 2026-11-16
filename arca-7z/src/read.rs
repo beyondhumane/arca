@@ -300,6 +300,7 @@ impl<R: Read + Seek> SevenZArchive<R> {
             }
             Ok(())
         };
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get() as u32);
         for (block, &needed) in blocks.iter().enumerate() {
             if !needed {
                 continue;
@@ -316,15 +317,16 @@ impl<R: Read + Seek> SevenZArchive<R> {
             } else {
                 &no_password
             };
-            let result = BlockDecoder::new(1, block, &self.archive, password, &mut self.source)
-                .for_each_entries(&mut |_, reader| {
-                    if let Err(error) = visit(index, reader) {
-                        callback_error = Some(error);
-                        return Ok(false);
-                    }
-                    index += 1;
-                    Ok(true)
-                });
+            let result =
+                BlockDecoder::new(threads, block, &self.archive, password, &mut self.source)
+                    .for_each_entries(&mut |_, reader| {
+                        if let Err(error) = visit(index, reader) {
+                            callback_error = Some(error);
+                            return Ok(false);
+                        }
+                        index += 1;
+                        Ok(true)
+                    });
             if let Some(error) = callback_error {
                 return Err(error);
             }
