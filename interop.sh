@@ -91,6 +91,12 @@ tar czf out/perm.tar.gz perm && rm -rf perm y && mkdir y
 $ARCA extract out/perm.tar.gz -o y >/dev/null 2>&1
 [ -x y/perm/run.sh ] && [ ! -x y/perm/plain.txt ] && [ "$(y/perm/run.sh)" = ok ] &&
   ok "Arca keeps the execute bit of a tar's program" || ko "Arca loses or invents execute bits"
+# And the other way: a tarball Arca makes keeps it for tar to restore.
+rm -rf z && mkdir z && mv y/perm . && $ARCA create out/arca-perm.tar.gz perm >/dev/null 2>&1
+tar xzf out/arca-perm.tar.gz -C z 2>/dev/null
+[ -x z/perm/run.sh ] && [ ! -x z/perm/plain.txt ] &&
+  ok "Arca's .tar.gz keeps the execute bit for tar" || ko "Arca's .tar.gz loses execute bits"
+rm -rf perm z
 7z a -tzip -mx5 out/s7.zip src >/dev/null 2>&1
 rm -rf y; mkdir y; $ARCA extract out/s7.zip -o y >/dev/null 2>&1
 H=$(cd y/src && find . -type f|sort|xargs sha256sum|sha256sum|cut -d' ' -f1)

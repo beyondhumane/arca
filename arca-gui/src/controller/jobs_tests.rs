@@ -555,6 +555,40 @@ fn leaving_for_the_disk_forgets_a_cut_out_of_the_archive() {
     assert!(app.state.cut_names.is_empty());
 }
 
+// The window wrote every .tar and .tar.gz entry dated 1970.
+#[test]
+fn a_tar_made_in_the_window_keeps_the_dates_of_its_files() {
+    let room = Room::new();
+    let source = room.path("dated");
+    std::fs::create_dir_all(&source).unwrap();
+    let file = source.join("a.txt");
+    std::fs::write(&file, b"a").unwrap();
+    let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+    for format in [Format::Tar, Format::TarGz, Format::TarXz] {
+        let archive = room.path(&format!("dated.{}", format.extension()));
+        crate::archive_ops::compress(
+            &archive,
+            std::slice::from_ref(&source),
+            format,
+            arca_core::Codec::Deflate,
+            arca_core::Level::NORMAL,
+            &|_, _, _| true,
+            (None, false),
+        )
+        .unwrap();
+        let (entries, _) =
+            crate::archive_ops::list_entries(&archive, None, &|_, _, _| true).unwrap();
+        let entry = entries.iter().find(|e| e.name.ends_with("a.txt")).unwrap();
+        assert_eq!(entry.mtime, Some(1_600_000_000), "{format:?}");
+    }
+}
+
 // A tar.xz compresses the whole stream, so the saving is the file against
 // what it holds; summing the entries said 0% for every one of them.
 #[test]

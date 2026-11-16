@@ -154,6 +154,21 @@ fn text_field(field: &[u8]) -> String {
     String::from_utf8_lossy(&field[..end]).into_owned()
 }
 
+/// The permissions to record for a file going into a tar: its own on Unix, so
+/// a program stays runnable once extracted, and an ordinary file's elsewhere.
+pub fn mode_of(meta: &std::fs::Metadata) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o777
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        0o644
+    }
+}
+
 /// Whether a 512-byte block is a TAR header with a valid checksum.
 pub fn is_header(block: &[u8]) -> bool {
     let Ok(header) = <&[u8; BLOCK]>::try_from(block) else {

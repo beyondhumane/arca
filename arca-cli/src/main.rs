@@ -417,8 +417,10 @@ fn create(
             };
             let mut w = TarWriter::new(dest);
             for s in &files {
-                let entrada = BufReader::with_capacity(BUF, File::open(&s.path)?);
-                w.add(&s.name, s.size, s.mtime, 0o644, entrada)?;
+                let file = File::open(&s.path)?;
+                let mode = arca_tar::mode_of(&file.metadata()?);
+                let entrada = BufReader::with_capacity(BUF, file);
+                w.add(&s.name, s.size, s.mtime, mode, entrada)?;
             }
             let mut d = w.finish()?;
             d.flush()?;
@@ -429,8 +431,10 @@ fn create(
                 let used = e.workers();
                 let mut w = TarWriter::new(e);
                 for s in &files {
-                    let entrada = BufReader::with_capacity(BUF, File::open(&s.path)?);
-                    w.add(&s.name, s.size, s.mtime, 0o644, entrada)?;
+                    let file = File::open(&s.path)?;
+                    let mode = arca_tar::mode_of(&file.metadata()?);
+                    let entrada = BufReader::with_capacity(BUF, file);
+                    w.add(&s.name, s.size, s.mtime, mode, entrada)?;
                 }
                 w.finish()?.finish()?.flush()?;
                 Ok(used)

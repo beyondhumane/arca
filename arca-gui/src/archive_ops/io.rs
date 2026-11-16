@@ -1256,7 +1256,13 @@ pub(crate) fn compress(
                 }
                 let meta = fs::metadata(path)?;
                 let f = BufReader::with_capacity(BUF, File::open(path)?);
-                w.add(name, meta.len(), 0, 0o644, f)?;
+                w.add(
+                    name,
+                    meta.len(),
+                    mtime_of(&meta),
+                    arca_tar::mode_of(&meta),
+                    f,
+                )?;
                 source_bytes += meta.len();
             }
             w.finish()?;
@@ -1273,7 +1279,13 @@ pub(crate) fn compress(
                     name,
                     notify,
                 );
-                let result = w.add(name, meta.len(), mtime_of(&meta), 0o644, &mut f);
+                let result = w.add(
+                    name,
+                    meta.len(),
+                    mtime_of(&meta),
+                    arca_tar::mode_of(&meta),
+                    &mut f,
+                );
                 f.check(result)?;
                 source_bytes += meta.len();
             }
