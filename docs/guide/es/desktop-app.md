@@ -64,8 +64,8 @@ No se puede crear CBR. Consulta [RAR](rar.md#crear-archivos-rar5).
 
 ## 7z
 
-Crea 7z con Store o LZMA2 y los niveles existentes. La creación y la extracción
-son secuenciales. Las entradas seleccionadas de archivos sólidos comparten un
+Crea 7z con Store o LZMA2 y los niveles existentes, en bloques sólidos y con tantos
+núcleos como quepan en 2 GiB; la extracción descomprime con uno. Las entradas seleccionadas de archivos sólidos comparten un
 decodificador por bloque y pasada, sin reabrirlo por cada entrada. La vista previa,
 abrir, Copiar y Extraer usan la misma ruta de lectura validada. Consulta
 [Cifrado](encryption.md) y los [límites de recursos](architecture.md#7z-boundaries).

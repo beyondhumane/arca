@@ -224,3 +224,45 @@ fn refuses_destination_symlinks_and_preserves_external_files() {
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }
+
+#[test]
+fn a_password_is_checked_on_the_first_encrypted_file_alone() {
+    for (name, password) in [
+        ("encrypted.rar", "arca-test-only"),
+        ("headers.rar", "arca-test-only"),
+        ("encrypted_multivol.part1.rar", "password"),
+    ] {
+        let a = RarArchive::open(&fixture(name), Some(password)).unwrap();
+        a.check_password(password, &|_, _, _| true)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let wrong = RarArchive::open(&fixture(name), Some("wrong"))
+            .and_then(|b| b.check_password("wrong", &|_, _, _| true));
+        assert!(wrong.is_err(), "{name}: a wrong password passed");
+    }
+    let plain = RarArchive::open(&fixture("plain.rar"), None).unwrap();
+    plain.check_password("anything", &|_, _, _| true).unwrap();
+}
+
+// Extracted files get the permissions any new file gets, not those of the
+// owner-only temporary they were written through.
+#[cfg(unix)]
+#[test]
+fn extracted_files_get_the_usual_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let a = RarArchive::open(&fixture("plain.rar"), None).unwrap();
+    a.extract(dir.path(), &[], None, &|_, _, _| true, &|_| {
+        Conflict::Overwrite
+    })
+    .unwrap();
+    let fresh = dir.path().join("fresh");
+    fs::File::create(&fresh).unwrap();
+    let usual = fs::metadata(&fresh).unwrap().permissions().mode() & 0o666;
+    for entry in a.entries().iter().filter(|e| !e.is_dir) {
+        let mode = fs::metadata(dir.path().join(&entry.name))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o666, usual, "{}", entry.name);
+    }
+}

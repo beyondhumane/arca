@@ -45,6 +45,16 @@ pub(crate) fn read_only_suffix(format: Option<Format>) -> String {
     }
 }
 
+/// Whether a format compresses the archive as one stream rather than entry by
+/// entry, so that no entry has a compressed size of its own and only the
+/// file's size says how much was saved.
+pub(crate) fn whole_stream(format: Format) -> bool {
+    matches!(
+        format.container(),
+        arca_core::Container::Tar | arca_core::Container::TarGz | arca_core::Container::TarXz
+    )
+}
+
 pub(crate) fn saved_of(r: &Row) -> f64 {
     if r.size == 0 {
         0.0
@@ -86,7 +96,7 @@ pub(crate) fn civil(t: i64) -> String {
 }
 
 pub(crate) fn human(n: u64) -> String {
-    const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    const U: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut v = n as f64;
     let mut i = 0;
     while v >= 1024.0 && i < U.len() - 1 {

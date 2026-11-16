@@ -68,9 +68,9 @@ impl AppController {
         self.cancel_preview();
     }
 
-    pub(crate) fn pane_rows(&self, pane: usize) -> Vec<Row> {
+    pub(crate) fn pane_rows(&self, pane: usize) -> std::rc::Rc<Vec<Row>> {
         let Some(state) = self.state.browser.panes.get(pane) else {
-            return Vec::new();
+            return Default::default();
         };
         if pane == self.state.browser.active {
             self.visible_rows()
@@ -417,8 +417,9 @@ mod tests {
             }
             let folder = c
                 .visible_rows()
-                .into_iter()
+                .iter()
                 .find(|r| r.path == "a/")
+                .cloned()
                 .unwrap();
             c.state.active_pane_mut().checked[1] = true;
             assert!(!c.pane_is_checked(0, &folder));
@@ -492,8 +493,9 @@ mod tests {
         assert!(c.selected_names().is_empty());
         let middle = c
             .visible_rows()
-            .into_iter()
+            .iter()
             .find(|r| r.path == "a/b/middle.txt")
+            .cloned()
             .unwrap();
         c.set_checked(&middle, true);
         c.set_pane_filter(2, "middle".into());
@@ -582,8 +584,9 @@ mod tests {
         let mut c = controller();
         let root = c
             .visible_rows()
-            .into_iter()
+            .iter()
             .find(|r| r.path == "root.txt")
+            .cloned()
             .unwrap();
         c.set_checked(&root, true);
         c.set_pane_filter(0, "absent".into());
@@ -636,5 +639,132 @@ mod tests {
         assert_eq!(c.state.active_pane().cursor, Some(2));
         assert_eq!(c.visible_rows()[2].path, "a/b/middle.txt");
         assert_eq!(c.opened_descendant(usize::MAX), None);
+    }
+
+    #[test]
+    fn rows_are_built_once_until_something_they_show_changes() {
+        let mut c = controller();
+        let first = c.visible_rows();
+        assert!(std::rc::Rc::ptr_eq(&first, &c.visible_rows()));
+
+        c.state.active_pane_mut().filter = "deep".into();
+        let filtered = c.visible_rows();
+        assert!(!std::rc::Rc::ptr_eq(&first, &filtered));
+        c.state.active_pane_mut().filter = "  DEEP ".into();
+        assert!(std::rc::Rc::ptr_eq(&filtered, &c.visible_rows()));
+        c.state.active_pane_mut().filter.clear();
+        assert!(std::rc::Rc::ptr_eq(&first, &c.visible_rows()));
+
+        c.state.active_pane_mut().order = (SortColumn::Name, false);
+        assert!(!std::rc::Rc::ptr_eq(&first, &c.visible_rows()));
+        c.state.active_pane_mut().order = (SortColumn::Name, true);
+
+        c.state.entries[0].name = "renamed.txt".into();
+        c.entries_changed();
+        let after = c.visible_rows();
+        assert!(!std::rc::Rc::ptr_eq(&first, &after));
+        assert!(after.iter().any(|r| r.path == "renamed.txt"));
+    }
+
+    #[test]
+    fn reading_names_under_another_code_page_shows_the_new_names() {
+        let mut c = controller();
+        c.state.entries[0].utf8 = false;
+        c.state.entries[0].raw_name = b"caf\x82.txt".to_vec();
+        let before = c.visible_rows();
+        assert!(before.iter().any(|r| r.path == "root.txt"));
+        c.reread_names(arca_zip::pages::Page::default());
+        let after = c.visible_rows();
+        assert!(!after.iter().any(|r| r.path == "root.txt"));
+        assert!(after.iter().any(|r| r.path.starts_with("caf")));
+    }
+
+    #[test]
+    fn a_folder_counts_as_picked_only_when_everything_under_it_is() {
+        let mut c = controller();
+        let folder = c
+            .visible_rows()
+            .iter()
+            .find(|r| r.path == "a/")
+            .cloned()
+            .unwrap();
+        assert!(!c.is_checked(&folder));
+        for (i, e) in c.state.entries.clone().iter().enumerate() {
+            c.state.active_pane_mut().checked[i] = e.name.starts_with("a/");
+        }
+        assert!(c.is_checked(&folder));
+        c.state.active_pane_mut().checked[2] = false;
+        assert!(!c.is_checked(&folder));
+        let empty = Row {
+            path: "nothing/".into(),
+            entry: None,
+            ..folder
+        };
+        assert!(!c.is_checked(&empty));
+    }
+
+    // cargo test -p arca-gui --release rows_of_a_large_archive -- --ignored --nocapture
+    #[test]
+    #[ignore = "timing, run by hand"]
+    fn rows_of_a_large_archive() {
+        let mut c = AppController::new(Settings::default());
+        c.state.entries = (0..100_000)
+            .map(|i| entry(&format!("dir{}/sub{}/file{i}.txt", i % 25, i % 7)))
+            .collect();
+        c.state.active_pane_mut().checked = vec![false; c.state.entries.len()];
+        c.go_to("dir3/".into());
+        c.entries_changed();
+        let started = std::time::Instant::now();
+        let built = c.visible_rows();
+        for row in built.iter() {
+            std::hint::black_box(c.is_checked(row));
+        }
+        let first = started.elapsed();
+        let started = std::time::Instant::now();
+        for _ in 0..20 {
+            let rows = c.build_rows("dir3/", "", (SortColumn::Name, true), false, true);
+            for row in rows.iter().filter(|r| r.is_dir) {
+                std::hint::black_box(crate::tree::entries_under(&c.state.entries, &row.path));
+            }
+        }
+        let old = started.elapsed() / 20;
+        let started = std::time::Instant::now();
+        for _ in 0..1000 {
+            let rows = c.visible_rows();
+            assert!(std::rc::Rc::ptr_eq(&rows, &built));
+            for row in rows.iter() {
+                std::hint::black_box(c.is_checked(row));
+            }
+        }
+        let again = started.elapsed() / 1000;
+        println!(
+            "{} rows: built once in {first:?}, then {again:?} a frame; before, {old:?} each time",
+            built.len()
+        );
+    }
+
+    // 7z names an empty folder without the slash ZIP gives it, and its row
+    // still has to be one that can be ticked.
+    #[test]
+    fn an_empty_folder_named_without_a_slash_can_be_picked() {
+        let mut c = controller();
+        let mut empty = entry("empty");
+        empty.is_dir = true;
+        c.state.entries.push(empty);
+        c.entries_changed();
+        c.state.active_pane_mut().checked = vec![false; c.state.entries.len()];
+        let row = c
+            .visible_rows()
+            .iter()
+            .find(|r| r.path == "empty/")
+            .cloned()
+            .expect("the empty folder has a row");
+        assert!(!c.is_checked(&row));
+        c.dispatch(AppAction::SetChecked {
+            row: row.clone(),
+            value: true,
+        });
+        assert!(c.is_checked(&row));
+        assert!(*c.state.active_pane().checked.last().unwrap());
     }
 }

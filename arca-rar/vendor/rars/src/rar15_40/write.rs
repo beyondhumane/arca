@@ -1,0 +1,3829 @@
+use super::*;
+use crate::codec::rar13::{
+    unpack15_encode_with_options_and_progress, EncodeOptions as Rar15EncodeOptions, Unpack15Encoder,
+};
+use crate::codec::rar20::{
+    unpack20_encode_auto_with_options_and_progress, EncodeOptions as Rar20EncodeOptions,
+    Unpack20Encoder,
+};
+use crate::codec::rar29::{
+    unpack29_encode_literals, unpack29_encode_literals_with_options,
+    unpack29_encode_literals_with_options_and_progress, ChainEngine,
+    EncodeOptions as Rar29EncodeOptions, Unpack29Encoder,
+};
+use crate::crc32::Crc32;
+pub use crate::filter::{FilterKind, FilterPolicy, FilterSpec};
+pub use crate::streaming::EntrySource;
+use crate::streaming::WriterResources;
+use crate::write_plan::{MemberCoding, PlanShape, WriterOption};
+use crate::write_progress::{ProgressReporter, WorkTracker};
+use crate::write_stream::{MemberBytes, MemberPayload};
+use crate::FeatureSet;
+use crate::{WriteOperation, WriteProgress, WriteProgressEvent};
+use std::io::Write;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WriterOptions {
+    pub target: ArchiveVersion,
+    pub features: FeatureSet,
+    pub compression_level: Option<u8>,
+    pub dictionary_size: Option<usize>,
+    /// Which engine compresses a member. Only the RAR 2.9 family has more than
+    /// one, so the other targets ignore anything but the default.
+    pub method: Rar29Method,
+    /// Retained NewSub comment DOS timestamp and host ID.
+    pub(crate) archive_comment_metadata: Option<(u32, u8)>,
+}
+
+/// Which compression engine the RAR 2.9 family writer uses for a member.
+///
+/// PPMd is an alternative to LZ, not a filter, even though the writer used to
+/// carry it as one. Keeping the two apart is what lets a filter be chosen
+/// without also deciding the engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Rar29Method {
+    /// Let the content decide. Text-shaped members are measured against PPMd;
+    /// anything else goes straight to LZ, so a binary member never pays for a
+    /// PPMd encode it was always going to lose. Compression levels 1 to 4 skip
+    /// the trial entirely, since those settings are asking for speed.
+    #[default]
+    Auto,
+    Lz,
+    Ppmd,
+}
+
+impl WriterOptions {
+    pub const fn new(target: ArchiveVersion, features: FeatureSet) -> Self {
+        Self {
+            target,
+            features,
+            compression_level: None,
+            dictionary_size: None,
+            method: Rar29Method::Auto,
+            archive_comment_metadata: None,
+        }
+    }
+
+    pub const fn with_method(mut self, method: Rar29Method) -> Self {
+        self.method = method;
+        self
+    }
+
+    pub const fn with_compression_level(mut self, level: u8) -> Self {
+        self.compression_level = Some(level);
+        self
+    }
+
+    pub const fn with_dictionary_size(mut self, size: usize) -> Self {
+        self.dictionary_size = Some(size);
+        self
+    }
+}
+
+impl Default for WriterOptions {
+    fn default() -> Self {
+        Self {
+            target: ArchiveVersion::Rar15,
+            features: FeatureSet::store_only(),
+            compression_level: None,
+            dictionary_size: None,
+            method: Rar29Method::Auto,
+            archive_comment_metadata: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredEntry<'a> {
+    pub name: &'a [u8],
+    pub data: &'a [u8],
+    pub file_time: u32,
+    pub file_attr: u32,
+    pub host_os: u8,
+    pub password: Option<&'a [u8]>,
+    pub file_comment: Option<&'a [u8]>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileEntry<'a> {
+    pub name: &'a [u8],
+    pub data: &'a [u8],
+    pub file_time: u32,
+    pub file_attr: u32,
+    pub host_os: u8,
+    pub password: Option<&'a [u8]>,
+    pub file_comment: Option<&'a [u8]>,
+}
+
+/// One member of an archive written a member at a time.
+///
+/// The bytes are opened when the member is coded and dropped once it is
+/// written, so an archive of many files never holds more than the members
+/// being worked on. A stored member is copied straight from its source and
+/// never lands on the heap at all.
+#[derive(Debug, Clone)]
+pub struct StreamingEntry {
+    pub name: Vec<u8>,
+    pub source: EntrySource,
+    pub file_time: u32,
+    pub file_attr: u32,
+    pub host_os: u8,
+    pub password: Option<Vec<u8>>,
+    pub file_comment: Option<Vec<u8>>,
+}
+
+impl StreamingEntry {
+    pub fn new(name: impl Into<Vec<u8>>, source: EntrySource) -> Self {
+        Self {
+            name: name.into(),
+            source,
+            file_time: 0,
+            file_attr: 0,
+            host_os: 3,
+            password: None,
+            file_comment: None,
+        }
+    }
+
+    pub fn with_file_time(mut self, file_time: u32) -> Self {
+        self.file_time = file_time;
+        self
+    }
+
+    pub fn with_file_attr(mut self, file_attr: u32) -> Self {
+        self.file_attr = file_attr;
+        self
+    }
+
+    pub fn with_host_os(mut self, host_os: u8) -> Self {
+        self.host_os = host_os;
+        self
+    }
+
+    pub fn with_password(mut self, password: impl Into<Vec<u8>>) -> Self {
+        self.password = Some(password.into());
+        self
+    }
+
+    pub fn with_file_comment(mut self, comment: impl Into<Vec<u8>>) -> Self {
+        self.file_comment = Some(comment.into());
+        self
+    }
+}
+
+#[cfg(any(test, feature = "encryption"))]
+fn checked_align16(value: usize, message: &'static str) -> Result<usize> {
+    value
+        .checked_add(15)
+        .map(|size| size & !15)
+        .ok_or(Error::InvalidArgument(message))
+}
+
+const AUTO_RGB_WIDTHS: [usize; 4] = [24, 48, 96, 192];
+const MIN_STORE_FALLBACK_SIZE: usize = 1024;
+const RAR29_TEXT_SAMPLE_SIZE: usize = 8192;
+
+/// How long a run of NUL has to be before the text screen reads it as padding
+/// and stops counting it either way.
+///
+/// Sixteen is well past what falls out of text (a run of NUL in a source file
+/// is already unusual) and well short of the 512 byte blocks tar pads to.
+/// Measured across 400 binaries over 200 KB in `/usr/bin` and
+/// `/usr/lib/x86_64-linux-gnu`, 8, 16 and 32 all give the same answer, so the
+/// exact number is not load-bearing.
+const RAR29_NUL_RUN_IS_PADDING: usize = 16;
+
+/// The level an absent `--level` means for RAR 2.0, matching the method byte
+/// `compression_method_for_level` writes for it.
+const RAR20_DEFAULT_LEVEL: u8 = 3;
+const RAR29_AUDIO_SAMPLE_SIZE: usize = 8192;
+/// How much data one RAR 2.9 LZ block covers.
+///
+/// Every block carries its own Huffman tables, so this is the distance over
+/// which the tables have to fit the data. A megabyte was far too long a lease:
+/// a binary's code and its data want different tables, and one set fitted to
+/// both is worse than either. Measured on `--level 5`, packed bytes:
+///
+/// ```text
+/// block         16K      32K      64K     128K       1M
+/// libc       686400   683942   684278   704689   797692
+/// python     632452   628926   627862   648835   738624
+/// mixed      136376   135530   135264   146831   149372
+/// lorem       16186    16186    16186    16186    16186
+/// ```
+///
+/// 64K is the best or within a rounding error of it on everything measured,
+/// and text does not care either way. The curve turns back up below 32K, where
+/// re-sending the tables starts to cost more than fitting them gains.
+const RAR29_LZ_BLOCK_SIZE: usize = 64 * 1024;
+
+/// The largest dictionary the format encodes, used when a memory estimate
+/// cannot resolve the real one. It has to stay an upper bound, so it does not
+/// follow the block size.
+const RAR29_MAX_DICTIONARY_SIZE: usize = 4 * 1024 * 1024;
+#[cfg(feature = "encryption")]
+const RAR15_ALIGN_OVERFLOW: &str = "RAR 1.5 block size overflows usize";
+
+pub fn write_stored_archive(
+    entries: &[StoredEntry<'_>],
+    options: WriterOptions,
+) -> Result<Vec<u8>> {
+    write_stored_archive_with_comment(entries, options, None)
+}
+
+pub fn write_stored_archive_with_comment(
+    entries: &[StoredEntry<'_>],
+    options: WriterOptions,
+    archive_comment: Option<&[u8]>,
+) -> Result<Vec<u8>> {
+    let members: Vec<_> = entries.iter().map(Member::from_stored).collect();
+    collect_archive(
+        &members,
+        options,
+        MemberCoding::Stored,
+        archive_comment,
+        None,
+    )
+}
+
+pub(crate) struct RetainedMemberMetadata<'a> {
+    pub(crate) unicode_name: Option<&'a [u8]>,
+    pub(crate) unpack_version: Option<u8>,
+    pub(crate) extended_times: Option<&'a [u8]>,
+    pub(crate) is_directory: bool,
+    pub(crate) is_symlink: bool,
+}
+
+pub(crate) struct RetainedFileEntry<'a> {
+    pub(crate) file: FileEntry<'a>,
+    pub(crate) source: Option<&'a EntrySource>,
+    pub(crate) metadata: RetainedMemberMetadata<'a>,
+}
+
+/// Builder path for retained native metadata and entry kinds. Existing direct
+/// entry structs keep their API.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_archive_with_retained_metadata(
+    entries: &[RetainedFileEntry<'_>],
+    options: WriterOptions,
+    coding: MemberCoding,
+    archive_comment: Option<&[u8]>,
+    resources: &WriterResources,
+    progress: Option<&dyn WriteProgress>,
+    header_password: Option<&[u8]>,
+    archive_comment_password: Option<&[u8]>,
+    output: &mut dyn Write,
+) -> Result<()> {
+    // Builder validates retained records at their setters and constructs each
+    // file with its metadata, so neither record validity nor array length can
+    // change at this private handoff.
+    let members: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            let mut member = Member::from_file(&entry.file);
+            if let Some(source) = entry.source {
+                member.bytes = MemberBytes::NamedSource(source, entry.file.name);
+            }
+            member.unicode_name = entry.metadata.unicode_name;
+            member.unpack_version = entry.metadata.unpack_version;
+            member.extended_times = entry.metadata.extended_times;
+            member.is_directory = entry.metadata.is_directory;
+            member.is_symlink = entry.metadata.is_symlink;
+            member
+        })
+        .collect();
+    write_archive_to(
+        &members,
+        options,
+        coding,
+        archive_comment,
+        resources,
+        progress,
+        output,
+        header_password,
+        archive_comment_password,
+    )
+}
+
+pub fn write_compressed_archive(
+    entries: &[FileEntry<'_>],
+    options: WriterOptions,
+) -> Result<Vec<u8>> {
+    write_compressed_archive_with_comment(entries, options, None)
+}
+
+pub fn write_compressed_archive_with_comment(
+    entries: &[FileEntry<'_>],
+    options: WriterOptions,
+    archive_comment: Option<&[u8]>,
+) -> Result<Vec<u8>> {
+    write_compressed_archive_with_comment_and_progress(entries, options, archive_comment, None)
+}
+
+pub fn write_compressed_archive_with_comment_and_progress(
+    entries: &[FileEntry<'_>],
+    options: WriterOptions,
+    archive_comment: Option<&[u8]>,
+    progress: Option<&dyn WriteProgress>,
+) -> Result<Vec<u8>> {
+    let members: Vec<_> = entries.iter().map(Member::from_file).collect();
+    collect_archive(
+        &members,
+        options,
+        MemberCoding::Compressed,
+        archive_comment,
+        progress,
+    )
+}
+
+pub fn write_rar29_compressed_archive_with_filter_policy(
+    entries: &[FileEntry<'_>],
+    options: WriterOptions,
+    policy: FilterPolicy,
+) -> Result<Vec<u8>> {
+    write_rar29_compressed_archive_with_filter_policy_and_progress(entries, options, policy, None)
+}
+
+pub fn write_rar29_compressed_archive_with_filter_policy_and_progress(
+    entries: &[FileEntry<'_>],
+    options: WriterOptions,
+    policy: FilterPolicy,
+    progress: Option<&dyn WriteProgress>,
+) -> Result<Vec<u8>> {
+    let members: Vec<_> = entries.iter().map(Member::from_file).collect();
+    collect_archive(
+        &members,
+        options,
+        MemberCoding::Filtered(policy),
+        None,
+        progress,
+    )
+}
+
+/// Writes an archive straight to `output`, holding only the members being
+/// compressed rather than every input at once.
+///
+/// `resources` bounds how many members are in flight, which is what keeps the
+/// peak flat across an archive of many files. One member still has to fit:
+/// these codecs compress a member as a unit, so a member larger than the budget
+/// is compressed on its own rather than refused.
+pub fn write_streaming_archive_to(
+    entries: &[StreamingEntry],
+    options: WriterOptions,
+    coding: MemberCoding,
+    archive_comment: Option<&[u8]>,
+    resources: &WriterResources,
+    progress: Option<&dyn WriteProgress>,
+    output: &mut dyn Write,
+) -> Result<()> {
+    let members: Vec<_> = entries.iter().map(Member::from_streaming).collect();
+    write_archive_to(
+        &members,
+        options,
+        coding,
+        archive_comment,
+        resources,
+        progress,
+        output,
+        None,
+        None,
+    )
+}
+
+/// Runs the streaming writer into a buffer, for the callers that want the
+/// archive as bytes. The budget still applies, so a many-file archive holds one
+/// window of members rather than all of them.
+fn collect_archive(
+    members: &[Member<'_>],
+    options: WriterOptions,
+    coding: MemberCoding,
+    archive_comment: Option<&[u8]>,
+    progress: Option<&dyn WriteProgress>,
+) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    write_archive_to(
+        members,
+        options,
+        coding,
+        archive_comment,
+        &WriterResources::default(),
+        progress,
+        &mut out,
+        None,
+        None,
+    )?;
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_archive_to(
+    members: &[Member<'_>],
+    mut options: WriterOptions,
+    coding: MemberCoding,
+    archive_comment: Option<&[u8]>,
+    resources: &WriterResources,
+    progress: Option<&dyn WriteProgress>,
+    output: &mut dyn Write,
+    explicit_header_password: Option<&[u8]>,
+    archive_comment_password: Option<&[u8]>,
+) -> Result<()> {
+    if explicit_header_password.is_some()
+        || archive_comment_password.is_some()
+        || members.iter().any(|member| member.password.is_some())
+    {
+        crate::crypto::require_encryption()?;
+    }
+
+    if resources.max_preparation_bytes().is_some() || resources.max_memory_bytes().is_some() {
+        return Err(Error::UnsupportedFamilyFeature {
+            family: options.target.family(),
+            feature: if resources.max_memory_bytes().is_some() {
+                "aggregate managed-memory limit"
+            } else {
+                "preparation memory quota"
+            },
+        });
+    }
+
+    if let Some(password) = archive_comment_password {
+        if password.is_empty()
+            || archive_comment.is_none()
+            || !matches!(
+                options.target,
+                ArchiveVersion::Rar30 | ArchiveVersion::Rar40
+            )
+        {
+            return Err(Error::InvalidArgument(
+                "encrypted legacy archive comments require a password and RAR3/4 CMT output",
+            ));
+        }
+    }
+    let control =
+        crate::write_progress::ResourceProgress::new(resources, progress.map(ProgressReporter));
+    let reporting = &control as &dyn WriteProgress;
+    let progress = Some(reporting);
+    crate::write_progress::check_cancelled(progress.map(ProgressReporter))?;
+    let mut output = crate::write_progress::CancellableIo {
+        inner: output,
+        progress: progress.map(ProgressReporter),
+    };
+    let output = &mut output as &mut dyn Write;
+    let has_file_comment = members.iter().any(|member| member.file_comment.is_some());
+    if has_file_comment && options.features.header_encryption {
+        return Err(Error::UnsupportedWriterOption {
+            target: options.target,
+            option: WriterOption::FileComment,
+            because: Some("embedded legacy file comments with header encryption are incompatible with reference readers"),
+        });
+    }
+    validate_plan(
+        options,
+        coding.shape(),
+        archive_comment.is_some(),
+        has_file_comment,
+    )?;
+    if let MemberCoding::Filtered(policy) = &coding {
+        validate_rar29_filter_policy(policy, options.method)?;
+    }
+    let header_password = if options.features.header_encryption {
+        validate_header_encrypted_archive_options(
+            options.target,
+            explicit_header_password.is_some()
+                || members.iter().any(|member| member.password.is_some()),
+        )?;
+        Some(if let Some(password) = explicit_header_password {
+            header_encryption_password(
+                std::iter::once(Some(password)).chain(
+                    members
+                        .iter()
+                        .filter_map(|member| member.password)
+                        .map(Some),
+                ),
+            )?
+        } else {
+            header_encryption_password(members.iter().map(|member| member.password))?
+        })
+    } else {
+        None
+    };
+
+    let mut total_bytes = 0u64;
+    let mut largest_member = 0u64;
+    for member in members {
+        let unpacked = member.unpacked_size().map_err(|error| {
+            crate::write_stream::member_error(error, member.name, "reading source")
+        })? as u64;
+        total_bytes = total_bytes.saturating_add(unpacked);
+        largest_member = largest_member.max(unpacked);
+    }
+    if options.dictionary_size.is_none() {
+        // A solid run is one stream, so its window has to reach back across the
+        // members it already coded; independent members only ever look inside
+        // themselves. Validation has already rejected solid stored coding.
+        let reach = if options.features.solid {
+            total_bytes
+        } else {
+            largest_member
+        };
+        options.dictionary_size = Some(fitted_dictionary_size(options.target, reach));
+    }
+    // RAR 2.0 walks a non-solid member twice, once to pick a method and once to
+    // encode it, so its progress total counts every byte twice.
+    let total_work = if options.target == ArchiveVersion::Rar20
+        && !options.features.solid
+        && coding.compresses()
+    {
+        total_bytes.saturating_mul(2)
+    } else {
+        total_bytes
+    };
+    report_compression_operation(reporting, true, total_work, members.len());
+    let work = WorkTracker::new(
+        Some(ProgressReporter(reporting)),
+        WriteOperation::Compression,
+        total_work,
+    );
+
+    let result = write_members_to(
+        members,
+        options,
+        &coding,
+        archive_comment,
+        header_password,
+        archive_comment_password,
+        resources,
+        &work,
+        output,
+    );
+    result?;
+    if !work.finish() {
+        return Err(Error::Cancelled);
+    }
+    report_compression_operation(reporting, false, total_work, members.len());
+    work.check()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_members_to(
+    members: &[Member<'_>],
+    options: WriterOptions,
+    coding: &MemberCoding,
+    archive_comment: Option<&[u8]>,
+    header_password: Option<&[u8]>,
+    archive_comment_password: Option<&[u8]>,
+    resources: &WriterResources,
+    progress: &WorkTracker<'_>,
+    output: &mut dyn Write,
+) -> Result<()> {
+    output.write_all(RAR15_SIGNATURE)?;
+    let mut main_flags = 0;
+    if options.features.solid {
+        main_flags |= MHD_SOLID;
+    }
+    if header_password.is_some() {
+        main_flags |= MHD_PASSWORD;
+    }
+    if archive_comment.is_some() && uses_old_style_archive_comment(options.target) {
+        main_flags |= MHD_COMMENT;
+    }
+    let mut head = Vec::new();
+    write_main_header(&mut head, main_flags);
+    output.write_all(&head)?;
+    write_archive_comment(
+        output,
+        archive_comment,
+        options,
+        header_password,
+        archive_comment_password,
+    )?;
+
+    // Solid members share one encoder, so they are coded in order. Independent
+    // ones are coded a window at a time and written as each window lands.
+    if options.features.solid {
+        let mut solid_encoder = Some(SolidEncoder::for_target(options)?);
+        let mut solid_run_has_member = false;
+        for member in members {
+            let encoded = encode_member(
+                member,
+                options,
+                coding,
+                &mut solid_encoder,
+                resources,
+                progress,
+            )
+            .map_err(|error| crate::write_stream::member_error(error, member.name, "preparing"))?;
+            let solid_continuation = encoded.method != 0x30 && solid_run_has_member;
+            // Storing a member rebuilds the encoder, so the chain ends there.
+            // An empty compressed member leaves the chain exactly as it was:
+            // it feeds the encoder nothing, and readers pass over an empty
+            // payload without advancing their decoder. Counting one as a
+            // member left the next one flagged as continuing a chain that had
+            // been broken by a stored member two places back.
+            if member.is_directory {
+                // Directory headers do not participate in the solid stream.
+            } else if encoded.method == 0x30 {
+                solid_run_has_member = false;
+            } else if encoded.unpacked_size != 0 {
+                solid_run_has_member = true;
+            }
+            write_member(
+                output,
+                member,
+                encoded,
+                options,
+                solid_continuation,
+                header_password,
+                progress.reporter(),
+            )
+            .map_err(|error| crate::write_stream::member_error(error, member.name, "writing"))?;
+            member.bytes.release();
+        }
+    } else {
+        // Scoped rewrite sources retain plaintext until emission; their disk
+        // quota may admit fewer inputs than the CPU pool can prepare at once.
+        let window = members
+            .iter()
+            .filter_map(|member| member.bytes.source())
+            .map(EntrySource::max_preparation_window)
+            .fold(crate::parallel::default_window(), usize::min);
+        crate::parallel::map_slice_windowed(
+            members,
+            window,
+            |member| {
+                encode_member(member, options, coding, &mut None, resources, progress).map_err(
+                    |error| crate::write_stream::member_error(error, member.name, "preparing"),
+                )
+            },
+            |member, encoded| {
+                write_member(
+                    output,
+                    member,
+                    encoded,
+                    options,
+                    false,
+                    header_password,
+                    progress.reporter(),
+                )
+                .map_err(|error| {
+                    crate::write_stream::member_error(error, member.name, "writing")
+                })?;
+                member.bytes.release();
+                Ok(())
+            },
+        )?;
+    }
+    if let Some(password) = header_password {
+        write_encrypted_end_block(output, password)?;
+    }
+    Ok(())
+}
+
+/// Encodes one member, choosing an engine and a filter independently.
+///
+/// The two are separate questions: which engine compresses this content best,
+/// and which transform makes it easier to compress. They used to be one enum,
+/// which meant some combinations simply could not be asked for.
+fn encode_rar29_policy_filtered_payload(
+    data: &[u8],
+    policy: &FilterPolicy,
+    method: Rar29Method,
+    options: Rar29EncodeOptions,
+    lz_method: u8,
+    ppmd_trial: bool,
+    progress: Option<&WorkTracker<'_>>,
+) -> Result<EncodedPayload> {
+    // An empty member is stored whatever was asked for. A filter over it is a
+    // 0..0 range, which the codec refuses, so an archive holding one empty file
+    // used to compress every other member and then fail at the last step. Only
+    // the search path guarded this; every explicit policy walked into it.
+    if lz_method == 0x30 || data.is_empty() {
+        return Ok(EncodedPayload {
+            data: data.to_vec(),
+            method: 0x30,
+        });
+    }
+    // The method byte carries the level that was asked for, not which engine
+    // answered. RAR 2.9 signals PPMd inside the stream (our own decoder takes
+    // no method byte at all), and WinRAR 3.00 stamps 0x34 on the PPMd archive
+    // it writes at -m4. Stamping 0x35 on every PPMd payload only looked right
+    // while the trial ran at level 5, and made a level 3 archive claim to be a
+    // level 5 one as soon as it ran anywhere else.
+    let ppmd = |data: &[u8]| -> Result<EncodedPayload> {
+        Ok(EncodedPayload {
+            data: with_codec_progress(progress, |report| {
+                crate::codec::rar29::unpack29_encode_ppmd_with_progress(
+                    data,
+                    true,
+                    None,
+                    options.max_match_distance,
+                    report,
+                )
+            })?,
+            method: lz_method,
+        })
+    };
+    match (method, policy) {
+        (Rar29Method::Ppmd, FilterPolicy::None) => ppmd(data),
+        (Rar29Method::Ppmd, FilterPolicy::Explicit(filter)) => Ok(EncodedPayload {
+            data: with_codec_progress(progress, |report| {
+                crate::codec::rar29::unpack29_encode_ppmd_with_progress(
+                    data,
+                    true,
+                    Some(filter.clone()),
+                    options.max_match_distance,
+                    report,
+                )
+            })?,
+            method: lz_method,
+        }),
+        // Filtered writes are rejected before encoding; plain compressed writes
+        // use FilterPolicy::None when PPMd is forced.
+        (Rar29Method::Ppmd, FilterPolicy::Auto) => unreachable!(),
+        (Rar29Method::Lz, FilterPolicy::None) => {
+            encode_rar29_lz_member(data, options, lz_method, progress)
+        }
+        (Rar29Method::Lz, FilterPolicy::Auto) => encode_rar29_auto_filtered_member_with_progress(
+            data, options, lz_method, false, progress,
+        ),
+        (Rar29Method::Lz, FilterPolicy::Explicit(filter)) => Ok(EncodedPayload {
+            data: with_codec_progress(progress, |report| {
+                Unpack29Encoder::with_options(options).encode_member_with_filters_and_progress(
+                    data,
+                    std::slice::from_ref(filter),
+                    Some(report),
+                )
+            })?,
+            method: lz_method,
+        }),
+        (Rar29Method::Auto, FilterPolicy::Auto) => encode_rar29_auto_filtered_member_with_progress(
+            data, options, lz_method, ppmd_trial, progress,
+        ),
+        (Rar29Method::Auto, policy) => {
+            let mut best = match policy {
+                FilterPolicy::Explicit(filter) => EncodedPayload {
+                    data: with_codec_progress(progress, |report| {
+                        Unpack29Encoder::with_options(options)
+                            .encode_member_with_filters_and_progress(
+                                data,
+                                std::slice::from_ref(filter),
+                                Some(report),
+                            )
+                    })?,
+                    method: lz_method,
+                },
+                _ => encode_rar29_lz_member(data, options, lz_method, progress)?,
+            };
+            // Gated on the content, so a binary member never pays for a PPMd
+            // encode it was always going to lose.
+            if ppmd_trial && is_text_ppmd_candidate(data) {
+                let candidate = ppmd(data)?;
+                if candidate.data.len() < best.data.len() {
+                    best = candidate;
+                }
+            }
+            Ok(best)
+        }
+    }
+}
+
+/// Whether this level is willing to encode the member twice to choose an engine.
+///
+/// Takes the resolved level, not the option. Reading `Option<u8>` meant an
+/// absent level and `--level 3` disagreed, though both write method 0x33: the
+/// default paid for the trial and the level that names the same number did not,
+/// so the two produced archives 24% apart on the same 4 MiB of text.
+///
+/// Levels 1 and 2 are the ones asking for speed and still skip it. Level 3 is
+/// the default and where most archives are written, and it is worth about a
+/// fifth of the size on text for roughly twice the encode. WinRAR turns PPMd on
+/// one level later, at m4: on the bench text member WinRAR 3.00 packs 657,294
+/// bytes at m3 and 585,357 at m4, where we now write 540,517 at both.
+fn ppmd_trial_pays(level: u8) -> bool {
+    level >= 3
+}
+
+fn validate_rar29_filter_policy(policy: &FilterPolicy, method: Rar29Method) -> Result<()> {
+    // Searching for a filter means measuring candidates against each other,
+    // and the search only knows how to measure them through LZ.
+    if matches!(policy, FilterPolicy::Auto) && method == Rar29Method::Ppmd {
+        return Err(Error::InvalidArgument(
+            "RAR 2.9 cannot search for a filter while PPMd is forced",
+        ));
+    }
+    let filter = match policy {
+        FilterPolicy::Explicit(filter) => filter,
+        FilterPolicy::None | FilterPolicy::Auto => return Ok(()),
+    };
+    match filter.kind {
+        FilterKind::Delta { channels } => {
+            if channels == 0 || channels > 32 {
+                return Err(Error::InvalidArgument(
+                    "RAR 2.9 DELTA filter channel count is invalid",
+                ));
+            }
+        }
+        FilterKind::Audio { channels } => {
+            if channels == 0 || channels > 32 {
+                return Err(Error::InvalidArgument(
+                    "RAR 2.9 AUDIO filter channel count is invalid",
+                ));
+            }
+        }
+        FilterKind::Rgb { width, pos_r } => {
+            if width == 0 || !width.is_multiple_of(3) || pos_r > 2 {
+                return Err(Error::InvalidArgument(
+                    "RAR 2.9 RGB filter parameters are invalid",
+                ));
+            }
+        }
+        FilterKind::E8 | FilterKind::E8E9 | FilterKind::Itanium => {}
+        // Refused here rather than in the codec, so nothing is compressed
+        // before the caller is told the filter cannot be written.
+        FilterKind::Arm => {
+            return Err(Error::UnsupportedFeature {
+                version: ArchiveVersion::Rar29,
+                feature: "ARM filter",
+            })
+        }
+    }
+    Ok(())
+}
+
+fn encode_rar29_lz_member(
+    data: &[u8],
+    options: Rar29EncodeOptions,
+    method: u8,
+    progress: Option<&WorkTracker<'_>>,
+) -> Result<EncodedPayload> {
+    let compressed = with_codec_progress(progress, |report| {
+        unpack29_encode_literals_with_options_and_progress(data, options, report)
+    })?;
+    if compressed.len() >= data.len() {
+        return Ok(EncodedPayload {
+            data: data.to_vec(),
+            method: 0x30,
+        });
+    }
+    Ok(EncodedPayload {
+        data: compressed,
+        method,
+    })
+}
+
+#[cfg(test)]
+fn encode_rar29_filtered_member(
+    data: &[u8],
+    filter: FilterSpec,
+    options: Rar29EncodeOptions,
+) -> Result<Vec<u8>> {
+    Unpack29Encoder::with_options(options)
+        .encode_member_with_filter(data, filter)
+        .map_err(Error::from)
+}
+
+#[cfg(test)]
+fn encode_rar29_filtered_members(
+    data: &[u8],
+    filters: &[FilterSpec],
+    options: Rar29EncodeOptions,
+) -> Result<Vec<u8>> {
+    Unpack29Encoder::with_options(options)
+        .encode_member_with_filters(data, filters)
+        .map_err(Error::from)
+}
+
+/// How the RAR 2.9 family measures a filter candidate, for the shared search.
+#[derive(Clone, Copy)]
+struct Rar29Search;
+
+impl crate::filter_search::FilterSearch for Rar29Search {
+    type Options = Rar29EncodeOptions;
+
+    fn screened_kinds(&self, data: &[u8]) -> Vec<FilterKind> {
+        let mut kinds = vec![FilterKind::Itanium];
+        for channels in 1..=4 {
+            kinds.push(FilterKind::Delta { channels });
+            // Free to ask, and it keeps the screened set from doubling.
+            if is_audio_filter_candidate(data, channels) {
+                kinds.push(FilterKind::Audio { channels });
+            }
+        }
+        kinds.extend(
+            AUTO_RGB_WIDTHS
+                .into_iter()
+                .filter(|&width| data.len() >= width)
+                .map(|width| FilterKind::Rgb { width, pos_r: 0 }),
+        );
+        kinds
+    }
+
+    /// Unlike RAR 5, a greedy parse here really is cheaper. On a megabyte of
+    /// binary it measured 59ms against 91ms at full effort, and it ranks
+    /// candidates the same way, so the screens run reduced and only the
+    /// finalists pay full price.
+    fn screen_options(&self, options: Rar29EncodeOptions) -> Rar29EncodeOptions {
+        let mut ranking = Rar29EncodeOptions::new(options.max_match_candidates.min(8))
+            .with_lazy_matching(false)
+            .with_max_match_distance(options.max_match_distance);
+        if let Some(block_size) = options.block_size {
+            ranking = ranking.with_block_size(block_size);
+        }
+        ranking
+    }
+
+    /// The VM filter splits a range into blocks it can address, and a delta
+    /// block holds whole records, so the channel count is bounded by the block
+    /// rather than by a field width the way RAR 5's is.
+    fn max_delta_channels(&self) -> usize {
+        crate::codec::rar29::MAX_VM_DELTA_FILTER_BLOCK_SIZE
+    }
+
+    fn filtered_bytes(&self, data: &[u8], filters: &[FilterSpec]) -> Result<Vec<u8>> {
+        crate::codec::rar29::filtered_members(data, filters)
+            .map(|filtered| filtered.data)
+            .map_err(Error::from)
+    }
+
+    fn encode_plain(
+        &self,
+        data: &[u8],
+        options: Rar29EncodeOptions,
+        progress: Option<&mut dyn FnMut(usize) -> bool>,
+    ) -> Result<Vec<u8>> {
+        match progress {
+            Some(progress) => {
+                unpack29_encode_literals_with_options_and_progress(data, options, progress)
+                    .map_err(map_codec_cancel)
+            }
+            None => unpack29_encode_literals_with_options(data, options).map_err(Error::from),
+        }
+    }
+
+    fn encode_filtered(
+        &self,
+        data: &[u8],
+        filters: &[FilterSpec],
+        options: Rar29EncodeOptions,
+        progress: Option<&mut dyn FnMut(usize) -> bool>,
+    ) -> Result<Vec<u8>> {
+        Unpack29Encoder::with_options(options)
+            .encode_member_with_filters_and_progress(data, filters, progress)
+            .map_err(map_codec_cancel)
+    }
+}
+
+#[cfg(test)]
+fn encode_rar29_auto_filtered_member(
+    data: &[u8],
+    options: Rar29EncodeOptions,
+    lz_method: u8,
+    include_ppmd: bool,
+) -> Result<EncodedPayload> {
+    encode_rar29_auto_filtered_member_with_progress(data, options, lz_method, include_ppmd, None)
+}
+
+fn encode_rar29_auto_filtered_member_with_progress(
+    data: &[u8],
+    options: Rar29EncodeOptions,
+    lz_method: u8,
+    include_ppmd: bool,
+    progress: Option<&WorkTracker<'_>>,
+) -> Result<EncodedPayload> {
+    // The search measures the unfiltered member as one of its own candidates
+    // and returns the winner's bytes, so encoding the member plainly here as
+    // well was a second full pass over every binary member on the default
+    // settings. Text goes nowhere near the search, so it still needs one.
+    let text = is_text_ppmd_candidate(data);
+    let searching = !text && crate::filter_search::search_applies(data);
+    let mut best = EncodedPayload {
+        data: if searching {
+            let mut last = 0usize;
+            crate::filter_search::choose_filter(
+                &Rar29Search,
+                data,
+                options,
+                Some(&mut |event| match event {
+                    crate::filter_search::EncodeProgress::PassStarted => {
+                        last = 0;
+                        !progress.is_some_and(WorkTracker::is_cancelled)
+                    }
+                    crate::filter_search::EncodeProgress::Advanced(position) => {
+                        let delta = position.saturating_sub(last);
+                        last = position;
+                        progress.is_none_or(|work| work.advance(delta as u64))
+                    }
+                }),
+            )?
+            .1
+        } else {
+            with_codec_progress(progress, |report| {
+                unpack29_encode_literals_with_options_and_progress(data, options, report)
+            })?
+        },
+        method: lz_method,
+    };
+    // Whichever engine wins, it wins because it was measured against the other
+    // over the whole member. Size used to decide it instead: under 1 MiB text
+    // was measured, over 16 MiB it went to PPMd unmeasured, and everything
+    // between kept the LZ bytes without ever encoding PPMd to compare. That
+    // middle band cost 24% on 2 MiB of man pages and 12% on 4 MiB, and the
+    // unmeasured end can lose just as badly the other way: 8 MiB of content
+    // that repeats every 4 MiB packs to 843 KB under LZ and 1.44 MB under PPMd.
+    //
+    // Screening on a sample first, the way the filter search earns its
+    // candidates, was tried and does not work here. The two engines are only
+    // comparable once there is enough output to compare: on 128 KiB of one
+    // repeating phrase LZ lands on 213 bytes and PPMd on 118, so the screen
+    // reads a 45% PPMd win off what is almost entirely archive overhead. And
+    // in the case worth catching, repetition further apart than the sample is
+    // wide, the sample cannot see the repetition at all. PPMd costs about
+    // three times LZ on the same bytes, so text at the top two levels pays for
+    // both engines. Levels 1 to 4 skip the trial as they always have.
+    if include_ppmd && text {
+        let ppmd = EncodedPayload {
+            data: with_codec_progress(progress, |report| {
+                crate::codec::rar29::unpack29_encode_ppmd_with_progress(
+                    data,
+                    true,
+                    None,
+                    options.max_match_distance,
+                    report,
+                )
+            })?,
+            method: lz_method,
+        };
+        if ppmd.data.len() < best.data.len() {
+            best = ppmd;
+        }
+        // The escape tokens price themselves against costs measured off the
+        // stream they are shaping, so a member where every escape loses can
+        // still ratify a few before the measurements catch up. A pure-literal
+        // stream is the direct check. It costs a second PPMd pass over the
+        // member, paid only where PPMd is already being tried: text at the
+        // top two levels.
+        let ppmd_literals = EncodedPayload {
+            data: with_codec_progress(progress, |report| {
+                crate::codec::rar29::unpack29_encode_ppmd_with_progress(
+                    data, false, None, 0, report,
+                )
+            })?,
+            method: lz_method,
+        };
+        if ppmd_literals.data.len() < best.data.len() {
+            best = ppmd_literals;
+        }
+    }
+    if best.data.len() >= data.len() {
+        return Ok(EncodedPayload {
+            data: data.to_vec(),
+            method: 0x30,
+        });
+    }
+    Ok(best)
+}
+
+fn is_text_ppmd_candidate(data: &[u8]) -> bool {
+    let mut printable = 0usize;
+    let mut nul = 0usize;
+    let mut total = 0usize;
+    for start in text_sample_offsets(data.len()) {
+        let end = start.saturating_add(RAR29_TEXT_SAMPLE_SIZE).min(data.len());
+        let (window_printable, window_nul, window_total) = score_text_window(&data[start..end]);
+        printable += window_printable;
+        nul += window_nul;
+        total += window_total;
+    }
+    total != 0 && nul * 100 <= total && printable * 100 >= total * 85
+}
+
+/// Counts one sampled window as printable, NUL and total bytes.
+///
+/// Counting only ASCII read every non-English member as binary. The bench's
+/// text member is a set of translated man pages, 23% of it well-formed
+/// multibyte UTF-8, and it scored 77% against the 85% bar and went to LZ. A
+/// multibyte sequence is as much text as an ASCII letter. Accepting them costs
+/// no precision either, because random binary almost never forms one: a lead
+/// byte followed by a continuation byte is about 3% of positions, nowhere near
+/// enough to carry a binary member over the bar.
+fn score_text_window(window: &[u8]) -> (usize, usize, usize) {
+    let mut printable = 0usize;
+    let mut nul = 0usize;
+    let mut total = 0usize;
+    let mut index = 0usize;
+    while index < window.len() {
+        let byte = window[index];
+        if byte == 0 {
+            let run = window[index..]
+                .iter()
+                .take_while(|&&byte| byte == 0)
+                .count();
+            index += run;
+            // A run this long is padding rather than content, and padding says
+            // nothing about what surrounds it, so it is left out of the count
+            // instead of counted against the member. A tar pads every file to a
+            // 512 byte block and ends with a block of nothing, which put 27% NUL
+            // in front of a 1% bar and sent a tar of source files to LZ as if it
+            // were binary. What is left either side of the padding still decides
+            // it: a tar of text reads 99.8% text, and an ELF only climbs from
+            // 34% to 38%, nowhere near the bar.
+            if run < RAR29_NUL_RUN_IS_PADDING {
+                nul += run;
+                total += run;
+            }
+        } else if byte.is_ascii_graphic() || matches!(byte, b'\n' | b'\r' | b'\t' | b' ') {
+            printable += 1;
+            total += 1;
+            index += 1;
+        } else if let Some(len) = utf8_sequence_len(window, index) {
+            printable += len;
+            total += len;
+            index += len;
+        } else if utf8_lead_len(byte).is_some_and(|len| index + len > window.len()) {
+            // The window cut a sequence in half. That is an artefact of where
+            // the sample lands, not evidence of binary, so the window ends here.
+            break;
+        } else {
+            total += 1;
+            index += 1;
+        }
+    }
+    (printable, nul, total)
+}
+
+/// How many bytes the sequence starting with this byte claims, if it can start
+/// one. Overlong forms (`0xc0`, `0xc1`) and anything past U+10FFFF cannot.
+fn utf8_lead_len(byte: u8) -> Option<usize> {
+    match byte {
+        0xc2..=0xdf => Some(2),
+        0xe0..=0xef => Some(3),
+        0xf0..=0xf4 => Some(4),
+        _ => None,
+    }
+}
+
+/// The length of the well-formed UTF-8 sequence at `index`, if there is one.
+fn utf8_sequence_len(window: &[u8], index: usize) -> Option<usize> {
+    let len = utf8_lead_len(window[index])?;
+    if index + len > window.len() {
+        return None;
+    }
+    window[index + 1..index + len]
+        .iter()
+        .all(|byte| (0x80..=0xbf).contains(byte))
+        .then_some(len)
+}
+
+fn text_sample_offsets(len: usize) -> [usize; 3] {
+    [
+        0,
+        len.saturating_sub(RAR29_TEXT_SAMPLE_SIZE) / 2,
+        len.saturating_sub(RAR29_TEXT_SAMPLE_SIZE),
+    ]
+}
+
+fn is_audio_filter_candidate(data: &[u8], channels: usize) -> bool {
+    if channels == 0 || channels > 4 || data.len() < channels * 64 {
+        return false;
+    }
+
+    let mut total_delta = 0usize;
+    let mut small_delta = 0usize;
+    let mut compared = 0usize;
+    for start in text_sample_offsets(data.len()) {
+        // The admission check leaves at least 64 samples per channel, even
+        // for the shortest window, so every window has comparisons to make.
+        let end = start
+            .saturating_add(RAR29_AUDIO_SAMPLE_SIZE)
+            .min(data.len());
+        let aligned_start = start + ((channels - start % channels) % channels);
+        for channel in 0..channels {
+            let mut previous = None;
+            let mut index = aligned_start + channel;
+            while index < end {
+                let byte = data[index];
+                if let Some(previous) = previous {
+                    let delta = usize::from(byte.abs_diff(previous));
+                    let delta = delta.min(256 - delta);
+                    total_delta += delta;
+                    small_delta += usize::from(delta <= 8);
+                    compared += 1;
+                }
+                previous = Some(byte);
+                index += channels;
+            }
+        }
+    }
+
+    total_delta <= compared * 24 && small_delta * 100 >= compared * 55
+}
+
+/// One member, however the caller supplied it.
+struct Member<'a> {
+    unicode_name: Option<&'a [u8]>,
+    unpack_version: Option<u8>,
+    name: &'a [u8],
+    bytes: MemberBytes<'a>,
+    file_time: u32,
+    file_attr: u32,
+    host_os: u8,
+    password: Option<&'a [u8]>,
+    file_comment: Option<&'a [u8]>,
+    extended_times: Option<&'a [u8]>,
+    is_directory: bool,
+    is_symlink: bool,
+}
+
+impl<'a> Member<'a> {
+    fn from_stored(entry: &'a StoredEntry<'a>) -> Self {
+        Self {
+            name: entry.name,
+            bytes: MemberBytes::Borrowed(entry.data),
+            file_time: entry.file_time,
+            file_attr: entry.file_attr,
+            host_os: entry.host_os,
+            password: entry.password,
+            file_comment: entry.file_comment,
+            unicode_name: None,
+            unpack_version: None,
+            extended_times: None,
+            is_directory: false,
+            is_symlink: false,
+        }
+    }
+
+    fn from_file(entry: &'a FileEntry<'a>) -> Self {
+        Self {
+            name: entry.name,
+            bytes: MemberBytes::Borrowed(entry.data),
+            file_time: entry.file_time,
+            file_attr: entry.file_attr,
+            host_os: entry.host_os,
+            password: entry.password,
+            file_comment: entry.file_comment,
+            unicode_name: None,
+            unpack_version: None,
+            extended_times: None,
+            is_directory: false,
+            is_symlink: false,
+        }
+    }
+
+    fn from_streaming(entry: &'a StreamingEntry) -> Self {
+        Self {
+            name: &entry.name,
+            bytes: MemberBytes::Source(&entry.source),
+            file_time: entry.file_time,
+            file_attr: entry.file_attr,
+            host_os: entry.host_os,
+            password: entry.password.as_deref(),
+            file_comment: entry.file_comment.as_deref(),
+            unicode_name: None,
+            unpack_version: None,
+            extended_times: None,
+            // Streaming callers have no retained metadata wrapper. The native
+            // attribute word already distinguishes directory sources.
+            is_directory: if entry.host_os == 3 {
+                entry.file_attr & 0o170000 == 0o040000
+            } else {
+                entry.file_attr & 0x10 != 0
+            },
+            is_symlink: false,
+        }
+    }
+
+    fn unpacked_size(&self) -> Result<usize> {
+        usize::try_from(self.bytes.len()?)
+            .map_err(|_| Error::InvalidArgument("RAR 1.5 writer does not support large files"))
+    }
+}
+
+struct EncodedMember<'a> {
+    payload: MemberPayload<'a>,
+    method: u8,
+    unpacked_size: usize,
+    file_crc: u32,
+}
+
+/// Working memory one member needs while it is coded.
+///
+/// This is the admission weight that decides how many members run at once, not
+/// a prediction: the encoder holds the member, its packed output, and a match
+/// finder sized by the block it works in.
+fn member_workspace(options: WriterOptions, unpacked: u64, compressing: bool) -> u64 {
+    if !compressing {
+        return 1024 * 1024;
+    }
+    let dictionary =
+        dictionary_size_for_options(options).unwrap_or(RAR29_MAX_DICTIONARY_SIZE) as u64;
+    unpacked
+        .saturating_mul(2)
+        .saturating_add(dictionary.saturating_mul(12))
+        .saturating_add(2 * 1024 * 1024)
+}
+
+/// Codes one member, holding its bytes only while it is being coded.
+fn encode_member<'a>(
+    member: &Member<'a>,
+    options: WriterOptions,
+    coding: &MemberCoding,
+    solid_encoder: &mut Option<SolidEncoder>,
+    resources: &WriterResources,
+    progress: &WorkTracker<'_>,
+) -> Result<EncodedMember<'a>> {
+    progress.check()?;
+    let unpacked_size = member.unpacked_size()?;
+    validate_member(member.name, unpacked_size)?;
+    if member.is_directory {
+        if unpacked_size != 0 {
+            return Err(Error::InvalidArgument("directory source must be empty"));
+        }
+        return Ok(EncodedMember {
+            payload: MemberPayload::Packed(Vec::new()),
+            method: 0x30,
+            unpacked_size: 0,
+            file_crc: 0,
+        });
+    }
+    let _permit = resources.acquire_serialising_cancellable(
+        member_workspace(options, unpacked_size as u64, coding.compresses()),
+        &|| progress.is_cancelled(),
+    )?;
+
+    // Legacy link targets must not become dependencies of later solid data:
+    // reference readers handle links separately from the solid unpacker.
+    let coding = if member.is_symlink {
+        if options.features.solid {
+            *solid_encoder = Some(SolidEncoder::for_target(options)?);
+        }
+        &MemberCoding::Stored
+    } else {
+        coding
+    };
+
+    // A stored member never needs to be resident: checksum it from its source
+    // and let the writer copy it straight through.
+    if let (MemberCoding::Stored, None, Some(source)) =
+        (coding, member.password, member.bytes.source())
+    {
+        return Ok(EncodedMember {
+            payload: MemberPayload::Copied(source),
+            method: 0x30,
+            unpacked_size,
+            file_crc: {
+                let mut crc = Crc32::new();
+                member.bytes.walk_exact_with_progress(
+                    unpacked_size as u64,
+                    progress.reporter(),
+                    |chunk| {
+                        crc.update(chunk);
+                        progress.advance(chunk.len() as u64);
+                    },
+                )?;
+                crc.finish()
+            },
+        });
+    }
+
+    let data = member
+        .bytes
+        .load_exact_with_progress(unpacked_size as u64, progress.reporter())?;
+    let mut crc = Crc32::new();
+    for chunk in data.chunks(64 * 1024) {
+        progress.check()?;
+        crc.update(chunk);
+        if !coding.compresses() {
+            progress.advance(chunk.len() as u64);
+        }
+    }
+    let file_crc = crc.finish();
+    progress.check()?;
+    let payload = match coding {
+        MemberCoding::Stored => EncodedPayload {
+            data: data.into_owned(),
+            method: 0x30,
+        },
+        MemberCoding::Compressed => {
+            encode_or_store_payload(&data, options, solid_encoder, Some(progress))?
+        }
+        MemberCoding::Filtered(policy) => {
+            encode_filtered_payload(&data, policy, options, solid_encoder, Some(progress))?
+        }
+    };
+    Ok(EncodedMember {
+        payload: MemberPayload::Packed(payload.data),
+        method: payload.method,
+        unpacked_size,
+        file_crc,
+    })
+}
+
+/// Writes one member's header and payload, encrypting either if asked.
+fn write_member(
+    output: &mut dyn Write,
+    member: &Member<'_>,
+    encoded: EncodedMember<'_>,
+    options: WriterOptions,
+    solid_continuation: bool,
+    header_password: Option<&[u8]>,
+    progress: Option<ProgressReporter<'_>>,
+) -> Result<()> {
+    let target = options.target;
+    crate::write_progress::check_cancelled(progress)?;
+    let (payload, salt) = match encoded.payload {
+        MemberPayload::Packed(mut packed) => {
+            let salt =
+                encrypt_packed_data_with_progress(&mut packed, target, member.password, progress)?;
+            (MemberPayload::Packed(packed), salt)
+        }
+        // Unencrypted by construction, so the stored bytes are their own
+        // payload and their size is the member's.
+        copied => (copied, None),
+    };
+    let packed_size = payload.size(encoded.unpacked_size as u64);
+    let packed_size = usize::try_from(packed_size)
+        .map_err(|_| Error::InvalidArgument("RAR 1.5 packed size overflows u32"))?;
+    let mut flags = writer_file_flags(member.password, member.file_comment, solid_continuation);
+    if salt.is_some() {
+        flags |= FHD_SALT;
+    }
+    let wire_name = member.unicode_name.unwrap_or(member.name);
+    if member.unicode_name.is_some() {
+        flags |= super::FHD_UNICODE;
+    }
+    let mut extra = encode_file_comment(member.file_comment)?;
+    if let Some(raw) = member.extended_times {
+        flags |= FHD_EXTTIME;
+        extra.extend_from_slice(raw);
+    }
+    let mut header = Vec::new();
+    write_file_header(
+        &mut header,
+        &FileRecord {
+            head_type: FILE_HEAD,
+            name: wire_name,
+            unpacked_size: encoded.unpacked_size,
+            file_crc: encoded.file_crc,
+            packed_size,
+            file_time: member.file_time,
+            file_attr: member.file_attr,
+            host_os: member.host_os,
+            target,
+            method: encoded.method,
+            dictionary_flags: if member.is_directory && target != ArchiveVersion::Rar15 {
+                FHD_DIRECTORY_MASK
+            } else {
+                dictionary_flags_for_options(options)?
+            },
+            flags,
+            salt,
+            extra: &extra,
+        },
+    )?;
+    if let Some(version) = member.unpack_version {
+        header[24] = version;
+        write_file_header_crc(&mut header, 0, wire_name.len(), flags);
+    }
+    match header_password {
+        Some(password) => write_encrypted_header(output, &header, password)?,
+        None => output.write_all(&header)?,
+    }
+    if matches!(payload, MemberPayload::Copied(_)) {
+        let mut checksum = Crc32::new();
+        payload.write_to(
+            &mut CrcWriter {
+                inner: output,
+                crc: &mut checksum,
+            },
+            packed_size as u64,
+        )?;
+        if checksum.finish() != encoded.file_crc {
+            return Err(Error::SourceChanged(
+                "entry source contents changed while writing",
+            ));
+        }
+        Ok(())
+    } else {
+        payload.write_to(output, packed_size as u64)
+    }
+}
+
+pub fn write_stored_volumes(
+    entry: StoredEntry<'_>,
+    options: WriterOptions,
+    max_packed_per_volume: usize,
+) -> Result<Vec<Vec<u8>>> {
+    write_stored_volumes_with_progress(entry, options, max_packed_per_volume, None)
+}
+
+pub(crate) fn write_stored_volumes_with_progress(
+    entry: StoredEntry<'_>,
+    options: WriterOptions,
+    max_packed_per_volume: usize,
+    progress: Option<&dyn WriteProgress>,
+) -> Result<Vec<Vec<u8>>> {
+    let resources = WriterResources::default();
+    let control =
+        crate::write_progress::ResourceProgress::new(&resources, progress.map(ProgressReporter));
+    let progress = ProgressReporter(&control);
+    crate::write_progress::check_cancelled(Some(progress))?;
+    validate_plan(options, PlanShape::new().volumes(true), false, false)?;
+    validate_volume_writer_inputs(entry.name, entry.data, entry.file_comment, options)?;
+    if options.features.header_encryption {
+        return write_header_encrypted_split_volumes(SplitVolumeRecord {
+            progress,
+            name: entry.name,
+            unpacked: entry.data,
+            packed: entry.data,
+            file_time: entry.file_time,
+            file_attr: entry.file_attr,
+            host_os: entry.host_os,
+            target: options.target,
+            method: 0x30,
+            dictionary_flags: dictionary_flags_for_options(options)?,
+            base_flags: writer_file_flags(entry.password, None, false),
+            main_flags: 0,
+            password: entry.password,
+            max_packed_per_volume,
+        });
+    }
+
+    write_split_volumes(SplitVolumeRecord {
+        progress,
+        name: entry.name,
+        unpacked: entry.data,
+        packed: entry.data,
+        file_time: entry.file_time,
+        file_attr: entry.file_attr,
+        host_os: entry.host_os,
+        target: options.target,
+        method: 0x30,
+        dictionary_flags: dictionary_flags_for_options(options)?,
+        base_flags: writer_file_flags(entry.password, None, false),
+        main_flags: 0,
+        password: entry.password,
+        max_packed_per_volume,
+    })
+}
+
+pub fn write_compressed_volumes(
+    entry: FileEntry<'_>,
+    options: WriterOptions,
+    max_packed_per_volume: usize,
+) -> Result<Vec<Vec<u8>>> {
+    write_compressed_volumes_with_progress(entry, options, max_packed_per_volume, None)
+}
+
+pub fn write_compressed_volumes_with_progress(
+    entry: FileEntry<'_>,
+    options: WriterOptions,
+    max_packed_per_volume: usize,
+    progress: Option<&dyn WriteProgress>,
+) -> Result<Vec<Vec<u8>>> {
+    let resources = WriterResources::default();
+    let control =
+        crate::write_progress::ResourceProgress::new(&resources, progress.map(ProgressReporter));
+    let reporting = &control as &dyn WriteProgress;
+    let progress = Some(reporting);
+    crate::write_progress::check_cancelled(progress.map(ProgressReporter))?;
+    let total_work = if options.target == ArchiveVersion::Rar20 && !options.features.solid {
+        (entry.data.len() as u64).saturating_mul(2)
+    } else {
+        entry.data.len() as u64
+    };
+    report_compression_operation(reporting, true, total_work, 1);
+    let work = WorkTracker::new(
+        Some(ProgressReporter(reporting)),
+        WriteOperation::Compression,
+        total_work,
+    );
+    let result = write_compressed_volumes_impl(entry, options, max_packed_per_volume, &work);
+    let result = result?;
+    if !work.finish() {
+        return Err(Error::Cancelled);
+    }
+    report_compression_operation(reporting, false, total_work, 1);
+    work.check()?;
+    Ok(result)
+}
+
+fn write_compressed_volumes_impl(
+    entry: FileEntry<'_>,
+    mut options: WriterOptions,
+    max_packed_per_volume: usize,
+    progress: &WorkTracker<'_>,
+) -> Result<Vec<Vec<u8>>> {
+    validate_plan(
+        options,
+        PlanShape::new().compressed(true).volumes(true),
+        false,
+        false,
+    )?;
+    validate_volume_writer_inputs(entry.name, entry.data, entry.file_comment, options)?;
+    // A volume set holds one member, and splitting it changes nothing about
+    // how far back the window has to reach.
+    if options.dictionary_size.is_none() {
+        options.dictionary_size = Some(fitted_dictionary_size(
+            options.target,
+            entry.data.len() as u64,
+        ));
+    }
+
+    let mut solid_encoder = None;
+    let payload = encode_or_store_payload(entry.data, options, &mut solid_encoder, Some(progress))
+        .map_err(|error| {
+            crate::write_stream::member_error(error, entry.name, "compressing volume member")
+        })?;
+    if options.features.header_encryption {
+        return write_header_encrypted_split_volumes(SplitVolumeRecord {
+            progress: progress
+                .reporter()
+                .expect("volume compression has a resource reporter"),
+            name: entry.name,
+            unpacked: entry.data,
+            packed: &payload.data,
+            file_time: entry.file_time,
+            file_attr: entry.file_attr,
+            host_os: entry.host_os,
+            target: options.target,
+            method: payload.method,
+            dictionary_flags: dictionary_flags_for_options(options)?,
+            base_flags: writer_file_flags(entry.password, None, false),
+            main_flags: if options.features.solid { MHD_SOLID } else { 0 },
+            password: entry.password,
+            max_packed_per_volume,
+        });
+    }
+
+    write_split_volumes(SplitVolumeRecord {
+        progress: progress
+            .reporter()
+            .expect("volume compression has a resource reporter"),
+        name: entry.name,
+        unpacked: entry.data,
+        packed: &payload.data,
+        file_time: entry.file_time,
+        file_attr: entry.file_attr,
+        host_os: entry.host_os,
+        target: options.target,
+        method: payload.method,
+        dictionary_flags: dictionary_flags_for_options(options)?,
+        base_flags: writer_file_flags(entry.password, None, false),
+        main_flags: if options.features.solid { MHD_SOLID } else { 0 },
+        password: entry.password,
+        max_packed_per_volume,
+    })
+}
+
+fn report_compression_operation(
+    progress: &dyn WriteProgress,
+    started: bool,
+    total_bytes: u64,
+    total_entries: usize,
+) {
+    if started {
+        progress.report(WriteProgressEvent::OperationStarted {
+            operation: WriteOperation::Compression,
+            total_bytes: Some(total_bytes),
+            total_entries: Some(total_entries),
+            pass: 1,
+        });
+    } else {
+        progress.report(WriteProgressEvent::OperationFinished {
+            operation: WriteOperation::Compression,
+            total_bytes: Some(total_bytes),
+            total_entries: Some(total_entries),
+            pass: 1,
+        });
+    }
+}
+
+/// Everything this writer refuses, in one place, before anything is written.
+///
+/// The three near-identical checks this replaced each built a set of allowed
+/// features out of the target and the request together, compared it with the
+/// request, and on a mismatch said only that some feature was unsupported.
+fn validate_plan(
+    options: WriterOptions,
+    shape: PlanShape,
+    has_archive_comment: bool,
+    has_file_comment: bool,
+) -> Result<()> {
+    if options.archive_comment_metadata.is_some()
+        && (!has_archive_comment
+            || !matches!(
+                options.target,
+                ArchiveVersion::Rar30 | ArchiveVersion::Rar40
+            ))
+    {
+        return Err(Error::InvalidArgument(
+            "retained archive comment metadata requires a RAR3/4 archive comment",
+        ));
+    }
+    if options.target.family() != crate::version::ArchiveFamily::Rar15To40 {
+        return Err(Error::UnsupportedVersion(options.target));
+    }
+    crate::write_plan::validate_features(options.target, options.features, shape)?;
+    crate::write_plan::validate_compression_level(options.target, options.compression_level)?;
+    if options.method == Rar29Method::Ppmd {
+        crate::write_plan::validate_option(options.target, WriterOption::CompressionMethod, shape)?;
+    }
+    // A filter policy routes the member through the RAR 2.9 engine, so the
+    // formats without one have to be turned away here. This used to be
+    // computed into the shape and then never asked about, which let RAR 1.5
+    // accept a policy and write an archive that failed its own checksum.
+    if shape.filtered {
+        crate::write_plan::validate_option(options.target, WriterOption::Filter, shape)?;
+    }
+    let _ = dictionary_flags_for_options(options)?;
+    if has_archive_comment {
+        crate::write_plan::validate_option(options.target, WriterOption::ArchiveComment, shape)?;
+    }
+    if has_file_comment {
+        crate::write_plan::validate_option(options.target, WriterOption::FileComment, shape)?;
+    }
+    Ok(())
+}
+
+/// Cross-flag rules: relations between options rather than per-option
+/// capability, so they are checked after the capability table has had its say.
+fn validate_header_encrypted_archive_options(
+    target: ArchiveVersion,
+    has_password: bool,
+) -> Result<()> {
+    if !has_password {
+        return Err(Error::UnsupportedWriterOption {
+            target,
+            option: WriterOption::Feature(crate::Feature::HeaderEncryption),
+            because: Some("without a password"),
+        });
+    }
+    Ok(())
+}
+
+fn rar29_encode_options_for_level(level: Option<u8>) -> Result<Rar29EncodeOptions> {
+    let level = level.unwrap_or(5);
+    let candidates = match level {
+        0 => 0,
+        1 => 8,
+        2 => 32,
+        3 => 64,
+        4 => 96,
+        5 => 128,
+        _ => {
+            return Err(Error::InvalidArgument(
+                "RAR compression level must be in the range 0..5",
+            ))
+        }
+    };
+    Ok(Rar29EncodeOptions::new(candidates)
+        .with_lazy_matching(level >= 4)
+        .with_lazy_lookahead(1)
+        .with_block_size(RAR29_LZ_BLOCK_SIZE))
+}
+
+fn rar29_encode_options_for_options(options: WriterOptions) -> Result<Rar29EncodeOptions> {
+    Ok(rar29_encode_options_for_level(options.compression_level)?
+        .with_max_match_distance(dictionary_size_for_options(options)?))
+}
+
+/// RAR 2.0 levels, as candidates searched per position.
+///
+/// The ladder used to run 16, 64, 256, 96, 128, so the top two levels searched
+/// less than the middle one and asking for more compression got less of it: on
+/// 4 MiB of man pages level 3 packed 848,854 bytes, level 5 packed 861,371 and
+/// level 4 packed 867,857, which is the candidate order exactly.
+///
+/// Lazy matching was off at every level, which cost more than the ladder did.
+/// Measured on that member, packed bytes and seconds:
+///
+/// ```text
+/// candidates       16       64      256      512     1024
+/// lazy off    937,906  878,958  848,790  840,496  835,622
+/// lazy on     886,854  837,531  813,252  806,728  803,006
+/// seconds        2.37     4.41     8.67    12.78    17.43
+/// ```
+///
+/// It is worth 4% on text and 3% on a stripped binary, at every count, for
+/// about half again the time. Candidates cost more and give less: the last
+/// doubling buys 0.5%. So lazy matching is on wherever anything is compressed,
+/// and the level chooses how far to search.
+fn rar20_encode_options_for_level(level: Option<u8>) -> Result<Rar20EncodeOptions> {
+    let level = level.unwrap_or(RAR20_DEFAULT_LEVEL);
+    let candidates = match level {
+        0 => return Ok(Rar20EncodeOptions::new(0)),
+        1 => 16,
+        2 => 64,
+        3 => 256,
+        4 => 512,
+        5 => 1024,
+        _ => {
+            return Err(Error::InvalidArgument(
+                "RAR compression level must be in the range 0..5",
+            ))
+        }
+    };
+    Ok(Rar20EncodeOptions::new(candidates)
+        .with_lazy_matching(true)
+        // Look two positions ahead before committing to a match, not one. The
+        // class this moves is downloads: docx, jpeg, png, gif, a ZX Spectrum
+        // snapshot. High-entropy bytes with occasional short matches, where a
+        // three byte match often costs more than the literal it replaces and
+        // the better match starts two bytes later. Depth 1 cannot see that far.
+        // Measured on the small corpus, packed bytes:
+        //
+        // ```text
+        // depth        1        2        3        4
+        // total  657,072  654,162  656,242  659,161
+        // ```
+        //
+        // Worth 0.44% at every level for about a third more encode time. Depth
+        // 3 and 4 give it back: on text, deferring that long skips matches
+        // worth taking.
+        .with_lazy_lookahead(2)
+        // The shortest-path parse is worth another 1.5% and costs four times
+        // the encode time, so it goes where the ladder already means "spend
+        // whatever it takes". rar29 gates its lazy matching at the same rung.
+        .with_optimal_parse(level >= 4)
+        // The audio trial is a second encode of the member, which is the one
+        // thing level 1 is trying not to pay for.
+        .with_try_audio(level > 1))
+}
+
+fn rar20_encode_options_for_options(options: WriterOptions) -> Result<Rar20EncodeOptions> {
+    Ok(rar20_encode_options_for_level(options.compression_level)?
+        .with_max_match_distance(dictionary_size_for_options(options)?))
+}
+
+fn rar15_encode_options_for_level(level: Option<u8>) -> Result<Rar15EncodeOptions> {
+    let level = level.unwrap_or(5);
+    match level {
+        0 => Ok(Rar15EncodeOptions::new()
+            .with_old_distance_tokens(false)
+            .with_lazy_matching(false)
+            .with_stmode_literal_runs(false)
+            .with_max_long_match_distance(0)),
+        1 => Ok(Rar15EncodeOptions::new()
+            .with_old_distance_tokens(false)
+            .with_lazy_matching(false)
+            .with_stmode_literal_runs(false)
+            .with_max_long_match_distance(4 * 1024)),
+        2 => Ok(Rar15EncodeOptions::new()
+            .with_lazy_matching(false)
+            .with_stmode_literal_runs(false)
+            .with_max_long_match_distance(8 * 1024)),
+        3 => Ok(Rar15EncodeOptions::new()
+            .with_lazy_matching(false)
+            .with_max_long_match_distance(16 * 1024)),
+        4 => Ok(Rar15EncodeOptions::new()
+            .with_lazy_matching(false)
+            .with_max_long_match_distance(24 * 1024)),
+        5 => Ok(Rar15EncodeOptions::new().with_lazy_matching(false)),
+        _ => Err(Error::InvalidArgument(
+            "RAR compression level must be in the range 0..5",
+        )),
+    }
+}
+
+/// The smallest and largest dictionary worth declaring for a target.
+///
+/// RAR 1.5 and older ignore the field: their decoders have a fixed window, and
+/// measuring confirms the packed size does not move with it, so those stay
+/// pinned. WinRAR 1.54 writes 64K in every archive we have from it.
+fn dictionary_range(target: ArchiveVersion) -> (usize, usize) {
+    match target {
+        ArchiveVersion::Rar29 | ArchiveVersion::Rar30 | ArchiveVersion::Rar40 => {
+            (128 * 1024, RAR29_MAX_DICTIONARY_SIZE)
+        }
+        ArchiveVersion::Rar20 => (64 * 1024, RAR29_MAX_DICTIONARY_SIZE),
+        _ => (64 * 1024, 64 * 1024),
+    }
+}
+
+/// The smallest dictionary the format encodes that reaches past `content`, so a
+/// match can span everything the window is meant to cover.
+///
+/// Picking one number for every archive is the wrong shape: too small loses
+/// half the ratio on content whose repeats sit far apart, and too large costs a
+/// decoder memory it never needs for a thirty byte file. WinRAR sizes it to the
+/// data, and reading the dictionary bits out of its own archives against their
+/// largest member shows exactly this rule:
+///
+/// ```text
+/// content   130048   196608   262144   705644   1048576
+/// declared    128K     256K     512K    1024K     2048K
+/// ```
+fn fitted_dictionary_size(target: ArchiveVersion, content: u64) -> usize {
+    let (floor, cap) = dictionary_range(target);
+    let mut size = floor;
+    while size < cap && size as u64 <= content {
+        size *= 2;
+    }
+    size
+}
+
+fn rar29_default_dictionary_size(target: ArchiveVersion) -> usize {
+    match target {
+        ArchiveVersion::Rar29 => 1024 * 1024,
+        ArchiveVersion::Rar30 | ArchiveVersion::Rar40 => 128 * 1024,
+        _ => 64 * 1024,
+    }
+}
+
+fn dictionary_size_for_options(options: WriterOptions) -> Result<usize> {
+    options
+        .dictionary_size
+        .map(Ok)
+        .unwrap_or_else(|| Ok(rar29_default_dictionary_size(options.target)))
+}
+
+fn dictionary_flags_for_options(options: WriterOptions) -> Result<u16> {
+    dictionary_flags_for_size(dictionary_size_for_options(options)?)
+}
+
+fn dictionary_flags_for_size(size: usize) -> Result<u16> {
+    let bits =
+        match size {
+            0x1_0000 => 0,
+            0x2_0000 => 1,
+            0x4_0000 => 2,
+            0x8_0000 => 3,
+            0x10_0000 => 4,
+            0x20_0000 => 5,
+            0x40_0000 => 6,
+            _ => return Err(Error::InvalidArgument(
+                "RAR 1.5-4.x dictionary size must be one of 64K, 128K, 256K, 512K, 1M, 2M, or 4M",
+            )),
+        };
+    Ok((bits as u16) << 5)
+}
+
+// Callers have passed `validate_plan`, including compression-level validation.
+fn compression_method_for_level(options: WriterOptions) -> u8 {
+    let Some(level) = options.compression_level else {
+        return 0x33;
+    };
+    0x30 + level
+}
+
+enum SolidEncoder {
+    Rar15(Box<Unpack15Encoder>),
+    Rar20(Unpack20Encoder),
+    Rar29(Box<Unpack29Encoder>),
+}
+
+impl SolidEncoder {
+    fn for_target(options: WriterOptions) -> Result<Self> {
+        let encoder = match options.target {
+            ArchiveVersion::Rar15 => Self::Rar15(Box::new(Unpack15Encoder::with_options(
+                rar15_encode_options_for_level(options.compression_level)?,
+            ))),
+            ArchiveVersion::Rar20 => Self::Rar20(Unpack20Encoder::with_options(
+                rar20_encode_options_for_options(options)?,
+            )),
+            ArchiveVersion::Rar29 | ArchiveVersion::Rar30 | ArchiveVersion::Rar40 => {
+                Self::Rar29(Box::new(Unpack29Encoder::with_options(
+                    rar29_encode_options_for_options(options)?,
+                )))
+            }
+            _ => return Err(Error::UnsupportedVersion(options.target)),
+        };
+        Ok(encoder)
+    }
+}
+
+struct EncodedPayload {
+    data: Vec<u8>,
+    method: u8,
+}
+
+/// Codes a filtered member, continuing the solid chain when there is one.
+///
+/// A filtered member used to be coded on its own whatever the archive said,
+/// while its header still claimed to continue the chain. That cost the whole
+/// benefit of `--solid`: three 400 KB members went from 550 KB to 1.2 MB, and
+/// the flag on the members was a plain lie about how they had been coded.
+fn encode_filtered_payload(
+    data: &[u8],
+    policy: &FilterPolicy,
+    options: WriterOptions,
+    solid_encoder: &mut Option<SolidEncoder>,
+    progress: Option<&WorkTracker<'_>>,
+) -> Result<EncodedPayload> {
+    let lz_method = compression_method_for_level(options);
+    // A named filter under forced PPMd is the one request the chain cannot
+    // take: its PPMd side codes no filters, and coding the member LZ instead
+    // would quietly overrule a flag the caller set.
+    let forced_ppmd_filter =
+        options.method == Rar29Method::Ppmd && matches!(policy, FilterPolicy::Explicit(_));
+    let encoder = match (
+        lz_method != 0x30 && !forced_ppmd_filter,
+        solid_encoder.as_mut(),
+    ) {
+        (true, Some(SolidEncoder::Rar29(encoder))) => encoder,
+        _ => {
+            return encode_rar29_policy_filtered_payload(
+                data,
+                policy,
+                options.method,
+                rar29_encode_options_for_options(options)?,
+                lz_method,
+                ppmd_trial_pays(lz_method.saturating_sub(0x30)),
+                progress,
+            )
+        }
+    };
+
+    // An empty member has no range to filter, and `--no-filter` asked for none,
+    // but both still go through the chain's encoder like any other member.
+    // Coding either one on its own would leave the encoder's history in place
+    // while the headers said the chain had ended, so the member after it would
+    // be coded against a dictionary its own flags told the decoder to discard.
+    let mut last = 0usize;
+    let mut advance = |position: usize| {
+        let delta = position.saturating_sub(last);
+        last = last.max(position);
+        progress.is_none_or(|work| work.advance(delta as u64))
+    };
+    let packed = match policy {
+        FilterPolicy::Explicit(filter) if !data.is_empty() => encoder
+            .encode_member_with_filters_and_progress(
+                data,
+                std::slice::from_ref(filter),
+                Some(&mut advance),
+            )
+            .map_err(map_codec_cancel)?,
+        // Naming a filter, or none, says nothing about which engine should code
+        // the member. `--no-filter` used to answer that question too, and answer
+        // it LZ, so asking a solid archive not to filter its binaries also took
+        // PPMd away from its text.
+        FilterPolicy::Explicit(_) | FilterPolicy::None => {
+            encode_rar29_chain_member(data, options, encoder, false, &mut advance)?
+        }
+        FilterPolicy::Auto => {
+            encode_rar29_chain_member(data, options, encoder, true, &mut advance)?
+        }
+    };
+
+    // A member the encoder could not shrink is stored, exactly as an unfiltered
+    // one is, which rebuilds the encoder and ends the chain here.
+    if should_store_fallback(options.target, true, data.len(), packed.len()) {
+        *solid_encoder = Some(SolidEncoder::for_target(options)?);
+        return Ok(EncodedPayload {
+            data: data.to_vec(),
+            method: 0x30,
+        });
+    }
+    Ok(EncodedPayload {
+        data: packed,
+        method: lz_method,
+    })
+}
+
+fn encode_or_store_payload(
+    data: &[u8],
+    options: WriterOptions,
+    solid_encoder: &mut Option<SolidEncoder>,
+    progress: Option<&WorkTracker<'_>>,
+) -> Result<EncodedPayload> {
+    let target = options.target;
+    if options.compression_level == Some(0) {
+        return Ok(EncodedPayload {
+            data: data.to_vec(),
+            method: 0x30,
+        });
+    }
+    let solid = solid_encoder.is_some();
+    if !solid
+        && matches!(
+            target,
+            ArchiveVersion::Rar29 | ArchiveVersion::Rar30 | ArchiveVersion::Rar40
+        )
+    {
+        let encode_options = rar29_encode_options_for_options(options)?;
+        let lz_method = compression_method_for_level(options);
+        // Forcing PPMd leaves nothing for a filter search to measure against.
+        let policy = if options.method == Rar29Method::Ppmd {
+            FilterPolicy::None
+        } else {
+            FilterPolicy::Auto
+        };
+        return encode_rar29_policy_filtered_payload(
+            data,
+            &policy,
+            options.method,
+            encode_options,
+            lz_method,
+            ppmd_trial_pays(lz_method.saturating_sub(0x30)),
+            progress,
+        );
+    }
+    let compressed = encode_compressed_payload(data, options, solid_encoder.as_mut(), progress)?;
+    if should_store_fallback(target, solid, data.len(), compressed.len()) {
+        if solid {
+            *solid_encoder = Some(SolidEncoder::for_target(options)?);
+        }
+        return Ok(EncodedPayload {
+            data: data.to_vec(),
+            method: 0x30,
+        });
+    }
+    Ok(EncodedPayload {
+        data: compressed,
+        method: compression_method_for_level(options),
+    })
+}
+
+/// Codes one member into a RAR 2.9 solid chain, choosing both the engine and,
+/// on the LZ side, the filter.
+///
+/// The engine question and the filter question meet here because they are
+/// asked of the same member and only one answer gets written. In practice they
+/// barely overlap: the filter search declines text and the PPMd trial only
+/// wants text, so a member that reaches one usually walks past the other. That
+/// is a fact about the two screens rather than a rule, so the trials are
+/// measured against each other rather than sequenced on the assumption.
+///
+/// `search` is off for a caller who named a filter or asked for none, and for
+/// PPMd, which leaves nothing for a filter to be measured through.
+fn encode_rar29_chain_member(
+    data: &[u8],
+    options: WriterOptions,
+    encoder: &mut Unpack29Encoder,
+    search: bool,
+    progress: &mut dyn FnMut(usize) -> bool,
+) -> Result<Vec<u8>> {
+    // A chain used to be LZ and nothing else, so a solid archive got no PPMd at
+    // all and an explicit --method ppmd was quietly ignored. It is the same
+    // content question here as in a non-solid archive, so it gets the same
+    // answer and the same gate: a level willing to encode the member twice, and
+    // content that looks like PPMd will win on it.
+    let level = compression_method_for_level(options).saturating_sub(0x30);
+    let engine = match options.method {
+        Rar29Method::Lz => ChainEngine::Lz,
+        Rar29Method::Ppmd => ChainEngine::Ppmd,
+        Rar29Method::Auto if ppmd_trial_pays(level) && is_text_ppmd_candidate(data) => {
+            ChainEngine::Smaller
+        }
+        Rar29Method::Auto => ChainEngine::Lz,
+    };
+    let candidates =
+        if search && engine != ChainEngine::Ppmd && crate::filter_search::search_applies(data) {
+            crate::filter_search::filter_candidates(
+                &Rar29Search,
+                data,
+                rar29_encode_options_for_options(options)?,
+            )?
+        } else {
+            Vec::new()
+        };
+    encoder
+        .encode_member_with_engine(data, engine, &candidates, progress)
+        .map_err(map_codec_cancel)
+}
+
+fn encode_compressed_payload(
+    data: &[u8],
+    options: WriterOptions,
+    solid_encoder: Option<&mut SolidEncoder>,
+    progress: Option<&WorkTracker<'_>>,
+) -> Result<Vec<u8>> {
+    let target = options.target;
+    let mut last = 0usize;
+    let mut advance = |position: usize| {
+        if position < last {
+            last = 0;
+        }
+        let delta = position.saturating_sub(last);
+        last = position;
+        progress.is_none_or(|progress| progress.advance(delta as u64))
+    };
+    // Non-solid RAR 2.9 members take the policy path in
+    // encode_or_store_payload before reaching this solid-chain encoder.
+    match (target, solid_encoder) {
+        (ArchiveVersion::Rar15, Some(SolidEncoder::Rar15(encoder))) => encoder
+            .encode_member_with_progress(data, &mut advance)
+            .map_err(map_codec_cancel),
+        (ArchiveVersion::Rar15, None) => unpack15_encode_with_options_and_progress(
+            data,
+            rar15_encode_options_for_level(options.compression_level)?,
+            &mut advance,
+        )
+        .map_err(map_codec_cancel),
+        (ArchiveVersion::Rar20, None) => unpack20_encode_auto_with_options_and_progress(
+            data,
+            rar20_encode_options_for_options(options)?,
+            &mut advance,
+        )
+        .map_err(map_codec_cancel),
+        (ArchiveVersion::Rar20, Some(SolidEncoder::Rar20(encoder))) => encoder
+            .encode_member_with_progress(data, &mut advance)
+            .map_err(map_codec_cancel),
+        (
+            ArchiveVersion::Rar29 | ArchiveVersion::Rar30 | ArchiveVersion::Rar40,
+            Some(SolidEncoder::Rar29(encoder)),
+        ) => encode_rar29_chain_member(data, options, encoder, true, &mut advance),
+        _ => Err(Error::UnsupportedVersion(target)),
+    }
+}
+
+fn map_codec_cancel(error: crate::codec::Error) -> Error {
+    if error == crate::codec::Error::Cancelled {
+        Error::Cancelled
+    } else {
+        Error::from(error)
+    }
+}
+
+fn with_codec_progress(
+    progress: Option<&WorkTracker<'_>>,
+    encode: impl FnOnce(&mut dyn FnMut(usize) -> bool) -> crate::codec::Result<Vec<u8>>,
+) -> Result<Vec<u8>> {
+    if let Some(work) = progress {
+        work.check()?;
+    }
+    let mut last = 0usize;
+    let result = encode(&mut |position| {
+        if position < last {
+            last = 0;
+        }
+        let delta = position.saturating_sub(last);
+        last = position;
+        progress.is_none_or(|work| work.advance(delta as u64))
+    })
+    .map_err(map_codec_cancel)?;
+    if let Some(work) = progress {
+        work.check()?;
+    }
+    Ok(result)
+}
+
+fn should_store_fallback(
+    target: ArchiveVersion,
+    solid: bool,
+    unpacked_len: usize,
+    packed_len: usize,
+) -> bool {
+    // RAR 2.0 onwards store any member compression did not help. RAR 1.5 pays
+    // more header for a stored member, so a small one stays compressed.
+    let stores_any_size = !solid
+        && matches!(
+            target,
+            ArchiveVersion::Rar20
+                | ArchiveVersion::Rar29
+                | ArchiveVersion::Rar30
+                | ArchiveVersion::Rar40
+        );
+    // Storing a member part way through a solid run rebuilds the encoder, so
+    // the member after it has to say it starts a fresh chain. Only RAR 2.0
+    // onwards can: RAR 1.5 file headers have no solid bit, and readers take
+    // every member of a solid RAR 1.5 archive as a continuation whatever the
+    // header says. Breaking the chain there writes an archive nothing can read.
+    crate::write_plan::StoreFallback::new()
+        .allow_solid(target != ArchiveVersion::Rar15)
+        .min_size(if stores_any_size {
+            0
+        } else {
+            MIN_STORE_FALLBACK_SIZE
+        })
+        .applies(solid, unpacked_len, packed_len)
+}
+
+fn validate_volume_writer_inputs(
+    name: &[u8],
+    data: &[u8],
+    file_comment: Option<&[u8]>,
+    options: WriterOptions,
+) -> Result<()> {
+    validate_file_entry(name, data).map_err(|error| {
+        crate::write_stream::member_error(error, name, "preparing volume member")
+    })?;
+    if file_comment.is_some() {
+        return Err(Error::UnsupportedFeature {
+            version: options.target,
+            feature: "volume_file_comment",
+        });
+    }
+    Ok(())
+}
+
+fn writer_file_flags(
+    password: Option<&[u8]>,
+    file_comment: Option<&[u8]>,
+    solid_continuation: bool,
+) -> u16 {
+    let mut flags = 0;
+    if password.is_some() {
+        flags |= FHD_PASSWORD;
+    }
+    if file_comment.is_some() {
+        flags |= FHD_COMMENT;
+    }
+    if solid_continuation {
+        flags |= FHD_SOLID;
+    }
+    flags
+}
+
+/// Builds the comment block that goes inside a file header.
+///
+/// RAR 1.3 and 1.4 wrote a bare size and the text, and this writer used to copy
+/// that. From 1.5 on it is the same comment block the archive comment uses,
+/// covered by the file header's size but not by its CRC.
+fn encode_file_comment(comment: Option<&[u8]>) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    write_comment_header(&mut out, comment)?;
+    Ok(out)
+}
+
+fn encrypt_split_packed_data(
+    data: &mut Vec<u8>,
+    target: ArchiveVersion,
+    password: &[u8],
+) -> Result<Option<[u8; 8]>> {
+    #[cfg(not(feature = "encryption"))]
+    {
+        let _ = (data, target, password);
+        Err(Error::FeatureDisabled {
+            feature: "encryption",
+        })
+    }
+    #[cfg(feature = "encryption")]
+    {
+        match target {
+            ArchiveVersion::Rar15 => {
+                Rar15Cipher::new(password).crypt_in_place(data);
+                Ok(None)
+            }
+            ArchiveVersion::Rar20 => {
+                let padded_len = checked_align16(data.len(), RAR15_ALIGN_OVERFLOW)
+                    .expect("byte vector length plus padding fits usize");
+                data.resize(padded_len, 0);
+                Rar20Cipher::new(password)
+                    .encrypt_in_place(data)
+                    .expect("padded legacy ciphertext is block aligned");
+                Ok(None)
+            }
+            ArchiveVersion::Rar29 | ArchiveVersion::Rar30 | ArchiveVersion::Rar40 => {
+                let salt = random_rar30_salt()?;
+                let padded_len = checked_align16(data.len(), RAR15_ALIGN_OVERFLOW)
+                    .expect("byte vector length plus padding fits usize");
+                data.resize(padded_len, 0);
+                Rar30Cipher::new(password, Some(salt))
+                    .map_err(super::map_rar30_crypto_error)?
+                    .encrypt_in_place(data)
+                    .expect("padded legacy ciphertext is block aligned");
+                Ok(Some(salt))
+            }
+            _ => Err(Error::UnsupportedVersion(target)),
+        }
+    }
+}
+
+fn header_encryption_password<'a>(
+    mut passwords: impl Iterator<Item = Option<&'a [u8]>>,
+) -> Result<&'a [u8]> {
+    let first = passwords.next().flatten().ok_or(Error::NeedPassword)?;
+    for password in passwords {
+        if password != Some(first) {
+            return Err(Error::InvalidArgument(
+                "RAR 3.x header-encrypted writer needs one shared password",
+            ));
+        }
+    }
+    Ok(first)
+}
+
+fn encrypt_packed_data_for_writer(
+    data: &mut Vec<u8>,
+    target: ArchiveVersion,
+    password: Option<&[u8]>,
+) -> Result<Option<[u8; 8]>> {
+    encrypt_packed_data_with_progress(data, target, password, None)
+}
+
+fn encrypt_packed_data_with_progress(
+    data: &mut Vec<u8>,
+    target: ArchiveVersion,
+    password: Option<&[u8]>,
+    progress: Option<ProgressReporter<'_>>,
+) -> Result<Option<[u8; 8]>> {
+    #[cfg(not(feature = "encryption"))]
+    {
+        let _ = (data, target);
+        crate::write_progress::check_cancelled(progress)?;
+        if password.is_none() {
+            Ok(None)
+        } else {
+            Err(Error::FeatureDisabled {
+                feature: "encryption",
+            })
+        }
+    }
+    #[cfg(feature = "encryption")]
+    {
+        crate::write_progress::check_cancelled(progress)?;
+        let Some(password) = password else {
+            return Ok(None);
+        };
+        match target {
+            ArchiveVersion::Rar15 => {
+                let mut cipher = Rar15Cipher::new(password);
+                for chunk in data.chunks_mut(64 * 1024) {
+                    crate::write_progress::check_cancelled(progress)?;
+                    cipher.crypt_in_place(chunk);
+                }
+                Ok(None)
+            }
+            ArchiveVersion::Rar20 => {
+                let padded_len = checked_align16(data.len(), RAR15_ALIGN_OVERFLOW)
+                    .expect("byte vector length plus padding fits usize");
+                data.resize(padded_len, 0);
+                let mut cipher = Rar20Cipher::new(password);
+                for chunk in data.chunks_mut(64 * 1024) {
+                    crate::write_progress::check_cancelled(progress)?;
+                    cipher
+                        .encrypt_in_place(chunk)
+                        .expect("padded ciphertext and 64 KiB chunks are block aligned");
+                }
+                Ok(None)
+            }
+            ArchiveVersion::Rar29 | ArchiveVersion::Rar30 | ArchiveVersion::Rar40 => {
+                let salt = random_rar30_salt()?;
+                // Byte vectors are bounded by isize::MAX, so adding 15 fits usize.
+                let padded_len = checked_align16(data.len(), RAR15_ALIGN_OVERFLOW)
+                    .expect("byte vector length plus padding fits usize");
+                data.resize(padded_len, 0);
+                let mut cipher = Rar30Cipher::new(password, Some(salt))
+                    .map_err(super::map_rar30_crypto_error)?;
+                for chunk in data.chunks_mut(64 * 1024) {
+                    crate::write_progress::check_cancelled(progress)?;
+                    cipher
+                        .encrypt_in_place(chunk)
+                        .expect("padded ciphertext and 64 KiB chunks are block aligned");
+                }
+                Ok(Some(salt))
+            }
+            _ => Err(Error::UnsupportedFeature {
+                version: target,
+                feature: "RAR writer file encryption",
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "encryption")]
+fn random_rar30_salt() -> Result<[u8; 8]> {
+    let mut salt = [0; 8];
+    crate::write_stream::fill_entropy(
+        &mut salt,
+        "RAR 3.x writer could not generate encryption salt",
+    )?;
+    Ok(salt)
+}
+
+/// What WinRAR writes on an end-of-archive block. The bit marks the block as
+/// one a reader may skip without understanding it.
+const ENDARC_FLAGS: u16 = 0x4000;
+const END_HEADER_SIZE: usize = 7;
+
+fn write_main_header(out: &mut Vec<u8>, flags: u16) {
+    let start = out.len();
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.push(MAIN_HEAD);
+    out.extend_from_slice(&flags.to_le_bytes());
+    out.extend_from_slice(&13u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    write_header_crc(out, start);
+}
+
+fn write_comment_header(out: &mut Vec<u8>, comment: Option<&[u8]>) -> Result<()> {
+    let Some(comment) = comment else {
+        return Ok(());
+    };
+    let unp_size = u16::try_from(comment.len())
+        .map_err(|_| Error::InvalidArgument("RAR 1.5 comment is longer than 65535 bytes"))?;
+    let head_size = 13usize
+        .checked_add(comment.len())
+        .ok_or(Error::InvalidArgument(
+            "RAR 1.5 comment header size overflows",
+        ))?;
+    let head_size = u16::try_from(head_size)
+        .map_err(|_| Error::InvalidArgument("RAR 1.5 comment header size overflows"))?;
+
+    let start = out.len();
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.push(COMM_HEAD);
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&head_size.to_le_bytes());
+    out.extend_from_slice(&unp_size.to_le_bytes());
+    out.push(15);
+    out.push(0x30);
+    out.extend_from_slice(&((crc32(comment) & 0xffff) as u16).to_le_bytes());
+    out.extend_from_slice(comment);
+    write_comment_header_crc(out, start);
+    Ok(())
+}
+
+fn uses_old_style_archive_comment(target: ArchiveVersion) -> bool {
+    matches!(
+        target,
+        ArchiveVersion::Rar15 | ArchiveVersion::Rar20 | ArchiveVersion::Rar29
+    )
+}
+
+fn write_archive_comment(
+    out: &mut dyn Write,
+    comment: Option<&[u8]>,
+    options: WriterOptions,
+    header_password: Option<&[u8]>,
+    password: Option<&[u8]>,
+) -> Result<()> {
+    let Some(comment) = comment else {
+        return Ok(());
+    };
+    if uses_old_style_archive_comment(options.target) {
+        let mut block = Vec::new();
+        write_comment_header(&mut block, Some(comment))?;
+        out.write_all(&block)?;
+        return Ok(());
+    }
+    let mut packed = unpack29_encode_literals(comment)?;
+    let salt = encrypt_packed_data_for_writer(&mut packed, options.target, password)?;
+    let metadata = options.archive_comment_metadata;
+    let mut header = Vec::new();
+    write_file_header(
+        &mut header,
+        &FileRecord {
+            head_type: NEWSUB_HEAD,
+            name: b"CMT",
+            unpacked_size: comment.len(),
+            file_crc: crc32(comment),
+            packed_size: packed.len(),
+            file_time: metadata.map_or(0, |metadata| metadata.0),
+            file_attr: 0,
+            host_os: metadata.map_or(3, |metadata| metadata.1),
+            target: ArchiveVersion::Rar30,
+            method: 0x33,
+            dictionary_flags: dictionary_flags_for_target(ArchiveVersion::Rar30),
+            flags: if password.is_some() {
+                FHD_PASSWORD | FHD_SALT
+            } else {
+                0
+            },
+            salt,
+            extra: &[],
+        },
+    )?;
+    if let Some(password) = header_password {
+        write_encrypted_header(out, &header, password)?;
+    } else {
+        out.write_all(&header)?;
+    }
+    out.write_all(&packed)?;
+    Ok(())
+}
+
+/// Closes a header-encrypted archive with an end-of-archive block in a group of
+/// its own.
+///
+/// Every encrypted header carries its own salt, so a reader that reaches the end
+/// of the last member's payload reads eight more bytes looking for the next
+/// group's salt. With nothing there it stops on a short read rather than on a
+/// clean end, and 7-Zip treats that as a decryption failure and refuses to open
+/// the archive at all. WinRAR closes the same way. unrar stops at the last
+/// member and never looks, which is why nothing caught this.
+fn write_encrypted_end_block(out: &mut dyn Write, password: &[u8]) -> Result<()> {
+    let mut header = Vec::new();
+    let start = header.len();
+    header.extend_from_slice(&0u16.to_le_bytes());
+    header.push(ENDARC_HEAD);
+    header.extend_from_slice(&ENDARC_FLAGS.to_le_bytes());
+    header.extend_from_slice(&(END_HEADER_SIZE as u16).to_le_bytes());
+    write_header_crc(&mut header, start);
+    debug_assert_eq!(header.len(), END_HEADER_SIZE);
+    write_encrypted_header(out, &header, password)
+}
+
+fn write_encrypted_header(out: &mut dyn Write, header: &[u8], password: &[u8]) -> Result<()> {
+    #[cfg(not(feature = "encryption"))]
+    {
+        let _ = (out, header, password);
+        Err(Error::FeatureDisabled {
+            feature: "encryption",
+        })
+    }
+    #[cfg(feature = "encryption")]
+    {
+        let salt = random_rar30_salt()?;
+        let encrypted_size = checked_align16(header.len(), RAR15_ALIGN_OVERFLOW)?;
+        let mut encrypted_header = Vec::with_capacity(encrypted_size);
+        encrypted_header.extend_from_slice(header);
+        encrypted_header.resize(encrypted_size, 0);
+        Rar30Cipher::new(password, Some(salt))
+            .map_err(super::map_rar30_crypto_error)?
+            .encrypt_in_place(&mut encrypted_header)
+            .map_err(super::map_rar30_crypto_error)?;
+        out.write_all(&salt)?;
+        out.write_all(&encrypted_header)?;
+        Ok(())
+    }
+}
+
+fn validate_member(name: &[u8], unpacked_size: usize) -> Result<()> {
+    if name.is_empty() {
+        return Err(Error::InvalidArgument("RAR 1.5 file name is empty"));
+    }
+    if name.len() > u16::MAX as usize {
+        return Err(Error::InvalidArgument("RAR 1.5 file name is too long"));
+    }
+    if unpacked_size > u32::MAX as usize {
+        return Err(Error::InvalidArgument(
+            "RAR 1.5 writer does not support large files",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_file_entry(name: &[u8], data: &[u8]) -> Result<()> {
+    validate_member(name, data.len())
+}
+
+struct FileRecord<'a> {
+    head_type: u8,
+    name: &'a [u8],
+    unpacked_size: usize,
+    file_crc: u32,
+    packed_size: usize,
+    file_time: u32,
+    file_attr: u32,
+    host_os: u8,
+    target: ArchiveVersion,
+    method: u8,
+    dictionary_flags: u16,
+    flags: u16,
+    salt: Option<[u8; 8]>,
+    extra: &'a [u8],
+}
+
+fn write_file_header_and_data(
+    out: &mut Vec<u8>,
+    record: FileRecord<'_>,
+    packed: &[u8],
+) -> Result<()> {
+    write_file_header(out, &record)?;
+    out.extend_from_slice(packed);
+    Ok(())
+}
+
+fn write_file_header(out: &mut Vec<u8>, record: &FileRecord<'_>) -> Result<()> {
+    let start = out.len();
+    let flags = record.flags | record.dictionary_flags;
+    let (host_os, file_attr) =
+        rar15_compatible_metadata(record.target, record.host_os, record.file_attr);
+    let packed_size = u32::try_from(record.packed_size)
+        .map_err(|_| Error::InvalidArgument("RAR 1.5 packed size overflows u32"))?;
+    let unpacked_size = u32::try_from(record.unpacked_size)
+        .map_err(|_| Error::InvalidArgument("RAR 1.5 unpacked size overflows u32"))?;
+    let head_size = 32usize
+        .checked_add(record.name.len())
+        .and_then(|size| size.checked_add(if record.salt.is_some() { 8 } else { 0 }))
+        .and_then(|size| size.checked_add(record.extra.len()))
+        .ok_or(Error::InvalidArgument("RAR 1.5 file header size overflows"))?;
+    let head_size = u16::try_from(head_size)
+        .map_err(|_| Error::InvalidArgument("RAR 1.5 file header size overflows"))?;
+    let unp_ver = match record.target {
+        ArchiveVersion::Rar15 => 15,
+        ArchiveVersion::Rar20 => 20,
+        ArchiveVersion::Rar29 | ArchiveVersion::Rar30 | ArchiveVersion::Rar40 => 29,
+        _ => return Err(Error::UnsupportedVersion(record.target)),
+    };
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.push(record.head_type);
+    out.extend_from_slice(&(LONG_BLOCK | flags).to_le_bytes());
+    out.extend_from_slice(&head_size.to_le_bytes());
+    out.extend_from_slice(&packed_size.to_le_bytes());
+    out.extend_from_slice(&unpacked_size.to_le_bytes());
+    out.push(host_os);
+    out.extend_from_slice(&record.file_crc.to_le_bytes());
+    out.extend_from_slice(&record.file_time.to_le_bytes());
+    out.push(unp_ver);
+    out.push(record.method);
+    out.extend_from_slice(&(record.name.len() as u16).to_le_bytes());
+    out.extend_from_slice(&file_attr.to_le_bytes());
+    out.extend_from_slice(record.name);
+    if let Some(salt) = record.salt {
+        out.extend_from_slice(&salt);
+    }
+    out.extend_from_slice(record.extra);
+    write_file_header_crc(out, start, record.name.len(), flags);
+    Ok(())
+}
+
+fn rar15_compatible_metadata(target: ArchiveVersion, host_os: u8, file_attr: u32) -> (u8, u32) {
+    const HOST_DOS: u8 = 0;
+    const HOST_UNIX: u8 = 3;
+    const DOS_ARCHIVE: u32 = 0x20;
+    const DOS_DIRECTORY: u32 = 0x10;
+    const UNIX_FILE_TYPE_MASK: u32 = 0o170000;
+    const UNIX_DIRECTORY: u32 = 0o040000;
+
+    if target == ArchiveVersion::Rar15 && host_os == HOST_UNIX {
+        let dos_attr = if file_attr & UNIX_FILE_TYPE_MASK == UNIX_DIRECTORY {
+            DOS_DIRECTORY
+        } else {
+            DOS_ARCHIVE
+        };
+        return (HOST_DOS, dos_attr);
+    }
+    (host_os, file_attr)
+}
+
+fn dictionary_flags_for_target(target: ArchiveVersion) -> u16 {
+    ((rar29_default_dictionary_size(target).trailing_zeros() - 16) as u16) << 5
+}
+
+struct SplitVolumeRecord<'a> {
+    progress: ProgressReporter<'a>,
+    name: &'a [u8],
+    unpacked: &'a [u8],
+    packed: &'a [u8],
+    file_time: u32,
+    file_attr: u32,
+    host_os: u8,
+    target: ArchiveVersion,
+    method: u8,
+    dictionary_flags: u16,
+    base_flags: u16,
+    main_flags: u16,
+    password: Option<&'a [u8]>,
+    max_packed_per_volume: usize,
+}
+
+fn report_volume(
+    progress: ProgressReporter<'_>,
+    index: usize,
+    total: usize,
+    bytes: usize,
+) -> Result<()> {
+    progress.report(WriteProgressEvent::VolumeFinished {
+        volume_number: index + 1,
+        total_volumes: Some(total),
+        bytes: bytes as u64,
+    });
+    crate::write_progress::check_cancelled(Some(progress))
+}
+
+fn write_split_volumes(entry: SplitVolumeRecord<'_>) -> Result<Vec<Vec<u8>>> {
+    crate::write_progress::check_cancelled(Some(entry.progress))?;
+    if entry.max_packed_per_volume == 0 {
+        return Err(Error::InvalidArgument(
+            "RAR 1.5 volume payload size must be non-zero",
+        ));
+    }
+    if entry.packed.is_empty() {
+        return Err(Error::InvalidArgument(
+            "RAR 1.5 volume writer needs a non-empty packed payload",
+        )
+        .at_entry(entry.name.to_vec(), "preparing volume member"));
+    }
+
+    let mut packed = entry.packed.to_vec();
+    let split_salt = if let Some(password) = entry.password {
+        encrypt_split_packed_data(&mut packed, entry.target, password).map_err(|error| {
+            crate::write_stream::member_error(error, entry.name, "encrypting volume member")
+        })?
+    } else {
+        None
+    };
+    let base_flags = entry.base_flags | if split_salt.is_some() { FHD_SALT } else { 0 };
+
+    // Packing well enough to need only one volume is not an error. The loop
+    // below already writes that set correctly: with one chunk neither split
+    // flag is set, so the member is an ordinary unsplit file inside a volume
+    // set of one, which is what WinRAR writes and what RAR 5 here already did.
+    // Refusing it meant a fixed `--volume-size` in a script could start failing
+    // because compression improved, which is how it was found.
+    let chunks: Vec<&[u8]> = packed.chunks(entry.max_packed_per_volume).collect();
+
+    let mut volumes = Vec::with_capacity(chunks.len());
+    let unpacked_crc = crc32(entry.unpacked);
+    for (index, chunk) in chunks.iter().enumerate() {
+        crate::write_progress::check_cancelled(Some(entry.progress))?;
+        let split_before = index > 0;
+        let split_after = index + 1 < chunks.len();
+        let mut file_flags = base_flags;
+        if split_before {
+            file_flags |= FHD_SPLIT_BEFORE;
+        }
+        if split_after {
+            file_flags |= FHD_SPLIT_AFTER;
+        }
+
+        let mut main_flags = MHD_VOLUME | entry.main_flags;
+        if index == 0 {
+            main_flags |= MHD_FIRSTVOLUME;
+        }
+
+        let mut out = Vec::new();
+        out.extend_from_slice(RAR15_SIGNATURE);
+        write_main_header(&mut out, main_flags);
+        write_file_header_and_data(
+            &mut out,
+            FileRecord {
+                head_type: FILE_HEAD,
+                name: entry.name,
+                unpacked_size: entry.unpacked.len(),
+                file_crc: if split_after {
+                    crc32(chunk)
+                } else {
+                    unpacked_crc
+                },
+                packed_size: chunk.len(),
+                file_time: entry.file_time,
+                file_attr: entry.file_attr,
+                host_os: entry.host_os,
+                target: entry.target,
+                method: entry.method,
+                dictionary_flags: entry.dictionary_flags,
+                flags: file_flags,
+                salt: split_salt,
+                extra: &[],
+            },
+            chunk,
+        )
+        .map_err(|error| {
+            crate::write_stream::member_error(error, entry.name, "writing volume member")
+        })?;
+        report_volume(entry.progress, index, chunks.len(), out.len())?;
+        volumes.push(out);
+    }
+
+    Ok(volumes)
+}
+
+fn write_header_encrypted_split_volumes(entry: SplitVolumeRecord<'_>) -> Result<Vec<Vec<u8>>> {
+    crate::write_progress::check_cancelled(Some(entry.progress))?;
+    validate_header_encrypted_archive_options(entry.target, entry.password.is_some())?;
+    let password = entry.password.ok_or(Error::NeedPassword)?;
+    if entry.max_packed_per_volume == 0 {
+        return Err(Error::InvalidArgument(
+            "RAR 1.5 volume payload size must be non-zero",
+        ));
+    }
+    if entry.packed.is_empty() {
+        return Err(Error::InvalidArgument(
+            "RAR 1.5 volume writer needs a non-empty packed payload",
+        )
+        .at_entry(entry.name.to_vec(), "preparing volume member"));
+    }
+
+    let mut packed = entry.packed.to_vec();
+    let split_salt =
+        encrypt_split_packed_data(&mut packed, entry.target, password).map_err(|error| {
+            crate::write_stream::member_error(error, entry.name, "encrypting volume member")
+        })?;
+    let base_flags = entry.base_flags | FHD_SALT;
+    // Packing well enough to need only one volume is not an error. The loop
+    // below already writes that set correctly: with one chunk neither split
+    // flag is set, so the member is an ordinary unsplit file inside a volume
+    // set of one, which is what WinRAR writes and what RAR 5 here already did.
+    // Refusing it meant a fixed `--volume-size` in a script could start failing
+    // because compression improved, which is how it was found.
+    let chunks: Vec<&[u8]> = packed.chunks(entry.max_packed_per_volume).collect();
+
+    let mut volumes = Vec::with_capacity(chunks.len());
+    let unpacked_crc = crc32(entry.unpacked);
+    for (index, chunk) in chunks.iter().enumerate() {
+        crate::write_progress::check_cancelled(Some(entry.progress))?;
+        let split_before = index > 0;
+        let split_after = index + 1 < chunks.len();
+        let mut file_flags = base_flags;
+        if split_before {
+            file_flags |= FHD_SPLIT_BEFORE;
+        }
+        if split_after {
+            file_flags |= FHD_SPLIT_AFTER;
+        }
+
+        let mut main_flags = MHD_VOLUME | MHD_PASSWORD | entry.main_flags;
+        if index == 0 {
+            main_flags |= MHD_FIRSTVOLUME;
+        }
+
+        let mut out = Vec::new();
+        out.extend_from_slice(RAR15_SIGNATURE);
+        write_main_header(&mut out, main_flags);
+        let mut header = Vec::new();
+        write_file_header(
+            &mut header,
+            &FileRecord {
+                head_type: FILE_HEAD,
+                name: entry.name,
+                unpacked_size: entry.unpacked.len(),
+                file_crc: if split_after {
+                    crc32(chunk)
+                } else {
+                    unpacked_crc
+                },
+                packed_size: chunk.len(),
+                file_time: entry.file_time,
+                file_attr: entry.file_attr,
+                host_os: entry.host_os,
+                target: entry.target,
+                method: entry.method,
+                dictionary_flags: entry.dictionary_flags,
+                flags: file_flags,
+                salt: split_salt,
+                extra: &[],
+            },
+        )
+        .map_err(|error| {
+            crate::write_stream::member_error(error, entry.name, "writing volume member")
+        })?;
+        write_encrypted_header(&mut out, &header, password).map_err(|error| {
+            crate::write_stream::member_error(error, entry.name, "writing volume member")
+        })?;
+        out.extend_from_slice(chunk);
+        report_volume(entry.progress, index, chunks.len(), out.len())?;
+        volumes.push(out);
+    }
+
+    Ok(volumes)
+}
+
+fn write_header_crc(out: &mut [u8], start: usize) {
+    let crc = (crc32(&out[start + 2..]) & 0xffff) as u16;
+    out[start..start + 2].copy_from_slice(&crc.to_le_bytes());
+}
+
+fn write_file_header_crc(out: &mut [u8], start: usize, name_len: usize, flags: u16) {
+    let end = if flags & FHD_COMMENT != 0 {
+        // Readers stop the CRC where the fields they parse stop, which leaves
+        // out the comment block. Miss the salt out of the range and an
+        // encrypted member with a comment gets a CRC nothing agrees with.
+        let salt_len = if flags & FHD_SALT != 0 { 8 } else { 0 };
+        start + 32 + name_len + salt_len
+    } else {
+        out.len()
+    };
+    let crc = (crc32(&out[start + 2..end]) & 0xffff) as u16;
+    out[start..start + 2].copy_from_slice(&crc.to_le_bytes());
+}
+
+fn write_comment_header_crc(out: &mut [u8], start: usize) {
+    let end = start + 13;
+    let crc = (crc32(&out[start + 2..end]) & 0xffff) as u16;
+    out[start..start + 2].copy_from_slice(&crc.to_le_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn streaming_directory_sources_cannot_discard_payloads() {
+        for (host_os, attributes) in [(3, 0o040750), (2, 0x10)] {
+            let entry = super::StreamingEntry::new(
+                b"directory".to_vec(),
+                crate::EntrySource::from_bytes(b"must not be discarded".to_vec()),
+            )
+            .with_host_os(host_os)
+            .with_file_attr(attributes);
+            let error = super::write_streaming_archive_to(
+                &[entry],
+                super::WriterOptions::new(
+                    crate::ArchiveVersion::Rar30,
+                    crate::FeatureSet::store_only(),
+                ),
+                crate::MemberCoding::Stored,
+                None,
+                &crate::WriterResources::default(),
+                None,
+                &mut Vec::new(),
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("directory source must be empty"));
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "encryption")]
+    fn encrypted_payload_padding_preserves_cipher_state_across_chunks() {
+        for target in [crate::ArchiveVersion::Rar20, crate::ArchiveVersion::Rar30] {
+            for length in [0usize, 1, 15, 16, 17, 65535, 65536, 65537] {
+                let plaintext: Vec<u8> = (0..length)
+                    .map(|index| (index as u8).wrapping_mul(37))
+                    .collect();
+                for split in [false, true] {
+                    let mut data = plaintext.clone();
+                    let salt = if split {
+                        super::encrypt_split_packed_data(&mut data, target, b"pw")
+                    } else {
+                        super::encrypt_packed_data_for_writer(&mut data, target, Some(b"pw"))
+                    }
+                    .unwrap();
+                    let padded = length.div_ceil(16) * 16;
+                    assert_eq!(data.len(), padded);
+                    match target {
+                        crate::ArchiveVersion::Rar20 => {
+                            assert_eq!(salt, None);
+                            super::Rar20Cipher::new(b"pw")
+                                .decrypt_in_place(&mut data)
+                                .unwrap();
+                        }
+                        crate::ArchiveVersion::Rar30 => {
+                            assert!(salt.is_some());
+                            super::Rar30Cipher::new(b"pw", salt)
+                                .unwrap()
+                                .decrypt_in_place(&mut data)
+                                .unwrap();
+                        }
+                        _ => unreachable!(),
+                    }
+                    assert_eq!(&data[..length], plaintext);
+                    assert!(data[length..].iter().all(|&byte| byte == 0));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn member_cancellation_during_workspace_admission_is_preserved() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CancelOnSecondPoll(AtomicUsize);
+        impl crate::WriteProgress for CancelOnSecondPoll {
+            fn report(&self, _: crate::WriteProgressEvent<'_>) {}
+
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) != 0
+            }
+        }
+
+        let entry = super::FileEntry {
+            name: b"file",
+            data: b"payload",
+            file_time: 0,
+            file_attr: 0x20,
+            host_os: 3,
+            password: None,
+            file_comment: None,
+        };
+        let callback = CancelOnSecondPoll(AtomicUsize::new(0));
+        let work = super::WorkTracker::new(
+            Some(super::ProgressReporter(&callback)),
+            crate::WriteOperation::Compression,
+            7,
+        );
+        let resources = crate::WriterResources::new(1);
+        assert!(matches!(
+            super::encode_member(
+                &super::Member::from_file(&entry),
+                super::WriterOptions::new(
+                    crate::ArchiveVersion::Rar29,
+                    crate::FeatureSet::store_only(),
+                ),
+                &crate::MemberCoding::Stored,
+                &mut None,
+                &resources,
+                &work,
+            ),
+            Err(crate::Error::Cancelled)
+        ));
+        assert_eq!(callback.0.load(Ordering::Relaxed), 2);
+        assert_eq!(resources.workspace_in_use(), 0);
+    }
+
+    #[test]
+    fn retained_archive_comment_metadata_requires_rar3_or_4_comment() {
+        let mut options = super::WriterOptions::new(
+            crate::ArchiveVersion::Rar30,
+            crate::FeatureSet::store_only(),
+        );
+        options.archive_comment_metadata = Some((123, 0));
+        let shape = crate::write_plan::PlanShape::new();
+        assert_eq!(
+            super::validate_plan(options, shape, false, false).unwrap_err(),
+            crate::Error::InvalidArgument(
+                "retained archive comment metadata requires a RAR3/4 archive comment"
+            )
+        );
+        options.target = crate::ArchiveVersion::Rar20;
+        assert_eq!(
+            super::validate_plan(options, shape, true, false).unwrap_err(),
+            crate::Error::InvalidArgument(
+                "retained archive comment metadata requires a RAR3/4 archive comment"
+            )
+        );
+        options.target = crate::ArchiveVersion::Rar30;
+        assert!(super::validate_plan(options, shape, true, false).is_ok());
+    }
+
+    #[test]
+    fn writer_limits_and_invalid_options_are_not_archive_corruption() {
+        for error in [
+            super::validate_member(b"", 0).unwrap_err(),
+            super::validate_member(&vec![b'a'; 65536], 0).unwrap_err(),
+            super::checked_align16(usize::MAX, "padding overflow").unwrap_err(),
+            super::write_comment_header(&mut Vec::new(), Some(&vec![0; 65536])).unwrap_err(),
+            super::header_encryption_password([Some(&b"one"[..]), Some(&b"two"[..])].into_iter())
+                .unwrap_err(),
+            super::validate_rar29_filter_policy(
+                &super::FilterPolicy::Auto,
+                super::Rar29Method::Ppmd,
+            )
+            .unwrap_err(),
+            super::rar29_encode_options_for_level(Some(6)).unwrap_err(),
+            super::rar20_encode_options_for_level(Some(6)).unwrap_err(),
+            super::rar15_encode_options_for_level(Some(6)).unwrap_err(),
+        ] {
+            assert_eq!(error.kind(), crate::ErrorKind::InvalidArgument, "{error}");
+        }
+        assert_eq!(super::checked_align16(17, "padding overflow").unwrap(), 32);
+        assert_eq!(
+            super::header_encryption_password([None].into_iter()).unwrap_err(),
+            crate::Error::NeedPassword
+        );
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(
+            super::validate_member(b"large", u32::MAX as usize + 1)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::InvalidArgument
+        );
+    }
+
+    use super::{
+        encode_rar29_auto_filtered_member, encode_rar29_filtered_member,
+        encode_rar29_filtered_members, is_audio_filter_candidate, rar20_encode_options_for_level,
+        rar20_encode_options_for_options, rar29_encode_options_for_options, FilterKind, FilterSpec,
+    };
+    use crate::codec::rar29::{unpack29_decode, EncodeOptions};
+
+    /// A member comfortably past the 1 MiB ceiling the PPMd trial used to have.
+    /// Text this size kept the LZ bytes without PPMd ever being encoded to
+    /// compare against, all the way up to 16 MiB.
+    const OVER_THE_OLD_TRIAL_LIMIT: usize = 1024 * 1024 + 4096;
+    use crate::filter_search::{
+        auto_delta_filter_range, disjoint_filter_ranges, AUTO_DELTA_EDGE_SKIP,
+    };
+    use crate::x86_filter_scan::auto_x86_filter_ranges;
+    use crate::{ArchiveVersion, FeatureSet};
+
+    #[test]
+    fn auto_x86_filter_ranges_select_dense_opcode_clusters() {
+        let mut data = vec![0x41; 20_000];
+        for pos in [1024, 1050, 1090, 1130] {
+            data[pos] = 0xe8;
+        }
+        for pos in [12_000, 12_040, 12_080] {
+            data[pos] = 0xe9;
+        }
+
+        let e8_ranges = auto_x86_filter_ranges(&data, false);
+        assert_eq!(e8_ranges.len(), 1);
+        assert!(e8_ranges[0].contains(&1024));
+        assert!(e8_ranges[0].contains(&(1130 + 4)));
+        assert!(!e8_ranges[0].contains(&12_000));
+
+        let e8e9_ranges = auto_x86_filter_ranges(&data, true);
+        assert_eq!(e8e9_ranges.len(), 3);
+        assert!(e8e9_ranges[0].contains(&1024));
+        assert!(e8e9_ranges[0].contains(&12_000));
+        assert!(e8e9_ranges.iter().any(|range| range.contains(&1024)));
+        assert!(e8e9_ranges.iter().any(|range| range.contains(&12_000)));
+    }
+
+    #[test]
+    fn large_text_ppmd_candidate_accepts_html_like_payloads() {
+        let mut data = vec![b'a'; OVER_THE_OLD_TRIAL_LIMIT];
+        for index in (0..data.len()).step_by(79) {
+            data[index] = b'\n';
+        }
+        data[..32].copy_from_slice(b"<html><body>RAR PPMd text sample");
+
+        assert!(super::is_text_ppmd_candidate(&data));
+    }
+
+    /// Reading past padding leaves the question of a member that is nothing
+    /// else. There is no evidence either way in it, and PPMd is not the answer
+    /// to a member the store rule is about to take anyway.
+    #[test]
+    fn a_member_of_nothing_but_padding_is_not_text() {
+        let data = vec![0u8; OVER_THE_OLD_TRIAL_LIMIT];
+
+        assert!(!super::is_text_ppmd_candidate(&data));
+    }
+
+    /// Scattered NULs are not padding and still count against the member: a
+    /// run has to be long enough to be structure before it is discounted.
+    #[test]
+    fn scattered_nuls_still_read_as_binary() {
+        let mut data = vec![b'A'; OVER_THE_OLD_TRIAL_LIMIT];
+        for index in (0..data.len()).step_by(3) {
+            data[index] = 0;
+        }
+
+        assert!(!super::is_text_ppmd_candidate(&data));
+    }
+
+    /// The bench corpus is man pages in several languages, and counting only
+    /// ASCII scored the sample 77% against an 85% bar and sent it to LZ.
+    #[test]
+    fn the_text_screen_reads_multibyte_utf8_as_text() {
+        let line = "Überprüfen Sie die Größe der Datei — ändern Sie sie nicht. \
+                    日本語のマニュアルページもテキストです。\n";
+        let data = line.repeat(4096).into_bytes();
+
+        let high = data.iter().filter(|&&byte| byte >= 0x80).count();
+        assert!(
+            high * 100 / data.len() > 15,
+            "sample must be multibyte enough to have failed the ASCII-only test"
+        );
+        assert!(super::is_text_ppmd_candidate(&data));
+    }
+
+    /// Accepting multibyte sequences must not accept binary that happens to
+    /// contain a few: a lead byte followed by a continuation byte turns up at
+    /// random often enough to notice, nowhere near often enough to pass.
+    #[test]
+    fn the_text_screen_still_rejects_high_entropy_binary() {
+        let mut state = 0x1234_5678u32;
+        let data: Vec<_> = (0..64_000)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
+
+        assert!(!super::is_text_ppmd_candidate(&data));
+    }
+
+    /// A tar pads every member to a 512 byte block and closes with a block of
+    /// nothing, which is 27% NUL in front of a 1% bar. The source tree in the
+    /// bench corpus was read as binary and packed 22% behind WinRAR 3.00 for it.
+    #[test]
+    fn the_text_screen_reads_past_tar_padding() {
+        let mut data = Vec::new();
+        for index in 0..512 {
+            let mut header = vec![0u8; 512];
+            let name = format!("src/module{index}.rs");
+            header[..name.len()].copy_from_slice(name.as_bytes());
+            data.extend_from_slice(&header);
+            let body = format!(
+                "pub fn thing{index}(value: usize) -> usize {{\n    value.wrapping_mul({index})\n}}\n"
+            );
+            data.extend_from_slice(body.as_bytes());
+            // Every member is padded out to the next block boundary.
+            data.resize(data.len().next_multiple_of(512), 0);
+        }
+        data.extend_from_slice(&[0u8; 1024]);
+
+        let nul = data.iter().filter(|&&byte| byte == 0).count();
+        assert!(
+            nul * 100 / data.len() > 15,
+            "the padding has to be heavy enough to have failed the old rule"
+        );
+        assert!(super::is_text_ppmd_candidate(&data));
+    }
+
+    /// The other side of that: an object file is full of NUL runs too, and
+    /// reading past them must not turn its code into text. A member wrongly
+    /// called text skips the x86 filter search, so this one costs bytes.
+    #[test]
+    fn reading_past_padding_does_not_make_an_object_file_text() {
+        let mut state = 0x8badf00du32;
+        let mut data = Vec::new();
+        for section in 0..64 {
+            // Alignment padding, the way a linker leaves it.
+            data.resize(data.len() + 64, 0);
+            data.extend_from_slice(format!("_ZN4rars{section}E\0").as_bytes());
+            for _ in 0..1024 {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                data.push(state as u8);
+            }
+        }
+
+        assert!(!super::is_text_ppmd_candidate(&data));
+    }
+
+    /// Naming the level you were already getting must not change the archive.
+    /// The default resolves to method 0x33, the same as `--level 3`, but the
+    /// trial decision read the option rather than the level and the two came
+    /// out 24% apart on the same text.
+    #[test]
+    fn the_default_level_and_level_three_agree_about_the_ppmd_trial() {
+        let options = crate::rar15_40::WriterOptions {
+            target: crate::ArchiveVersion::Rar30,
+            ..Default::default()
+        };
+        let default_level = super::compression_method_for_level(options);
+        let named_level = super::compression_method_for_level(crate::rar15_40::WriterOptions {
+            compression_level: Some(3),
+            ..options
+        });
+
+        assert_eq!(default_level, named_level);
+        assert_eq!(
+            super::ppmd_trial_pays(default_level - 0x30),
+            super::ppmd_trial_pays(named_level - 0x30),
+        );
+        assert!(super::ppmd_trial_pays(3));
+        assert!(!super::ppmd_trial_pays(2));
+    }
+
+    #[test]
+    fn auto_ppmd_candidate_rejects_binary_audio_shaped_payloads() {
+        let mut data = Vec::new();
+        for sample in 0..8192i16 {
+            let left = sample.wrapping_mul(5).wrapping_add(200);
+            let right = sample.wrapping_mul(7).wrapping_sub(200);
+            data.extend_from_slice(&left.to_le_bytes());
+            data.extend_from_slice(&right.to_le_bytes());
+        }
+
+        assert!(!super::is_text_ppmd_candidate(&data));
+    }
+
+    #[test]
+    fn auto_ppmd_candidate_accepts_text_payloads() {
+        let data = b"fn main() {\n    println!(\"rar ppmd text candidate\");\n}\n".repeat(256);
+
+        assert!(super::is_text_ppmd_candidate(&data));
+    }
+
+    #[test]
+    fn audio_filter_candidate_accepts_interleaved_pcm_like_payloads() {
+        let mut data = Vec::new();
+        for sample in 0..4096i16 {
+            let left = sample.wrapping_mul(3).wrapping_add(200);
+            let right = sample.wrapping_mul(3).wrapping_sub(200);
+            data.extend_from_slice(&left.to_le_bytes());
+            data.extend_from_slice(&right.to_le_bytes());
+        }
+
+        assert!(is_audio_filter_candidate(&data, 4));
+        assert!(!is_audio_filter_candidate(&data, 3));
+        assert!(!is_audio_filter_candidate(&data, 0));
+        assert!(!is_audio_filter_candidate(&data, 5));
+    }
+
+    #[test]
+    fn audio_filter_candidate_checks_the_smallest_admitted_window() {
+        for channels in 1..=4 {
+            assert!(!is_audio_filter_candidate(
+                &vec![0; channels * 64 - 1],
+                channels
+            ));
+            assert!(is_audio_filter_candidate(&vec![0; channels * 64], channels));
+        }
+    }
+
+    #[test]
+    fn rar15_unix_directory_and_file_modes_become_dos_attributes() {
+        use crate::ArchiveVersion;
+
+        assert_eq!(
+            super::rar15_compatible_metadata(ArchiveVersion::Rar15, 3, 0o040755),
+            (0, 0x10)
+        );
+        assert_eq!(
+            super::rar15_compatible_metadata(ArchiveVersion::Rar15, 3, 0o100644),
+            (0, 0x20)
+        );
+        assert_eq!(
+            super::rar15_compatible_metadata(ArchiveVersion::Rar20, 3, 0o040755),
+            (3, 0o040755)
+        );
+    }
+
+    #[test]
+    fn codec_progress_restart_counts_new_work_and_preserves_codec_errors() {
+        use crate::write_progress::{ProgressReporter, WorkTracker};
+        use crate::{WriteOperation, WriteProgressEvent};
+        use std::sync::Mutex;
+
+        let advanced = Mutex::new(Vec::new());
+        let reporter = |event: WriteProgressEvent<'_>| {
+            if let WriteProgressEvent::Advanced {
+                completed_bytes, ..
+            } = event
+            {
+                advanced.lock().unwrap().push(completed_bytes);
+            }
+        };
+        let work = WorkTracker::new(
+            Some(ProgressReporter(&reporter)),
+            WriteOperation::Compression,
+            30,
+        );
+        let encoded = super::with_codec_progress(Some(&work), |progress| {
+            assert!(progress(10));
+            assert!(progress(3));
+            assert!(progress(5));
+            Ok(b"packed".to_vec())
+        })
+        .unwrap();
+        assert_eq!(encoded, b"packed");
+        assert_eq!(*advanced.lock().unwrap(), [10, 13, 15]);
+
+        let error = super::with_codec_progress(None, |_| {
+            Err(crate::codec::Error::InvalidData("injected codec failure"))
+        })
+        .unwrap_err();
+        assert!(matches!(error, crate::Error::Codec(_)));
+    }
+
+    #[test]
+    fn audio_filter_candidate_rejects_high_entropy_binary_payloads() {
+        let mut state = 0xfeed_faceu32;
+        let data: Vec<_> = (0..16_384)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
+
+        for channels in 1..=4 {
+            assert!(!is_audio_filter_candidate(&data, channels));
+        }
+    }
+
+    /// Prose with no long repeats: PPMd's model has plenty to work with and LZ
+    /// has little to match, which is the shape the engine choice exists for.
+    fn prose_like_text(len: usize) -> Vec<u8> {
+        const WORDS: [&str; 24] = [
+            "archive",
+            "compression",
+            "dictionary",
+            "encoder",
+            "filter",
+            "header",
+            "member",
+            "method",
+            "offset",
+            "payload",
+            "reader",
+            "solid",
+            "stream",
+            "volume",
+            "window",
+            "writer",
+            "the",
+            "of",
+            "a",
+            "and",
+            "to",
+            "in",
+            "that",
+            "with",
+        ];
+        let mut state = 0x9e37_79b9u32;
+        let mut out = Vec::with_capacity(len + 16);
+        while out.len() < len {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            out.extend_from_slice(WORDS[state as usize % WORDS.len()].as_bytes());
+            out.push(if state.is_multiple_of(13) {
+                b'\n'
+            } else {
+                b' '
+            });
+        }
+        out.truncate(len);
+        out
+    }
+
+    /// Text past the trial limit used to keep the LZ bytes without ever
+    /// encoding PPMd to compare, which cost 24% on 2 MiB of man pages and 12%
+    /// on 4 MiB. The method byte cannot tell the two engines apart (PPMd and
+    /// `-m5` LZ both write 0x35), so ask for the member both ways instead.
+    #[test]
+    fn text_over_the_trial_limit_is_measured_against_ppmd() {
+        let data = prose_like_text(OVER_THE_OLD_TRIAL_LIMIT);
+        assert!(super::is_text_ppmd_candidate(&data));
+
+        let offered =
+            encode_rar29_auto_filtered_member(&data, EncodeOptions::default(), 0x35, true).unwrap();
+        let lz_only =
+            encode_rar29_auto_filtered_member(&data, EncodeOptions::default(), 0x35, false)
+                .unwrap();
+
+        assert!(
+            offered.data.len() < lz_only.data.len(),
+            "PPMd should have won this member: offered {} bytes, LZ alone {}",
+            offered.data.len(),
+            lz_only.data.len()
+        );
+    }
+
+    /// The other half of the same rule: winning is measured, not assumed. Text
+    /// that is one phrase repeating is all match and belongs to LZ, and the
+    /// member has to come back no larger than LZ alone would have made it.
+    #[test]
+    fn text_ppmd_cannot_lose_to_the_engine_it_replaced() {
+        let data = b"the quick brown fox jumps over the lazy dog. "
+            .repeat(OVER_THE_OLD_TRIAL_LIMIT / 45 + 64);
+        assert!(super::is_text_ppmd_candidate(&data));
+
+        let offered =
+            encode_rar29_auto_filtered_member(&data, EncodeOptions::default(), 0x35, true).unwrap();
+        let lz_only =
+            encode_rar29_auto_filtered_member(&data, EncodeOptions::default(), 0x35, false)
+                .unwrap();
+
+        assert!(
+            offered.data.len() <= lz_only.data.len(),
+            "offering PPMd made the member bigger: {} bytes against {}",
+            offered.data.len(),
+            lz_only.data.len()
+        );
+
+        let plain_auto = super::encode_rar29_policy_filtered_payload(
+            &data,
+            &super::FilterPolicy::None,
+            super::Rar29Method::Auto,
+            EncodeOptions::default(),
+            0x35,
+            true,
+            None,
+        )
+        .unwrap();
+        let forced_ppmd = super::encode_rar29_policy_filtered_payload(
+            &data,
+            &super::FilterPolicy::None,
+            super::Rar29Method::Ppmd,
+            EncodeOptions::default(),
+            0x35,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(plain_auto.data, forced_ppmd.data);
+    }
+
+    #[test]
+    fn repeated_high_entropy_text_keeps_lz_when_ppmd_loses() {
+        let mut state = 0x9e37_79b9u32;
+        let mut block = Vec::with_capacity(64 * 1024);
+        for _ in 0..64 * 1024 {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            block.push(b' ' + (state % 95) as u8);
+        }
+        let mut data = block.clone();
+        data.extend_from_slice(&block);
+        assert!(super::is_text_ppmd_candidate(&data));
+        let options = EncodeOptions::default();
+        let offered = encode_rar29_auto_filtered_member(&data, options, 0x35, true).unwrap();
+        let lz_only = encode_rar29_auto_filtered_member(&data, options, 0x35, false).unwrap();
+        assert_eq!(offered.data, lz_only.data);
+
+        let plain_offered = super::encode_rar29_policy_filtered_payload(
+            &data,
+            &super::FilterPolicy::None,
+            super::Rar29Method::Auto,
+            options,
+            0x35,
+            true,
+            None,
+        )
+        .unwrap();
+        let plain_lz = super::encode_rar29_policy_filtered_payload(
+            &data,
+            &super::FilterPolicy::None,
+            super::Rar29Method::Auto,
+            options,
+            0x35,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(plain_offered.data, plain_lz.data);
+    }
+
+    #[test]
+    fn auto_x86_filter_ranges_include_code_section_spans() {
+        let mut data = vec![0x41; 32_000];
+        for pos in [4096, 4128, 4160] {
+            data[pos] = 0xe8;
+        }
+        for pos in [14_000, 14_032, 14_064] {
+            data[pos] = 0xe8;
+        }
+
+        let ranges = auto_x86_filter_ranges(&data, false);
+
+        assert!(ranges[0].contains(&4096));
+        assert!(ranges[0].contains(&14_064));
+        assert!(ranges.iter().any(|range| range.contains(&4096)));
+        assert!(ranges.iter().any(|range| range.contains(&14_064)));
+    }
+
+    #[test]
+    fn auto_x86_policy_can_encode_multiple_disjoint_ranges() {
+        let mut data = vec![0x41u8; 80_000];
+        for cluster_start in [8_000, 60_000] {
+            for index in 0..8 {
+                let pos = cluster_start + index * 64;
+                data[pos] = 0xe8;
+                data[pos + 1..pos + 5].copy_from_slice(&(0x2000u32 + index as u32).to_le_bytes());
+            }
+        }
+        let filters: Vec<_> = disjoint_filter_ranges(auto_x86_filter_ranges(&data, false))
+            .into_iter()
+            .map(|range| FilterSpec::range(FilterKind::E8, range))
+            .collect();
+
+        let packed = encode_rar29_filtered_members(&data, &filters, EncodeOptions::default())
+            .expect("multi-filter RAR29 member should encode");
+        let decoded = unpack29_decode(&packed, data.len()).unwrap();
+
+        assert_eq!(filters.len(), 2);
+        assert!(
+            decoded == data,
+            "RAR 2.9 auto multi-filter E8 round-trip failed"
+        );
+    }
+
+    #[test]
+    fn auto_x86_policy_considers_tight_ranges_inside_sparse_spans() {
+        let mut data = Vec::new();
+        data.extend((0..1024).map(|index| (index * 37 + 11) as u8));
+        let first_cluster_start = data.len();
+        for index in 0..16usize {
+            data.extend_from_slice(&[0x55, 0x8b, 0xec, 0x83, 0xec, (index & 0x7f) as u8]);
+            let call_pos = data.len();
+            data.push(0xe8);
+            let target = first_cluster_start + 0x500;
+            let relative = (target as i64 - (call_pos + 5) as i64) as i32;
+            data.extend_from_slice(&relative.to_le_bytes());
+            data.extend_from_slice(&[0x83, 0xc4, 0x04, 0x5d, 0xc3]);
+        }
+        data.extend((0..3200).map(|index| (index * 251 + 17) as u8));
+        let second_cluster_start = data.len();
+        for index in 0..16usize {
+            data.extend_from_slice(&[0x56, 0x8b, 0xf1, 0x83, 0xec, (index & 0x7f) as u8]);
+            let call_pos = data.len();
+            data.push(0xe8);
+            let target = second_cluster_start + 0x500;
+            let relative = (target as i64 - (call_pos + 5) as i64) as i32;
+            data.extend_from_slice(&relative.to_le_bytes());
+            data.extend_from_slice(&[0x83, 0xc4, 0x04, 0x5e, 0xc3]);
+        }
+        data.extend((0..1024).map(|index| (index * 53 + 7) as u8));
+
+        let ranges = disjoint_filter_ranges(auto_x86_filter_ranges(&data, false));
+        let filters: Vec<_> = ranges
+            .iter()
+            .cloned()
+            .map(|range| FilterSpec::range(FilterKind::E8, range))
+            .collect();
+        let broad_range = first_cluster_start..second_cluster_start + 16 * 16;
+        let broad = encode_rar29_filtered_member(
+            &data,
+            FilterSpec::range(FilterKind::E8, broad_range),
+            EncodeOptions::default(),
+        )
+        .unwrap();
+        let tight = encode_rar29_filtered_members(&data, &filters, EncodeOptions::default())
+            .expect("tight sparse x86 filters should encode");
+        let auto = encode_rar29_auto_filtered_member(&data, EncodeOptions::default(), 0x35, false)
+            .unwrap();
+
+        assert!(
+            tight.len() < broad.len(),
+            "tight x86 ranges should avoid filtering sparse data gaps"
+        );
+        assert!(auto.data.len() <= tight.len());
+        assert_eq!(unpack29_decode(&auto.data, data.len()).unwrap(), data);
+    }
+
+    #[test]
+    fn auto_delta_filter_range_skips_container_edges_and_aligns_channels() {
+        let data = vec![0u8; 512];
+
+        let range = auto_delta_filter_range(&data, 3).unwrap();
+
+        assert!(range.start >= AUTO_DELTA_EDGE_SKIP);
+        assert!(range.end <= data.len() - AUTO_DELTA_EDGE_SKIP);
+        assert_eq!(range.start % 3, 0);
+        assert_eq!((range.end - range.start) % 3, 0);
+        assert!(auto_delta_filter_range(&data[..80], 3).is_none());
+    }
+
+    #[test]
+    fn auto_filter_policy_considers_ranged_delta_candidates() {
+        let mut data = vec![0x55u8; AUTO_DELTA_EDGE_SKIP];
+        for sample in 0..256u16 {
+            let left = sample as u8;
+            let right = left.wrapping_add(1);
+            data.extend_from_slice(&[left, right]);
+        }
+        data.extend(std::iter::repeat_n(0xaa, AUTO_DELTA_EDGE_SKIP));
+        let options = EncodeOptions::default();
+
+        let plain =
+            crate::codec::rar29::unpack29_encode_literals_with_options(&data, options).unwrap();
+        let ranged = encode_rar29_filtered_member(
+            &data,
+            FilterSpec::range(
+                FilterKind::Delta { channels: 2 },
+                auto_delta_filter_range(&data, 2).unwrap(),
+            ),
+            options,
+        )
+        .unwrap();
+        let auto = encode_rar29_auto_filtered_member(&data, options, 0x35, true).unwrap();
+
+        assert!(ranged.len() < plain.len());
+        assert!(auto.data.len() <= ranged.len());
+    }
+
+    #[test]
+    fn rar29_options_cap_match_distance_to_target_dictionary() {
+        assert_eq!(
+            rar29_encode_options_for_options(
+                super::WriterOptions::new(ArchiveVersion::Rar29, FeatureSet::store_only())
+                    .with_compression_level(5)
+            )
+            .unwrap()
+            .max_match_distance,
+            1024 * 1024
+        );
+        assert_eq!(
+            rar29_encode_options_for_options(
+                super::WriterOptions::new(ArchiveVersion::Rar40, FeatureSet::store_only())
+                    .with_compression_level(5)
+            )
+            .unwrap()
+            .max_match_distance,
+            128 * 1024
+        );
+        assert_eq!(
+            rar29_encode_options_for_options(
+                super::WriterOptions::new(ArchiveVersion::Rar40, FeatureSet::store_only())
+                    .with_compression_level(5)
+                    .with_dictionary_size(4 * 1024 * 1024)
+            )
+            .unwrap()
+            .max_match_distance,
+            4 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn rar20_options_cap_match_distance_to_header_dictionary() {
+        assert_eq!(
+            rar20_encode_options_for_options(super::WriterOptions::new(
+                ArchiveVersion::Rar20,
+                FeatureSet::store_only(),
+            ))
+            .unwrap()
+            .max_match_distance,
+            64 * 1024
+        );
+        assert_eq!(
+            rar20_encode_options_for_options(
+                super::WriterOptions::new(ArchiveVersion::Rar20, FeatureSet::store_only())
+                    .with_dictionary_size(1024 * 1024),
+            )
+            .unwrap()
+            .max_match_distance,
+            1024 * 1024
+        );
+    }
+    #[test]
+    fn only_the_top_two_levels_pay_for_the_rar20_optimal_parse() {
+        for level in 0..=3u8 {
+            let options = rar20_encode_options_for_level(Some(level)).unwrap();
+            assert!(!options.optimal_parse, "level {level} priced every path");
+        }
+        for level in 4..=5u8 {
+            let options = rar20_encode_options_for_level(Some(level)).unwrap();
+            assert!(options.optimal_parse, "level {level} settled for greedy");
+        }
+        assert!(
+            !rar20_encode_options_for_level(None).unwrap().optimal_parse,
+            "an absent level is the default level, which is not the top of the ladder",
+        );
+    }
+
+    #[test]
+    fn every_rar20_level_looks_two_positions_ahead() {
+        for level in 1..=5u8 {
+            let options = rar20_encode_options_for_level(Some(level)).unwrap();
+            assert!(options.lazy_matching, "level {level} stopped being lazy");
+            assert_eq!(options.lazy_lookahead, 2, "level {level}");
+        }
+    }
+}

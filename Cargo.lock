@@ -261,6 +261,7 @@ name = "arca-7z"
 version = "0.10.0"
 dependencies = [
  "arca-core",
+ "arca-xz",
  "crc32fast",
  "getrandom 0.4.3",
  "sevenz-rust2",
@@ -3062,13 +3063,12 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "rars"
 version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0665518097392be04a322dec9eba41e88028f6aca85f5d61f8abb068691f2266"
 dependencies = [
  "aes",
  "aho-corasick",
  "getrandom 0.4.3",
  "hmac",
+ "rayon",
  "sha1",
  "sha2",
  "zeroize",

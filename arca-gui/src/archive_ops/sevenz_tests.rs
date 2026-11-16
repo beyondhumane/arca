@@ -502,7 +502,7 @@ fn exhausted_extraction_rename_does_not_fall_back_to_overwrite() {
     let original = room.path("a.txt");
     fs::write(&original, b"original").unwrap();
     let mut claimed = (1..10_000)
-        .map(|n| room.path(&format!("a ({n}).txt")))
+        .map(|n| arca_core::extraction::claim_key(&room.path(&format!("a ({n}).txt"))))
         .collect();
     assert!(matches!(
         dest_path(&room.0, "a.txt", false, &|_| Answer::Rename, &mut claimed),

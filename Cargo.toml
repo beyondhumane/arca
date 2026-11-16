@@ -19,7 +19,7 @@ members = [
 ]
 # Solo compila en Windows: se queda fuera del workspace para que
 # `cargo build` siga funcionando en Linux y macOS.
-exclude = ["windows/arca-shell", "arca-7z/vendor/sevenz-rust2"]
+exclude = ["windows/arca-shell", "arca-7z/vendor/sevenz-rust2", "arca-rar/vendor/rars"]
 
 [workspace.package]
 version = "0.10.0"
@@ -80,3 +80,4 @@ inherits = "release"
 
 [patch.crates-io]
 sevenz-rust2 = { path = "arca-7z/vendor/sevenz-rust2" }
+rars = { path = "arca-rar/vendor/rars" }

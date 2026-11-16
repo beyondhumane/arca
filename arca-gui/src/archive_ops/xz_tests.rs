@@ -255,3 +255,120 @@ fn a_stop_during_a_small_xz_job_publishes_nothing() {
     ));
     assert!(leftovers(&room.0).is_empty());
 }
+
+// Two ZIP entries of one name, both replaced: the later one wins, as it would
+// extracting in order, and never a mix of the two written at once.
+#[test]
+fn the_later_of_two_same_named_zip_entries_is_the_one_extracted() {
+    let room = Room::new();
+    let archive = room.path("dup.zip");
+    let mut zip = arca_zip::ZipWriter::new(File::create(&archive).unwrap());
+    for body in [&b"first"[..], &b"second, which is longer"[..]] {
+        zip.add("dup.txt", body, Codec::Store, Level::STORE, None)
+            .unwrap();
+    }
+    zip.finish().unwrap();
+    for run in 0..20 {
+        let dest = room.path(&format!("out{run}"));
+        extract(&archive, &dest, &[], GO, &replace, None).unwrap();
+        assert_eq!(
+            fs::read(dest.join("dup.txt")).unwrap(),
+            b"second, which is longer"
+        );
+    }
+}
+
+// Replacing a file with an entry that then fails to come out, here for a wrong
+// password, leaves the file that was there as it was.
+#[test]
+fn a_failed_replace_keeps_the_file_it_would_have_replaced() {
+    let room = Room::new();
+    let archive = room.path("locked.zip");
+    let mut zip = arca_zip::ZipWriter::new(File::create(&archive).unwrap());
+    zip.add_with_password(
+        "keep.txt",
+        &b"from the archive"[..],
+        Codec::Deflate,
+        Level::FAST,
+        None,
+        Some("right"),
+    )
+    .unwrap();
+    zip.finish().unwrap();
+    let dest = room.path("out");
+    fs::create_dir_all(&dest).unwrap();
+    fs::write(dest.join("keep.txt"), b"mine").unwrap();
+    assert!(extract(&archive, &dest, &[], GO, &replace, Some("wrong")).is_err());
+    assert_eq!(fs::read(dest.join("keep.txt")).unwrap(), b"mine");
+    assert_eq!(fs::read_dir(&dest).unwrap().count(), 1);
+}
+
+// Two names that differ only in case are one file on Windows and macOS, and
+// must not be written by two threads at once there.
+#[test]
+fn zip_entries_that_differ_only_in_case_are_one_file_where_the_disk_says_so() {
+    let room = Room::new();
+    let archive = room.path("case.zip");
+    let mut zip = arca_zip::ZipWriter::new(File::create(&archive).unwrap());
+    for (name, body) in [
+        ("Readme.txt", &b"upper"[..]),
+        ("readme.txt", &b"lower, later"[..]),
+    ] {
+        zip.add(name, body, Codec::Store, Level::STORE, None)
+            .unwrap();
+    }
+    zip.finish().unwrap();
+    let dest = room.path("out");
+    extract(&archive, &dest, &[], GO, &replace, None).unwrap();
+    if cfg!(any(windows, target_os = "macos")) {
+        assert_eq!(fs::read_dir(&dest).unwrap().count(), 1);
+        assert_eq!(fs::read(dest.join("readme.txt")).unwrap(), b"lower, later");
+    } else {
+        assert_eq!(fs::read_dir(&dest).unwrap().count(), 2);
+    }
+}
+
+// An archive written into the folder it is made from, over an older copy of
+// itself, leaves both the older copy and itself out.
+#[test]
+fn an_archive_made_inside_its_own_folder_leaves_itself_out() {
+    let room = Room::new();
+    let source = sample(&room);
+    for format in [Format::Zip, Format::Tar, Format::TarGz, Format::SevenZ] {
+        let out = source.join(format!("pack.{}", format.extension()));
+        fs::write(&out, b"an older archive").unwrap();
+        make(&out, std::slice::from_ref(&source), format).unwrap();
+        let (entries, _) = list_entries(&out, None, GO).unwrap();
+        assert!(
+            entries.iter().all(|e| !e.name.contains("pack.")),
+            "{format:?}: {:?}",
+            entries.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        fs::remove_file(&out).unwrap();
+    }
+}
+
+// Stopping halfway through an archive that replaces another leaves the other
+// one where it was, for the formats that used to write in place.
+#[test]
+fn a_stopped_replacement_keeps_the_archive_it_was_replacing() {
+    let room = Room::new();
+    let source = sample(&room);
+    let stop: &(dyn Fn(usize, usize, &str) -> bool + Sync) = &|_, _, _| false;
+    for format in [Format::Zip, Format::Tar, Format::TarGz] {
+        let out = room.path(&format!("old.{}", format.extension()));
+        fs::write(&out, b"keep me").unwrap();
+        let r = compress(
+            &out,
+            std::slice::from_ref(&source),
+            format,
+            Codec::Deflate,
+            Level::FAST,
+            stop,
+            (None, false),
+        );
+        assert!(r.is_err(), "{format:?}");
+        assert_eq!(fs::read(&out).unwrap(), b"keep me", "{format:?}");
+        assert!(leftovers(&room.0).is_empty(), "{format:?}");
+    }
+}

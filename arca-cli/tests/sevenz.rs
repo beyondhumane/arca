@@ -133,14 +133,14 @@ fn create_list_test_extract_all_levels_and_password_modes() {
                 args.push("--hide-names");
             }
             let summary = temp.ok(&args);
-            assert!(summary.contains("sequential"));
+            assert!(summary.contains("threads"));
             let archive = SevenZArchive::open(
                 File::open(temp.0.join("archive.7z")).unwrap(),
                 Some(password),
             )
             .unwrap();
             assert_eq!(archive.has_encrypted_header(), mode == "hidden");
-            assert!(!archive.is_solid());
+            assert!(archive.is_solid());
             let entry = archive
                 .entries()
                 .iter()

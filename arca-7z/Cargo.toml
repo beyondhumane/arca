@@ -9,6 +9,7 @@ description = "Bounded, safe Rust 7z reading and writing for Arca"
 
 [dependencies]
 arca-core.workspace = true
+arca-xz.workspace = true
 sevenz-rust2 = { version = "=0.23.0", default-features = false, features = ["aes256", "compress", "deflate"] }
 crc32fast.workspace = true
 tempfile = "3"

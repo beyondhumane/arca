@@ -52,7 +52,27 @@ pub(crate) struct AppController {
     pub(crate) volumes: Vec<disk::Volume>,
     volumes_at: Option<std::time::Instant>,
     volume_job: Option<disk::DeviceJob>,
+    survey: disk::Survey,
+    survey_job: Option<disk::SurveyJob>,
+    // Bumped by every change to `state.entries`; the rows built from them
+    // are kept until it moves. See `entries_changed`.
+    entries_gen: u64,
+    rows: std::cell::RefCell<RowCache>,
 }
+
+/// Rows already built, so that drawing a frame does not build them again. A
+/// list of 100,000 entries costs that many strings to sort into folders, and
+/// the list is asked for several times a frame.
+#[derive(Default)]
+struct RowCache {
+    stamp: (u64, usize, usize),
+    slots: Vec<(RowKey, std::rc::Rc<Vec<Row>>)>,
+    by_name: Option<std::rc::Rc<Vec<(String, usize)>>>,
+}
+
+type RowKey = (String, String, (SortColumn, bool), bool, bool);
+
+const ROW_SLOTS: usize = 8;
 
 fn rename_destination(path: &str, name: &str) -> String {
     let path = path.trim_end_matches('/');
@@ -698,8 +718,8 @@ impl AppController {
     }
     pub(crate) fn select_all_visible(&mut self) {
         self.cancel_preview();
-        for row in self.visible_rows() {
-            self.set_checked_projection(&row, true);
+        for row in self.visible_rows().iter() {
+            self.set_checked_projection(row, true);
         }
     }
     pub(crate) fn invert_visible(&mut self) {
@@ -759,6 +779,10 @@ impl AppController {
             volumes: Vec::new(),
             volumes_at: None,
             volume_job: None,
+            survey: Default::default(),
+            survey_job: None,
+            entries_gen: 0,
+            rows: Default::default(),
             state: AppState {
                 view: View::Browse,
                 settings,
@@ -797,6 +821,7 @@ impl AppController {
                 add_password: String::new(),
                 hide_names: false,
                 archive_password: None,
+                archive_bytes: None,
                 reread_dir: None,
                 reread_queued: None,
                 history: vec![String::new()],
@@ -833,7 +858,13 @@ impl AppController {
     pub(crate) fn summary(&self) -> String {
         let s = self.s();
         if self.on_disk() {
-            let rows = children_of(&self.state.entries, &self.state.active_pane().directory);
+            let rows = self.rows_for(
+                &self.state.active_pane().directory,
+                "",
+                (SortColumn::Name, true),
+                false,
+                false,
+            );
             let raw: u64 = rows
                 .iter()
                 .filter(|row| !row.is_dir)
@@ -853,11 +884,16 @@ impl AppController {
         }
         let n = self.state.entries.iter().filter(|e| !e.is_dir).count();
         let raw: u64 = self.state.entries.iter().map(|e| e.size).sum();
-        let packed: u64 = self.state.entries.iter().map(|e| e.compressed_size).sum();
+        let packed: u64 = match self.state.archive_bytes {
+            Some(bytes) if whole_stream(self.state.format) => bytes,
+            _ => self.state.entries.iter().map(|e| e.compressed_size).sum(),
+        };
+        // A plain .tar is a little larger than what it holds, and "-2% saved"
+        // says nothing anybody wants to know.
         let ratio = if raw == 0 {
             0.0
         } else {
-            (1.0 - packed as f64 / raw as f64) * 100.0
+            ((1.0 - packed as f64 / raw as f64) * 100.0).max(0.0)
         };
         format!(
             "{n} {} \u{b7} {} {} \u{b7} {} {} \u{b7} {ratio:.1}% {}",
@@ -994,6 +1030,24 @@ impl AppController {
     // stands for all of them, so a copy hands the clipboard one folder instead
     // of the fifteen hundred files inside it, and the Explorer pastes a folder
     // rather than a heap of loose files.
+    /// Gives up on an archive still being read and goes back to where the
+    /// window was. The reading thread is told to stop and whatever it still
+    /// sends is not listened to.
+    pub(crate) fn cancel_opening(&mut self) {
+        if !self.state.listing {
+            return;
+        }
+        self.state
+            .stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.state.channel = None;
+        self.state.busy = false;
+        self.state.listing = false;
+        self.state.overlay = false;
+        self.state.view = View::Browse;
+        self.close_archive();
+    }
+
     pub(crate) fn cancel_password(&mut self) {
         let was_job = matches!(self.state.waiting_on_password, Some(Pending::Extract(_)));
         let was_opening = matches!(self.state.waiting_on_password, Some(Pending::OpenArchive));
@@ -1030,7 +1084,7 @@ impl AppController {
         if self.blocked() {
             return;
         }
-        let Some((archive, _)) = self.state.undo.take() else {
+        let Some((archive, word)) = self.state.undo.take() else {
             return;
         };
         let keep = undo_path(&archive);
@@ -1038,12 +1092,33 @@ impl AppController {
             return;
         }
         let pw = self.state.archive_password.clone();
-        if let Err(e) = fs::remove_file(&archive).and_then(|_| fs::rename(&keep, &archive)) {
+        // One rename, which replaces the archive where there is one: removing
+        // it first would lose it if the rename then failed, and would fail
+        // outright when a rewrite left no archive behind.
+        if let Err(e) = fs::rename(&keep, &archive) {
             self.state.notice = e.to_string();
             self.state.error = true;
+            self.state.undo = Some((archive, word));
             return;
         }
         self.open_with_password(archive, pw);
+    }
+
+    // Offers to take a change back once it has landed. One that failed left
+    // the archive as it was, and whatever was on offer before still holds;
+    // except when it failed after the archive stepped aside, which leaves the
+    // kept version as the only copy and putting it back as the way out.
+    pub(crate) fn keep_undo(&mut self, undo: (PathBuf, &'static str), landed: bool) {
+        let stranded = !undo.0.exists() && undo_path(&undo.0).exists();
+        if !landed && !stranded {
+            return;
+        }
+        // A change to the same archive replaced the kept version itself when
+        // it stepped the archive aside; anything else would leave it orphaned.
+        if self.state.undo.as_ref().map(|(archive, _)| archive) != Some(&undo.0) {
+            self.drop_undo();
+        }
+        self.state.undo = Some(undo);
     }
 
     // Reads the names in the archive again under another code page.
@@ -1061,6 +1136,7 @@ impl AppController {
             e.name = arca_zip::pages::decode(&e.raw_name, page);
             e.is_dir = e.name.ends_with('/') || e.name.ends_with('\\');
         }
+        self.entries_changed();
         self.state.folders = tree::folders_of(&self.state.entries);
         self.clear_picked();
         self.state.active_pane_mut().cursor = None;
@@ -1858,9 +1934,11 @@ impl AppController {
                     self.state.active_pane_mut().checked = vec![false; v.len()];
                     self.state.folders = tree::folders_of(&v);
                     self.state.entries = v;
+                    self.entries_changed();
                     if let Some(f) = detect(&path) {
                         self.state.format = f;
                     }
+                    self.state.archive_bytes = fs::metadata(&path).ok().map(|m| m.len());
                     // The name of what is open goes where every other
                     // program puts it, which frees a whole row above the
                     // list for nothing at all.
@@ -1971,7 +2049,7 @@ impl AppController {
         }
     }
 
-    pub(crate) fn visible_rows(&self) -> Vec<Row> {
+    pub(crate) fn visible_rows(&self) -> std::rc::Rc<Vec<Row>> {
         self.rows_for(
             &self.state.active_pane().directory,
             &self.state.active_pane().filter,
@@ -1981,6 +2059,28 @@ impl AppController {
         )
     }
 
+    /// Every change to `state.entries` goes through here or is followed by
+    /// it, so that rows built from the old ones are not shown again.
+    pub(crate) fn entries_changed(&mut self) {
+        self.entries_gen = self.entries_gen.wrapping_add(1);
+    }
+
+    fn row_cache(&self) -> std::cell::RefMut<'_, RowCache> {
+        let stamp = (
+            self.entries_gen,
+            self.state.entries.as_ptr() as usize,
+            self.state.entries.len(),
+        );
+        let mut cache = self.rows.borrow_mut();
+        if cache.stamp != stamp {
+            *cache = RowCache {
+                stamp,
+                ..RowCache::default()
+            };
+        }
+        cache
+    }
+
     pub(crate) fn rows_for(
         &self,
         directory: &str,
@@ -1988,8 +2088,48 @@ impl AppController {
         order: (SortColumn, bool),
         flat: bool,
         up: bool,
-    ) -> Vec<Row> {
+    ) -> std::rc::Rc<Vec<Row>> {
         let filter = filter.trim().to_lowercase();
+        let key: RowKey = (directory.to_string(), filter, order, flat, up);
+        if let Some((_, rows)) = self.row_cache().slots.iter().find(|(k, _)| *k == key) {
+            return rows.clone();
+        }
+        let rows = std::rc::Rc::new(self.build_rows(&key.0, &key.1, order, flat, up));
+        let mut cache = self.row_cache();
+        if cache.slots.len() >= ROW_SLOTS {
+            cache.slots.remove(0);
+        }
+        cache.slots.push((key, rows.clone()));
+        rows
+    }
+
+    /// The entries sorted by their name with forward slashes, so that the ones
+    /// under a folder are one run that starts where its path would sort.
+    fn name_index(&self) -> std::rc::Rc<Vec<(String, usize)>> {
+        if let Some(index) = &self.row_cache().by_name {
+            return index.clone();
+        }
+        let mut index: Vec<(String, usize)> = self
+            .state
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (tree::normalized(e), i))
+            .collect();
+        index.sort_unstable();
+        let index = std::rc::Rc::new(index);
+        self.row_cache().by_name = Some(index.clone());
+        index
+    }
+
+    fn build_rows(
+        &self,
+        directory: &str,
+        filter: &str,
+        order: (SortColumn, bool),
+        flat: bool,
+        up: bool,
+    ) -> Vec<Row> {
         // A search reaches down through the folders, so it starts where you
         // are: from the root it still walks the whole archive, and inside a
         // folder it stays under that folder. The flat view is the same list
@@ -1998,7 +2138,7 @@ impl AppController {
             search_under(
                 &self.state.entries,
                 if flat { "" } else { directory },
-                &filter,
+                filter,
             )
         } else if flat {
             self.state
@@ -2216,6 +2356,7 @@ impl AppController {
         self.state.password_wrong = false;
         self.state.reread_dir = None;
         self.state.entries.clear();
+        self.entries_changed();
         self.state.active_pane_mut().checked.clear();
         self.state.folders = tree::Folder::default();
         self.state.active_pane_mut().directory.clear();
@@ -2403,14 +2544,6 @@ impl AppController {
             Job::Move { archive, .. } => Some((archive.clone(), words.moving_word)),
             _ => None,
         };
-        // A change to the same archive replaces the kept version itself when
-        // it steps the archive aside; anything else would leave it orphaned.
-        let kept = self.state.undo.as_ref().map(|(archive, _)| archive);
-        if kept != undo.as_ref().map(|(archive, _)| archive) {
-            self.drop_undo();
-        }
-        self.state.undo = undo;
-
         let (reads, writes, outputs) = touched_by(&job);
         let mut task = Task::new(
             verb,
@@ -2436,7 +2569,7 @@ impl AppController {
                 let created = if let Job::Compress {
                     out,
                     password,
-                    format: format @ (Format::SevenZ | Format::Rar),
+                    format,
                     ..
                 } = &mut job
                 {
@@ -2474,6 +2607,7 @@ impl AppController {
         task.in_bytes = in_bytes;
         task.stop_leaves_files = stop_leaves_files;
         task.reread_after = reread_after;
+        task.undo = undo;
         task.close_when_done = self.state.close_when_done;
         self.enqueue(task);
     }
@@ -2496,8 +2630,13 @@ impl AppController {
         match row.entry {
             Some(i) => selected(i),
             None => {
-                let under = entries_under(&self.state.entries, &row.path);
-                !under.is_empty() && under.into_iter().all(selected)
+                let index = self.name_index();
+                let start = index.partition_point(|(name, _)| name.as_str() < row.path.as_str());
+                let mut under = index[start..]
+                    .iter()
+                    .take_while(|(name, _)| name.starts_with(&row.path))
+                    .peekable();
+                under.peek().is_some() && under.all(|(_, i)| selected(*i))
             }
         }
     }
@@ -3067,7 +3206,8 @@ mod filter_tests {
         controller.state.active_pane_mut().filter = filter.to_string();
         controller
             .visible_rows()
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|r| r.label)
             .collect()
     }

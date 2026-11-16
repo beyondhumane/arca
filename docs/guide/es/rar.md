@@ -75,7 +75,7 @@ La creación rechaza, antes de leer ninguna entrada o escribir ningún fichero:
 
 - Una contraseña u **Ocultar nombres**: la salida RAR nunca se cifra. Usa ZIP o
   7z para eso.
-- `-c deflate|zstd|lzma2`, `-j` mayor que 1 (la creación RAR es secuencial), un
+- `-c deflate|zstd|lzma2`, un
   destino `.cbr` o cualquier otro sufijo distinto de `.rar`.
 - Un destino que ya exista, incluso como enlace roto. Arca solo crea archivos
   RAR nuevos y nunca reemplaza un fichero, tampoco uno que aparezca mientras se

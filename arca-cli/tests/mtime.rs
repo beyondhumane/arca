@@ -55,3 +55,21 @@ fn extraction_restores_the_recorded_modification_time() {
         }
     }
 }
+
+#[test]
+fn an_archive_made_inside_its_own_folder_leaves_itself_out() {
+    let room = tempfile::tempdir().unwrap();
+    let dir = room.path();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/a.txt"), b"contents").unwrap();
+    for archive in ["pack.zip", "pack.tar", "pack.tar.gz", "pack.7z"] {
+        let inside = format!("src/{archive}");
+        fs::write(dir.join(&inside), b"an older archive").unwrap();
+        ok(dir, &["create", &inside, "src"]);
+        let out = dir.join(format!("out-{archive}"));
+        ok(dir, &["extract", &inside, "-o", out.to_str().unwrap()]);
+        assert!(out.join("src/a.txt").is_file(), "{archive}");
+        assert!(!out.join(&inside).exists(), "{archive} took itself in");
+        fs::remove_file(dir.join(&inside)).unwrap();
+    }
+}

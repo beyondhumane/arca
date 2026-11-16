@@ -28,6 +28,106 @@ fn octal(field: &[u8], what: &str) -> Result<u64> {
     Ok(v)
 }
 
+/// A numeric field, in octal or, with the top bit of its first byte set, in the
+/// base-256 GNU tar uses for sizes over 8 GiB and times before 1970.
+fn number(field: &[u8], what: &str) -> Result<i64> {
+    let overflow = || Error::Limit(format!("{what}: overflow"));
+    match field.first() {
+        Some(&first) if first & 0x80 != 0 => {
+            // Big-endian, in two's complement over the whole field when the
+            // second bit says negative, with the marker bit aside otherwise.
+            if field.len() > 15 {
+                return Err(overflow());
+            }
+            let negative = first & 0x40 != 0;
+            let mut v: i128 = 0;
+            for (i, &byte) in field.iter().enumerate() {
+                let byte = if i == 0 && !negative {
+                    byte & 0x7f
+                } else {
+                    byte
+                };
+                v = v * 256 + i128::from(byte);
+            }
+            if negative {
+                v -= 1i128 << (8 * field.len());
+            }
+            i64::try_from(v).map_err(|_| overflow())
+        }
+        _ => i64::try_from(octal(field, what)?).map_err(|_| overflow()),
+    }
+}
+
+fn unsigned(field: &[u8], what: &str) -> Result<u64> {
+    u64::try_from(number(field, what)?).map_err(|_| Error::Format(format!("{what}: negative")))
+}
+
+/// The most a pax header may hold. Real ones are a few hundred bytes; this is
+/// room for a long path and every attribute tar knows, and no more.
+const PAX_LIMIT: u64 = 64 * 1024;
+
+/// What the extension headers in front of an entry say about it.
+#[derive(Default)]
+struct Longer {
+    name: Option<String>,
+    size: Option<u64>,
+    mtime: Option<i64>,
+}
+
+impl Longer {
+    fn is_empty(&self) -> bool {
+        self.name.is_none() && self.size.is_none() && self.mtime.is_none()
+    }
+
+    /// Reads pax records, each `<length> <key>=<value>\n` where the length
+    /// counts the whole record, itself included.
+    fn apply_pax(&mut self, mut data: &[u8]) -> Result<()> {
+        let bad = || Error::Format("a malformed pax record".into());
+        while !data.is_empty() {
+            let space = data.iter().position(|&b| b == b' ').ok_or_else(bad)?;
+            let length: usize = std::str::from_utf8(&data[..space])
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(bad)?;
+            if length <= space + 1 || length > data.len() || data[length - 1] != b'\n' {
+                return Err(bad());
+            }
+            let record = &data[space + 1..length - 1];
+            let equals = record.iter().position(|&b| b == b'=').ok_or_else(bad)?;
+            let (key, value) = (&record[..equals], &record[equals + 1..]);
+            let value = std::str::from_utf8(value).map_err(|_| bad())?;
+            match key {
+                b"path" => self.name = Some(value.to_string()),
+                b"size" => self.size = Some(value.parse().map_err(|_| bad())?),
+                b"mtime" => {
+                    let whole = value.split('.').next().unwrap_or(value);
+                    self.mtime = Some(whole.parse().map_err(|_| bad())?);
+                }
+                _ => {}
+            }
+            data = &data[length..];
+        }
+        Ok(())
+    }
+}
+
+/// A name without the `./` in front of it, however many times it is there.
+fn without_current(name: &str) -> &str {
+    let mut name = name;
+    while let Some(rest) = name.strip_prefix("./") {
+        name = rest.trim_start_matches('/');
+    }
+    if name == "." {
+        ""
+    } else {
+        name
+    }
+}
+
+fn dangling() -> Error {
+    Error::Format("an extension header with no entry after it".into())
+}
+
 fn write_octal(dest: &mut [u8], value: u64) {
     let width = dest.len() - 1;
     let s = format!("{value:0width$o}", width = width);
@@ -54,6 +154,21 @@ fn text_field(field: &[u8]) -> String {
     String::from_utf8_lossy(&field[..end]).into_owned()
 }
 
+/// The permissions to record for a file going into a tar: its own on Unix, so
+/// a program stays runnable once extracted, and an ordinary file's elsewhere.
+pub fn mode_of(meta: &std::fs::Metadata) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o777
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        0o644
+    }
+}
+
 /// Whether a 512-byte block is a TAR header with a valid checksum.
 pub fn is_header(block: &[u8]) -> bool {
     let Ok(header) = <&[u8; BLOCK]>::try_from(block) else {
@@ -69,6 +184,21 @@ pub fn is_header(block: &[u8]) -> bool {
 pub struct TarEntry {
     pub entry: Entry,
     pub data: u64,
+    /// The Unix permission bits, `0o755` for a program. Zero when the field
+    /// cannot be read, which only ever costs the execute bit.
+    pub mode: u32,
+    /// The typeflag: `0` or NUL a file, `5` a folder, `1` a hard link, `2` a
+    /// symbolic link, `3` to `6` devices and pipes, `V` a volume label.
+    pub kind: u8,
+}
+
+impl TarEntry {
+    /// Whether extracting the entry means writing a file or making a folder.
+    /// Links, devices, pipes and volume labels have no data of their own, and
+    /// writing them as files would leave empty files where a tar puts links.
+    pub fn is_plain(&self) -> bool {
+        self.entry.is_dir || matches!(self.kind, b'0' | 0 | b'7')
+    }
 }
 
 pub struct TarReader<R: Read> {
@@ -91,59 +221,120 @@ impl<R: Read> TarReader<R> {
         self.source
     }
 
+    /// The next file or folder. The headers GNU tar and pax put in front of
+    /// one to give it a longer name, a larger size or an exact time are read
+    /// and applied here, never returned as entries of their own.
     pub fn next_entry(&mut self) -> Result<Option<TarEntry>> {
         if self.finished {
             return Ok(None);
         }
-        let mut header = [0u8; BLOCK];
-        match self.source.read_exact(&mut header) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                self.finished = true;
-                return Ok(None);
+        let (header, longer, name) = loop {
+            let mut longer = Longer::default();
+            let header = loop {
+                let mut header = [0u8; BLOCK];
+                // A tar that simply stops where a header would start is read as
+                // ended, as tar itself does; one that stops inside a header, or
+                // whose decompressor reports it cut short, is not.
+                if fill(&mut self.source, &mut header)? == 0 {
+                    self.finished = true;
+                    return if longer.is_empty() {
+                        Ok(None)
+                    } else {
+                        Err(dangling())
+                    };
+                }
+                self.pos += BLOCK as u64;
+
+                if header.iter().all(|&b| b == 0) {
+                    self.finished = true;
+                    return if longer.is_empty() {
+                        Ok(None)
+                    } else {
+                        Err(dangling())
+                    };
+                }
+
+                let declared = octal(&header[148..156], "checksum")? as u32;
+                let actual = checksum(&header);
+                if declared != actual {
+                    return Err(Error::Format(format!(
+                        "invalid header checksum: {declared} declared, {actual} computed"
+                    )));
+                }
+                let size = unsigned(&header[124..136], "size")?;
+                match header[156] {
+                    b'L' => {
+                        let name = self.payload(size, limits::MAX_NAME as u64 + 1)?;
+                        longer.name = Some(text_field(&name));
+                    }
+                    b'K' => {
+                        self.payload(size, limits::MAX_NAME as u64 + 1)?;
+                    }
+                    b'x' => {
+                        let records = self.payload(size, PAX_LIMIT)?;
+                        longer.apply_pax(&records)?;
+                    }
+                    // The global header every `git archive` tarball starts with.
+                    // Nothing in it names a file, so it is stepped over.
+                    b'g' => self.payload(size, PAX_LIMIT).map(|_| ())?,
+                    _ => break header,
+                }
+            };
+
+            let name = match longer.name.take() {
+                Some(name) => name,
+                None => {
+                    let base_name = text_field(&header[0..100]);
+                    let prefix = if &header[257..262] == b"ustar" {
+                        text_field(&header[345..500])
+                    } else {
+                        String::new()
+                    };
+                    if prefix.is_empty() {
+                        base_name
+                    } else {
+                        format!("{prefix}/{base_name}")
+                    }
+                }
+            };
+            if name.len() > limits::MAX_NAME {
+                return Err(Error::Limit("name too long".into()));
             }
-            Err(e) => return Err(Error::Io(e)),
-        }
-        self.pos += BLOCK as u64;
+            // `tar -C folder .` names everything `./…` and adds `./` for the
+            // folder itself. The prefix says nothing, and the folder is wherever
+            // the archive is extracted to, so it is not an entry of its own.
+            let bare = without_current(&name);
+            if bare.is_empty() {
+                if header[156] == b'5' || name.ends_with('/') || name == "." {
+                    let size = unsigned(&header[124..136], "size")?;
+                    self.skip(longer.size.unwrap_or(size))?;
+                    continue;
+                }
+                return Err(Error::Format("an entry without a name".into()));
+            }
+            break (header, longer, bare.to_string());
+        };
 
-        if header.iter().all(|&b| b == 0) {
-            self.finished = true;
-            return Ok(None);
-        }
-
-        let declared = octal(&header[148..156], "checksum")? as u32;
-        let actual = checksum(&header);
-        if declared != actual {
-            return Err(Error::Format(format!(
-                "invalid header checksum: {declared} declared, {actual} computed"
+        let size = match longer.size {
+            Some(size) => size,
+            None => unsigned(&header[124..136], "size")?,
+        };
+        let mtime = match longer.mtime {
+            Some(mtime) => mtime,
+            None => number(&header[136..148], "mtime")?,
+        };
+        let kind = header[156];
+        if matches!(kind, b'S' | b'M') {
+            return Err(Error::Unsupported(format!(
+                "'{name}' is a GNU tar {} entry",
+                if kind == b'S' {
+                    "sparse"
+                } else {
+                    "multivolume"
+                }
             )));
         }
-
-        let base_name = text_field(&header[0..100]);
-        let prefix = if &header[257..262] == b"ustar" {
-            text_field(&header[345..500])
-        } else {
-            String::new()
-        };
-        let name = if prefix.is_empty() {
-            base_name
-        } else {
-            format!("{prefix}/{base_name}")
-        };
-        if name.len() > limits::MAX_NAME {
-            return Err(Error::Limit("name too long".into()));
-        }
-
-        let size = octal(&header[124..136], "size")?;
-        let mtime = octal(&header[136..148], "mtime")? as i64;
-        let kind = header[156];
         let is_dir = kind == b'5' || name.ends_with('/');
-
-        if kind == b'L' || kind == b'K' {
-            return Err(Error::Unsupported(
-                "GNU tar long headers are not supported yet".into(),
-            ));
-        }
 
         let entry = Entry {
             // A tar name is bytes too, but this reader has always taken them as
@@ -169,12 +360,49 @@ impl<R: Read> TarReader<R> {
         Ok(Some(TarEntry {
             entry,
             data: if is_dir { 0 } else { size },
+            mode: octal(&header[100..108], "mode").map_or(0, |m| (m & 0o7777) as u32),
+            kind,
         }))
+    }
+
+    /// The data of an extension header, read whole and with its padding. Its
+    /// size comes from the archive, so it is held to `limit` before anything
+    /// is set aside for it.
+    fn payload(&mut self, size: u64, limit: u64) -> Result<Vec<u8>> {
+        if size > limit {
+            return Err(Error::Limit(format!("an extension header of {size} bytes")));
+        }
+        let padded = size.div_ceil(BLOCK as u64) * BLOCK as u64;
+        let mut data = vec![0u8; padded as usize];
+        self.source.read_exact(&mut data).map_err(|e| {
+            if e.kind() == io::ErrorKind::UnexpectedEof {
+                Error::Format("an extension header is truncated".into())
+            } else {
+                Error::Io(e)
+            }
+        })?;
+        self.pos += padded;
+        data.truncate(size as usize);
+        Ok(data)
+    }
+
+    /// Steps over `size` bytes of data and their padding.
+    fn skip(&mut self, size: u64) -> Result<()> {
+        let padded = size.div_ceil(BLOCK as u64) * BLOCK as u64;
+        let n = io::copy(&mut (&mut self.source).take(padded), &mut io::sink())?;
+        self.pos += n;
+        if n < padded {
+            return Err(Error::Io(truncated()));
+        }
+        Ok(())
     }
 
     pub fn copy_data<W: Write>(&mut self, e: &TarEntry, dest: &mut W) -> Result<u64> {
         let n = io::copy(&mut (&mut self.source).take(e.data), dest)?;
         self.pos += n;
+        if n != e.data {
+            return Err(Error::Io(truncated()));
+        }
         let padding = (BLOCK - (e.data as usize % BLOCK)) % BLOCK;
         if padding > 0 {
             let mut discard = vec![0u8; padding];
@@ -247,6 +475,24 @@ fn truncated() -> io::Error {
     io::Error::new(io::ErrorKind::UnexpectedEof, "the TAR entry is truncated")
 }
 
+/// Reads a whole block, or nothing at all: gives back 0 when the source ends
+/// before the block starts and an error when it ends, or fails, inside it.
+fn fill<R: Read>(source: &mut R, block: &mut [u8; BLOCK]) -> Result<usize> {
+    let mut filled = 0;
+    while filled < BLOCK {
+        match source.read(&mut block[filled..]) {
+            Ok(0) if filled == 0 => return Ok(0),
+            Ok(0) => {
+                return Err(Error::Format("the TAR archive ends inside a header".into()));
+            }
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(Error::Io(e)),
+        }
+    }
+    Ok(filled)
+}
+
 pub struct TarWriter<W: Write> {
     out: W,
 }
@@ -262,39 +508,58 @@ impl<W: Write> TarWriter<W> {
         size: u64,
         mtime: i64,
         mode: u32,
-        mut data: R,
+        data: R,
     ) -> Result<()> {
-        let (prefix, base) = split_name(name)?;
-        let mut header = [0u8; BLOCK];
-        header[..base.len()].copy_from_slice(base.as_bytes());
-        write_octal(&mut header[100..108], mode as u64);
-        write_octal(&mut header[108..116], 0);
-        write_octal(&mut header[116..124], 0);
-        write_octal(&mut header[124..136], size);
-        write_octal(&mut header[136..148], mtime.max(0) as u64);
-        header[156] = if name.ends_with('/') { b'5' } else { b'0' };
-        header[257..262].copy_from_slice(b"ustar");
-        header[262] = 0;
-        header[263..265].copy_from_slice(b"00");
-        if !prefix.is_empty() {
-            header[345..345 + prefix.len()].copy_from_slice(prefix.as_bytes());
+        if name.len() > limits::MAX_NAME {
+            return Err(Error::Limit(format!("name of {} bytes", name.len())));
         }
-        let sum = checksum(&header);
-        let s = format!("{sum:06o}");
-        header[148..154].copy_from_slice(s.as_bytes());
-        header[154] = 0;
-        header[155] = b' ';
-
-        self.out.write_all(&header)?;
-        let written = io::copy(&mut data, &mut self.out)?;
+        // What the ustar header cannot hold goes in a pax header in front of
+        // it, which every tar since 2001 reads: a name past its 255 bytes, a
+        // size from 8 GiB up, a time before 1970 or past 2242.
+        let mut pax = Vec::new();
+        let (prefix, base) = match split_name(name) {
+            Some(parts) => parts,
+            None => {
+                pax.extend(pax_record("path", name));
+                ("", cut_name(name, 100))
+            }
+        };
+        if size > OCTAL_11 {
+            pax.extend(pax_record("size", &size.to_string()));
+        }
+        if !(0..=OCTAL_11 as i64).contains(&mtime) {
+            pax.extend(pax_record("mtime", &mtime.to_string()));
+        }
+        if !pax.is_empty() {
+            let header = ustar_header(
+                &format!("PaxHeaders/{}", cut_name(base, 89)),
+                "",
+                pax.len() as u64,
+                mtime,
+                0o644,
+                b'x',
+            );
+            self.out.write_all(&header)?;
+            self.out.write_all(&pax)?;
+            self.pad(pax.len() as u64)?;
+        }
+        let kind = if name.ends_with('/') { b'5' } else { b'0' };
+        self.out
+            .write_all(&ustar_header(base, prefix, size, mtime, mode, kind))?;
+        // No more than the size just recorded, whatever the source holds now.
+        let written = io::copy(&mut data.take(size), &mut self.out)?;
         if written != size {
             return Err(Error::Format(format!(
                 "'{name}': {size} bytes declared but {written} written"
             )));
         }
-        let padding = (BLOCK - (size as usize % BLOCK)) % BLOCK;
+        self.pad(size)
+    }
+
+    fn pad(&mut self, size: u64) -> Result<()> {
+        let padding = (BLOCK - (size % BLOCK as u64) as usize) % BLOCK;
         if padding > 0 {
-            self.out.write_all(&vec![0u8; padding])?;
+            self.out.write_all(&[0u8; BLOCK][..padding])?;
         }
         Ok(())
     }
@@ -306,19 +571,78 @@ impl<W: Write> TarWriter<W> {
     }
 }
 
-fn split_name(name: &str) -> Result<(&str, &str)> {
+/// The largest number eleven octal digits hold: 8 GiB less one byte.
+const OCTAL_11: u64 = 0o777_7777_7777;
+
+/// A ustar header. Numbers too large for their octal field are written in
+/// the base-256 form GNU tar reads, beside the pax record that says the same.
+fn ustar_header(
+    base: &str,
+    prefix: &str,
+    size: u64,
+    mtime: i64,
+    mode: u32,
+    kind: u8,
+) -> [u8; BLOCK] {
+    let mut header = [0u8; BLOCK];
+    header[..base.len()].copy_from_slice(base.as_bytes());
+    write_octal(&mut header[100..108], u64::from(mode & 0o7777));
+    write_octal(&mut header[108..116], 0);
+    write_octal(&mut header[116..124], 0);
+    if size > OCTAL_11 {
+        header[124] = 0x80;
+        header[128..136].copy_from_slice(&size.to_be_bytes());
+    } else {
+        write_octal(&mut header[124..136], size);
+    }
+    write_octal(
+        &mut header[136..148],
+        mtime.clamp(0, OCTAL_11 as i64) as u64,
+    );
+    header[156] = kind;
+    header[257..262].copy_from_slice(b"ustar");
+    header[263..265].copy_from_slice(b"00");
+    header[345..345 + prefix.len()].copy_from_slice(prefix.as_bytes());
+    let sum = checksum(&header);
+    header[148..154].copy_from_slice(format!("{sum:06o}").as_bytes());
+    header[154] = 0;
+    header[155] = b' ';
+    header
+}
+
+/// A name cut to at most `max` bytes without splitting a character.
+fn cut_name(name: &str, max: usize) -> &str {
+    let mut end = name.len().min(max);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    &name[..end]
+}
+
+/// `<length> <key>=<value>\n`, where the length counts the whole record,
+/// its own digits included.
+fn pax_record(key: &str, value: &str) -> Vec<u8> {
+    let body = key.len() + value.len() + 3;
+    let mut length = body + 1;
+    while length != body + length.to_string().len() {
+        length = body + length.to_string().len();
+    }
+    format!("{length} {key}={value}\n").into_bytes()
+}
+
+/// The name split into ustar's prefix and name fields, at a slash, or `None`
+/// when it does not fit them. The split is on bytes, so a name of any script
+/// is cut only at its ASCII slash.
+fn split_name(name: &str) -> Option<(&str, &str)> {
     if name.len() <= 100 {
-        return Ok(("", name));
+        return Some(("", name));
     }
-    let cut = name[..name.len().min(156)]
-        .rfind('/')
-        .ok_or_else(|| Error::Limit(format!("name of {} bytes with no split point", name.len())))?;
-    let (p, b) = name.split_at(cut);
-    let b = &b[1..];
-    if p.len() > 155 || b.len() > 100 {
-        return Err(Error::Limit(format!("name too long for ustar: {name}")));
-    }
-    Ok((p, b))
+    let bytes = name.as_bytes();
+    let cut = bytes[..bytes.len().min(156)]
+        .iter()
+        .rposition(|&b| b == b'/')?;
+    let (p, b) = (&name[..cut], &name[cut + 1..]);
+    (p.len() <= 155 && b.len() <= 100 && !b.is_empty()).then_some((p, b))
 }
 
 #[cfg(test)]
@@ -425,6 +749,286 @@ mod tests {
                 .collect();
             let mut r = TarReader::new(&data[..]);
             let _ = r.next_entry();
+        }
+    }
+
+    /// A header of `kind` for `name` holding `size` bytes, as GNU tar and
+    /// pax write their extension headers.
+    fn header(name: &str, kind: u8, size: u64) -> Vec<u8> {
+        let mut h = [0u8; BLOCK];
+        h[..name.len()].copy_from_slice(name.as_bytes());
+        write_octal(&mut h[100..108], 0o644);
+        write_octal(&mut h[124..136], size);
+        write_octal(&mut h[136..148], 1_700_000_000);
+        h[156] = kind;
+        h[257..262].copy_from_slice(b"ustar");
+        let sum = checksum(&h);
+        write_octal(&mut h[148..155], u64::from(sum));
+        h[155] = b' ';
+        h.to_vec()
+    }
+
+    fn padded(data: &[u8]) -> Vec<u8> {
+        let mut out = data.to_vec();
+        out.resize(data.len().div_ceil(BLOCK) * BLOCK, 0);
+        out
+    }
+
+    fn pax(records: &[(&str, &str)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (key, value) in records {
+            let body = format!(" {key}={value}\n");
+            let mut length = body.len() + 1;
+            while format!("{length}{body}").len() != length {
+                length += 1;
+            }
+            out.extend_from_slice(format!("{length}{body}").as_bytes());
+        }
+        out
+    }
+
+    type Listed = (String, u64, i64, Vec<u8>);
+
+    fn names(tar: &[u8]) -> Result<Vec<Listed>> {
+        let mut r = TarReader::new(tar);
+        let mut out = Vec::new();
+        while let Some(e) = r.next_entry()? {
+            let mut data = Vec::new();
+            r.copy_data(&e, &mut data)?;
+            out.push((e.entry.name, e.entry.size, e.entry.mtime.unwrap(), data));
+        }
+        Ok(out)
+    }
+
+    fn end() -> Vec<u8> {
+        vec![0u8; BLOCK * 2]
+    }
+
+    #[test]
+    fn the_permissions_of_an_entry_are_read_and_a_bad_field_costs_only_them() {
+        let with_mode = |field: &[u8]| {
+            let mut h = header("tool", b'0', 0);
+            h[100..108].copy_from_slice(field);
+            h[148..156].copy_from_slice(b"        ");
+            let sum = checksum(<&[u8; BLOCK]>::try_from(&h[..]).unwrap());
+            write_octal(&mut h[148..155], u64::from(sum));
+            h.extend(end());
+            let mut r = TarReader::new(&h[..]);
+            r.next_entry().unwrap().unwrap().mode
+        };
+        assert_eq!(with_mode(b"0000755\0"), 0o755);
+        assert_eq!(with_mode(b"0104755\0"), 0o4755);
+        assert_eq!(with_mode(b"07x5\0\0\0\0"), 0);
+    }
+
+    #[test]
+    fn a_gnu_long_name_names_the_entry_after_it() {
+        let long = format!("{}/{}.txt", "d".repeat(120), "f".repeat(40));
+        let mut tar = header("././@LongLink", b'L', long.len() as u64 + 1);
+        tar.extend(padded(format!("{long}\0").as_bytes()));
+        tar.extend(header("short-cut-name", b'0', 2));
+        tar.extend(padded(b"hi"));
+        tar.extend(header("././@LongLink", b'K', 10));
+        tar.extend(padded(b"target.txt"));
+        tar.extend(header("link", b'2', 0));
+        tar.extend(end());
+        let got = names(&tar).unwrap();
+        assert_eq!(got[0].0, long);
+        assert_eq!(got[0].3, b"hi");
+        assert_eq!(got[1].0, "link");
+        assert_eq!(got.len(), 2);
+    }
+
+    #[test]
+    fn pax_records_override_the_header_and_global_ones_are_skipped() {
+        let long = format!("{}/{}.bin", "p".repeat(150), "q".repeat(30));
+        let global = pax(&[("comment", "made by git archive")]);
+        let mut tar = header("pax_global_header", b'g', global.len() as u64);
+        tar.extend(padded(&global));
+        let local = pax(&[("path", &long), ("mtime", "1234567890.25"), ("size", "3")]);
+        tar.extend(header("PaxHeaders/x", b'x', local.len() as u64));
+        tar.extend(padded(&local));
+        tar.extend(header("cut", b'0', 0));
+        tar.extend(padded(b"abc"));
+        tar.extend(end());
+        let got = names(&tar).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, long);
+        assert_eq!((got[0].1, got[0].2), (3, 1_234_567_890));
+        assert_eq!(got[0].3, b"abc");
+    }
+
+    #[test]
+    fn the_folder_tar_was_run_in_is_not_an_entry() {
+        let mut tar = header("./", b'5', 0);
+        tar.extend(header("./a.txt", b'0', 1));
+        tar.extend(padded(b"a"));
+        tar.extend(header("././b/", b'5', 0));
+        tar.extend(end());
+        let got = names(&tar).unwrap();
+        let got: Vec<&str> = got.iter().map(|e| e.0.as_str()).collect();
+        assert_eq!(got, ["a.txt", "b/"]);
+        let mut nameless = header("", b'0', 0);
+        nameless.extend(end());
+        assert!(names(&nameless).is_err());
+    }
+
+    #[test]
+    fn base_256_numbers_are_read() {
+        let mut field = [0u8; 12];
+        field[0] = 0x80;
+        field[11] = 5;
+        field[7] = 1;
+        assert_eq!(number(&field, "size").unwrap(), (1i64 << 32) + 5);
+        let negative = [0xffu8; 12];
+        assert_eq!(number(&negative, "mtime").unwrap(), -1);
+        assert!(unsigned(&negative, "size").is_err());
+        let mut huge = [0u8; 12];
+        huge[0] = 0x80;
+        huge[1] = 0x7f;
+        assert!(number(&huge, "size").is_err());
+    }
+
+    #[test]
+    fn broken_extension_headers_are_errors_not_panics() {
+        let name = b"long-name.txt\0";
+        // A long name with nothing after it.
+        let mut alone = header("././@LongLink", b'L', name.len() as u64);
+        alone.extend(padded(name));
+        assert!(names(&alone).is_err());
+        let mut then_end = alone.clone();
+        then_end.extend(end());
+        assert!(names(&then_end).is_err());
+        // Cut in the middle of its own data.
+        let mut cut = header("././@LongLink", b'L', 600);
+        cut.extend(vec![b'a'; 100]);
+        assert!(names(&cut).is_err());
+        // Larger than any name may be.
+        let mut huge = header("././@LongLink", b'L', 100_000);
+        huge.extend(end());
+        assert!(matches!(names(&huge), Err(Error::Limit(_))));
+        // Pax records that do not add up.
+        for records in [
+            &b"99 path=x\n"[..],
+            b"9 pathx\n",
+            b"x path=y\n",
+            b"10 path=xy",
+            b"3 a\n",
+        ] {
+            let mut tar = header("PaxHeaders/x", b'x', records.len() as u64);
+            tar.extend(padded(records));
+            tar.extend(header("a.txt", b'0', 0));
+            tar.extend(end());
+            assert!(names(&tar).is_err(), "{}", String::from_utf8_lossy(records));
+        }
+    }
+
+    // A name of any script that is too long for ustar goes in a pax record and
+    // reads back whole; one that ustar can split is cut only at a slash, never
+    // inside a character.
+    #[test]
+    fn long_and_non_ascii_names_round_trip() {
+        let split = format!("{}/{}.txt", "ñ".repeat(77), "é".repeat(30));
+        assert!(split.len() > 100 && split.len() < 256);
+        let long = format!("{}/{}", "日本".repeat(60), "ñ".repeat(80));
+        let one_part = "x".repeat(300);
+        let mut w = TarWriter::new(Vec::new());
+        for name in [&split, &long, &one_part] {
+            w.add(name, 3, 1_700_000_000, 0o755, &b"abc"[..]).unwrap();
+        }
+        let tar = w.finish().unwrap();
+        let got = names(&tar).unwrap();
+        let got: Vec<&str> = got.iter().map(|e| e.0.as_str()).collect();
+        assert_eq!(got, [split.as_str(), long.as_str(), one_part.as_str()]);
+        let mut r = TarReader::new(&tar[..]);
+        assert_eq!(r.next_entry().unwrap().unwrap().mode, 0o755);
+    }
+
+    // A size from 8 GiB up does not fit eleven octal digits; it is written in
+    // base 256 and in a pax record, and reads back from either.
+    #[test]
+    fn sizes_and_times_past_ustar_fields_are_kept() {
+        let huge = (8u64 << 30) + 5;
+        let header = ustar_header("big", "", huge, -1, 0o644, b'0');
+        assert_eq!(unsigned(&header[124..136], "size").unwrap(), huge);
+        assert!(is_header(&header));
+        let record = pax_record("size", &huge.to_string());
+        let mut longer = Longer::default();
+        longer.apply_pax(&record).unwrap();
+        assert_eq!(longer.size, Some(huge));
+        // Lengths that cross a digit boundary still count themselves.
+        for value in ["x".repeat(4), "x".repeat(92), "x".repeat(993)] {
+            let record = pax_record("path", &value);
+            let digits = record.iter().position(|&b| b == b' ').unwrap();
+            let length: usize = std::str::from_utf8(&record[..digits])
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert_eq!(length, record.len());
+        }
+        let mut w = TarWriter::new(Vec::new());
+        w.add("old.txt", 1, -86_400, 0o644, &b"a"[..]).unwrap();
+        let tar = w.finish().unwrap();
+        assert_eq!(names(&tar).unwrap()[0].2, -86_400);
+    }
+
+    // A source that grew after its size was taken writes the size recorded,
+    // not what it holds now, so the archive stays readable.
+    #[test]
+    fn a_source_that_grew_writes_only_its_recorded_size() {
+        let mut w = TarWriter::new(Vec::new());
+        w.add("grew.txt", 3, 0, 0o644, &b"abcdef"[..]).unwrap();
+        w.add("next.txt", 1, 0, 0o644, &b"z"[..]).unwrap();
+        let tar = w.finish().unwrap();
+        let got = names(&tar).unwrap();
+        assert_eq!(got[0].3, b"abc");
+        assert_eq!(got[1].0, "next.txt");
+        let mut w = TarWriter::new(Vec::new());
+        assert!(w.add("short.txt", 5, 0, 0o644, &b"ab"[..]).is_err());
+    }
+
+    // A tar that stops where a header would start is ended; one that stops
+    // inside a header or inside an entry's data is cut, even when the data
+    // is a whole number of blocks and so has no padding to trip over.
+    #[test]
+    fn truncation_is_an_error_and_a_missing_end_is_not() {
+        let mut w = TarWriter::new(Vec::new());
+        w.add("a.bin", 1024, 0, 0o644, &[7u8; 1024][..]).unwrap();
+        let tar = w.finish().unwrap();
+        let entry = BLOCK + 1024;
+        assert_eq!(names(&tar[..entry]).unwrap().len(), 1);
+        assert!(names(&tar[..entry + 100]).is_err());
+        assert!(names(&tar[..BLOCK + 512]).is_err());
+        assert!(names(&tar[..300]).is_err());
+    }
+
+    // Links, devices and pipes are listed but are not files to write, and a
+    // sparse or multivolume entry is refused rather than written wrong.
+    #[test]
+    fn entry_kinds_are_told_apart() {
+        let mut tar = header("link", b'2', 0);
+        tar.extend(header("hard", b'1', 0));
+        tar.extend(header("file", b'0', 0));
+        tar.extend(header("dir/", b'5', 0));
+        tar.extend(end());
+        let mut r = TarReader::new(&tar[..]);
+        let mut plain = Vec::new();
+        while let Some(e) = r.next_entry().unwrap() {
+            plain.push((e.entry.name.clone(), e.is_plain()));
+        }
+        assert_eq!(
+            plain,
+            [
+                ("link".to_string(), false),
+                ("hard".to_string(), false),
+                ("file".to_string(), true),
+                ("dir/".to_string(), true),
+            ]
+        );
+        for &kind in b"SM" {
+            let mut tar = header("odd", kind, 0);
+            tar.extend(end());
+            assert!(matches!(names(&tar), Err(Error::Unsupported(_))));
         }
     }
 }

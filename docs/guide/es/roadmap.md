@@ -32,8 +32,6 @@ y escritorio. Consulta el
 
 - **UDF:** las imágenes ISO se leen por ISO 9660, así que los ficheros que solo están en UDF (como `install.wim` en los medios de Windows) todavía no aparecen.
 - **Enlaces simbólicos:** se omiten al crear ZIP/TAR y se rechazan en 7z.
-- **Nombres largos de GNU tar.**
-- **Crear 7z sólidos:** se leen los existentes, pero se crean bloques independientes.
 - **Cambiar contraseñas y modificar 7z:** añadir, borrar y renombrar puede exigir reescribir bloques sólidos y queda fuera del alcance.
 - **Integración de escritorio en Linux y macOS:** el menú del Explorador es solo para Windows por ahora.
 - **Modificar fuera de ZIP:** ZIP ya se edita en la ventana; 7z solo se crea y se lee.

@@ -69,6 +69,8 @@ pub(crate) struct AppState {
     // Held for the archive currently open in the window, so extracting from it
     // does not ask again for every button press.
     pub(crate) archive_password: Option<String>,
+    /// The size of the open archive's file, read when its listing arrives.
+    pub(crate) archive_bytes: Option<u64>,
     // The folder to restore after rereading a rewritten archive. It is consumed
     // by the next listing, so opening an archive normally still starts at root.
     pub(crate) reread_dir: Option<String>,

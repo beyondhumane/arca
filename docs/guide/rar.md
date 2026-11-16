@@ -74,7 +74,7 @@ What creation refuses, before any input is read or any file is written:
 
 - A password or **Hide file names**: RAR output is never encrypted. Use ZIP or
   7z for that.
-- `-c deflate|zstd|lzma2`, `-j` above 1 (RAR creation is sequential), a `.cbr`
+- `-c deflate|zstd|lzma2`, a `.cbr`
   output name or any other suffix than `.rar`.
 - An output path that already exists, even as a dangling link. Arca creates
   new RAR archives only and never replaces a file, including one that appears

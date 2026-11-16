@@ -66,6 +66,37 @@ for f in t.tar t.tar.gz; do
   H=$(cd y/src && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
   [ "$H" = "$REF" ] && ok "Arca extracts tar's $f without losing a byte" || ko "Arca mis-extracts $f"
 done
+# Names past ustar's 100 bytes, in both ways tar spells them, archived from
+# inside the folder so every name starts with ./ as GitHub release tarballs
+# do, and a .tar.gz split across two gzip members as pigz writes them.
+LONG="long/$(printf 'd%.0s' {1..120})/$(printf 'e%.0s' {1..90})"
+mkdir -p "$LONG" && cp -r src "$LONG/"
+LREF=$(cd long && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+tar --format=gnu -czf out/long-gnu.tar.gz -C long .
+tar --format=pax -czf out/long-pax.tar.gz -C long .
+tar --format=gnu -cf out/long.tar -C long .
+head -c 4096 out/long.tar | gzip -c > out/long-split.tar.gz
+tail -c +4097 out/long.tar | gzip -c >> out/long-split.tar.gz
+for f in long-gnu long-pax long-split; do
+  rm -rf y; mkdir y
+  $ARCA extract out/$f.tar.gz -o y >/dev/null 2>&1 || { ko "arca extract $f.tar.gz"; continue; }
+  H=$(cd y && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+  [ "$H" = "$LREF" ] && ok "Arca extracts $f.tar.gz with its long names" || ko "Arca mis-extracts $f.tar.gz"
+done
+rm -rf long
+# A program in a tarball comes out runnable, and a plain file does not.
+mkdir -p perm && printf '#!/bin/sh\necho ok\n' > perm/run.sh && echo data > perm/plain.txt
+chmod 755 perm/run.sh && chmod 644 perm/plain.txt
+tar czf out/perm.tar.gz perm && rm -rf perm y && mkdir y
+$ARCA extract out/perm.tar.gz -o y >/dev/null 2>&1
+[ -x y/perm/run.sh ] && [ ! -x y/perm/plain.txt ] && [ "$(y/perm/run.sh)" = ok ] &&
+  ok "Arca keeps the execute bit of a tar's program" || ko "Arca loses or invents execute bits"
+# And the other way: a tarball Arca makes keeps it for tar to restore.
+rm -rf z && mkdir z && mv y/perm . && $ARCA create out/arca-perm.tar.gz perm >/dev/null 2>&1
+tar xzf out/arca-perm.tar.gz -C z 2>/dev/null
+[ -x z/perm/run.sh ] && [ ! -x z/perm/plain.txt ] &&
+  ok "Arca's .tar.gz keeps the execute bit for tar" || ko "Arca's .tar.gz loses execute bits"
+rm -rf perm z
 7z a -tzip -mx5 out/s7.zip src >/dev/null 2>&1
 rm -rf y; mkdir y; $ARCA extract out/s7.zip -o y >/dev/null 2>&1
 H=$(cd y/src && find . -type f|sort|xargs sha256sum|sha256sum|cut -d' ' -f1)
@@ -164,7 +195,8 @@ fi
 
 echo
 echo "G) 7z: Arca writes, 7-Zip verifies and extracts"
-python3 - <<'PY'
+python3 - "$ARCA" <<'PY'
+import sys
 from pathlib import Path
 root = Path('src7')
 (root / 'nested' / 'empty-dir').mkdir(parents=True)
@@ -172,6 +204,15 @@ root = Path('src7')
 (root / 'first.txt').write_bytes(b'first solid contents\n' * 2000)
 (root / 'second.txt').write_bytes(b'second solid contents\n' * 2000)
 (root / 'nested' / '\u00f1-\U0001f680.txt').write_bytes(bytes(range(256)) * 16)
+# Executables go in a block of their own behind the BCJ filter, so 7-Zip has
+# to undo that filter too; the program is the binary under test, the library
+# made-up x86 calls.
+(root / 'bin').mkdir()
+(root / 'bin' / 'arca.exe').write_bytes(Path(sys.argv[1]).read_bytes())
+calls = bytearray()
+for i in range(40000):
+    calls += b'\xe8' + ((0x1000 + 16 * i - len(calls)) & 0xffffffff).to_bytes(4, 'little') + b'\x48\x89\xc7\x90'
+(root / 'bin' / 'helper.dll').write_bytes(bytes(calls))
 PY
 compare_trees() {
   python3 - "$1" "$2" <<'PY'

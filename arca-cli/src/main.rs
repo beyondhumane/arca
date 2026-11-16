@@ -45,7 +45,7 @@ enum Cmd {
             short = 'j',
             long,
             default_value_t = 0,
-            help = "Threads to use. 0 means every core. .7z and .rar creation is sequential; .xz and .tar.xz use as many as fit in 2 GiB"
+            help = "Threads to use. 0 means every core. .xz and .tar.xz use as many as fit in 2 GiB; .7z and .rar always use every core their memory budget allows"
         )]
         threads: usize,
         #[arg(
@@ -174,7 +174,7 @@ fn tar_source(archive: &Path, format_kind: Format) -> Result<Box<dyn Read>> {
         _ => {
             let f = BufReader::with_capacity(BUF, File::open(archive)?);
             if format_kind == Format::TarGz {
-                Box::new(flate2::read::GzDecoder::new(f))
+                Box::new(flate2::read::MultiGzDecoder::new(f))
             } else {
                 Box::new(f)
             }
@@ -192,10 +192,14 @@ fn conflict(policy: OnConflict) -> Conflict {
 
 // Built under a temporary name beside `out` and renamed only once complete, so
 // a failed or interrupted run never leaves a half-written archive behind.
-fn staged<T>(out: &Path, write: impl FnOnce(BufWriter<File>) -> Result<T>) -> Result<T> {
+fn staged_path(out: &Path) -> PathBuf {
     let mut name = out.file_name().unwrap_or_default().to_os_string();
     name.push(".arca-new");
-    let temp = out.with_file_name(name);
+    out.with_file_name(name)
+}
+
+fn staged<T>(out: &Path, write: impl FnOnce(BufWriter<File>) -> Result<T>) -> Result<T> {
+    let temp = staged_path(out);
     let result = File::create(&temp)
         .map_err(Error::from)
         .and_then(|f| write(BufWriter::with_capacity(BUF, f)));
@@ -378,7 +382,9 @@ fn create(
     }
     let codec = resolve_codec(if xz { CodecArg::Auto } else { codec_arg }, format_kind)?;
     let mut threads = resolve_threads(requested_threads);
-    let raw_list = collect_files(inputs)?;
+    let own = arca_core::extraction::OwnOutput::new(out);
+    let mut raw_list = collect_files(inputs)?;
+    raw_list.retain(|(path, _)| !own.is_own(path));
     if raw_list.is_empty() {
         return Err(Error::Format("there is nothing to add".into()));
     }
@@ -404,9 +410,15 @@ fn create(
         // Nothing to report while it runs -- the summary is printed at the end
         // -- so the answer to "carry on?" is always yes.
         Container::Rar | Container::Iso => return Err(format_kind.read_only()),
-        Container::Zip => arca_zip::create_zip(out, &files, threads, password, &|_, _, _| true)?,
-        Container::Tar | Container::TarGz => {
-            let f = BufWriter::with_capacity(BUF, File::create(out)?);
+        Container::Zip => {
+            let temp = staged_path(out);
+            arca_zip::create_zip(&temp, &files, threads, password, &|_, _, _| true)?;
+            if let Err(e) = fs::rename(&temp, out) {
+                let _ = fs::remove_file(&temp);
+                return Err(e.into());
+            }
+        }
+        Container::Tar | Container::TarGz => staged(out, |f| {
             let dest: Box<dyn Write> = if format_kind == Format::TarGz {
                 Box::new(flate2::write::GzEncoder::new(
                     f,
@@ -417,20 +429,24 @@ fn create(
             };
             let mut w = TarWriter::new(dest);
             for s in &files {
-                let entrada = BufReader::with_capacity(BUF, File::open(&s.path)?);
-                w.add(&s.name, s.size, s.mtime, 0o644, entrada)?;
+                let file = File::open(&s.path)?;
+                let mode = arca_tar::mode_of(&file.metadata()?);
+                let entrada = BufReader::with_capacity(BUF, file);
+                w.add(&s.name, s.size, s.mtime, mode, entrada)?;
             }
-            let mut d = w.finish()?;
-            d.flush()?;
-        }
+            w.finish()?.flush()?;
+            Ok(())
+        })?,
         Container::TarXz => {
             threads = staged(out, |f| {
                 let e = arca_xz::encoder(f, level, requested_threads)?;
                 let used = e.workers();
                 let mut w = TarWriter::new(e);
                 for s in &files {
-                    let entrada = BufReader::with_capacity(BUF, File::open(&s.path)?);
-                    w.add(&s.name, s.size, s.mtime, 0o644, entrada)?;
+                    let file = File::open(&s.path)?;
+                    let mode = arca_tar::mode_of(&file.metadata()?);
+                    let entrada = BufReader::with_capacity(BUF, file);
+                    w.add(&s.name, s.size, s.mtime, mode, entrada)?;
                 }
                 w.finish()?.finish()?.flush()?;
                 Ok(used)
@@ -463,7 +479,7 @@ fn create(
         0.0
     };
     println!(
-        "{}: {} files, {} -> {} ({:.1}% smaller) in {:.3} s · {:.0} MB/s · {} threads",
+        "{}: {} files, {} -> {} ({:.1}% smaller) in {:.3} s · {:.0} MiB/s · {} threads",
         out.display(),
         files.len(),
         human(total),
@@ -598,7 +614,7 @@ fn free_name(path: &Path, claimed: &HashSet<PathBuf>) -> PathBuf {
         .unwrap_or_default();
     for n in 1..10_000u32 {
         let candidate = dir.join(format!("{stem} ({n}){ext}"));
-        if !candidate.exists() && !claimed.contains(&candidate) {
+        if !candidate.exists() && !claimed.contains(&arca_core::extraction::claim_key(&candidate)) {
             return candidate;
         }
     }
@@ -635,8 +651,8 @@ fn resolve_conflict(
     policy: OnConflict,
     claimed: &mut HashSet<PathBuf>,
 ) -> Option<PathBuf> {
-    let taken =
-        claimed.contains(&path) || (!matches!(policy, OnConflict::Overwrite) && path.exists());
+    let taken = claimed.contains(&arca_core::extraction::claim_key(&path))
+        || (!matches!(policy, OnConflict::Overwrite) && path.exists());
     let chosen = if !taken {
         path
     } else {
@@ -646,7 +662,7 @@ fn resolve_conflict(
             OnConflict::Rename => free_name(&path, claimed),
         }
     };
-    claimed.insert(chosen.clone());
+    claimed.insert(arca_core::extraction::claim_key(&chosen));
     Some(chosen)
 }
 
@@ -730,6 +746,19 @@ fn extract(
                 };
                 jobs.push((e.clone(), path));
             }
+            // Two entries with one name, overwriting: the later one is what
+            // extracting in order would leave, and writing both from two
+            // threads at once would leave a mix of the two.
+            if matches!(policy, OnConflict::Overwrite) {
+                let mut seen: HashSet<PathBuf> = HashSet::new();
+                let mut kept: Vec<(arca_core::Entry, PathBuf)> = jobs
+                    .into_iter()
+                    .rev()
+                    .filter(|(_, path)| seen.insert(arca_core::extraction::claim_key(path)))
+                    .collect();
+                kept.reverse();
+                jobs = kept;
+            }
             drop(a);
 
             let pool = rayon::ThreadPoolBuilder::new()
@@ -744,8 +773,11 @@ fn extract(
                             ExtractionReader::with_capacity(BUF, File::open(archive)?)?;
                         let mut staging = Vec::new();
                         let mut total = 0u64;
+                        // Nothing already on disk is touched until the entry has
+                        // decoded: a small one is decoded into memory first, a
+                        // large one or one replacing a file goes through a
+                        // temporary that is renamed over it at the end.
                         for (e, path) in batch {
-                            let mut f = File::create(path)?;
                             if e.size <= BUF as u64 {
                                 staging.clear();
                                 let mut bounded = Bounded {
@@ -758,14 +790,30 @@ fn extract(
                                     &mut bounded,
                                     password,
                                 )?;
-                                f.write_all(&staging)?;
-                                arca_core::extraction::set_mtime(&f, e.mtime);
+                                let put = |f: &mut File| -> Result<u64> {
+                                    f.write_all(&staging)?;
+                                    arca_core::extraction::set_mtime(f, e.mtime);
+                                    Ok(0)
+                                };
+                                if path.exists() {
+                                    arca_core::extraction::write_staged(path, put)?;
+                                } else {
+                                    put(&mut File::create(path)?)?;
+                                }
                             } else {
-                                let mut f = BufWriter::with_capacity(BUF, f);
-                                total +=
-                                    arca_zip::extract_entry_with(&mut source, e, &mut f, password)?;
-                                f.flush()?;
-                                arca_core::extraction::set_mtime(f.get_ref(), e.mtime);
+                                total += arca_core::extraction::write_staged(path, |f| {
+                                    let mut w = BufWriter::with_capacity(BUF, &mut *f);
+                                    let n = arca_zip::extract_entry_with(
+                                        &mut source,
+                                        e,
+                                        &mut w,
+                                        password,
+                                    )?;
+                                    w.flush()?;
+                                    drop(w);
+                                    arca_core::extraction::set_mtime(f, e.mtime);
+                                    Ok(n)
+                                })?;
                             }
                         }
                         Ok(total)
@@ -793,11 +841,18 @@ fn extract(
             let mut r = TarReader::new(tar_source(archive, format_kind)?);
             let mut destination = Destination::new(dest);
             while let Some(e) = r.next_entry()? {
+                // Links and devices have no data to write, and a file in their
+                // place would be an empty one where a link belongs.
+                if !e.is_plain() {
+                    r.skip_data(&e)?;
+                    continue;
+                }
                 let written = r.with_data(&e, |data| {
-                    destination.write_entry(
+                    destination.write_file(
                         &e.entry.name,
                         e.entry.is_dir,
                         e.entry.mtime,
+                        Some(e.mode),
                         data,
                         &mut |_| conflict(policy),
                     )
@@ -1013,7 +1068,7 @@ fn pass_fail(ok: bool) -> &'static str {
 }
 
 fn human(b: u64) -> String {
-    const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    const U: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut v = b as f64;
     let mut i = 0;
     while v >= 1024.0 && i < U.len() - 1 {

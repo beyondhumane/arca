@@ -15,7 +15,7 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | --- | --- | --- | --- |
 | `-l, --level` | store · fast · normal · best | normal | Nivel de compresión. |
 | `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz, el compresor RAR en .rar (solo auto o store). |
-| `-j, --threads` | un número | 0 | Límite de hilos ZIP y XZ. 0 usa todos los núcleos; 7z y RAR son secuenciales. |
+| `-j, --threads` | un número | 0 | Límite de hilos ZIP y XZ. 0 usa todos los núcleos; 7z y RAR usan todos los núcleos que permite su presupuesto de memoria. |
 | `-p, --password` | texto | ninguna | Cifra ZIP o 7z con AES-256. Se rechaza en .rar. |
 | `--hide-names` | indicador | desactivado | Cifra también las cabeceras 7z; exige una contraseña no vacía. |
 
@@ -64,8 +64,11 @@ Los niveles `store`, `fast`, `normal` y `best` seleccionan Copy o LZMA2 con nive
 1, 6 y 9. `-c store` prevalece sobre el nivel. 7z solo admite `auto`, `store` y
 `lzma2`; la selección explícita Deflate/Zstandard se aplica a ZIP, no a 7z.
 TAR ignora esas opciones y `.tar.gz` siempre usa gzip; `lzma2` se rechaza fuera de 7z.
-La creación es secuencial independientemente de `-j`, con un bloque independiente
-por fichero, sin compresión sólida. Sí se pueden leer archivos sólidos existentes.
+Los ficheros se comprimen juntos en bloques sólidos de hasta 256 MiB, agrupados
+por extensión como hace 7-Zip; los ejecutables x86 (`.exe`, `.dll` y similares)
+van en bloques propios con el filtro BCJ, que reduce el código máquina. LZMA2 usa
+tantos núcleos como quepan en 2 GiB (todos en `fast` y `normal`, uno en `best`), y
+las entradas se listan en ese orden agrupado.
 
 7z incluye ficheros y directorios vacíos y rechaza enlaces simbólicos, puntos de
 reanálisis y ficheros especiales. La creación usa un temporal junto al destino y
@@ -83,7 +86,7 @@ arca create stored.rar big.iso -c store
 Crea un archivo RAR5 nuevo, de un solo volumen, no sólido y sin cifrar, que
 UnRAR y 7-Zip oficiales abren. Los cuatro niveles eligen la fuerza del compresor
 RAR; `-c store` equivale a `-l store` y cualquier otro códec explícito se
-rechaza. La creación es secuencial (`-j` mayor que 1 se rechaza), guarda
+rechaza. La creación usa todos los núcleos que permite su presupuesto de memoria, diga lo que diga `-j`, guarda
 ficheros y directorios vacíos y rechaza enlaces simbólicos y ficheros especiales
 en lugar de seguirlos.
 

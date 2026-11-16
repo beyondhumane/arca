@@ -10,6 +10,8 @@ use egui_phosphor::regular as icon;
 pub(crate) const ROW_HEIGHT: f32 = 24.0;
 /// Space around the rows that belongs to the list but to no row.
 const GUTTER: f32 = 16.0;
+// How long the pointer rests on a folder before its peek card opens, in seconds.
+const PEEK_REST: f64 = 0.45;
 
 pub(crate) fn column_slot(column: SortColumn) -> usize {
     Columns::ALL
@@ -201,13 +203,29 @@ impl Shell {
         self.focus_filter = true;
     }
 
+    /// What a band starts from: one flag per row on show, in the order they
+    /// are drawn, because that is the index each row looks itself up by while
+    /// the band is pulled. The selection itself is kept per entry.
+    pub(super) fn marquee_base(&self, pane: Option<usize>, keep: bool) -> Vec<bool> {
+        let rows = match pane {
+            Some(pane) => self.controller.pane_rows(pane),
+            None => self.controller.visible_rows(),
+        };
+        if keep {
+            rows.iter()
+                .map(|row| self.controller.is_checked(row))
+                .collect()
+        } else {
+            vec![false; rows.len()]
+        }
+    }
+
     fn peek_card(&mut self, ui: &mut egui::Ui) {
-        const REST: f64 = 0.45;
         const SHOWN: usize = 8;
         let Some((path, rect, since)) = self.peek.clone() else {
             return;
         };
-        if ui.input(|i| i.time) - since < REST || self.modal_kind().is_some() {
+        if ui.input(|i| i.time) - since < PEEK_REST || self.modal_kind().is_some() {
             return;
         }
         let s = self.controller.s();
@@ -338,17 +356,57 @@ impl Shell {
         });
     }
 
+    /// What the list shows while an archive is being read: the mark breathing
+    /// in and out over the name of what is being opened, so a large archive
+    /// does not look like an empty one.
+    fn opening_state(&self, ui: &mut egui::Ui) {
+        let s = self.controller.s();
+        let p = palette_of(ui.ctx());
+        let time = ui.input(|i| i.time);
+        let alpha = 0.55 + 0.45 * (time * std::f64::consts::TAU / 1.6).cos() as f32;
+        ui.vertical_centered(|ui| {
+            ui.add_space((ui.available_height() / 2.0 - 90.0).max(24.0));
+            ui.add(
+                egui::Image::from_bytes("bytes://arca-mark.svg", crate::assets::MARK)
+                    .fit_to_exact_size(Vec2::splat(96.0))
+                    .tint(egui::Color32::WHITE.gamma_multiply(alpha)),
+            );
+            ui.add_space(12.0);
+            ui.label(RichText::new(format!("{}\u{2026}", s.opening)).font(theme::display(20.0)));
+            let name = self
+                .controller
+                .state
+                .archive
+                .as_ref()
+                .and_then(|a| a.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            ui.add(egui::Label::new(RichText::new(name).color(hex(p.muted))).truncate());
+            ui.add_space(16.0);
+            let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if secondary_button(ui, s.cancel, true).clicked() || escape {
+                self.stop_opening.set(true);
+            }
+        });
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(33));
+    }
+
     fn empty_state(&self, ui: &mut egui::Ui) {
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
         let state = &self.controller.state;
+        if state.listing {
+            self.opening_state(ui);
+            return;
+        }
         let text = if state.archive.is_some()
             && state.entries.is_empty()
             && state.active_pane().filter.trim().is_empty()
         {
             s.empty_archive
         } else {
-            empty_state_aria_label(state.error, &state.active_pane().filter, s)
+            empty_state_aria_label(false, state.error, &state.active_pane().filter, s)
         };
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
@@ -399,6 +457,10 @@ impl Shell {
         let total: f32 = widths.iter().sum();
         let order = self.controller.state.active_pane().order;
         let current_dir = self.controller.row_root().to_string();
+        // No entry of a .tar.gz or a .tar.xz is compressed on its own, so it
+        // has no packed size or saving to show; the status bar has the total.
+        let whole = self.controller.state.archive.is_some()
+            && crate::model::whole_stream(self.controller.state.format);
         egui::ScrollArea::horizontal()
             .id_salt("details-across")
             .auto_shrink(false)
@@ -594,7 +656,13 @@ impl Shell {
                                     }
                                     continue;
                                 }
-                                let text = column_text(row, *column, s, &current_dir);
+                                let text = if whole
+                                    && matches!(column, SortColumn::Packed | SortColumn::Saved)
+                                {
+                                    String::new()
+                                } else {
+                                    column_text(row, *column, s, &current_dir)
+                                };
                                 let (anchor, at) = if right_aligned(*column) {
                                     (
                                         Align2::RIGHT_CENTER,
@@ -846,6 +914,12 @@ impl Shell {
             }
         }
         let rows = self.controller.pane_rows(pane);
+        if rows.is_empty() && self.controller.state.listing {
+            if pane == self.controller.state.browser.active {
+                self.opening_state(ui);
+            }
+            return;
+        }
         if rows.is_empty() {
             ui.label(RichText::new(s.empty_folder).color(hex(p.muted)));
             self.empty_space(ui, Some(pane));
@@ -1029,9 +1103,13 @@ impl Shell {
             }
             if let Some(peek) = &mut self.peek {
                 peek.1 = response.rect;
+                // One more frame when the card is due, and none after it.
+                let left = PEEK_REST - (now - peek.2);
+                if left > 0.0 {
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_secs_f64(left));
+                }
             }
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(120));
         }
         if let Some(marquee) = self.marquee.as_ref().filter(|m| m.pane == pane) {
             let swept = response.rect.intersects(marquee.rect());
@@ -1300,11 +1378,7 @@ impl Shell {
                 if !keep {
                     self.controller.dispatch(AppAction::ClearSelection);
                 }
-                let base = if keep {
-                    self.controller.state.active_pane().checked.clone()
-                } else {
-                    vec![false; self.controller.state.active_pane().checked.len()]
-                };
+                let base = self.marquee_base(pane, keep);
                 self.marquee = Some(Marquee {
                     from,
                     to: from,

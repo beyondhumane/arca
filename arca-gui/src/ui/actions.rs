@@ -406,6 +406,11 @@ pub(crate) enum DialogKind {
         name: String,
         directory: PathBuf,
     },
+    /// Where the picked files on the disk are moved or copied to.
+    CarryTo {
+        roots: Vec<String>,
+        copy: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -447,6 +452,7 @@ pub(crate) enum Shortcut {
     Up,
     CloseWindow,
     TogglePreview,
+    Duplicate,
 }
 
 /// Reading a key press, with no state and no side effects, so the table of
@@ -481,6 +487,7 @@ pub(crate) fn shortcut_for(
             "i" => Some(Shortcut::Invert),
             "w" => Some(Shortcut::CloseWindow),
             "z" if !typing => Some(Shortcut::Undo),
+            "d" if !typing => Some(Shortcut::Duplicate),
             _ => None,
         };
     }
@@ -533,12 +540,17 @@ pub(crate) fn clipboard_action_allowed(
     available && idle && has_archive && (!needs_selection || selected > 0)
 }
 
+/// What an empty list says. An archive still being read has no rows yet, and
+/// saying the folder is empty then is saying something false.
 pub(crate) fn empty_state_aria_label(
+    listing: bool,
     error: bool,
     filter: &str,
     s: &'static Strings,
 ) -> &'static str {
-    if error {
+    if listing {
+        s.opening
+    } else if error {
         s.cannot_open
     } else if filter.trim().is_empty() {
         s.empty_folder
