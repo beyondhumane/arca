@@ -465,39 +465,58 @@ impl<W: Write> TarWriter<W> {
         size: u64,
         mtime: i64,
         mode: u32,
-        mut data: R,
+        data: R,
     ) -> Result<()> {
-        let (prefix, base) = split_name(name)?;
-        let mut header = [0u8; BLOCK];
-        header[..base.len()].copy_from_slice(base.as_bytes());
-        write_octal(&mut header[100..108], mode as u64);
-        write_octal(&mut header[108..116], 0);
-        write_octal(&mut header[116..124], 0);
-        write_octal(&mut header[124..136], size);
-        write_octal(&mut header[136..148], mtime.max(0) as u64);
-        header[156] = if name.ends_with('/') { b'5' } else { b'0' };
-        header[257..262].copy_from_slice(b"ustar");
-        header[262] = 0;
-        header[263..265].copy_from_slice(b"00");
-        if !prefix.is_empty() {
-            header[345..345 + prefix.len()].copy_from_slice(prefix.as_bytes());
+        if name.len() > limits::MAX_NAME {
+            return Err(Error::Limit(format!("name of {} bytes", name.len())));
         }
-        let sum = checksum(&header);
-        let s = format!("{sum:06o}");
-        header[148..154].copy_from_slice(s.as_bytes());
-        header[154] = 0;
-        header[155] = b' ';
-
-        self.out.write_all(&header)?;
-        let written = io::copy(&mut data, &mut self.out)?;
+        // What the ustar header cannot hold goes in a pax header in front of
+        // it, which every tar since 2001 reads: a name past its 255 bytes, a
+        // size from 8 GiB up, a time before 1970 or past 2242.
+        let mut pax = Vec::new();
+        let (prefix, base) = match split_name(name) {
+            Some(parts) => parts,
+            None => {
+                pax.extend(pax_record("path", name));
+                ("", cut_name(name, 100))
+            }
+        };
+        if size > OCTAL_11 {
+            pax.extend(pax_record("size", &size.to_string()));
+        }
+        if !(0..=OCTAL_11 as i64).contains(&mtime) {
+            pax.extend(pax_record("mtime", &mtime.to_string()));
+        }
+        if !pax.is_empty() {
+            let header = ustar_header(
+                &format!("PaxHeaders/{}", cut_name(base, 89)),
+                "",
+                pax.len() as u64,
+                mtime,
+                0o644,
+                b'x',
+            );
+            self.out.write_all(&header)?;
+            self.out.write_all(&pax)?;
+            self.pad(pax.len() as u64)?;
+        }
+        let kind = if name.ends_with('/') { b'5' } else { b'0' };
+        self.out
+            .write_all(&ustar_header(base, prefix, size, mtime, mode, kind))?;
+        // No more than the size just recorded, whatever the source holds now.
+        let written = io::copy(&mut data.take(size), &mut self.out)?;
         if written != size {
             return Err(Error::Format(format!(
                 "'{name}': {size} bytes declared but {written} written"
             )));
         }
-        let padding = (BLOCK - (size as usize % BLOCK)) % BLOCK;
+        self.pad(size)
+    }
+
+    fn pad(&mut self, size: u64) -> Result<()> {
+        let padding = (BLOCK - (size % BLOCK as u64) as usize) % BLOCK;
         if padding > 0 {
-            self.out.write_all(&vec![0u8; padding])?;
+            self.out.write_all(&[0u8; BLOCK][..padding])?;
         }
         Ok(())
     }
@@ -509,19 +528,78 @@ impl<W: Write> TarWriter<W> {
     }
 }
 
-fn split_name(name: &str) -> Result<(&str, &str)> {
+/// The largest number eleven octal digits hold: 8 GiB less one byte.
+const OCTAL_11: u64 = 0o777_7777_7777;
+
+/// A ustar header. Numbers too large for their octal field are written in
+/// the base-256 form GNU tar reads, beside the pax record that says the same.
+fn ustar_header(
+    base: &str,
+    prefix: &str,
+    size: u64,
+    mtime: i64,
+    mode: u32,
+    kind: u8,
+) -> [u8; BLOCK] {
+    let mut header = [0u8; BLOCK];
+    header[..base.len()].copy_from_slice(base.as_bytes());
+    write_octal(&mut header[100..108], u64::from(mode & 0o7777));
+    write_octal(&mut header[108..116], 0);
+    write_octal(&mut header[116..124], 0);
+    if size > OCTAL_11 {
+        header[124] = 0x80;
+        header[128..136].copy_from_slice(&size.to_be_bytes());
+    } else {
+        write_octal(&mut header[124..136], size);
+    }
+    write_octal(
+        &mut header[136..148],
+        mtime.clamp(0, OCTAL_11 as i64) as u64,
+    );
+    header[156] = kind;
+    header[257..262].copy_from_slice(b"ustar");
+    header[263..265].copy_from_slice(b"00");
+    header[345..345 + prefix.len()].copy_from_slice(prefix.as_bytes());
+    let sum = checksum(&header);
+    header[148..154].copy_from_slice(format!("{sum:06o}").as_bytes());
+    header[154] = 0;
+    header[155] = b' ';
+    header
+}
+
+/// A name cut to at most `max` bytes without splitting a character.
+fn cut_name(name: &str, max: usize) -> &str {
+    let mut end = name.len().min(max);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    &name[..end]
+}
+
+/// `<length> <key>=<value>\n`, where the length counts the whole record,
+/// its own digits included.
+fn pax_record(key: &str, value: &str) -> Vec<u8> {
+    let body = key.len() + value.len() + 3;
+    let mut length = body + 1;
+    while length != body + length.to_string().len() {
+        length = body + length.to_string().len();
+    }
+    format!("{length} {key}={value}\n").into_bytes()
+}
+
+/// The name split into ustar's prefix and name fields, at a slash, or `None`
+/// when it does not fit them. The split is on bytes, so a name of any script
+/// is cut only at its ASCII slash.
+fn split_name(name: &str) -> Option<(&str, &str)> {
     if name.len() <= 100 {
-        return Ok(("", name));
+        return Some(("", name));
     }
-    let cut = name[..name.len().min(156)]
-        .rfind('/')
-        .ok_or_else(|| Error::Limit(format!("name of {} bytes with no split point", name.len())))?;
-    let (p, b) = name.split_at(cut);
-    let b = &b[1..];
-    if p.len() > 155 || b.len() > 100 {
-        return Err(Error::Limit(format!("name too long for ustar: {name}")));
-    }
-    Ok((p, b))
+    let bytes = name.as_bytes();
+    let cut = bytes[..bytes.len().min(156)]
+        .iter()
+        .rposition(|&b| b == b'/')?;
+    let (p, b) = (&name[..cut], &name[cut + 1..]);
+    (p.len() <= 155 && b.len() <= 100 && !b.is_empty()).then_some((p, b))
 }
 
 #[cfg(test)]
@@ -800,5 +878,69 @@ mod tests {
             tar.extend(end());
             assert!(names(&tar).is_err(), "{}", String::from_utf8_lossy(records));
         }
+    }
+
+    // A name of any script that is too long for ustar goes in a pax record and
+    // reads back whole; one that ustar can split is cut only at a slash, never
+    // inside a character.
+    #[test]
+    fn long_and_non_ascii_names_round_trip() {
+        let split = format!("{}/{}.txt", "ñ".repeat(77), "é".repeat(30));
+        assert!(split.len() > 100 && split.len() < 256);
+        let long = format!("{}/{}", "日本".repeat(60), "ñ".repeat(80));
+        let one_part = "x".repeat(300);
+        let mut w = TarWriter::new(Vec::new());
+        for name in [&split, &long, &one_part] {
+            w.add(name, 3, 1_700_000_000, 0o755, &b"abc"[..]).unwrap();
+        }
+        let tar = w.finish().unwrap();
+        let got = names(&tar).unwrap();
+        let got: Vec<&str> = got.iter().map(|e| e.0.as_str()).collect();
+        assert_eq!(got, [split.as_str(), long.as_str(), one_part.as_str()]);
+        let mut r = TarReader::new(&tar[..]);
+        assert_eq!(r.next_entry().unwrap().unwrap().mode, 0o755);
+    }
+
+    // A size from 8 GiB up does not fit eleven octal digits; it is written in
+    // base 256 and in a pax record, and reads back from either.
+    #[test]
+    fn sizes_and_times_past_ustar_fields_are_kept() {
+        let huge = (8u64 << 30) + 5;
+        let header = ustar_header("big", "", huge, -1, 0o644, b'0');
+        assert_eq!(unsigned(&header[124..136], "size").unwrap(), huge);
+        assert!(is_header(&header));
+        let record = pax_record("size", &huge.to_string());
+        let mut longer = Longer::default();
+        longer.apply_pax(&record).unwrap();
+        assert_eq!(longer.size, Some(huge));
+        // Lengths that cross a digit boundary still count themselves.
+        for value in ["x".repeat(4), "x".repeat(92), "x".repeat(993)] {
+            let record = pax_record("path", &value);
+            let digits = record.iter().position(|&b| b == b' ').unwrap();
+            let length: usize = std::str::from_utf8(&record[..digits])
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert_eq!(length, record.len());
+        }
+        let mut w = TarWriter::new(Vec::new());
+        w.add("old.txt", 1, -86_400, 0o644, &b"a"[..]).unwrap();
+        let tar = w.finish().unwrap();
+        assert_eq!(names(&tar).unwrap()[0].2, -86_400);
+    }
+
+    // A source that grew after its size was taken writes the size recorded,
+    // not what it holds now, so the archive stays readable.
+    #[test]
+    fn a_source_that_grew_writes_only_its_recorded_size() {
+        let mut w = TarWriter::new(Vec::new());
+        w.add("grew.txt", 3, 0, 0o644, &b"abcdef"[..]).unwrap();
+        w.add("next.txt", 1, 0, 0o644, &b"z"[..]).unwrap();
+        let tar = w.finish().unwrap();
+        let got = names(&tar).unwrap();
+        assert_eq!(got[0].3, b"abc");
+        assert_eq!(got[1].0, "next.txt");
+        let mut w = TarWriter::new(Vec::new());
+        assert!(w.add("short.txt", 5, 0, 0o644, &b"ab"[..]).is_err());
     }
 }
