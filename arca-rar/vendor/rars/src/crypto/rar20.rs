@@ -1,0 +1,22 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Error {
+    UnalignedInput,
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnalignedInput => f.write_str("RAR 2.0 cipher input is not block aligned"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(feature = "encryption")]
+mod implementation;
+#[cfg(feature = "encryption")]
+pub use implementation::*;
