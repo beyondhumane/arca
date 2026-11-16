@@ -463,7 +463,7 @@ fn create(
         0.0
     };
     println!(
-        "{}: {} files, {} -> {} ({:.1}% smaller) in {:.3} s · {:.0} MB/s · {} threads",
+        "{}: {} files, {} -> {} ({:.1}% smaller) in {:.3} s · {:.0} MiB/s · {} threads",
         out.display(),
         files.len(),
         human(total),
@@ -1013,7 +1013,7 @@ fn pass_fail(ok: bool) -> &'static str {
 }
 
 fn human(b: u64) -> String {
-    const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    const U: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut v = b as f64;
     let mut i = 0;
     while v >= 1024.0 && i < U.len() - 1 {

@@ -96,7 +96,7 @@ pub(crate) fn civil(t: i64) -> String {
 }
 
 pub(crate) fn human(n: u64) -> String {
-    const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    const U: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut v = n as f64;
     let mut i = 0;
     while v >= 1024.0 && i < U.len() - 1 {

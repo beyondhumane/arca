@@ -532,7 +532,7 @@ impl Shell {
         let yes_no = |on: bool| if on { s.yes_word } else { s.no_word };
         let mut rows: Vec<(&str, String)> = vec![
             (s.location_word, location),
-            (s.col_size, at_least(pretty_bytes(props.size))),
+            (s.col_size, at_least(crate::model::human(props.size))),
         ];
         if props.is_dir {
             rows.push((
@@ -2207,21 +2207,6 @@ fn paint_swatch(ui: &egui::Ui, rect: egui::Rect, palette: theme::Palette) {
             4.0,
             hex(color),
         );
-    }
-}
-
-fn pretty_bytes(n: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut value = n as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{n} B")
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
     }
 }
 
