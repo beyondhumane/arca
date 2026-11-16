@@ -399,6 +399,10 @@ impl Shell {
         let total: f32 = widths.iter().sum();
         let order = self.controller.state.active_pane().order;
         let current_dir = self.controller.row_root().to_string();
+        // No entry of a .tar.gz or a .tar.xz is compressed on its own, so it
+        // has no packed size or saving to show; the status bar has the total.
+        let whole = self.controller.state.archive.is_some()
+            && crate::model::whole_stream(self.controller.state.format);
         egui::ScrollArea::horizontal()
             .id_salt("details-across")
             .auto_shrink(false)
@@ -594,7 +598,13 @@ impl Shell {
                                     }
                                     continue;
                                 }
-                                let text = column_text(row, *column, s, &current_dir);
+                                let text = if whole
+                                    && matches!(column, SortColumn::Packed | SortColumn::Saved)
+                                {
+                                    String::new()
+                                } else {
+                                    column_text(row, *column, s, &current_dir)
+                                };
                                 let (anchor, at) = if right_aligned(*column) {
                                     (
                                         Align2::RIGHT_CENTER,

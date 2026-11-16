@@ -797,6 +797,7 @@ impl AppController {
                 add_password: String::new(),
                 hide_names: false,
                 archive_password: None,
+                archive_bytes: None,
                 reread_dir: None,
                 reread_queued: None,
                 history: vec![String::new()],
@@ -853,11 +854,16 @@ impl AppController {
         }
         let n = self.state.entries.iter().filter(|e| !e.is_dir).count();
         let raw: u64 = self.state.entries.iter().map(|e| e.size).sum();
-        let packed: u64 = self.state.entries.iter().map(|e| e.compressed_size).sum();
+        let packed: u64 = match self.state.archive_bytes {
+            Some(bytes) if whole_stream(self.state.format) => bytes,
+            _ => self.state.entries.iter().map(|e| e.compressed_size).sum(),
+        };
+        // A plain .tar is a little larger than what it holds, and "-2% saved"
+        // says nothing anybody wants to know.
         let ratio = if raw == 0 {
             0.0
         } else {
-            (1.0 - packed as f64 / raw as f64) * 100.0
+            ((1.0 - packed as f64 / raw as f64) * 100.0).max(0.0)
         };
         format!(
             "{n} {} \u{b7} {} {} \u{b7} {} {} \u{b7} {ratio:.1}% {}",
@@ -1861,6 +1867,7 @@ impl AppController {
                     if let Some(f) = detect(&path) {
                         self.state.format = f;
                     }
+                    self.state.archive_bytes = fs::metadata(&path).ok().map(|m| m.len());
                     // The name of what is open goes where every other
                     // program puts it, which frees a whole row above the
                     // list for nothing at all.

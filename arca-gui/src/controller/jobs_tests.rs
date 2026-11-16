@@ -555,6 +555,34 @@ fn leaving_for_the_disk_forgets_a_cut_out_of_the_archive() {
     assert!(app.state.cut_names.is_empty());
 }
 
+// A tar.xz compresses the whole stream, so the saving is the file against
+// what it holds; summing the entries said 0% for every one of them.
+#[test]
+fn a_compressed_tar_says_how_much_its_file_saved() {
+    let room = Room::new();
+    let source = room.path("source");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("a.txt"), "the same line again\n".repeat(5000)).unwrap();
+    let archive = room.path("saved.tar.xz");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        Format::TarXz,
+        arca_core::Codec::Deflate,
+        arca_core::Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.open_with_password(archive.clone(), None);
+    settle(&mut app);
+    let bytes = std::fs::metadata(&archive).unwrap().len();
+    let summary = app.summary();
+    assert!(summary.contains(&human(bytes)), "{summary}");
+    assert!(!summary.contains(" 0.0%"), "{summary}");
+}
+
 #[test]
 fn a_rewrite_that_failed_behind_keeps_the_reread_of_the_one_before() {
     let room = Room::new();
