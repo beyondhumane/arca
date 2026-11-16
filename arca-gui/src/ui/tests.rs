@@ -403,6 +403,7 @@ fn the_explorer_shortcuts_mean_what_they_mean_there() {
     let cases = [
         (true, true, false, "n", Shortcut::NewFolder),
         (true, false, false, "w", Shortcut::CloseWindow),
+        (true, false, false, "d", Shortcut::Duplicate),
         (false, false, true, "enter", Shortcut::Properties),
         (false, false, true, "up", Shortcut::Up),
         (false, false, true, "d", Shortcut::EditPath),

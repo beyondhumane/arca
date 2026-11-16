@@ -45,6 +45,7 @@ pub(crate) fn shortcut_rows(s: &'static Strings) -> [Vec<ShortcutRow>; 2] {
             (&["f2"], s.rename_word),
             (&["delete"], s.delete_word),
             (&["ctrl-shift-n"], s.new_folder),
+            (&["ctrl-d"], s.duplicate_word),
             (&["alt-enter"], s.properties_word),
             (&["alt-p"], s.preview_panel),
             (&["ctrl-w"], s.close_window),

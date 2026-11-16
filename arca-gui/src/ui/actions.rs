@@ -447,6 +447,7 @@ pub(crate) enum Shortcut {
     Up,
     CloseWindow,
     TogglePreview,
+    Duplicate,
 }
 
 /// Reading a key press, with no state and no side effects, so the table of
@@ -481,6 +482,7 @@ pub(crate) fn shortcut_for(
             "i" => Some(Shortcut::Invert),
             "w" => Some(Shortcut::CloseWindow),
             "z" if !typing => Some(Shortcut::Undo),
+            "d" if !typing => Some(Shortcut::Duplicate),
             _ => None,
         };
     }

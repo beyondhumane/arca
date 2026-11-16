@@ -1806,6 +1806,12 @@ impl Shell {
                 self.row_action(RowAction::Properties, at.unwrap_or(usize::MAX));
             }
             Shortcut::NewFolder => self.row_action(RowAction::NewFolder, usize::MAX),
+            // The menu offers it on the disk only, and the key does the same.
+            Shortcut::Duplicate => {
+                if self.controller.on_disk() && !self.controller.selected_roots().is_empty() {
+                    self.row_action(RowAction::Duplicate, usize::MAX);
+                }
+            }
             Shortcut::Up => {
                 if self.controller.can_go_up() {
                     self.controller.dispatch(AppAction::Up);
