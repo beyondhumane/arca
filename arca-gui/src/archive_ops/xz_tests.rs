@@ -255,3 +255,25 @@ fn a_stop_during_a_small_xz_job_publishes_nothing() {
     ));
     assert!(leftovers(&room.0).is_empty());
 }
+
+// Two ZIP entries of one name, both replaced: the later one wins, as it would
+// extracting in order, and never a mix of the two written at once.
+#[test]
+fn the_later_of_two_same_named_zip_entries_is_the_one_extracted() {
+    let room = Room::new();
+    let archive = room.path("dup.zip");
+    let mut zip = arca_zip::ZipWriter::new(File::create(&archive).unwrap());
+    for body in [&b"first"[..], &b"second, which is longer"[..]] {
+        zip.add("dup.txt", body, Codec::Store, Level::STORE, None)
+            .unwrap();
+    }
+    zip.finish().unwrap();
+    for run in 0..20 {
+        let dest = room.path(&format!("out{run}"));
+        extract(&archive, &dest, &[], GO, &replace, None).unwrap();
+        assert_eq!(
+            fs::read(dest.join("dup.txt")).unwrap(),
+            b"second, which is longer"
+        );
+    }
+}

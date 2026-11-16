@@ -769,6 +769,13 @@ pub(crate) fn extract(
                 }
             }
             drop(a);
+            // Two entries of one name both answered Replace: the later one is
+            // what extracting in order leaves, and writing both from two
+            // threads at once would leave a mix of the two.
+            let mut seen = HashSet::new();
+            jobs.reverse();
+            jobs.retain(|(e, path)| e.is_dir || seen.insert(path.clone()));
+            jobs.reverse();
 
             let total = jobs.len();
             let done = AtomicUsize::new(0);
