@@ -398,15 +398,30 @@ pub fn replace_file(target: &Path, bytes: &[u8]) -> Res<bool> {
     }
 }
 
+// Removes the copies `move_aside` left of Arca's own files, and nothing else:
+// the folder may be one somebody chose that holds files of their own.
 pub fn sweep_leftovers(dir: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().contains(".old-") {
-            let _ = fs::remove_file(entry.path());
+    for known in super::KNOWN_FILES.iter().copied().chain([UNINSTALLER]) {
+        let target = dir.join(known);
+        let (Some(folder), Some(name)) = (target.parent(), target.file_name()) else {
+            continue;
+        };
+        let Ok(entries) = fs::read_dir(folder) else {
+            continue;
+        };
+        let prefix = format!("{}.old-", name.to_string_lossy());
+        for entry in entries.flatten() {
+            if is_aside_copy(&entry.file_name().to_string_lossy(), &prefix) {
+                let _ = fs::remove_file(entry.path());
+            }
         }
     }
+}
+
+fn is_aside_copy(found: &str, prefix: &str) -> bool {
+    found
+        .strip_prefix(prefix)
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 pub fn install_uninstaller(dir: &Path) -> Res<()> {
@@ -417,31 +432,6 @@ pub fn install_uninstaller(dir: &Path) -> Res<()> {
     }
     let bytes = fs::read(&own).map_err(ctx("reading the installer to keep it as uninstaller"))?;
     replace_file(&target, &bytes).map(|_| ())
-}
-
-fn explorer_running() -> bool {
-    Command::new(system32("tasklist.exe"))
-        .args(["/FI", "IMAGENAME eq explorer.exe", "/NH"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains("explorer.exe"))
-}
-
-pub fn restart_explorer() {
-    let mut kill = Command::new(system32("taskkill.exe"));
-    kill.args(["/F", "/IM", "explorer.exe"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW);
-    let _ = wait_for(kill, Duration::from_secs(15));
-    thread::sleep(Duration::from_millis(1500));
-    if !explorer_running() {
-        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
-        let _ = Command::new(PathBuf::from(root).join("explorer.exe")).spawn();
-    }
 }
 
 pub fn launch(exe: &Path, dir: &Path) {
@@ -481,4 +471,38 @@ pub fn delete_own_copy_later() {
 pub fn notify_changes() {
     arca_notify::associations_changed();
     arca_notify::environment_changed();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_numbered_copies_of_known_files_are_swept() {
+        let room = std::env::temp_dir().join(format!("arca-sweep-{}", std::process::id()));
+        fs::create_dir_all(room.join("Assets")).unwrap();
+        let swept = [
+            "arca.exe.old-1",
+            "unins000.exe.old-12",
+            "Assets/StoreLogo.png.old-3",
+        ];
+        let kept = [
+            "arca.exe",
+            "notes.old-1",
+            "report.old-2023.txt",
+            "arca.exe.old-",
+            "arca.exe.old-1a",
+        ];
+        for name in swept.iter().chain(&kept) {
+            fs::write(room.join(name), b"x").unwrap();
+        }
+        sweep_leftovers(&room);
+        for name in swept {
+            assert!(!room.join(name).exists(), "{name} should be gone");
+        }
+        for name in kept {
+            assert!(room.join(name).exists(), "{name} should stay");
+        }
+        fs::remove_dir_all(&room).unwrap();
+    }
 }

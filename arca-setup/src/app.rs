@@ -315,6 +315,9 @@ impl Setup {
             Action::Begin => self.begin(),
             Action::Customize => self.screen = Screen::Options,
             Action::Back => self.screen = Screen::Welcome,
+            // Closing halfway would leave a folder that is neither the old
+            // version nor the new one, and registry entries pointing into it.
+            Action::Close if self.screen == Screen::Installing => {}
             Action::Close => ctx.send_viewport_cmd(ViewportCommand::Close),
             Action::Finish => self.finish(ctx),
             Action::Releases => ctx.open_url(egui::OpenUrl::new_tab(RELEASES)),
@@ -376,6 +379,9 @@ impl Setup {
 impl eframe::App for Setup {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if self.screen == Screen::Installing && ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+        }
         if self.events.is_some() {
             self.advance(Instant::now());
             if self.events.is_some() {
