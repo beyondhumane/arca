@@ -132,12 +132,14 @@ impl Destination {
 
 /// The folder somebody asked to extract into, with the links on the way to it
 /// followed: on macOS `/tmp` and `/var` are links, and on any Unix a home or
-/// a mount point may be. Whoever named the folder meant where it leads. The
-/// part that does not exist yet is kept as given, and everything under the
-/// folder is still opened without following links.
+/// a mount point may be. The folder itself is not resolved, so one that is a
+/// link is still refused when it is opened, and everything under it is still
+/// opened without following links.
 #[cfg(unix)]
 fn as_the_disk_has_it(path: &Path) -> PathBuf {
-    let mut existing = path;
+    let Some(mut existing) = path.parent() else {
+        return path.to_path_buf();
+    };
     loop {
         if let Ok(real) = std::fs::canonicalize(existing) {
             return real.join(path.strip_prefix(existing).unwrap_or(Path::new("")));
@@ -737,5 +739,27 @@ mod tests {
         )
         .unwrap();
         assert_eq!(fs::read(real.join("out/a.txt")).unwrap(), b"contents");
+    }
+
+    // Only the folders above the one asked for are followed: that one, if it
+    // is a link, is refused like any link under it.
+    #[cfg(unix)]
+    #[test]
+    fn a_destination_that_is_itself_a_link_is_refused() {
+        let room = room();
+        let real = room.path().join("real");
+        fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, room.path().join("link")).unwrap();
+        let mut dest = Destination::new(&room.path().join("link"));
+        assert!(dest
+            .write_entry(
+                "a.txt",
+                false,
+                None,
+                &mut &b"contents"[..],
+                &mut |_| unreachable!(),
+            )
+            .is_err());
+        assert_eq!(fs::read_dir(&real).unwrap().count(), 0);
     }
 }
