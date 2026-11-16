@@ -50,6 +50,9 @@ pub enum Conflict {
 
 pub struct RarArchive {
     entries: Vec<Entry>,
+    // The Unix permissions each member recorded, where it was made on Unix.
+    #[cfg(feature = "rar")]
+    modes: Vec<Option<u32>>,
     #[cfg(feature = "rar")]
     inner: volumes::Volumes,
 }
@@ -88,6 +91,22 @@ impl RarArchive {
     pub fn test(&self, password: Option<&str>, progress: &Progress<'_>) -> Result<()> {
         #[cfg(feature = "rar")]
         return reader::test(self, password, progress);
+        #[cfg(not(feature = "rar"))]
+        {
+            let _ = (password, progress);
+            Err(disabled())
+        }
+    }
+
+    /// Checks a password against the first encrypted file only, decoding as
+    /// little of the archive as gets there, instead of all of it as [`test`]
+    /// does. A wrong password fails here; a right one says nothing about
+    /// whether the rest of the archive is intact.
+    ///
+    /// [`test`]: Self::test
+    pub fn check_password(&self, password: &str, progress: &Progress<'_>) -> Result<()> {
+        #[cfg(feature = "rar")]
+        return reader::check_password(self, password, progress);
         #[cfg(not(feature = "rar"))]
         {
             let _ = (password, progress);

@@ -877,3 +877,56 @@ fn undoing_puts_back_an_archive_a_rewrite_left_missing() {
     assert!(!app.state.error, "{}", app.state.notice);
     assert_eq!(app.state.entries.len(), after + 1);
 }
+
+#[test]
+fn opening_an_archive_can_be_given_up_on() {
+    let room = Room::new();
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("a.txt"), b"contents").unwrap();
+    let archive = room.path("slow.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.browse_disk(&room.path(""));
+    settle(&mut app);
+    app.open_with_password(archive.clone(), None);
+    assert!(app.state.listing);
+    app.cancel_opening();
+    assert!(!app.state.listing && !app.state.busy);
+    assert!(app.state.channel.is_none());
+    std::thread::sleep(Duration::from_millis(100));
+    app.receive();
+    assert!(app.on_disk(), "the window went back to the folder");
+    assert_ne!(app.state.archive.as_ref(), Some(&archive));
+}
+
+#[test]
+fn stopping_a_task_that_waits_on_a_question_lets_it_go() {
+    let mut app = AppController::new(Settings::default());
+    let (answered_tx, answered_rx) = channel();
+    let asker: Work = Box::new(move |tx, replies, _, _| {
+        let _ = tx.send(Message::Conflict("there.txt".into()));
+        let answer = replies.recv().unwrap_or(Answer::Cancel);
+        let _ = answered_tx.send(answer);
+        let _ = tx.send(Message::Failed(arca_core::Error::Cancelled.to_string()));
+    });
+    let asking = app.enqueue(Task::new("Extract", "a", asker));
+    settle_until(&mut app, |app| app.conflict().is_some());
+    app.cancel_task(asking);
+    assert!(app.conflict().is_none());
+    assert_eq!(
+        answered_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+        Answer::Cancel
+    );
+    settle(&mut app);
+    assert_eq!(status(&app, asking), TaskStatus::Stopped);
+}

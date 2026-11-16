@@ -205,6 +205,9 @@ pub(crate) struct Shell {
     pane_action: Option<PaneAction>,
     properties: Option<Props>,
     properties_job: Option<Receiver<Props>>,
+    // Set by the opening screen when somebody gives up waiting for an
+    // archive to be read; acted on once the frame is drawn.
+    stop_opening: std::cell::Cell<bool>,
     // Size and kind of each file waiting to be compressed, read once for the
     // list they were read for rather than on every frame.
     input_facts: Option<(Vec<PathBuf>, InputFacts)>,
@@ -323,6 +326,7 @@ impl Shell {
             pane_action: None,
             properties: None,
             properties_job: None,
+            stop_opening: Default::default(),
             input_facts: None,
             last_active_pane: None,
             keyboard_drove: false,
@@ -2155,6 +2159,14 @@ impl eframe::App for Shell {
         }
         if !only_form {
             self.workspace(ui);
+        }
+        if self.stop_opening.take() {
+            self.controller.cancel_opening();
+        }
+        // A band ends when the button comes up, wherever that happens: the
+        // blank space that started it may be gone by then, filled by rows.
+        if self.marquee.is_some() && !ctx.input(|i| i.pointer.primary_down()) {
+            self.marquee = None;
         }
         // After the lists, so every row has had its say about a drop.
         self.settle_blank_drop(&ctx);

@@ -382,6 +382,11 @@ impl Shell {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             ui.add(egui::Label::new(RichText::new(name).color(hex(p.muted))).truncate());
+            ui.add_space(16.0);
+            let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if secondary_button(ui, s.cancel, true).clicked() || escape {
+                self.stop_opening.set(true);
+            }
         });
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(33));

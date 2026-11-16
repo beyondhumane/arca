@@ -233,7 +233,7 @@ pub(crate) fn check_access(
             let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
             if a.entries().iter().any(|e| e.encrypted) {
                 let password = password.ok_or(arca_core::Error::PasswordRequired)?;
-                a.test(Some(password), notify)
+                a.check_password(password, notify)
             } else {
                 Ok(())
             }
