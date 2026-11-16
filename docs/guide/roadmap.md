@@ -31,8 +31,6 @@ extracted in CLI and desktop. See
 
 - **UDF:** ISO images are read through ISO 9660, so files stored only in UDF (such as `install.wim` on Windows media) are not listed yet.
 - **Symbolic links:** skipped for ZIP/TAR creation, rejected for 7z.
-- **GNU tar long names.**
-- **Solid 7z creation:** existing solid archives can be read, but new ones use independent blocks.
 - **7z password changes and mutation:** adding, deleting and renaming can require solid-block rewrites and are out of scope.
 - **Desktop integration on Linux and macOS:** the Explorer menu is Windows-only for now.
 - **Mutation outside ZIP:** ZIP desktop editing exists; 7z remains create/read only.
