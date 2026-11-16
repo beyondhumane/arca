@@ -203,6 +203,23 @@ impl Shell {
         self.focus_filter = true;
     }
 
+    /// What a band starts from: one flag per row on show, in the order they
+    /// are drawn, because that is the index each row looks itself up by while
+    /// the band is pulled. The selection itself is kept per entry.
+    pub(super) fn marquee_base(&self, pane: Option<usize>, keep: bool) -> Vec<bool> {
+        let rows = match pane {
+            Some(pane) => self.controller.pane_rows(pane),
+            None => self.controller.visible_rows(),
+        };
+        if keep {
+            rows.iter()
+                .map(|row| self.controller.is_checked(row))
+                .collect()
+        } else {
+            vec![false; rows.len()]
+        }
+    }
+
     fn peek_card(&mut self, ui: &mut egui::Ui) {
         const SHOWN: usize = 8;
         let Some((path, rect, since)) = self.peek.clone() else {
@@ -1356,11 +1373,7 @@ impl Shell {
                 if !keep {
                     self.controller.dispatch(AppAction::ClearSelection);
                 }
-                let base = if keep {
-                    self.controller.state.active_pane().checked.clone()
-                } else {
-                    vec![false; self.controller.state.active_pane().checked.len()]
-                };
+                let base = self.marquee_base(pane, keep);
                 self.marquee = Some(Marquee {
                     from,
                     to: from,

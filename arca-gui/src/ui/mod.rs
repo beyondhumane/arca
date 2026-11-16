@@ -74,8 +74,8 @@ fn look_of(s: &Settings) -> String {
 }
 
 /// A rectangle being dragged out over the rows from the blank space, which
-/// picks every row it crosses. `base` is what was checked when it started,
-/// kept when Ctrl is held so the sweep adds to it.
+/// picks every row it crosses. `base` is what was checked when it started, one
+/// flag per row on show, kept when Ctrl is held so the sweep adds to it.
 pub(crate) struct Marquee {
     from: egui::Pos2,
     to: egui::Pos2,

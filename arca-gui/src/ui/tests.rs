@@ -691,3 +691,43 @@ fn properties_of_a_folder_wait_for_the_walk_to_give_a_size() {
     assert!(!file.counting);
     assert_eq!(file.size, 5);
 }
+
+// A band pulled with Ctrl held keeps what was picked: its starting point is
+// read per row on show, the index the rows look themselves up by, and not per
+// entry of the archive, which is a different order inside any folder.
+#[test]
+fn a_ctrl_band_starts_from_the_rows_already_picked() {
+    let ctx = egui::Context::default();
+    let mut shell = Shell::new(&ctx, crate::Startup::Browse(None));
+    let mut c = crate::controller::AppController::new(crate::settings::Settings::default());
+    c.state.entries = ["dir/a.txt", "dir/b.txt", "dir/c.txt", "root.txt"]
+        .iter()
+        .map(|name| arca_core::Entry {
+            name: name.to_string(),
+            raw_name: name.as_bytes().to_vec(),
+            size: 1,
+            compressed_size: 1,
+            method: arca_core::Method::Store,
+            crc32: None,
+            is_dir: false,
+            mtime: None,
+            created: None,
+            accessed: None,
+            attributes: 0,
+            offset: 0,
+            utf8: true,
+            encrypted: false,
+            zipcrypto: false,
+        })
+        .collect();
+    c.state.active_pane_mut().checked = vec![true, false, false, false];
+    c.state.active_pane_mut().directory = "dir/".into();
+    shell.controller = c;
+    let rows = shell.controller.visible_rows();
+    let base = shell.marquee_base(None, true);
+    assert_eq!(base.len(), rows.len());
+    for (row, picked) in rows.iter().zip(&base) {
+        assert_eq!(*picked, row.path == "dir/a.txt", "{}", row.path);
+    }
+    assert!(shell.marquee_base(None, false).iter().all(|picked| !picked));
+}
