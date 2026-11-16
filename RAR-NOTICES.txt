@@ -113,6 +113,24 @@ Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-APACHE -> SHA-256 c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08
   LICENSE-MIT -> SHA-256 61d383b05b87d78f94d2937e2580cce47226d17823c0430fbcad09596537efcf
 
+crossbeam-deque 0.8.8
+Declared license: MIT OR Apache-2.0
+Source: registry+https://github.com/rust-lang/crates.io-index
+  LICENSE-APACHE -> SHA-256 a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2
+  LICENSE-MIT -> SHA-256 5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab
+
+crossbeam-epoch 0.9.21
+Declared license: MIT OR Apache-2.0
+Source: registry+https://github.com/rust-lang/crates.io-index
+  LICENSE-APACHE -> SHA-256 a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2
+  LICENSE-MIT -> SHA-256 5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab
+
+crossbeam-utils 0.8.23
+Declared license: MIT OR Apache-2.0
+Source: registry+https://github.com/rust-lang/crates.io-index
+  LICENSE-APACHE -> SHA-256 a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2
+  LICENSE-MIT -> SHA-256 5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab
+
 crypto-common 0.2.2
 Declared license: MIT OR Apache-2.0
 Source: registry+https://github.com/rust-lang/crates.io-index
@@ -130,6 +148,12 @@ Declared license: MIT OR Apache-2.0
 Source: registry+https://github.com/rust-lang/crates.io-index
   LICENSE-APACHE -> SHA-256 a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5
   LICENSE-MIT -> SHA-256 af59cea35d7f5e2777a713b8d155d65efa2c339eb43f3c14e868c6ac8506edad
+
+either 1.18.0
+Declared license: MIT OR Apache-2.0
+Source: registry+https://github.com/rust-lang/crates.io-index
+  LICENSE-APACHE -> SHA-256 a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2
+  LICENSE-MIT -> SHA-256 7576269ea71f767b99297934c0b2367532690f8c4badc695edf8e04ab6a1e545
 
 errno 0.3.14
 Declared license: MIT OR Apache-2.0
@@ -275,8 +299,20 @@ Source: registry+https://github.com/rust-lang/crates.io-index
 
 rars 0.10.2
 Declared license: Apache-2.0
-Source: registry+https://github.com/rust-lang/crates.io-index
+Source: vendored in arca-rar/vendor from registry+https://github.com/rust-lang/crates.io-index
   COPYING -> SHA-256 cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
+
+rayon 1.12.0
+Declared license: MIT OR Apache-2.0
+Source: registry+https://github.com/rust-lang/crates.io-index
+  LICENSE-APACHE -> SHA-256 a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2
+  LICENSE-MIT -> SHA-256 0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720
+
+rayon-core 1.13.0
+Declared license: MIT OR Apache-2.0
+Source: registry+https://github.com/rust-lang/crates.io-index
+  LICENSE-APACHE -> SHA-256 a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2
+  LICENSE-MIT -> SHA-256 0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720
 
 rustix 1.1.4
 Declared license: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
@@ -413,6 +449,34 @@ DEALINGS IN THE SOFTWARE.
 This project is dual-licensed under the Unlicense and MIT licenses.
 
 You may use this code under the terms of either license.
+
+
+===== SHA-256 0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720 =====
+Copyright (c) 2010 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 
 
 ===== SHA-256 0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f =====
@@ -1111,6 +1175,36 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 
+===== SHA-256 5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab =====
+The MIT License (MIT)
+
+Copyright (c) 2019 The Crossbeam Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
 ===== SHA-256 5b3d8a674979e158328c57f5c4cc12150df79d0bdf12c86eafc2e9c6006a2d4e =====
 Short version for non-lawyers:
 
@@ -1436,6 +1530,34 @@ DEALINGS IN THE SOFTWARE.
 
 ===== SHA-256 73b9dc2e79c7308998dd30296e073aefaefb944a68fb89aa412c23c0edcabcaa =====
 Copyright (c) 2020-2026 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+===== SHA-256 7576269ea71f767b99297934c0b2367532690f8c4badc695edf8e04ab6a1e545 =====
+Copyright (c) 2015
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated

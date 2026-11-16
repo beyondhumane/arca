@@ -326,3 +326,23 @@ reinterpreted as writer evidence.
   WinRAR-equivalent. The creation validation record
   ([RAR_CREATE_VALIDATION.md](../../arca-rar/RAR_CREATE_VALIDATION.md)) states
   which interoperability checks were actually run and with which tool versions.
+
+## Scope update: vendored writer and parallel feature (2026-11-16)
+
+This section records a later change of technical scope. Everything above still
+stands as written.
+
+- `rars 0.10.2` is now vendored in `arca-rar/vendor/rars` from the crates.io
+  archive (SHA-256 recorded in `arca-rar/vendor/PATCHES.md`) and applied with
+  `[patch.crates-io]`. The patches touch only the RAR 5 writer's speed and are
+  listed there: the binary-tree finder is kept for a whole member, and levels 2
+  and 3 search and price less. The reader, the format code and the integrity
+  checks are unchanged, and no RARLAB source was consulted for the changes.
+- The `parallel` feature is now on, so `rars` encodes members and runs on
+  several threads. It adds `rayon`, `rayon-core`, `crossbeam-deque`,
+  `crossbeam-epoch`, `crossbeam-utils` and `either`, all MIT OR Apache-2.0;
+  `python3 packaging/rar-notices.py` lists them and records `rars` as vendored,
+  and `python3 arca-rar/tests/check-features.py` asserts
+  `encryption,parallel,write` on the vendored copy. `recovery` stays off.
+- `arca-rar/fuzz` keeps its own lockfile on the crates.io copy, whose reader is
+  the one the vendored copy carries unchanged.

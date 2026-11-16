@@ -57,20 +57,36 @@ pub(super) fn create(
     if cfg!(not(feature = "rar")) {
         return create_rar(out, &[], &CreateOptions::default(), &|_, _, _| true);
     }
-    let options = options(level, codec, requested_threads, password, hide_names)?;
+    let options = options(level, codec, password, hide_names)?;
     let cancelled = interruption()?;
     let walk = collect(out, inputs, Bounds::WRITER, &cancelled)?;
     let t0 = Instant::now();
-    create_rar(out, &walk.sources, &options, &|_, _, _| {
-        !cancelled.load(Ordering::SeqCst)
-    })?;
+    let run = || {
+        create_rar(out, &walk.sources, &options, &|_, _, _| {
+            !cancelled.load(Ordering::SeqCst)
+        })
+    };
+    // The writer works on whatever rayon pool it runs in, so -j is a pool of
+    // that many threads; without it, every core.
+    let threads = if requested_threads > 0 {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(requested_threads)
+            .build()
+            .map_err(|e| Error::Format(format!("cannot start the thread pool: {e}")))?
+            .install(run)?;
+        requested_threads
+    } else {
+        run()?;
+        rayon::current_num_threads()
+    };
     println!(
-        "{}: {} files, {} -> {} in {:.3} s (sequential)",
+        "{}: {} files, {} -> {} in {:.3} s \u{b7} {} threads",
         out.display(),
         walk.files,
         human(walk.bytes),
         human(fs::metadata(out)?.len()),
-        t0.elapsed().as_secs_f64()
+        t0.elapsed().as_secs_f64(),
+        threads
     );
     Ok(())
 }
@@ -80,7 +96,6 @@ pub(super) fn create(
 fn options(
     level: Level,
     codec: CodecArg,
-    requested_threads: usize,
     password: Option<&str>,
     hide_names: bool,
 ) -> Result<CreateOptions> {
@@ -92,11 +107,6 @@ fn options(
     if password.is_some() {
         return Err(Error::Unsupported(
             ".rar creation does not support encryption; use .zip or .7z for a password".into(),
-        ));
-    }
-    if requested_threads > 1 {
-        return Err(Error::Unsupported(
-            ".rar creation is sequential; leave --threads at 0 or 1".into(),
         ));
     }
     let level = match codec {

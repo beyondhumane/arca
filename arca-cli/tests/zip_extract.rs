@@ -210,7 +210,7 @@ fn mixed_sizes_and_duplicate_names_share_one_reader_per_chunk() {
             assert_eq!(fs::read(output.path().join(name)).unwrap(), *body);
         }
         let dup = fs::read(output.path().join("dup.txt")).unwrap();
-        assert!(dup == b"first" || dup == b"second");
+        assert_eq!(dup, b"second");
         let output = tempfile::tempdir().unwrap();
         success(extract(
             &archive,
@@ -246,4 +246,36 @@ fn an_entry_that_understates_its_size_fails_without_panicking() {
     let result = extract(&archive, output.path(), &["-j", "1"]);
     assert!(!result.status.success());
     assert!(!String::from_utf8_lossy(&result.stderr).contains("panicked"));
+}
+
+#[test]
+fn a_failed_overwrite_keeps_the_files_it_would_have_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = dir.path().join("locked.zip");
+    let mut writer = ZipWriter::new(File::create(&archive).unwrap());
+    let big = vec![b'x'; 2 << 20];
+    for (name, body) in [("small.txt", &b"tiny"[..]), ("big.bin", &big[..])] {
+        writer
+            .add_with_password(name, body, Codec::Deflate, Level::FAST, None, Some("right"))
+            .unwrap();
+    }
+    writer.finish().unwrap();
+    let output = tempfile::tempdir().unwrap();
+    for name in ["small.txt", "big.bin"] {
+        fs::write(output.path().join(name), b"mine").unwrap();
+    }
+    let result = extract(
+        &archive,
+        output.path(),
+        &["--on-conflict", "overwrite", "-p", "wrong"],
+    );
+    assert!(!result.status.success());
+    for name in ["small.txt", "big.bin"] {
+        assert_eq!(
+            fs::read(output.path().join(name)).unwrap(),
+            b"mine",
+            "{name}"
+        );
+    }
+    assert_eq!(fs::read_dir(output.path()).unwrap().count(), 2);
 }

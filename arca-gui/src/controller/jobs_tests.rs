@@ -555,6 +555,68 @@ fn leaving_for_the_disk_forgets_a_cut_out_of_the_archive() {
     assert!(app.state.cut_names.is_empty());
 }
 
+// The window wrote every .tar and .tar.gz entry dated 1970.
+#[test]
+fn a_tar_made_in_the_window_keeps_the_dates_of_its_files() {
+    let room = Room::new();
+    let source = room.path("dated");
+    std::fs::create_dir_all(&source).unwrap();
+    let file = source.join("a.txt");
+    std::fs::write(&file, b"a").unwrap();
+    let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+    for format in [Format::Tar, Format::TarGz, Format::TarXz] {
+        let archive = room.path(&format!("dated.{}", format.extension()));
+        crate::archive_ops::compress(
+            &archive,
+            std::slice::from_ref(&source),
+            format,
+            arca_core::Codec::Deflate,
+            arca_core::Level::NORMAL,
+            &|_, _, _| true,
+            (None, false),
+        )
+        .unwrap();
+        let (entries, _) =
+            crate::archive_ops::list_entries(&archive, None, &|_, _, _| true).unwrap();
+        let entry = entries.iter().find(|e| e.name.ends_with("a.txt")).unwrap();
+        assert_eq!(entry.mtime, Some(1_600_000_000), "{format:?}");
+    }
+}
+
+// A tar.xz compresses the whole stream, so the saving is the file against
+// what it holds; summing the entries said 0% for every one of them.
+#[test]
+fn a_compressed_tar_says_how_much_its_file_saved() {
+    let room = Room::new();
+    let source = room.path("source");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("a.txt"), "the same line again\n".repeat(5000)).unwrap();
+    let archive = room.path("saved.tar.xz");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        Format::TarXz,
+        arca_core::Codec::Deflate,
+        arca_core::Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.open_with_password(archive.clone(), None);
+    settle(&mut app);
+    let bytes = std::fs::metadata(&archive).unwrap().len();
+    let summary = app.summary();
+    assert!(summary.contains(&human(bytes)), "{summary}");
+    assert!(!summary.contains(" 0.0%"), "{summary}");
+}
+
 #[test]
 fn a_rewrite_that_failed_behind_keeps_the_reread_of_the_one_before() {
     let room = Room::new();
@@ -766,4 +828,105 @@ fn a_second_edit_keeps_one_step_to_undo() {
     settle(&mut app);
     assert_eq!(app.state.entries.len(), after_first);
     assert!(!crate::archive_ops::undo_path(&archive).exists());
+}
+
+#[test]
+fn an_edit_that_failed_offers_nothing_to_undo() {
+    let room = Room::new();
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("a.txt"), b"first contents").unwrap();
+    let archive = room.path("broken.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.open_with_password(archive.clone(), None);
+    settle(&mut app);
+    let stale = crate::archive_ops::undo_path(&archive);
+    fs::write(&stale, b"left over from another session").unwrap();
+    fs::write(&archive, b"no longer a zip").unwrap();
+    app.run_job(Job::Delete {
+        archive: archive.clone(),
+        names: vec!["source/a.txt".into()],
+        password: None,
+    });
+    settle(&mut app);
+    assert!(app.state.error);
+    assert!(app.state.undo.is_none());
+    app.undo_last();
+    assert_eq!(fs::read(&archive).unwrap(), b"no longer a zip");
+}
+
+#[test]
+fn undoing_puts_back_an_archive_a_rewrite_left_missing() {
+    let room = Room::new();
+    let (mut app, archive) = edited_archive(&room);
+    let after = app.state.entries.len();
+    fs::remove_file(&archive).unwrap();
+    app.undo_last();
+    settle(&mut app);
+    assert!(archive.exists());
+    assert!(!app.state.error, "{}", app.state.notice);
+    assert_eq!(app.state.entries.len(), after + 1);
+}
+
+#[test]
+fn opening_an_archive_can_be_given_up_on() {
+    let room = Room::new();
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("a.txt"), b"contents").unwrap();
+    let archive = room.path("slow.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.browse_disk(&room.path(""));
+    settle(&mut app);
+    app.open_with_password(archive.clone(), None);
+    assert!(app.state.listing);
+    app.cancel_opening();
+    assert!(!app.state.listing && !app.state.busy);
+    assert!(app.state.channel.is_none());
+    std::thread::sleep(Duration::from_millis(100));
+    app.receive();
+    assert!(app.on_disk(), "the window went back to the folder");
+    assert_ne!(app.state.archive.as_ref(), Some(&archive));
+}
+
+#[test]
+fn stopping_a_task_that_waits_on_a_question_lets_it_go() {
+    let mut app = AppController::new(Settings::default());
+    let (answered_tx, answered_rx) = channel();
+    let asker: Work = Box::new(move |tx, replies, _, _| {
+        let _ = tx.send(Message::Conflict("there.txt".into()));
+        let answer = replies.recv().unwrap_or(Answer::Cancel);
+        let _ = answered_tx.send(answer);
+        let _ = tx.send(Message::Failed(arca_core::Error::Cancelled.to_string()));
+    });
+    let asking = app.enqueue(Task::new("Extract", "a", asker));
+    settle_until(&mut app, |app| app.conflict().is_some());
+    app.cancel_task(asking);
+    assert!(app.conflict().is_none());
+    assert_eq!(
+        answered_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+        Answer::Cancel
+    );
+    settle(&mut app);
+    assert_eq!(status(&app, asking), TaskStatus::Stopped);
 }

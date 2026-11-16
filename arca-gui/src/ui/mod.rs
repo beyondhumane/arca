@@ -44,7 +44,16 @@ enum DialogResult {
     },
     AddFiles(Option<Vec<PathBuf>>),
     SaveCopy(Option<PathBuf>),
+    CarryTo {
+        roots: Vec<String>,
+        copy: bool,
+        to: Option<PathBuf>,
+    },
 }
+
+/// For each file waiting to be compressed: its size if it is a file, and
+/// whether it is a folder.
+pub(crate) type InputFacts = std::rc::Rc<Vec<(Option<u64>, bool)>>;
 
 /// Rows carried by a drag inside the window, as the roots they stand for.
 #[derive(Clone)]
@@ -65,8 +74,8 @@ fn look_of(s: &Settings) -> String {
 }
 
 /// A rectangle being dragged out over the rows from the blank space, which
-/// picks every row it crosses. `base` is what was checked when it started,
-/// kept when Ctrl is held so the sweep adds to it.
+/// picks every row it crosses. `base` is what was checked when it started, one
+/// flag per row on show, kept when Ctrl is held so the sweep adds to it.
 pub(crate) struct Marquee {
     from: egui::Pos2,
     to: egui::Pos2,
@@ -90,6 +99,9 @@ pub(crate) struct Props {
     pub(crate) folders: usize,
     /// The walk stopped early, so size and counts are lower bounds.
     pub(crate) capped: bool,
+    /// A folder still being walked on its own thread: size and counts so far
+    /// say nothing yet.
+    pub(crate) counting: bool,
     pub(crate) modified: Option<std::time::SystemTime>,
     pub(crate) hidden: bool,
     pub(crate) pinned: bool,
@@ -103,7 +115,7 @@ const PROPS_WALK_MOST: usize = 50_000;
 
 /// Sizes up a path without going on for ever: deep trees are cut off at
 /// `PROPS_WALK_MOST` entries and said to be at least that big.
-pub(crate) fn inspect(path: &std::path::Path, pinned: bool) -> Props {
+pub(crate) fn inspect(path: &std::path::Path, pinned: bool, walk: bool) -> Props {
     let meta = std::fs::symlink_metadata(path).ok();
     let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
     let name = path
@@ -120,6 +132,7 @@ pub(crate) fn inspect(path: &std::path::Path, pinned: bool) -> Props {
         files: 0,
         folders: 0,
         capped: false,
+        counting: false,
         modified: meta.as_ref().and_then(|m| m.modified().ok()),
         hidden: path
             .file_name()
@@ -136,7 +149,9 @@ pub(crate) fn inspect(path: &std::path::Path, pinned: bool) -> Props {
         props.owner = unix_name("/etc/passwd", meta.uid());
         props.group = unix_name("/etc/group", meta.gid());
     }
-    if is_dir {
+    if is_dir && !walk {
+        props.counting = true;
+    } else if is_dir {
         let mut stack = vec![path.to_path_buf()];
         while let Some(dir) = stack.pop() {
             let Ok(read) = std::fs::read_dir(&dir) else {
@@ -189,6 +204,13 @@ pub(crate) struct Shell {
     marquee: Option<Marquee>,
     pane_action: Option<PaneAction>,
     properties: Option<Props>,
+    properties_job: Option<Receiver<Props>>,
+    // Set by the opening screen when somebody gives up waiting for an
+    // archive to be read; acted on once the frame is drawn.
+    stop_opening: std::cell::Cell<bool>,
+    // Size and kind of each file waiting to be compressed, read once for the
+    // list they were read for rather than on every frame.
+    input_facts: Option<(Vec<PathBuf>, InputFacts)>,
     last_active_pane: Option<usize>,
     // Whether the last thing the user did was press a key. While it was,
     // the pointer resting on another pane does not steal the focus.
@@ -303,6 +325,9 @@ impl Shell {
             marquee: None,
             pane_action: None,
             properties: None,
+            properties_job: None,
+            stop_opening: Default::default(),
+            input_facts: None,
             last_active_pane: None,
             keyboard_drove: false,
             peek: None,
@@ -366,6 +391,7 @@ impl Shell {
     /// Everything that happened on other threads since the last frame.
     fn poll(&mut self, ctx: &egui::Context) {
         self.poll_dialog();
+        self.poll_properties();
         self.controller.ask_about_updates();
         let conflict_was_open = self.controller.conflict().is_some();
         if self.controller.receive() {
@@ -395,10 +421,13 @@ impl Shell {
             || state.channel.is_some()
             || state.update_rx.is_some()
             || matches!(state.preview.status, PreviewStatus::Loading)
-            || state
-                .tasks
-                .iter()
-                .any(|task| matches!(task.status, TaskStatus::Queued | TaskStatus::Running));
+            || state.tasks.iter().any(|task| {
+                // A paused task says nothing until it is let go, and letting it
+                // go is a click, which brings a frame of its own.
+                let paused = task.hold.load(std::sync::atomic::Ordering::Relaxed)
+                    && !task.stop.load(std::sync::atomic::Ordering::Relaxed);
+                matches!(task.status, TaskStatus::Queued | TaskStatus::Running) && !paused
+            });
         if waiting {
             ctx.request_repaint_after(TICK);
         } else if state.cut_pending.is_some() {
@@ -925,10 +954,52 @@ impl Shell {
                         .set_directory(&directory)
                         .save_file(),
                 ),
+                DialogKind::CarryTo { roots, copy } => DialogResult::CarryTo {
+                    roots,
+                    copy,
+                    to: rfd::FileDialog::new().pick_folder(),
+                },
             };
             let _ = tx.send(result);
             ctx.request_repaint();
         });
+    }
+
+    /// Opens Properties at once with what one look at the path says, and
+    /// sizes a folder up on a thread: a tree on a network share or a slow
+    /// disk can take seconds to walk, and the window keeps drawing meanwhile.
+    pub(crate) fn show_properties(&mut self, path: PathBuf, pinned: bool) {
+        let props = inspect(&path, pinned, false);
+        self.properties_job = None;
+        if props.counting {
+            let (tx, rx) = channel();
+            let ctx = self.ctx.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(inspect(&path, pinned, true));
+                ctx.request_repaint();
+            });
+            self.properties_job = Some(rx);
+        }
+        self.properties = Some(props);
+    }
+
+    fn poll_properties(&mut self) {
+        let Some(job) = &self.properties_job else {
+            return;
+        };
+        match job.try_recv() {
+            Ok(done) => {
+                self.properties_job = None;
+                if let Some(open) = &mut self.properties {
+                    if open.path == done.path {
+                        let pinned = open.pinned;
+                        *open = Props { pinned, ..done };
+                    }
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.properties_job = None,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
     }
 
     fn poll_dialog(&mut self) {
@@ -960,6 +1031,18 @@ impl Shell {
                 .dispatch(AppAction::ExtractTo { only_checked, dest }),
             DialogResult::AddFiles(Some(paths)) if !paths.is_empty() => {
                 self.controller.dispatch(AppAction::Add(paths))
+            }
+            DialogResult::CarryTo {
+                roots,
+                copy,
+                to: Some(dir),
+            } => {
+                let target = crate::controller::disk::disk_dir(&dir);
+                if copy {
+                    self.controller.copy_on_disk(&roots, &target);
+                } else {
+                    self.controller.move_on_disk(&roots, &target);
+                }
             }
             DialogResult::SaveCopy(Some(dest)) => {
                 if let Some(archive) = self.controller.state.archive.clone() {
@@ -1100,7 +1183,7 @@ impl Shell {
                 if name.is_empty() {
                     return;
                 }
-                for row in &rows {
+                for row in rows.iter() {
                     if matches_mask(&name, &row.label) {
                         self.controller.dispatch(AppAction::SetChecked {
                             row: row.clone(),
@@ -1191,14 +1274,10 @@ impl Shell {
                 if roots.is_empty() {
                     return;
                 }
-                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                    let target = crate::controller::disk::disk_dir(&dir);
-                    if action == RowAction::MoveTo {
-                        self.controller.move_on_disk(&roots, &target);
-                    } else {
-                        self.controller.copy_on_disk(&roots, &target);
-                    }
-                }
+                self.begin_dialog(DialogKind::CarryTo {
+                    roots,
+                    copy: action == RowAction::CopyTo,
+                });
             }
             RowAction::OpenWith => {
                 if let Some(row) = row.filter(|row| !row.is_dir) {
@@ -1219,7 +1298,7 @@ impl Shell {
                     _ => disk_path(&self.controller.state.active_pane().directory),
                 };
                 let pinned = self.controller.is_pinned(&path);
-                self.properties = Some(inspect(&path, pinned));
+                self.show_properties(path, pinned);
             }
             RowAction::Copy => self.dispatch_clipboard(false),
             RowAction::Cut => self.dispatch_clipboard(true),
@@ -1806,6 +1885,12 @@ impl Shell {
                 self.row_action(RowAction::Properties, at.unwrap_or(usize::MAX));
             }
             Shortcut::NewFolder => self.row_action(RowAction::NewFolder, usize::MAX),
+            // The menu offers it on the disk only, and the key does the same.
+            Shortcut::Duplicate => {
+                if self.controller.on_disk() && !self.controller.selected_roots().is_empty() {
+                    self.row_action(RowAction::Duplicate, usize::MAX);
+                }
+            }
             Shortcut::Up => {
                 if self.controller.can_go_up() {
                     self.controller.dispatch(AppAction::Up);
@@ -2069,8 +2154,19 @@ impl eframe::App for Shell {
         self.width = ui.available_width();
         self.cursor_row = None;
         let only_form = self.controller.state.one_shot && self.modal_kind() == Some(ModalKind::Add);
+        if !only_form && self.controller.refresh_volumes() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         if !only_form {
             self.workspace(ui);
+        }
+        if self.stop_opening.take() {
+            self.controller.cancel_opening();
+        }
+        // A band ends when the button comes up, wherever that happens: the
+        // blank space that started it may be gone by then, filled by rows.
+        if self.marquee.is_some() && !ctx.input(|i| i.pointer.primary_down()) {
+            self.marquee = None;
         }
         // After the lists, so every row has had its say about a drop.
         self.settle_blank_drop(&ctx);

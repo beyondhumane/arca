@@ -1,6 +1,5 @@
 use super::{
-    leftovers_error, overall, system, warn_on, Event, Job, INNO_LEFTOVERS, KNOWN_FILES, SHELL_DLL,
-    UNINSTALLER,
+    leftovers_error, overall, system, warn_on, Event, Job, INNO_LEFTOVERS, KNOWN_FILES, UNINSTALLER,
 };
 use std::{fs, path::Path};
 
@@ -25,7 +24,7 @@ pub fn run(job: &Job, report: &mut dyn FnMut(Event)) -> Result<(), String> {
     }
     report(Event::Progress(overall(1, 1.)));
 
-    remove_files(dir, job.files_only, report)?;
+    remove_files(dir, report)?;
     report(Event::Progress(overall(2, 1.)));
 
     if !job.files_only {
@@ -37,7 +36,7 @@ pub fn run(job: &Job, report: &mut dyn FnMut(Event)) -> Result<(), String> {
     Ok(())
 }
 
-fn remove_files(dir: &Path, files_only: bool, report: &mut dyn FnMut(Event)) -> Result<(), String> {
+fn remove_files(dir: &Path, report: &mut dyn FnMut(Event)) -> Result<(), String> {
     let names: Vec<&str> = KNOWN_FILES
         .iter()
         .copied()
@@ -45,18 +44,11 @@ fn remove_files(dir: &Path, files_only: bool, report: &mut dyn FnMut(Event)) -> 
         .chain(INNO_LEFTOVERS)
         .collect();
     let total = names.len() as f32;
-    let mut explorer_restarted = false;
     let mut left = Vec::new();
     for (index, name) in names.iter().enumerate() {
         let path = dir.join(name);
-        if path.exists() && fs::remove_file(&path).is_err() {
-            if *name == SHELL_DLL && !files_only && !explorer_restarted {
-                system::restart_explorer();
-                explorer_restarted = true;
-            }
-            if fs::remove_file(&path).is_err() && system::move_aside(&path).is_err() {
-                left.push(path);
-            }
+        if path.exists() && fs::remove_file(&path).is_err() && system::move_aside(&path).is_err() {
+            left.push(path);
         }
         report(Event::Progress(overall(2, (index + 1) as f32 / total)));
     }

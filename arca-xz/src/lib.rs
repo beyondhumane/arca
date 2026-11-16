@@ -340,7 +340,9 @@ fn dictionary(preset: u32) -> u64 {
     u64::from(LzmaOptions::with_preset(preset).dict_size)
 }
 
-fn block_size(preset: u32) -> u64 {
+/// How much uncompressed data each thread of a multithreaded LZMA2 encoder
+/// takes at a time: three dictionaries, so cutting the stream costs little.
+pub fn block_size(preset: u32) -> u64 {
     (3 * dictionary(preset)).max(1 << 20)
 }
 

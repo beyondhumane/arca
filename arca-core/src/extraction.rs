@@ -33,6 +33,8 @@ impl Destination {
     fn root(&mut self) -> Result<&Dir> {
         if self.directories.is_empty() {
             let absolute = std::path::absolute(&self.path)?;
+            #[cfg(unix)]
+            let absolute = as_the_disk_has_it(&absolute);
             let mut components = absolute.components().peekable();
             let mut anchor = PathBuf::new();
             while let Some(Component::Prefix(_) | Component::RootDir) = components.peek() {
@@ -66,6 +68,20 @@ impl Destination {
         reader: &mut dyn Read,
         ask: &mut dyn FnMut(&Path) -> Conflict,
     ) -> Result<Option<u64>> {
+        self.write_file(name, is_dir, mtime, None, reader, ask)
+    }
+
+    /// `write_entry` for a format that records Unix permissions: the file
+    /// also gets the execute bits `mode` has, see [`set_executable`].
+    pub fn write_file(
+        &mut self,
+        name: &str,
+        is_dir: bool,
+        mtime: Option<i64>,
+        mode: Option<u32>,
+        reader: &mut dyn Read,
+        ask: &mut dyn FnMut(&Path) -> Conflict,
+    ) -> Result<Option<u64>> {
         let relative = safe_name(name)?;
         let directory = if is_dir {
             relative.as_path()
@@ -87,7 +103,7 @@ impl Destination {
         let parent = directories.last().unwrap();
         let mut name = relative.file_name().unwrap().to_os_string();
         let exists = exists_without_link(parent, Path::new(&name))?;
-        if exists || self.claimed.contains(&relative) {
+        if exists || self.claimed.contains(&claim_key(&relative)) {
             match ask(&self.path.join(&relative)) {
                 Conflict::Overwrite => {}
                 Conflict::Skip => return Ok(None),
@@ -98,19 +114,100 @@ impl Destination {
             }
         }
         let chosen = relative.with_file_name(&name);
-        self.claimed.insert(chosen);
+        self.claimed.insert(claim_key(&chosen));
         let (mut staged, file) = StagedFile::new(parent, Path::new(&name))?;
         let mut writer = BufWriter::with_capacity(256 * 1024, file);
         let bytes = io::copy(reader, &mut writer)?;
         writer.flush()?;
-        let file = writer.into_inner().map_err(|e| e.into_error())?;
-        set_mtime(&file.into_std(), mtime);
+        let file = writer.into_inner().map_err(|e| e.into_error())?.into_std();
+        set_mtime(&file, mtime);
+        set_executable(&file, mode);
         exists_without_link(parent, Path::new(&name))?;
         // Rename replaces the directory entry without following it, even if it changed.
         parent.rename(&staged.name, parent, &name)?;
         staged.committed = true;
         Ok(Some(bytes))
     }
+}
+
+/// The folder somebody asked to extract into, with the links on the way to it
+/// followed: on macOS `/tmp` and `/var` are links, and on any Unix a home or
+/// a mount point may be. The folder itself is not resolved, so one that is a
+/// link is still refused when it is opened, and everything under it is still
+/// opened without following links.
+#[cfg(unix)]
+fn as_the_disk_has_it(path: &Path) -> PathBuf {
+    let Some(mut existing) = path.parent() else {
+        return path.to_path_buf();
+    };
+    loop {
+        if let Ok(real) = std::fs::canonicalize(existing) {
+            return real.join(path.strip_prefix(existing).unwrap_or(Path::new("")));
+        }
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => return path.to_path_buf(),
+        }
+    }
+}
+
+/// The form two paths share when the file system would take them for one
+/// file. Windows and macOS compare names without regard to case by default, so
+/// an archive holding `A.txt` and `a.txt` names one file there, and a run that
+/// keeps track of the names it handed out has to compare them this way.
+pub fn claim_key(path: &Path) -> PathBuf {
+    if cfg!(any(windows, target_os = "macos")) {
+        PathBuf::from(path.to_string_lossy().to_lowercase())
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// Writes `target` through a temporary file beside it, renamed over `target`
+/// only once `fill` has succeeded. A wrong password, a corrupt entry or a stop
+/// halfway leaves whatever was at `target` before exactly as it was, and no
+/// temporary behind.
+pub fn write_staged(
+    target: &Path,
+    fill: impl FnOnce(&mut std::fs::File) -> Result<u64>,
+) -> Result<u64> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = target.parent().unwrap_or(Path::new("."));
+    let mut opened = None;
+    for _ in 0..10_000 {
+        let temp = dir.join(format!(
+            ".arca-{}-{}.tmp",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(f) => {
+                opened = Some((temp, f));
+                break;
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    let Some((temp, mut file)) = opened else {
+        return Err(Error::Limit(
+            "cannot allocate an extraction temporary file".into(),
+        ));
+    };
+    let result = fill(&mut file);
+    drop(file);
+    let result = result.and_then(|n| {
+        std::fs::rename(&temp, target)?;
+        Ok(n)
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 /// Gives an extracted file the modification time its archive recorded.
@@ -124,6 +221,28 @@ pub fn set_mtime(file: &std::fs::File, mtime: Option<i64>) {
     if let Some(when) = std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(seconds)) {
         let _ = file.set_modified(when);
     }
+}
+
+/// Lets an extracted program run where the archive says it could: the execute
+/// bits of `mode`, the Unix permissions the archive recorded, are added to
+/// the file's. Nothing is ever taken away and nothing else is added, so the
+/// most an archive can do is mark one of its own files executable. A no-op
+/// where there are no such bits, and best effort like `set_mtime`.
+pub fn set_executable(file: &std::fs::File, mode: Option<u32>) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(execute) = mode.map(|m| m & 0o111).filter(|m| *m != 0) else {
+            return;
+        };
+        if let Ok(meta) = file.metadata() {
+            let mut permissions = meta.permissions();
+            permissions.set_mode(permissions.mode() | execute);
+            let _ = file.set_permissions(permissions);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (file, mode);
 }
 
 fn open_child(parent: &Dir, name: &Path) -> Result<Dir> {
@@ -180,7 +299,9 @@ fn free_name(parent: &Dir, relative: &Path, claimed: &HashSet<PathBuf>) -> Resul
     for n in 1..10_000 {
         let name = OsString::from(format!("{stem} ({n}){ext}"));
         let candidate = relative.with_file_name(&name);
-        if !claimed.contains(&candidate) && !exists_without_link(parent, Path::new(&name))? {
+        if !claimed.contains(&claim_key(&candidate))
+            && !exists_without_link(parent, Path::new(&name))?
+        {
             return Ok(name);
         }
     }
@@ -234,13 +355,95 @@ impl Drop for StagedFile<'_> {
     }
 }
 
+/// The files a new archive must not take in: itself, when it is written into
+/// a folder being archived, and the temporary it is built under. Without this
+/// an archive replacing an older one swallows the older one, or reads itself
+/// while it grows.
+pub struct OwnOutput {
+    names: Vec<OsString>,
+    dir: Option<PathBuf>,
+}
+
+impl OwnOutput {
+    pub fn new(out: &Path) -> Self {
+        let name = out.file_name().unwrap_or_default().to_os_string();
+        let mut staged = name.clone();
+        staged.push(".arca-new");
+        let parent = match out.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => Path::new("."),
+        };
+        Self {
+            names: vec![name, staged],
+            dir: std::fs::canonicalize(parent).ok(),
+        }
+    }
+
+    pub fn is_own(&self, path: &Path) -> bool {
+        let Some(name) = path.file_name() else {
+            return false;
+        };
+        let key = claim_key(Path::new(name));
+        if !self.names.iter().any(|n| claim_key(Path::new(n)) == key) {
+            return false;
+        }
+        let parent = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => Path::new("."),
+        };
+        match (&self.dir, std::fs::canonicalize(parent)) {
+            (Some(dir), Ok(found)) => *dir == found,
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_archive_written_into_its_own_input_does_not_take_itself_in() {
+        let room = room();
+        let out = room.path().join("sub").join("pack.zip");
+        fs::create_dir_all(out.parent().unwrap()).unwrap();
+        let own = OwnOutput::new(&out);
+        assert!(own.is_own(&room.path().join("sub/./pack.zip")));
+        assert!(own.is_own(&room.path().join("sub/pack.zip.arca-new")));
+        assert!(!own.is_own(&room.path().join("pack.zip")));
+        assert!(!own.is_own(&room.path().join("sub/other.zip")));
+    }
     use std::fs;
 
     fn room() -> tempfile::TempDir {
         tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_staged_write_replaces_the_target_only_when_it_succeeds() {
+        let room = room();
+        let target = room.path().join("keep.txt");
+        fs::write(&target, b"original").unwrap();
+        let failed = write_staged(&target, |f| {
+            f.write_all(b"half")?;
+            Err(Error::Format("wrong password".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        let written = write_staged(&target, |f| {
+            f.write_all(b"new")?;
+            Ok(3)
+        });
+        assert_eq!(written.unwrap(), 3);
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        let left: Vec<_> = fs::read_dir(room.path()).unwrap().collect();
+        assert_eq!(left.len(), 1, "no temporary may be left behind");
+    }
+
+    #[test]
+    fn names_that_differ_only_in_case_are_one_claim_where_the_disk_says_so() {
+        let same = claim_key(Path::new("Dir/A.txt")) == claim_key(Path::new("dir/a.txt"));
+        assert_eq!(same, cfg!(any(windows, target_os = "macos")));
     }
 
     #[test]
@@ -331,6 +534,37 @@ mod tests {
         };
         assert_eq!(modified("dated"), when as u64);
         assert!(modified("undated") > when as u64);
+    }
+
+    // A program in a tarball has to come out runnable, and a plain file must
+    // not come out runnable just for having passed through an archive.
+    #[cfg(unix)]
+    #[test]
+    fn programs_keep_their_execute_bits_and_nothing_more() {
+        use std::os::unix::fs::PermissionsExt;
+        let room = room();
+        let mut dest = Destination::new(room.path());
+        for (name, mode) in [
+            ("program", Some(0o755)),
+            ("plain", Some(0o644)),
+            ("setuid", Some(0o4755)),
+            ("unknown", None),
+        ] {
+            dest.write_file(name, false, None, mode, &mut &b"x"[..], &mut |_| {
+                Conflict::Overwrite
+            })
+            .unwrap();
+        }
+        let mode = |name: &str| {
+            fs::metadata(room.path().join(name))
+                .unwrap()
+                .permissions()
+                .mode()
+        };
+        assert_eq!(mode("program") & 0o111, 0o111);
+        assert_eq!(mode("plain") & 0o111, 0);
+        assert_eq!(mode("unknown") & 0o111, 0);
+        assert_eq!(mode("setuid") & 0o7000, 0);
     }
 
     #[test]
@@ -484,5 +718,48 @@ mod tests {
                 if fail { b"original".as_slice() } else { b"x" }
             );
         }
+    }
+
+    // The folder asked for may be reached through a link, as /tmp is on
+    // macOS: that link is followed, and the files land where it leads.
+    #[cfg(unix)]
+    #[test]
+    fn a_destination_reached_through_a_link_is_used() {
+        let room = room();
+        let real = room.path().join("real");
+        fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, room.path().join("link")).unwrap();
+        let mut dest = Destination::new(&room.path().join("link").join("out"));
+        dest.write_entry(
+            "a.txt",
+            false,
+            None,
+            &mut &b"contents"[..],
+            &mut |_| unreachable!(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(real.join("out/a.txt")).unwrap(), b"contents");
+    }
+
+    // Only the folders above the one asked for are followed: that one, if it
+    // is a link, is refused like any link under it.
+    #[cfg(unix)]
+    #[test]
+    fn a_destination_that_is_itself_a_link_is_refused() {
+        let room = room();
+        let real = room.path().join("real");
+        fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, room.path().join("link")).unwrap();
+        let mut dest = Destination::new(&room.path().join("link"));
+        assert!(dest
+            .write_entry(
+                "a.txt",
+                false,
+                None,
+                &mut &b"contents"[..],
+                &mut |_| unreachable!(),
+            )
+            .is_err());
+        assert_eq!(fs::read_dir(&real).unwrap().count(), 0);
     }
 }

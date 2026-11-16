@@ -63,8 +63,15 @@ pub struct Row {
     pub up: bool,
 }
 
-fn normalized(e: &Entry) -> String {
-    e.name.replace('\\', "/")
+/// The name with forward slashes, and with one on the end for a folder: 7z
+/// and the disk list folders by the bare name, ZIP with the slash, and a
+/// folder row is matched against what starts with its path and the slash.
+pub(crate) fn normalized(e: &Entry) -> String {
+    let mut name = e.name.replace('\\', "/");
+    if e.is_dir && !name.ends_with('/') {
+        name.push('/');
+    }
+    name
 }
 
 pub fn children_of(entries: &[Entry], dir: &str) -> Vec<Row> {

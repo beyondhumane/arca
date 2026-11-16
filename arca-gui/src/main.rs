@@ -318,6 +318,16 @@ c76ecf12e8e05b8f4730fb9933450ea121fe1ce3699ab9b7d20b058f872815f4 *arca-setup-0.6
         assert_eq!(wheel_speed(900.0), wheel_speed(2000.0));
     }
 
+    // Sizes are counted in powers of 1024, and say so: "17.4 MB" for 17.4
+    // MiB is 1.3 MB off by the other reading.
+    #[test]
+    fn sizes_are_named_in_binary_units() {
+        assert_eq!(crate::model::human(1023), "1023 B");
+        assert_eq!(crate::model::human(1024), "1.0 KiB");
+        assert_eq!(crate::model::human(17_400 * 1024 * 1024 / 1000), "17.4 MiB");
+        assert_eq!(crate::model::human(3 << 30), "3.0 GiB");
+    }
+
     // The only arithmetic in this file that can be wrong without anyone
     // noticing: a date is either right or plausible, and plausible is worse.
     #[test]

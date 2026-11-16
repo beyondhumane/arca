@@ -50,38 +50,45 @@ impl<W: Write> Write for Watched<'_, W> {
 
 // Writes one entry to `path` while keeping `notify` in the loop, so a pause
 // holds and a stop lands inside the file rather than after it. A stop, like
-// any other failure, takes the half-written file away with it.
+// any other failure, takes the half-written file away with it, and a file that
+// was already there and answered Replace stays untouched until the entry has
+// come out whole. `stamp` is the time and, where the format keeps them, the
+// Unix permissions to give it.
 fn unpack(
     path: &Path,
-    mtime: Option<i64>,
+    (mtime, mode): (Option<i64>, Option<u32>),
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     progress: (usize, usize, &str),
     fill: impl FnOnce(&mut dyn Write) -> arca_core::Result<u64>,
 ) -> arca_core::Result<u64> {
-    let mut out = Watched {
-        inner: BufWriter::with_capacity(BUF, File::create(path)?),
-        notify,
-        progress,
-        since: 0,
-        cancelled: false,
+    let write = |file: &mut File| -> arca_core::Result<u64> {
+        let mut out = Watched {
+            inner: BufWriter::with_capacity(BUF, &mut *file),
+            notify,
+            progress,
+            since: 0,
+            cancelled: false,
+        };
+        let result = fill(&mut out);
+        let Watched {
+            inner, cancelled, ..
+        } = out;
+        if cancelled {
+            return Err(arca_core::Error::Cancelled);
+        }
+        let n = result?;
+        let file = inner.into_inner().map_err(|e| e.into_error())?;
+        arca_core::extraction::set_mtime(file, mtime);
+        arca_core::extraction::set_executable(file, mode);
+        Ok(n)
     };
-    let result = fill(&mut out);
-    let Watched {
-        mut inner,
-        cancelled,
-        ..
-    } = out;
-    let result = if cancelled {
-        Err(arca_core::Error::Cancelled)
-    } else {
-        result.and_then(|n| {
-            inner.flush()?;
-            arca_core::extraction::set_mtime(inner.get_ref(), mtime);
-            Ok(n)
-        })
-    };
+    if path.exists() {
+        return arca_core::extraction::write_staged(path, write);
+    }
+    let mut file = File::create(path)?;
+    let result = write(&mut file);
     if result.is_err() {
-        drop(inner);
+        drop(file);
         let _ = fs::remove_file(path);
     }
     result
@@ -93,7 +100,7 @@ pub(crate) fn open_source(archive: &Path, format: Format) -> arca_core::Result<B
     }
     let f = BufReader::with_capacity(BUF, File::open(archive)?);
     Ok(match format {
-        Format::TarGz => Box::new(flate2::read::GzDecoder::new(f)),
+        Format::TarGz => Box::new(flate2::read::MultiGzDecoder::new(f)),
         _ => Box::new(f),
     })
 }
@@ -226,7 +233,7 @@ pub(crate) fn check_access(
             let a = arca_rar::RarArchive::open_with_progress(archive, password, notify)?;
             if a.entries().iter().any(|e| e.encrypted) {
                 let password = password.ok_or(arca_core::Error::PasswordRequired)?;
-                a.test(Some(password), notify)
+                a.check_password(password, notify)
             } else {
                 Ok(())
             }
@@ -448,9 +455,13 @@ pub(crate) fn extract_one_into(
                 fs::create_dir_all(parent)?;
             }
             let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
-            unpack(&path, entry.mtime, notify, (0, 1, &entry.name), |out| {
-                arca_zip::extract_entry_with(&mut source, entry, out, password)
-            })?;
+            unpack(
+                &path,
+                (entry.mtime, None),
+                notify,
+                (0, 1, &entry.name),
+                |out| arca_zip::extract_entry_with(&mut source, entry, out, password),
+            )?;
             Ok(path)
         }
         Container::Tar | Container::TarGz | Container::TarXz => {
@@ -462,10 +473,10 @@ pub(crate) fn extract_one_into(
             // the ones before it.
             let mut r = TarReader::new(open_source(archive, format)?);
             while let Some(e) = r.next_entry()? {
-                if e.entry.name == entry.name && !e.entry.is_dir {
+                if e.entry.name == entry.name && !e.entry.is_dir && e.is_plain() {
                     unpack(
                         &path,
-                        entry.mtime,
+                        (entry.mtime, Some(e.mode)),
                         notify,
                         (0, 1, &entry.name),
                         |mut out| r.copy_data(&e, &mut out),
@@ -569,7 +580,7 @@ pub(crate) fn free_name(path: &Path, claimed: &HashSet<PathBuf>) -> PathBuf {
         .unwrap_or_default();
     for n in 1..10_000u32 {
         let candidate = dir.join(format!("{stem} ({n}){ext}"));
-        if !candidate.exists() && !claimed.contains(&candidate) {
+        if !candidate.exists() && !claimed.contains(&arca_core::extraction::claim_key(&candidate)) {
             return candidate;
         }
     }
@@ -592,8 +603,8 @@ pub(crate) fn dest_path(
     if let Some(p) = path.parent() {
         fs::create_dir_all(p)?;
     }
-    if !path.exists() && !claimed.contains(&path) {
-        claimed.insert(path.clone());
+    if !path.exists() && !claimed.contains(&arca_core::extraction::claim_key(&path)) {
+        claimed.insert(arca_core::extraction::claim_key(&path));
         return Ok(Some(path));
     }
     let chosen = match ask(&path) {
@@ -610,7 +621,7 @@ pub(crate) fn dest_path(
         }
         Answer::Cancel => return Err(arca_core::Error::Cancelled),
     };
-    claimed.insert(chosen.clone());
+    claimed.insert(arca_core::extraction::claim_key(&chosen));
     Ok(Some(chosen))
 }
 
@@ -763,6 +774,15 @@ pub(crate) fn extract(
                 }
             }
             drop(a);
+            // Two entries of one name both answered Replace: the later one is
+            // what extracting in order leaves, and writing both from two
+            // threads at once would leave a mix of the two.
+            let mut seen = HashSet::new();
+            jobs.reverse();
+            jobs.retain(|(e, path)| {
+                e.is_dir || seen.insert(arca_core::extraction::claim_key(path))
+            });
+            jobs.reverse();
 
             let total = jobs.len();
             let done = AtomicUsize::new(0);
@@ -771,7 +791,7 @@ pub(crate) fn extract(
                 .map(|(e, path)| {
                     let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
                     let at = (done.load(Ordering::Relaxed), total, e.name.as_str());
-                    let w = unpack(path, e.mtime, notify, at, |out| {
+                    let w = unpack(path, (e.mtime, None), notify, at, |out| {
                         arca_zip::extract_entry_with(&mut source, e, out, password)
                     })?;
                     if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &e.name) {
@@ -804,7 +824,7 @@ pub(crate) fn extract(
                 if !notify(i, total, &e.entry.name) {
                     return Err(arca_core::Error::Cancelled);
                 }
-                if !wanted.is_empty() && !wanted.get(i).copied().unwrap_or(true) {
+                if !e.is_plain() || !wanted.is_empty() && !wanted.get(i).copied().unwrap_or(true) {
                     r.skip_data(&e)?;
                     i += 1;
                     continue;
@@ -812,7 +832,7 @@ pub(crate) fn extract(
                 match dest_path(dest, &e.entry.name, e.entry.is_dir, ask, &mut claimed)? {
                     Some(path) => {
                         let at = (i, total, e.entry.name.as_str());
-                        bytes += unpack(&path, e.entry.mtime, notify, at, |out| {
+                        bytes += unpack(&path, (e.entry.mtime, Some(e.mode)), notify, at, |out| {
                             r.with_data(&e, |data| Ok(std::io::copy(data, out)?))
                         })?;
                     }
@@ -1183,7 +1203,9 @@ pub(crate) fn compress(
         let final_size = fs::metadata(out).map(|m| m.len()).unwrap_or(0);
         return Ok((source_bytes, final_size));
     }
-    let files = collect_sources(inputs, format == Format::SevenZ)?;
+    let own = arca_core::extraction::OwnOutput::new(out);
+    let mut files = collect_sources(inputs, format == Format::SevenZ)?;
+    files.retain(|(path, name)| name.ends_with('/') || !own.is_own(path));
     if format == Format::Xz && !(inputs.len() == 1 && files.len() == 1 && inputs[0].is_file()) {
         return Err(arca_core::Error::Unsupported(
             "an .xz holds exactly one file; make a .tar.xz to keep several".into(),
@@ -1231,29 +1253,52 @@ pub(crate) fn compress(
                     level,
                 });
             }
-            arca_zip::create_zip(out, &sources, 0, password, notify)?;
+            let temp = staged_path(out);
+            arca_zip::create_zip(&temp, &sources, 0, password, notify)?;
+            if let Err(e) = fs::rename(&temp, out) {
+                let _ = fs::remove_file(&temp);
+                return Err(e.into());
+            }
         }
         Container::Tar | Container::TarGz => {
-            let raw = BufWriter::with_capacity(BUF, File::create(out)?);
-            let sink: Box<dyn Write> = if format == Format::TarGz {
-                Box::new(flate2::write::GzEncoder::new(
-                    raw,
-                    flate2::Compression::new(level.to_flate2()),
-                ))
-            } else {
-                Box::new(raw)
-            };
-            let mut w = TarWriter::new(sink);
-            for (i, (path, name)) in files.iter().enumerate() {
-                if !notify(i, total, name) {
-                    return Err(arca_core::Error::Cancelled);
+            fn tar_into<W: Write>(
+                sink: W,
+                files: &[(PathBuf, String)],
+                notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+                bytes: &mut u64,
+            ) -> arca_core::Result<W> {
+                let mut w = TarWriter::new(sink);
+                for (i, (path, name)) in files.iter().enumerate() {
+                    if !notify(i, files.len(), name) {
+                        return Err(arca_core::Error::Cancelled);
+                    }
+                    let meta = fs::metadata(path)?;
+                    let f = BufReader::with_capacity(BUF, File::open(path)?);
+                    w.add(
+                        name,
+                        meta.len(),
+                        mtime_of(&meta),
+                        arca_tar::mode_of(&meta),
+                        f,
+                    )?;
+                    *bytes += meta.len();
                 }
-                let meta = fs::metadata(path)?;
-                let f = BufReader::with_capacity(BUF, File::open(path)?);
-                w.add(name, meta.len(), 0, 0o644, f)?;
-                source_bytes += meta.len();
+                w.finish()
             }
-            w.finish()?;
+            staged(out, |raw| {
+                if format == Format::TarGz {
+                    let gz = flate2::write::GzEncoder::new(
+                        raw,
+                        flate2::Compression::new(level.to_flate2()),
+                    );
+                    tar_into(gz, &files, notify, &mut source_bytes)?
+                        .finish()?
+                        .flush()?;
+                } else {
+                    tar_into(raw, &files, notify, &mut source_bytes)?.flush()?;
+                }
+                Ok(())
+            })?;
         }
         Container::TarXz => staged(out, |f| {
             let mut w = TarWriter::new(arca_xz::encoder(f, level, 0)?);
@@ -1267,7 +1312,13 @@ pub(crate) fn compress(
                     name,
                     notify,
                 );
-                let result = w.add(name, meta.len(), mtime_of(&meta), 0o644, &mut f);
+                let result = w.add(
+                    name,
+                    meta.len(),
+                    mtime_of(&meta),
+                    arca_tar::mode_of(&meta),
+                    &mut f,
+                );
                 f.check(result)?;
                 source_bytes += meta.len();
             }

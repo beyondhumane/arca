@@ -34,6 +34,7 @@ pub(super) fn create(
         password,
         hide_names,
     };
+    let own = arca_core::extraction::OwnOutput::new(out);
     let mut sources = Vec::new();
     let mut bytes = 0;
     let mut files = 0;
@@ -41,6 +42,7 @@ pub(super) fn create(
         collect(
             input,
             input.parent().unwrap_or(Path::new("")),
+            &own,
             &mut sources,
             &mut bytes,
             &mut files,
@@ -49,11 +51,16 @@ pub(super) fn create(
     let t0 = Instant::now();
     create_7z(out, &sources, &options, &mut |_| true)?;
     println!(
-        "{}: {files} files, {} -> {} in {:.3} s (sequential)",
+        "{}: {files} files, {} -> {} in {:.3} s \u{b7} {} threads",
         out.display(),
         human(bytes),
         human(fs::metadata(out)?.len()),
-        t0.elapsed().as_secs_f64()
+        t0.elapsed().as_secs_f64(),
+        if options.level == Level::STORE {
+            1
+        } else {
+            arca_7z::workers(options.level)
+        }
     );
     Ok(())
 }
@@ -61,11 +68,15 @@ pub(super) fn create(
 fn collect(
     path: &Path,
     base: &Path,
+    own: &arca_core::extraction::OwnOutput,
     sources: &mut Vec<Source>,
     bytes: &mut u64,
     files: &mut u64,
 ) -> Result<()> {
     let meta = fs::symlink_metadata(path)?;
+    if meta.is_file() && own.is_own(path) {
+        return Ok(());
+    }
     if is_link(&meta) || !meta.is_file() && !meta.is_dir() {
         return Err(Error::Unsupported(format!(
             "7z source is not a regular file or directory: '{}'",
@@ -93,7 +104,7 @@ fn collect(
         let mut children = fs::read_dir(path)?.collect::<io::Result<Vec<_>>>()?;
         children.sort_by_key(|entry| entry.file_name());
         for child in children {
-            collect(&child.path(), base, sources, bytes, files)?;
+            collect(&child.path(), base, own, sources, bytes, files)?;
         }
     }
     Ok(())

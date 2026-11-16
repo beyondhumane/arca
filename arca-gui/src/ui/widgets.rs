@@ -533,12 +533,12 @@ pub(crate) fn nav_item(
 /// A thin horizontal bar of progress, with an accessible value.
 pub(crate) fn progress(ui: &mut Ui, fraction: Option<f32>) -> Response {
     let p = palette_of(ui.ctx());
-    let mut bar = egui::ProgressBar::new(fraction.unwrap_or(0.0))
+    // Not animated while the amount is unknown: an animated bar asks for a
+    // frame at the display's rate for as long as it is on screen, and with
+    // rounded corners egui draws no spinner in it to show for that.
+    let bar = egui::ProgressBar::new(fraction.unwrap_or(0.0))
         .desired_height(6.0)
         .fill(hex(p.spark))
         .corner_radius(3);
-    if fraction.is_none() {
-        bar = bar.animate(true);
-    }
     ui.add(bar)
 }

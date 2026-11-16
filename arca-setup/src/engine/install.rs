@@ -1,6 +1,6 @@
 use super::{
     overall, payload, stamp_manifest, system, warn_on, Event, Job, INNO_LEFTOVERS, MANIFEST,
-    SHELL_DLL, VERSION,
+    VERSION,
 };
 use std::{fs, path::Path};
 use system::ctx;
@@ -12,7 +12,6 @@ pub fn run(job: &Job, report: &mut dyn FnMut(Event)) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(ctx(format!("creating {}", dir.display())))?;
     system::sweep_leftovers(dir);
 
-    let mut shell_moved = false;
     let mut size = 0u64;
     let total = files.len().max(1) as f32;
     for (index, file) in files.iter().enumerate() {
@@ -27,10 +26,10 @@ pub fn run(job: &Job, report: &mut dyn FnMut(Event)) -> Result<(), String> {
         } else {
             &file.bytes
         };
-        let moved = system::replace_file(&target, bytes)?;
-        if moved && file.path == Path::new(SHELL_DLL) {
-            shell_moved = true;
-        }
+        // A shell extension Explorer has loaded cannot be overwritten but can
+        // be renamed: the new one takes its place for every Explorer started
+        // from now on, and the old copy goes the next time this runs.
+        system::replace_file(&target, bytes)?;
         size += bytes.len() as u64;
         report(Event::Progress(overall(0, (index + 1) as f32 / total)));
     }
@@ -78,9 +77,6 @@ pub fn run(job: &Job, report: &mut dyn FnMut(Event)) -> Result<(), String> {
 
     if !job.files_only {
         system::notify_changes();
-        if shell_moved && !job.quiet_update {
-            system::restart_explorer();
-        }
     }
     report(Event::Progress(overall(3, 0.8)));
     if job.quiet_update && !job.files_only {

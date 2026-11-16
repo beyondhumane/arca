@@ -504,3 +504,50 @@ fn dragging_out_hands_over_each_dragged_row_as_itself() {
         std::fs::canonicalize(room.path("nested")).unwrap()
     );
 }
+
+// The sidebar reads the machine on a thread: asking for places never waits on
+// the disk, and the answer arrives a little later.
+#[test]
+fn places_and_drives_are_read_off_the_drawing_thread() {
+    let mut app = AppController::new(Settings::default());
+    assert!(app.places().is_empty());
+    let started = std::time::Instant::now();
+    assert!(
+        app.refresh_volumes(),
+        "the first reading starts on its own thread"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_millis(50));
+    while app.refresh_volumes() {
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    if super::disk::home_dir().is_some() {
+        assert_eq!(app.places()[0].kind, super::disk::PlaceKind::Home);
+    }
+    assert!(
+        !app.refresh_volumes(),
+        "nothing is read again before it is due"
+    );
+}
+
+// Changing only the case of a name is a rename like any other, though on a
+// disk that ignores case the new name already "exists".
+#[test]
+fn a_name_can_change_only_its_case() {
+    let room = Room::new();
+    std::fs::write(room.path("note.txt"), b"x").unwrap();
+    let mut app = AppController::new(Settings::default());
+    let dir = super::disk::disk_dir(&room.path(""));
+    let dir = if dir.ends_with('/') {
+        dir
+    } else {
+        format!("{dir}/")
+    };
+    app.rename_on_disk(&format!("{dir}note.txt"), &format!("{dir}Note.txt"));
+    assert!(!app.state.error, "{}", app.state.notice);
+    let names: Vec<String> = std::fs::read_dir(room.path(""))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["Note.txt"]);
+}

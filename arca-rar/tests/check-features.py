@@ -1,7 +1,8 @@
-"""Assert default RAR support, the opt-out and the encryption+write feature set.
+"""Assert default RAR support, the opt-out and the encryption+write+parallel feature set.
 
-The writer feature is intentional (new RAR5 archives); recovery and parallel
-stay off, and no build may fall back to the crate defaults."""
+The writer feature is intentional (new RAR5 archives), and parallel lets it use
+every core; recovery stays off, and no build may fall back to the crate
+defaults. The crate is the vendored copy in arca-rar/vendor/rars."""
 
 import pathlib
 import subprocess
@@ -24,7 +25,8 @@ for name, flags, enabled in cases:
     rar = [line for line in tree.splitlines() if line.startswith("rars v")]
     if enabled:
         assert rar, "RAR feature did not activate the reader"
-        assert all(line.removesuffix(" (*)") == "rars v0.10.2|encryption,write" for line in rar), rar
+        assert all(line.removesuffix(" (*)").split("|")[1] == "encryption,parallel,write"
+                   and line.startswith("rars v0.10.2 (") and "vendor" in line for line in rar), rar
     else:
         assert not rar, f"{name} unexpectedly includes rars"
-    print(f"{name}: {'RAR with encryption,write only' if enabled else 'no rars dependency'}")
+    print(f"{name}: {'vendored RAR with encryption,parallel,write' if enabled else 'no rars dependency'}")

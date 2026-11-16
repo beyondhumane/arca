@@ -100,6 +100,7 @@ pub(super) fn open(
         let mut names = HashSet::new();
         let mut files = HashSet::new();
         let mut total = 0u64;
+        let mut modes = Vec::new();
         for (index, member) in inner.members(token)?.into_iter().enumerate() {
             let meta = &member.meta;
             if token.is_cancelled() {
@@ -142,6 +143,10 @@ pub(super) fn open(
                 ArchiveMemberDetail::Rar50Plus { crc32, .. } => crc32,
                 _ => None,
             };
+            modes.push(
+                (meta.attr_source() == rars::AttrSource::Unix)
+                    .then_some((meta.file_attr & 0o7777) as u32),
+            );
             entries.push(Entry {
                 name,
                 size: meta.unpacked_size,
@@ -183,7 +188,11 @@ pub(super) fn open(
                 parent = path.parent();
             }
         }
-        Ok(RarArchive { inner, entries })
+        Ok(RarArchive {
+            inner,
+            entries,
+            modes,
+        })
     })
 }
 
@@ -243,6 +252,41 @@ pub(super) fn test(
             |_| Ok(Box::new(io::sink())),
         )
         .map_err(|e| archive.inner.error(e))
+    })
+}
+
+pub(super) fn check_password(
+    archive: &RarArchive,
+    password: &str,
+    progress: &Progress<'_>,
+) -> Result<()> {
+    let Some(first) = archive
+        .entries
+        .iter()
+        .position(|e| e.encrypted && !e.is_dir)
+    else {
+        return Ok(());
+    };
+    // A set of volumes has no way to stop early, so it is tested whole.
+    let [single] = archive.inner.archives.as_slice() else {
+        return test(archive, Some(password), progress);
+    };
+    // Everything up to the first encrypted file is decoded, since in a solid
+    // archive it is what that file is decoded from, and nothing after it.
+    let mut index = 0;
+    controlled(progress, |token| {
+        single
+            .extract_with_control(options(Some(password), token), |_| {
+                let decision = if index > first {
+                    rars::ExtractionDecision::Stop
+                } else {
+                    rars::ExtractionDecision::Extract(Box::new(io::sink()))
+                };
+                index += 1;
+                Ok(decision)
+            })
+            .map(|_| ())
+            .map_err(|e| archive.inner.error(e))
     })
 }
 
@@ -462,10 +506,25 @@ pub(super) fn extract(
             .ok_or_else(|| Error::Format("missing destination parent".into()))?;
         fs::create_dir_all(parent)?;
         // Publish only verified bytes, with a same-filesystem atomic replacement.
+        // A temporary is created readable by its owner alone; the file it
+        // becomes gets what any new file gets, through the umask, plus the
+        // execute bits the archive recorded.
+        #[cfg(unix)]
+        let mut output = {
+            use std::os::unix::fs::PermissionsExt;
+            tempfile::Builder::new()
+                .permissions(fs::Permissions::from_mode(0o666))
+                .tempfile_in(parent)?
+        };
+        #[cfg(not(unix))]
         let mut output = tempfile::NamedTempFile::new_in(parent)?;
         let mut input = File::open(staging.path().join(i.to_string()))?;
         bytes += io::copy(&mut input, &mut output)?;
         arca_core::extraction::set_mtime(output.as_file(), entry.mtime);
+        arca_core::extraction::set_executable(
+            output.as_file(),
+            archive.modes.get(i).copied().flatten(),
+        );
         output.as_file().sync_all()?;
         reject_links(&target)?;
         if overwrite {

@@ -160,7 +160,7 @@ fn transfer_trees(
                 }
             }
         }
-        claimed.insert(to.clone());
+        claimed.insert(arca_core::extraction::claim_key(&to));
         if copy {
             copy_tree(from, &to).map_err(|(path, e)| could_not(s, true, &path, &e))?;
         } else if fs::rename(from, &to).is_err() {
@@ -457,6 +457,47 @@ fn mounted_volumes() -> Vec<PathBuf> {
 
 /// The outcome a device job in the background leaves for the window.
 pub(crate) type DeviceJob = Arc<Mutex<Option<Result<String, String>>>>;
+
+/// What the sidebar shows of the machine, read on a thread of its own: a
+/// drive letter that names a network share nobody is answering for blocks
+/// the call that looks at it for as long as the network takes to give up,
+/// and that call has no business on the thread that draws the window.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Survey {
+    pub(crate) home: Option<PathBuf>,
+    pub(crate) folders: Vec<(PlaceKind, PathBuf)>,
+    pub(crate) drives: Vec<PathBuf>,
+}
+
+pub(crate) type SurveyJob = Arc<Mutex<Option<(Survey, Vec<Volume>)>>>;
+
+pub(crate) fn survey() -> Survey {
+    let mut out = Survey {
+        home: home_dir(),
+        ..Survey::default()
+    };
+    if let Some(home) = &out.home {
+        let known = user_dirs(home);
+        for (kind, name) in [
+            (PlaceKind::Desktop, "Desktop"),
+            (PlaceKind::Documents, "Documents"),
+            (PlaceKind::Downloads, "Downloads"),
+            (PlaceKind::Pictures, "Pictures"),
+            (PlaceKind::Music, "Music"),
+            (PlaceKind::Videos, "Videos"),
+        ] {
+            let path = known.get(name).cloned().unwrap_or_else(|| home.join(name));
+            if path.is_dir() && path != *home {
+                out.folders.push((kind, path));
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        out.drives = drives();
+    }
+    out
+}
 
 /// A storage volume the sidebar can offer: a partition with a file system
 /// that is not part of the running system.
@@ -757,7 +798,10 @@ impl AppController {
     pub(crate) fn rename_on_disk(&mut self, from: &str, to: &str) {
         let s = self.s();
         let (a, b) = (disk_path(from), disk_path(to));
-        if b.exists() {
+        // On a disk that ignores case, `b` exists when only the case of the
+        // name is changing, and that one it is: renaming it is the point.
+        let same = arca_core::extraction::claim_key(&a) == arca_core::extraction::claim_key(&b);
+        if b.exists() && !same {
             let name = b
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -1057,7 +1101,14 @@ impl AppController {
 
     pub(crate) fn folder_total(&self) -> usize {
         if self.on_disk() {
-            children_of(&self.state.entries, &self.state.active_pane().directory).len()
+            self.rows_for(
+                &self.state.active_pane().directory,
+                "",
+                (SortColumn::Name, true),
+                false,
+                false,
+            )
+            .len()
         } else {
             self.state.entries.len()
         }
@@ -1107,6 +1158,7 @@ impl AppController {
         self.state.archive = None;
         self.state.origin = None;
         self.state.entries.clear();
+        self.entries_changed();
         self.state.active_pane_mut().checked.clear();
         self.state.active_pane_mut().cursor = None;
         self.state.folders = tree::folders_of(&[]);
@@ -1175,7 +1227,10 @@ impl AppController {
                 continue;
             }
             match list_directory(&ancestor, show_hidden) {
-                Ok(entries) => self.state.entries.extend(entries),
+                Ok(entries) => {
+                    self.state.entries.extend(entries);
+                    self.entries_changed();
+                }
                 Err(error) => {
                     let name = ancestor
                         .trim_end_matches('/')
@@ -1222,6 +1277,7 @@ impl AppController {
             })
             .collect();
         self.state.entries.clear();
+        self.entries_changed();
         self.state.active_pane_mut().checked.clear();
         self.state.disk = Some(DiskState::default());
         self.load_disk_ancestors(&dir);
@@ -1344,30 +1400,27 @@ impl AppController {
     pub(crate) fn places(&self) -> Vec<Place> {
         let s = self.s();
         let mut out = Vec::new();
-        if let Some(home) = home_dir() {
+        if let Some(home) = &self.survey.home {
             out.push(Place {
                 kind: PlaceKind::Home,
                 label: s.home_word.to_string(),
                 path: home.clone(),
             });
-            let known = user_dirs(&home);
-            for (kind, name, label) in [
-                (PlaceKind::Desktop, "Desktop", s.desktop_word),
-                (PlaceKind::Documents, "Documents", s.documents_word),
-                (PlaceKind::Downloads, "Downloads", s.downloads_word),
-                (PlaceKind::Pictures, "Pictures", s.pictures_word),
-                (PlaceKind::Music, "Music", s.music_word),
-                (PlaceKind::Videos, "Videos", s.videos_word),
-            ] {
-                let path = known.get(name).cloned().unwrap_or_else(|| home.join(name));
-                if path.is_dir() && path != home {
-                    out.push(Place {
-                        kind,
-                        label: label.to_string(),
-                        path,
-                    });
-                }
-            }
+        }
+        for (kind, path) in &self.survey.folders {
+            let label = match kind {
+                PlaceKind::Desktop => s.desktop_word,
+                PlaceKind::Documents => s.documents_word,
+                PlaceKind::Downloads => s.downloads_word,
+                PlaceKind::Pictures => s.pictures_word,
+                PlaceKind::Music => s.music_word,
+                _ => s.videos_word,
+            };
+            out.push(Place {
+                kind: *kind,
+                label: label.to_string(),
+                path: path.clone(),
+            });
         }
         out
     }
@@ -1392,15 +1445,33 @@ impl AppController {
             .collect()
     }
 
-    /// Re-reads the volumes every few seconds and collects what a format
-    /// job in the background has to say.
-    pub(crate) fn refresh_volumes(&mut self) {
+    /// Re-reads places, drives and volumes every few seconds on a thread, and
+    /// collects what a format job in the background has to say. Answers
+    /// whether a reading is still on its way, so the window knows to look
+    /// again soon.
+    pub(crate) fn refresh_volumes(&mut self) -> bool {
+        let read = self
+            .survey_job
+            .as_ref()
+            .and_then(|job| job.lock().ok().and_then(|mut slot| slot.take()));
+        if let Some((survey, volumes)) = read {
+            self.survey_job = None;
+            self.survey = survey;
+            self.volumes = volumes;
+        }
         let due = self
             .volumes_at
             .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(3));
-        if due {
-            self.volumes = volumes();
+        if due && self.survey_job.is_none() {
+            let slot: SurveyJob = Arc::new(Mutex::new(None));
+            self.survey_job = Some(slot.clone());
             self.volumes_at = Some(std::time::Instant::now());
+            std::thread::spawn(move || {
+                let read = (survey(), volumes());
+                if let Ok(mut slot) = slot.lock() {
+                    *slot = Some(read);
+                }
+            });
         }
         let finished = self
             .volume_job
@@ -1411,6 +1482,7 @@ impl AppController {
             self.volumes_at = None;
             self.report_device(outcome);
         }
+        self.survey_job.is_some()
     }
 
     pub(crate) fn volume_at(&self, path: &Path) -> Option<&Volume> {
@@ -1503,12 +1575,11 @@ impl AppController {
                 label: s.computer_word.to_string(),
                 path: PathBuf::new(),
             });
-            #[cfg(windows)]
-            for root in drives() {
+            for root in &self.survey.drives {
                 out.push(Place {
                     kind: PlaceKind::Drive,
                     label: root.to_string_lossy().trim_end_matches('\\').to_string(),
-                    path: root,
+                    path: root.clone(),
                 });
             }
         } else {
@@ -1594,7 +1665,18 @@ pub(crate) fn duplicate_target(path: &Path) -> Option<PathBuf> {
 /// Moves a file or folder to the Trash the way the desktop does it.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn trash_item(path: &Path) -> Result<(), String> {
-    let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
+    // The folder is made absolute, the item itself is not: a link is trashed
+    // as the link, never as whatever it points at.
+    let leaf_name = path
+        .file_name()
+        .ok_or_else(|| "nothing to trash".to_string())?;
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let path = fs::canonicalize(parent)
+        .map_err(|e| e.to_string())?
+        .join(leaf_name);
     let data = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
