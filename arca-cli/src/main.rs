@@ -602,7 +602,7 @@ fn free_name(path: &Path, claimed: &HashSet<PathBuf>) -> PathBuf {
         .unwrap_or_default();
     for n in 1..10_000u32 {
         let candidate = dir.join(format!("{stem} ({n}){ext}"));
-        if !candidate.exists() && !claimed.contains(&candidate) {
+        if !candidate.exists() && !claimed.contains(&arca_core::extraction::claim_key(&candidate)) {
             return candidate;
         }
     }
@@ -639,8 +639,8 @@ fn resolve_conflict(
     policy: OnConflict,
     claimed: &mut HashSet<PathBuf>,
 ) -> Option<PathBuf> {
-    let taken =
-        claimed.contains(&path) || (!matches!(policy, OnConflict::Overwrite) && path.exists());
+    let taken = claimed.contains(&arca_core::extraction::claim_key(&path))
+        || (!matches!(policy, OnConflict::Overwrite) && path.exists());
     let chosen = if !taken {
         path
     } else {
@@ -650,7 +650,7 @@ fn resolve_conflict(
             OnConflict::Rename => free_name(&path, claimed),
         }
     };
-    claimed.insert(chosen.clone());
+    claimed.insert(arca_core::extraction::claim_key(&chosen));
     Some(chosen)
 }
 
@@ -742,7 +742,7 @@ fn extract(
                 let mut kept: Vec<(arca_core::Entry, PathBuf)> = jobs
                     .into_iter()
                     .rev()
-                    .filter(|(_, path)| seen.insert(path.clone()))
+                    .filter(|(_, path)| seen.insert(arca_core::extraction::claim_key(path)))
                     .collect();
                 kept.reverse();
                 jobs = kept;
@@ -761,8 +761,11 @@ fn extract(
                             ExtractionReader::with_capacity(BUF, File::open(archive)?)?;
                         let mut staging = Vec::new();
                         let mut total = 0u64;
+                        // Nothing already on disk is touched until the entry has
+                        // decoded: a small one is decoded into memory first, a
+                        // large one or one replacing a file goes through a
+                        // temporary that is renamed over it at the end.
                         for (e, path) in batch {
-                            let mut f = File::create(path)?;
                             if e.size <= BUF as u64 {
                                 staging.clear();
                                 let mut bounded = Bounded {
@@ -775,14 +778,30 @@ fn extract(
                                     &mut bounded,
                                     password,
                                 )?;
-                                f.write_all(&staging)?;
-                                arca_core::extraction::set_mtime(&f, e.mtime);
+                                let put = |f: &mut File| -> Result<u64> {
+                                    f.write_all(&staging)?;
+                                    arca_core::extraction::set_mtime(f, e.mtime);
+                                    Ok(0)
+                                };
+                                if path.exists() {
+                                    arca_core::extraction::write_staged(path, put)?;
+                                } else {
+                                    put(&mut File::create(path)?)?;
+                                }
                             } else {
-                                let mut f = BufWriter::with_capacity(BUF, f);
-                                total +=
-                                    arca_zip::extract_entry_with(&mut source, e, &mut f, password)?;
-                                f.flush()?;
-                                arca_core::extraction::set_mtime(f.get_ref(), e.mtime);
+                                total += arca_core::extraction::write_staged(path, |f| {
+                                    let mut w = BufWriter::with_capacity(BUF, &mut *f);
+                                    let n = arca_zip::extract_entry_with(
+                                        &mut source,
+                                        e,
+                                        &mut w,
+                                        password,
+                                    )?;
+                                    w.flush()?;
+                                    drop(w);
+                                    arca_core::extraction::set_mtime(f, e.mtime);
+                                    Ok(n)
+                                })?;
                             }
                         }
                         Ok(total)

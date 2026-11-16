@@ -50,8 +50,10 @@ impl<W: Write> Write for Watched<'_, W> {
 
 // Writes one entry to `path` while keeping `notify` in the loop, so a pause
 // holds and a stop lands inside the file rather than after it. A stop, like
-// any other failure, takes the half-written file away with it. `stamp` is the
-// time and, where the format keeps them, the Unix permissions to give it.
+// any other failure, takes the half-written file away with it, and a file that
+// was already there and answered Replace stays untouched until the entry has
+// come out whole. `stamp` is the time and, where the format keeps them, the
+// Unix permissions to give it.
 fn unpack(
     path: &Path,
     (mtime, mode): (Option<i64>, Option<u32>),
@@ -59,31 +61,34 @@ fn unpack(
     progress: (usize, usize, &str),
     fill: impl FnOnce(&mut dyn Write) -> arca_core::Result<u64>,
 ) -> arca_core::Result<u64> {
-    let mut out = Watched {
-        inner: BufWriter::with_capacity(BUF, File::create(path)?),
-        notify,
-        progress,
-        since: 0,
-        cancelled: false,
+    let write = |file: &mut File| -> arca_core::Result<u64> {
+        let mut out = Watched {
+            inner: BufWriter::with_capacity(BUF, &mut *file),
+            notify,
+            progress,
+            since: 0,
+            cancelled: false,
+        };
+        let result = fill(&mut out);
+        let Watched {
+            inner, cancelled, ..
+        } = out;
+        if cancelled {
+            return Err(arca_core::Error::Cancelled);
+        }
+        let n = result?;
+        let file = inner.into_inner().map_err(|e| e.into_error())?;
+        arca_core::extraction::set_mtime(file, mtime);
+        arca_core::extraction::set_executable(file, mode);
+        Ok(n)
     };
-    let result = fill(&mut out);
-    let Watched {
-        mut inner,
-        cancelled,
-        ..
-    } = out;
-    let result = if cancelled {
-        Err(arca_core::Error::Cancelled)
-    } else {
-        result.and_then(|n| {
-            inner.flush()?;
-            arca_core::extraction::set_mtime(inner.get_ref(), mtime);
-            arca_core::extraction::set_executable(inner.get_ref(), mode);
-            Ok(n)
-        })
-    };
+    if path.exists() {
+        return arca_core::extraction::write_staged(path, write);
+    }
+    let mut file = File::create(path)?;
+    let result = write(&mut file);
     if result.is_err() {
-        drop(inner);
+        drop(file);
         let _ = fs::remove_file(path);
     }
     result
@@ -575,7 +580,7 @@ pub(crate) fn free_name(path: &Path, claimed: &HashSet<PathBuf>) -> PathBuf {
         .unwrap_or_default();
     for n in 1..10_000u32 {
         let candidate = dir.join(format!("{stem} ({n}){ext}"));
-        if !candidate.exists() && !claimed.contains(&candidate) {
+        if !candidate.exists() && !claimed.contains(&arca_core::extraction::claim_key(&candidate)) {
             return candidate;
         }
     }
@@ -598,8 +603,8 @@ pub(crate) fn dest_path(
     if let Some(p) = path.parent() {
         fs::create_dir_all(p)?;
     }
-    if !path.exists() && !claimed.contains(&path) {
-        claimed.insert(path.clone());
+    if !path.exists() && !claimed.contains(&arca_core::extraction::claim_key(&path)) {
+        claimed.insert(arca_core::extraction::claim_key(&path));
         return Ok(Some(path));
     }
     let chosen = match ask(&path) {
@@ -616,7 +621,7 @@ pub(crate) fn dest_path(
         }
         Answer::Cancel => return Err(arca_core::Error::Cancelled),
     };
-    claimed.insert(chosen.clone());
+    claimed.insert(arca_core::extraction::claim_key(&chosen));
     Ok(Some(chosen))
 }
 
@@ -774,7 +779,9 @@ pub(crate) fn extract(
             // threads at once would leave a mix of the two.
             let mut seen = HashSet::new();
             jobs.reverse();
-            jobs.retain(|(e, path)| e.is_dir || seen.insert(path.clone()));
+            jobs.retain(|(e, path)| {
+                e.is_dir || seen.insert(arca_core::extraction::claim_key(path))
+            });
             jobs.reverse();
 
             let total = jobs.len();

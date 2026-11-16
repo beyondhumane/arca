@@ -101,7 +101,7 @@ impl Destination {
         let parent = directories.last().unwrap();
         let mut name = relative.file_name().unwrap().to_os_string();
         let exists = exists_without_link(parent, Path::new(&name))?;
-        if exists || self.claimed.contains(&relative) {
+        if exists || self.claimed.contains(&claim_key(&relative)) {
             match ask(&self.path.join(&relative)) {
                 Conflict::Overwrite => {}
                 Conflict::Skip => return Ok(None),
@@ -112,7 +112,7 @@ impl Destination {
             }
         }
         let chosen = relative.with_file_name(&name);
-        self.claimed.insert(chosen);
+        self.claimed.insert(claim_key(&chosen));
         let (mut staged, file) = StagedFile::new(parent, Path::new(&name))?;
         let mut writer = BufWriter::with_capacity(256 * 1024, file);
         let bytes = io::copy(reader, &mut writer)?;
@@ -126,6 +126,65 @@ impl Destination {
         staged.committed = true;
         Ok(Some(bytes))
     }
+}
+
+/// The form two paths share when the file system would take them for one
+/// file. Windows and macOS compare names without regard to case by default, so
+/// an archive holding `A.txt` and `a.txt` names one file there, and a run that
+/// keeps track of the names it handed out has to compare them this way.
+pub fn claim_key(path: &Path) -> PathBuf {
+    if cfg!(any(windows, target_os = "macos")) {
+        PathBuf::from(path.to_string_lossy().to_lowercase())
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// Writes `target` through a temporary file beside it, renamed over `target`
+/// only once `fill` has succeeded. A wrong password, a corrupt entry or a stop
+/// halfway leaves whatever was at `target` before exactly as it was, and no
+/// temporary behind.
+pub fn write_staged(
+    target: &Path,
+    fill: impl FnOnce(&mut std::fs::File) -> Result<u64>,
+) -> Result<u64> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = target.parent().unwrap_or(Path::new("."));
+    let mut opened = None;
+    for _ in 0..10_000 {
+        let temp = dir.join(format!(
+            ".arca-{}-{}.tmp",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(f) => {
+                opened = Some((temp, f));
+                break;
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    let Some((temp, mut file)) = opened else {
+        return Err(Error::Limit(
+            "cannot allocate an extraction temporary file".into(),
+        ));
+    };
+    let result = fill(&mut file);
+    drop(file);
+    let result = result.and_then(|n| {
+        std::fs::rename(&temp, target)?;
+        Ok(n)
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 /// Gives an extracted file the modification time its archive recorded.
@@ -217,7 +276,9 @@ fn free_name(parent: &Dir, relative: &Path, claimed: &HashSet<PathBuf>) -> Resul
     for n in 1..10_000 {
         let name = OsString::from(format!("{stem} ({n}){ext}"));
         let candidate = relative.with_file_name(&name);
-        if !claimed.contains(&candidate) && !exists_without_link(parent, Path::new(&name))? {
+        if !claimed.contains(&claim_key(&candidate))
+            && !exists_without_link(parent, Path::new(&name))?
+        {
             return Ok(name);
         }
     }
@@ -278,6 +339,33 @@ mod tests {
 
     fn room() -> tempfile::TempDir {
         tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_staged_write_replaces_the_target_only_when_it_succeeds() {
+        let room = room();
+        let target = room.path().join("keep.txt");
+        fs::write(&target, b"original").unwrap();
+        let failed = write_staged(&target, |f| {
+            f.write_all(b"half")?;
+            Err(Error::Format("wrong password".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        let written = write_staged(&target, |f| {
+            f.write_all(b"new")?;
+            Ok(3)
+        });
+        assert_eq!(written.unwrap(), 3);
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        let left: Vec<_> = fs::read_dir(room.path()).unwrap().collect();
+        assert_eq!(left.len(), 1, "no temporary may be left behind");
+    }
+
+    #[test]
+    fn names_that_differ_only_in_case_are_one_claim_where_the_disk_says_so() {
+        let same = claim_key(Path::new("Dir/A.txt")) == claim_key(Path::new("dir/a.txt"));
+        assert_eq!(same, cfg!(any(windows, target_os = "macos")));
     }
 
     #[test]

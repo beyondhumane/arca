@@ -160,7 +160,7 @@ fn transfer_trees(
                 }
             }
         }
-        claimed.insert(to.clone());
+        claimed.insert(arca_core::extraction::claim_key(&to));
         if copy {
             copy_tree(from, &to).map_err(|(path, e)| could_not(s, true, &path, &e))?;
         } else if fs::rename(from, &to).is_err() {

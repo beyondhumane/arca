@@ -277,3 +277,53 @@ fn the_later_of_two_same_named_zip_entries_is_the_one_extracted() {
         );
     }
 }
+
+// Replacing a file with an entry that then fails to come out, here for a wrong
+// password, leaves the file that was there as it was.
+#[test]
+fn a_failed_replace_keeps_the_file_it_would_have_replaced() {
+    let room = Room::new();
+    let archive = room.path("locked.zip");
+    let mut zip = arca_zip::ZipWriter::new(File::create(&archive).unwrap());
+    zip.add_with_password(
+        "keep.txt",
+        &b"from the archive"[..],
+        Codec::Deflate,
+        Level::FAST,
+        None,
+        Some("right"),
+    )
+    .unwrap();
+    zip.finish().unwrap();
+    let dest = room.path("out");
+    fs::create_dir_all(&dest).unwrap();
+    fs::write(dest.join("keep.txt"), b"mine").unwrap();
+    assert!(extract(&archive, &dest, &[], GO, &replace, Some("wrong")).is_err());
+    assert_eq!(fs::read(dest.join("keep.txt")).unwrap(), b"mine");
+    assert_eq!(fs::read_dir(&dest).unwrap().count(), 1);
+}
+
+// Two names that differ only in case are one file on Windows and macOS, and
+// must not be written by two threads at once there.
+#[test]
+fn zip_entries_that_differ_only_in_case_are_one_file_where_the_disk_says_so() {
+    let room = Room::new();
+    let archive = room.path("case.zip");
+    let mut zip = arca_zip::ZipWriter::new(File::create(&archive).unwrap());
+    for (name, body) in [
+        ("Readme.txt", &b"upper"[..]),
+        ("readme.txt", &b"lower, later"[..]),
+    ] {
+        zip.add(name, body, Codec::Store, Level::STORE, None)
+            .unwrap();
+    }
+    zip.finish().unwrap();
+    let dest = room.path("out");
+    extract(&archive, &dest, &[], GO, &replace, None).unwrap();
+    if cfg!(any(windows, target_os = "macos")) {
+        assert_eq!(fs::read_dir(&dest).unwrap().count(), 1);
+        assert_eq!(fs::read(dest.join("readme.txt")).unwrap(), b"lower, later");
+    } else {
+        assert_eq!(fs::read_dir(&dest).unwrap().count(), 2);
+    }
+}
