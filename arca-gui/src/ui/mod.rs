@@ -2163,6 +2163,11 @@ impl eframe::App for Shell {
         if self.stop_opening.take() {
             self.controller.cancel_opening();
         }
+        // A band ends when the button comes up, wherever that happens: the
+        // blank space that started it may be gone by then, filled by rows.
+        if self.marquee.is_some() && !ctx.input(|i| i.pointer.primary_down()) {
+            self.marquee = None;
+        }
         // After the lists, so every row has had its say about a drop.
         self.settle_blank_drop(&ctx);
         self.drag_shadow(&ctx);
