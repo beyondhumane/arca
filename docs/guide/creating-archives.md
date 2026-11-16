@@ -15,7 +15,7 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | --- | --- | --- | --- |
 | `-l, --level` | store · fast · normal · best | normal | Compression level. |
 | `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, the RAR compressor in .rar (auto or store only). |
-| `-j, --threads` | a number | 0 | ZIP and XZ thread limit. 0 means every core; 7z and RAR use every core their memory budget allows. |
+| `-j, --threads` | a number | 0 | ZIP, XZ and RAR thread limit. 0 means every core; 7z uses every core its memory budget allows. |
 | `-p, --password` | text | none | Encrypt ZIP or 7z with AES-256. Refused for .rar. |
 | `--hide-names` | flag | off | Encrypt 7z headers too; requires a nonempty password. |
 
@@ -87,7 +87,7 @@ arca create stored.rar big.iso -c store
 Creates a new single-volume, non-solid, unencrypted RAR5 archive that official
 UnRAR and 7-Zip open. The four levels select the RAR compressor strength;
 `-c store` equals `-l store` and any other explicit codec is refused. Creation
-uses every core its memory budget allows whatever `-j` says, stores empty files and directories,
+uses every core by default, or as many threads as `-j` says, stores empty files and directories,
 and rejects symbolic links and special files instead of following them.
 
 RAR output is never encrypted (`-p` and `--hide-names` are refused), never a

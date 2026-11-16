@@ -565,7 +565,16 @@ class Harness:
         refused("hide names", ["create", str(area / "h.rar"), str(src), "-p", "secret", "--hide-names"], "")
         for codec in ("zstd", "deflate", "lzma2"):
             refused(f"codec {codec}", ["create", str(area / f"{codec}.rar"), str(src), "-c", codec], "auto or store")
-        refused("threads 4", ["create", str(area / "j.rar"), str(src), "-j", "4"], "sequential")
+        # -j picks the size of the pool the writer runs on; it is honored,
+        # not refused, and the archive it makes is an ordinary one.
+        threaded = area / "j.rar"
+        run = self.expect_ok(self.arca("create", str(threaded), str(src), "-j", "4"), "threads 4")
+        if "4 threads" not in run.stdout:
+            raise Failure(f"threads 4: summary does not say 4 threads: {run.stdout.strip()[-200:]!r}")
+        unrar = self.tools.get("unrar")
+        if unrar:
+            self.expect_ok(self.run([unrar["path"], "t", "-inul", str(threaded)]), "threads 4: unrar t")
+        detail["threads 4"] = run.stdout.strip()[-160:]
         refused("output inside source", ["create", str(src / "inside.rar"), str(src)], "output directory")
         refused("source is the output", ["create", str(existing), str(existing)], "")
         dup = area / "dup"
@@ -582,7 +591,7 @@ class Harness:
         refused("missing source", ["create", str(area / "missing.rar"), str(area / "absent")], "")
         refused("missing parent", ["create", str(area / "no-such-dir" / "x.rar"), str(src)], "")
         refused("unsupported extension", ["create", str(area / "x.rar5"), str(src)], "")
-        self.expect_clean_dir(area, {"src", "existing.rar", "dup", "link.txt", "fifo"})
+        self.expect_clean_dir(area, {"src", "existing.rar", "j.rar", "dup", "link.txt", "fifo"})
         return detail
 
     def test_limits(self, area):
