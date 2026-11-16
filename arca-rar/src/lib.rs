@@ -51,6 +51,7 @@ pub enum Conflict {
 pub struct RarArchive {
     entries: Vec<Entry>,
     // The Unix permissions each member recorded, where it was made on Unix.
+    #[cfg(feature = "rar")]
     modes: Vec<Option<u32>>,
     #[cfg(feature = "rar")]
     inner: volumes::Volumes,
