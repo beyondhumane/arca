@@ -730,6 +730,19 @@ fn extract(
                 };
                 jobs.push((e.clone(), path));
             }
+            // Two entries with one name, overwriting: the later one is what
+            // extracting in order would leave, and writing both from two
+            // threads at once would leave a mix of the two.
+            if matches!(policy, OnConflict::Overwrite) {
+                let mut seen: HashSet<PathBuf> = HashSet::new();
+                let mut kept: Vec<(arca_core::Entry, PathBuf)> = jobs
+                    .into_iter()
+                    .rev()
+                    .filter(|(_, path)| seen.insert(path.clone()))
+                    .collect();
+                kept.reverse();
+                jobs = kept;
+            }
             drop(a);
 
             let pool = rayon::ThreadPoolBuilder::new()

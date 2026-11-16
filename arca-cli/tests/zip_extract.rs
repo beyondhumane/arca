@@ -210,7 +210,7 @@ fn mixed_sizes_and_duplicate_names_share_one_reader_per_chunk() {
             assert_eq!(fs::read(output.path().join(name)).unwrap(), *body);
         }
         let dup = fs::read(output.path().join("dup.txt")).unwrap();
-        assert!(dup == b"first" || dup == b"second");
+        assert_eq!(dup, b"second");
         let output = tempfile::tempdir().unwrap();
         success(extract(
             &archive,
