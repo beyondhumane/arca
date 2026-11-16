@@ -61,6 +61,9 @@ pub(crate) struct Task {
     pub(crate) reread_after: Option<(PathBuf, Option<String>, String)>,
     pub(crate) close_when_done: bool,
     pub(crate) quiet: bool,
+    // The archive this task rebuilds and the word for the change, offered to
+    // be taken back once the task has finished, and only if it worked.
+    pub(crate) undo: Option<(PathBuf, &'static str)>,
     work: Option<Work>,
 }
 
@@ -93,6 +96,7 @@ impl Task {
             reread_after: None,
             close_when_done: false,
             quiet: false,
+            undo: None,
             work: Some(work),
         }
     }
@@ -475,6 +479,10 @@ impl AppController {
                     if task.close_when_done {
                         close_window = true;
                     }
+                }
+                let landed = task.status == TaskStatus::Done;
+                if let Some(undo) = task.undo.take() {
+                    self.keep_undo(undo, landed);
                 }
             }
         }

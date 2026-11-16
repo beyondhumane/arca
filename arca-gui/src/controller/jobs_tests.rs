@@ -829,3 +829,51 @@ fn a_second_edit_keeps_one_step_to_undo() {
     assert_eq!(app.state.entries.len(), after_first);
     assert!(!crate::archive_ops::undo_path(&archive).exists());
 }
+
+#[test]
+fn an_edit_that_failed_offers_nothing_to_undo() {
+    let room = Room::new();
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("a.txt"), b"first contents").unwrap();
+    let archive = room.path("broken.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.open_with_password(archive.clone(), None);
+    settle(&mut app);
+    let stale = crate::archive_ops::undo_path(&archive);
+    fs::write(&stale, b"left over from another session").unwrap();
+    fs::write(&archive, b"no longer a zip").unwrap();
+    app.run_job(Job::Delete {
+        archive: archive.clone(),
+        names: vec!["source/a.txt".into()],
+        password: None,
+    });
+    settle(&mut app);
+    assert!(app.state.error);
+    assert!(app.state.undo.is_none());
+    app.undo_last();
+    assert_eq!(fs::read(&archive).unwrap(), b"no longer a zip");
+}
+
+#[test]
+fn undoing_puts_back_an_archive_a_rewrite_left_missing() {
+    let room = Room::new();
+    let (mut app, archive) = edited_archive(&room);
+    let after = app.state.entries.len();
+    fs::remove_file(&archive).unwrap();
+    app.undo_last();
+    settle(&mut app);
+    assert!(archive.exists());
+    assert!(!app.state.error, "{}", app.state.notice);
+    assert_eq!(app.state.entries.len(), after + 1);
+}

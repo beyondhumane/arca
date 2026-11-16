@@ -1036,7 +1036,7 @@ impl AppController {
         if self.blocked() {
             return;
         }
-        let Some((archive, _)) = self.state.undo.take() else {
+        let Some((archive, word)) = self.state.undo.take() else {
             return;
         };
         let keep = undo_path(&archive);
@@ -1044,12 +1044,33 @@ impl AppController {
             return;
         }
         let pw = self.state.archive_password.clone();
-        if let Err(e) = fs::remove_file(&archive).and_then(|_| fs::rename(&keep, &archive)) {
+        // One rename, which replaces the archive where there is one: removing
+        // it first would lose it if the rename then failed, and would fail
+        // outright when a rewrite left no archive behind.
+        if let Err(e) = fs::rename(&keep, &archive) {
             self.state.notice = e.to_string();
             self.state.error = true;
+            self.state.undo = Some((archive, word));
             return;
         }
         self.open_with_password(archive, pw);
+    }
+
+    // Offers to take a change back once it has landed. One that failed left
+    // the archive as it was, and whatever was on offer before still holds;
+    // except when it failed after the archive stepped aside, which leaves the
+    // kept version as the only copy and putting it back as the way out.
+    pub(crate) fn keep_undo(&mut self, undo: (PathBuf, &'static str), landed: bool) {
+        let stranded = !undo.0.exists() && undo_path(&undo.0).exists();
+        if !landed && !stranded {
+            return;
+        }
+        // A change to the same archive replaced the kept version itself when
+        // it stepped the archive aside; anything else would leave it orphaned.
+        if self.state.undo.as_ref().map(|(archive, _)| archive) != Some(&undo.0) {
+            self.drop_undo();
+        }
+        self.state.undo = Some(undo);
     }
 
     // Reads the names in the archive again under another code page.
@@ -2410,14 +2431,6 @@ impl AppController {
             Job::Move { archive, .. } => Some((archive.clone(), words.moving_word)),
             _ => None,
         };
-        // A change to the same archive replaces the kept version itself when
-        // it steps the archive aside; anything else would leave it orphaned.
-        let kept = self.state.undo.as_ref().map(|(archive, _)| archive);
-        if kept != undo.as_ref().map(|(archive, _)| archive) {
-            self.drop_undo();
-        }
-        self.state.undo = undo;
-
         let (reads, writes, outputs) = touched_by(&job);
         let mut task = Task::new(
             verb,
@@ -2481,6 +2494,7 @@ impl AppController {
         task.in_bytes = in_bytes;
         task.stop_leaves_files = stop_leaves_files;
         task.reread_after = reread_after;
+        task.undo = undo;
         task.close_when_done = self.state.close_when_done;
         self.enqueue(task);
     }
