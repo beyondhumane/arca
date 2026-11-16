@@ -224,3 +224,21 @@ fn refuses_destination_symlinks_and_preserves_external_files() {
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }
+
+#[test]
+fn a_password_is_checked_on_the_first_encrypted_file_alone() {
+    for (name, password) in [
+        ("encrypted.rar", "arca-test-only"),
+        ("headers.rar", "arca-test-only"),
+        ("encrypted_multivol.part1.rar", "password"),
+    ] {
+        let a = RarArchive::open(&fixture(name), Some(password)).unwrap();
+        a.check_password(password, &|_, _, _| true)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let wrong = RarArchive::open(&fixture(name), Some("wrong"))
+            .and_then(|b| b.check_password("wrong", &|_, _, _| true));
+        assert!(wrong.is_err(), "{name}: a wrong password passed");
+    }
+    let plain = RarArchive::open(&fixture("plain.rar"), None).unwrap();
+    plain.check_password("anything", &|_, _, _| true).unwrap();
+}

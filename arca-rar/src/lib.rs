@@ -95,6 +95,22 @@ impl RarArchive {
         }
     }
 
+    /// Checks a password against the first encrypted file only, decoding as
+    /// little of the archive as gets there, instead of all of it as [`test`]
+    /// does. A wrong password fails here; a right one says nothing about
+    /// whether the rest of the archive is intact.
+    ///
+    /// [`test`]: Self::test
+    pub fn check_password(&self, password: &str, progress: &Progress<'_>) -> Result<()> {
+        #[cfg(feature = "rar")]
+        return reader::check_password(self, password, progress);
+        #[cfg(not(feature = "rar"))]
+        {
+            let _ = (password, progress);
+            Err(disabled())
+        }
+    }
+
     pub fn read_entry(&self, index: usize, password: Option<&str>) -> Result<Vec<u8>> {
         #[cfg(feature = "rar")]
         return reader::read_entry(self, index, password);

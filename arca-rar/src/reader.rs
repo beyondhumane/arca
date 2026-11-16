@@ -246,6 +246,41 @@ pub(super) fn test(
     })
 }
 
+pub(super) fn check_password(
+    archive: &RarArchive,
+    password: &str,
+    progress: &Progress<'_>,
+) -> Result<()> {
+    let Some(first) = archive
+        .entries
+        .iter()
+        .position(|e| e.encrypted && !e.is_dir)
+    else {
+        return Ok(());
+    };
+    // A set of volumes has no way to stop early, so it is tested whole.
+    let [single] = archive.inner.archives.as_slice() else {
+        return test(archive, Some(password), progress);
+    };
+    // Everything up to the first encrypted file is decoded, since in a solid
+    // archive it is what that file is decoded from, and nothing after it.
+    let mut index = 0;
+    controlled(progress, |token| {
+        single
+            .extract_with_control(options(Some(password), token), |_| {
+                let decision = if index > first {
+                    rars::ExtractionDecision::Stop
+                } else {
+                    rars::ExtractionDecision::Extract(Box::new(io::sink()))
+                };
+                index += 1;
+                Ok(decision)
+            })
+            .map(|_| ())
+            .map_err(|e| archive.inner.error(e))
+    })
+}
+
 pub(super) fn read_entry(
     archive: &RarArchive,
     index: usize,
