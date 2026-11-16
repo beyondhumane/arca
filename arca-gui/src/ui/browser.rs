@@ -365,7 +365,8 @@ impl Shell {
                 .unwrap_or_default();
             ui.add(egui::Label::new(RichText::new(name).color(hex(p.muted))).truncate());
         });
-        ui.ctx().request_repaint();
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(33));
     }
 
     fn empty_state(&self, ui: &mut egui::Ui) {
