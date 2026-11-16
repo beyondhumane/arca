@@ -33,6 +33,8 @@ impl Destination {
     fn root(&mut self) -> Result<&Dir> {
         if self.directories.is_empty() {
             let absolute = std::path::absolute(&self.path)?;
+            #[cfg(unix)]
+            let absolute = as_the_disk_has_it(&absolute);
             let mut components = absolute.components().peekable();
             let mut anchor = PathBuf::new();
             while let Some(Component::Prefix(_) | Component::RootDir) = components.peek() {
@@ -125,6 +127,25 @@ impl Destination {
         parent.rename(&staged.name, parent, &name)?;
         staged.committed = true;
         Ok(Some(bytes))
+    }
+}
+
+/// The folder somebody asked to extract into, with the links on the way to it
+/// followed: on macOS `/tmp` and `/var` are links, and on any Unix a home or
+/// a mount point may be. Whoever named the folder meant where it leads. The
+/// part that does not exist yet is kept as given, and everything under the
+/// folder is still opened without following links.
+#[cfg(unix)]
+fn as_the_disk_has_it(path: &Path) -> PathBuf {
+    let mut existing = path;
+    loop {
+        if let Ok(real) = std::fs::canonicalize(existing) {
+            return real.join(path.strip_prefix(existing).unwrap_or(Path::new("")));
+        }
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => return path.to_path_buf(),
+        }
     }
 }
 
@@ -695,5 +716,26 @@ mod tests {
                 if fail { b"original".as_slice() } else { b"x" }
             );
         }
+    }
+
+    // The folder asked for may be reached through a link, as /tmp is on
+    // macOS: that link is followed, and the files land where it leads.
+    #[cfg(unix)]
+    #[test]
+    fn a_destination_reached_through_a_link_is_used() {
+        let room = room();
+        let real = room.path().join("real");
+        fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, room.path().join("link")).unwrap();
+        let mut dest = Destination::new(&room.path().join("link").join("out"));
+        dest.write_entry(
+            "a.txt",
+            false,
+            None,
+            &mut &b"contents"[..],
+            &mut |_| unreachable!(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(real.join("out/a.txt")).unwrap(), b"contents");
     }
 }
