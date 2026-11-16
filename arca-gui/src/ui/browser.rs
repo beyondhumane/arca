@@ -10,6 +10,8 @@ use egui_phosphor::regular as icon;
 pub(crate) const ROW_HEIGHT: f32 = 24.0;
 /// Space around the rows that belongs to the list but to no row.
 const GUTTER: f32 = 16.0;
+// How long the pointer rests on a folder before its peek card opens, in seconds.
+const PEEK_REST: f64 = 0.45;
 
 pub(crate) fn column_slot(column: SortColumn) -> usize {
     Columns::ALL
@@ -202,12 +204,11 @@ impl Shell {
     }
 
     fn peek_card(&mut self, ui: &mut egui::Ui) {
-        const REST: f64 = 0.45;
         const SHOWN: usize = 8;
         let Some((path, rect, since)) = self.peek.clone() else {
             return;
         };
-        if ui.input(|i| i.time) - since < REST || self.modal_kind().is_some() {
+        if ui.input(|i| i.time) - since < PEEK_REST || self.modal_kind().is_some() {
             return;
         }
         let s = self.controller.s();
@@ -1080,9 +1081,13 @@ impl Shell {
             }
             if let Some(peek) = &mut self.peek {
                 peek.1 = response.rect;
+                // One more frame when the card is due, and none after it.
+                let left = PEEK_REST - (now - peek.2);
+                if left > 0.0 {
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_secs_f64(left));
+                }
             }
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(120));
         }
         if let Some(marquee) = self.marquee.as_ref().filter(|m| m.pane == pane) {
             let swept = response.rect.intersects(marquee.rect());

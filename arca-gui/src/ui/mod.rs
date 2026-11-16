@@ -395,10 +395,13 @@ impl Shell {
             || state.channel.is_some()
             || state.update_rx.is_some()
             || matches!(state.preview.status, PreviewStatus::Loading)
-            || state
-                .tasks
-                .iter()
-                .any(|task| matches!(task.status, TaskStatus::Queued | TaskStatus::Running));
+            || state.tasks.iter().any(|task| {
+                // A paused task says nothing until it is let go, and letting it
+                // go is a click, which brings a frame of its own.
+                let paused = task.hold.load(std::sync::atomic::Ordering::Relaxed)
+                    && !task.stop.load(std::sync::atomic::Ordering::Relaxed);
+                matches!(task.status, TaskStatus::Queued | TaskStatus::Running) && !paused
+            });
         if waiting {
             ctx.request_repaint_after(TICK);
         } else if state.cut_pending.is_some() {
