@@ -84,6 +84,13 @@ for f in long-gnu long-pax long-split; do
   [ "$H" = "$LREF" ] && ok "Arca extracts $f.tar.gz with its long names" || ko "Arca mis-extracts $f.tar.gz"
 done
 rm -rf long
+# A program in a tarball comes out runnable, and a plain file does not.
+mkdir -p perm && printf '#!/bin/sh\necho ok\n' > perm/run.sh && echo data > perm/plain.txt
+chmod 755 perm/run.sh && chmod 644 perm/plain.txt
+tar czf out/perm.tar.gz perm && rm -rf perm y && mkdir y
+$ARCA extract out/perm.tar.gz -o y >/dev/null 2>&1
+[ -x y/perm/run.sh ] && [ ! -x y/perm/plain.txt ] && [ "$(y/perm/run.sh)" = ok ] &&
+  ok "Arca keeps the execute bit of a tar's program" || ko "Arca loses or invents execute bits"
 7z a -tzip -mx5 out/s7.zip src >/dev/null 2>&1
 rm -rf y; mkdir y; $ARCA extract out/s7.zip -o y >/dev/null 2>&1
 H=$(cd y/src && find . -type f|sort|xargs sha256sum|sha256sum|cut -d' ' -f1)

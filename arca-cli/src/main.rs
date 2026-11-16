@@ -807,10 +807,11 @@ fn extract(
             let mut destination = Destination::new(dest);
             while let Some(e) = r.next_entry()? {
                 let written = r.with_data(&e, |data| {
-                    destination.write_entry(
+                    destination.write_file(
                         &e.entry.name,
                         e.entry.is_dir,
                         e.entry.mtime,
+                        Some(e.mode),
                         data,
                         &mut |_| conflict(policy),
                     )

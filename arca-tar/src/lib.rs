@@ -169,6 +169,9 @@ pub fn is_header(block: &[u8]) -> bool {
 pub struct TarEntry {
     pub entry: Entry,
     pub data: u64,
+    /// The Unix permission bits, `0o755` for a program. Zero when the field
+    /// cannot be read, which only ever costs the execute bit.
+    pub mode: u32,
 }
 
 pub struct TarReader<R: Read> {
@@ -321,6 +324,7 @@ impl<R: Read> TarReader<R> {
         Ok(Some(TarEntry {
             entry,
             data: if is_dir { 0 } else { size },
+            mode: octal(&header[100..108], "mode").map_or(0, |m| (m & 0o7777) as u32),
         }))
     }
 
@@ -662,6 +666,23 @@ mod tests {
 
     fn end() -> Vec<u8> {
         vec![0u8; BLOCK * 2]
+    }
+
+    #[test]
+    fn the_permissions_of_an_entry_are_read_and_a_bad_field_costs_only_them() {
+        let with_mode = |field: &[u8]| {
+            let mut h = header("tool", b'0', 0);
+            h[100..108].copy_from_slice(field);
+            h[148..156].copy_from_slice(b"        ");
+            let sum = checksum(<&[u8; BLOCK]>::try_from(&h[..]).unwrap());
+            write_octal(&mut h[148..155], u64::from(sum));
+            h.extend(end());
+            let mut r = TarReader::new(&h[..]);
+            r.next_entry().unwrap().unwrap().mode
+        };
+        assert_eq!(with_mode(b"0000755\0"), 0o755);
+        assert_eq!(with_mode(b"0104755\0"), 0o4755);
+        assert_eq!(with_mode(b"07x5\0\0\0\0"), 0);
     }
 
     #[test]

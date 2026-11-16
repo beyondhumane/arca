@@ -66,6 +66,20 @@ impl Destination {
         reader: &mut dyn Read,
         ask: &mut dyn FnMut(&Path) -> Conflict,
     ) -> Result<Option<u64>> {
+        self.write_file(name, is_dir, mtime, None, reader, ask)
+    }
+
+    /// `write_entry` for a format that records Unix permissions: the file
+    /// also gets the execute bits `mode` has, see [`set_executable`].
+    pub fn write_file(
+        &mut self,
+        name: &str,
+        is_dir: bool,
+        mtime: Option<i64>,
+        mode: Option<u32>,
+        reader: &mut dyn Read,
+        ask: &mut dyn FnMut(&Path) -> Conflict,
+    ) -> Result<Option<u64>> {
         let relative = safe_name(name)?;
         let directory = if is_dir {
             relative.as_path()
@@ -103,8 +117,9 @@ impl Destination {
         let mut writer = BufWriter::with_capacity(256 * 1024, file);
         let bytes = io::copy(reader, &mut writer)?;
         writer.flush()?;
-        let file = writer.into_inner().map_err(|e| e.into_error())?;
-        set_mtime(&file.into_std(), mtime);
+        let file = writer.into_inner().map_err(|e| e.into_error())?.into_std();
+        set_mtime(&file, mtime);
+        set_executable(&file, mode);
         exists_without_link(parent, Path::new(&name))?;
         // Rename replaces the directory entry without following it, even if it changed.
         parent.rename(&staged.name, parent, &name)?;
@@ -124,6 +139,28 @@ pub fn set_mtime(file: &std::fs::File, mtime: Option<i64>) {
     if let Some(when) = std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(seconds)) {
         let _ = file.set_modified(when);
     }
+}
+
+/// Lets an extracted program run where the archive says it could: the execute
+/// bits of `mode`, the Unix permissions the archive recorded, are added to
+/// the file's. Nothing is ever taken away and nothing else is added, so the
+/// most an archive can do is mark one of its own files executable. A no-op
+/// where there are no such bits, and best effort like `set_mtime`.
+pub fn set_executable(file: &std::fs::File, mode: Option<u32>) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(execute) = mode.map(|m| m & 0o111).filter(|m| *m != 0) else {
+            return;
+        };
+        if let Ok(meta) = file.metadata() {
+            let mut permissions = meta.permissions();
+            permissions.set_mode(permissions.mode() | execute);
+            let _ = file.set_permissions(permissions);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (file, mode);
 }
 
 fn open_child(parent: &Dir, name: &Path) -> Result<Dir> {
@@ -331,6 +368,37 @@ mod tests {
         };
         assert_eq!(modified("dated"), when as u64);
         assert!(modified("undated") > when as u64);
+    }
+
+    // A program in a tarball has to come out runnable, and a plain file must
+    // not come out runnable just for having passed through an archive.
+    #[cfg(unix)]
+    #[test]
+    fn programs_keep_their_execute_bits_and_nothing_more() {
+        use std::os::unix::fs::PermissionsExt;
+        let room = room();
+        let mut dest = Destination::new(room.path());
+        for (name, mode) in [
+            ("program", Some(0o755)),
+            ("plain", Some(0o644)),
+            ("setuid", Some(0o4755)),
+            ("unknown", None),
+        ] {
+            dest.write_file(name, false, None, mode, &mut &b"x"[..], &mut |_| {
+                Conflict::Overwrite
+            })
+            .unwrap();
+        }
+        let mode = |name: &str| {
+            fs::metadata(room.path().join(name))
+                .unwrap()
+                .permissions()
+                .mode()
+        };
+        assert_eq!(mode("program") & 0o111, 0o111);
+        assert_eq!(mode("plain") & 0o111, 0);
+        assert_eq!(mode("unknown") & 0o111, 0);
+        assert_eq!(mode("setuid") & 0o7000, 0);
     }
 
     #[test]

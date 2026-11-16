@@ -50,10 +50,11 @@ impl<W: Write> Write for Watched<'_, W> {
 
 // Writes one entry to `path` while keeping `notify` in the loop, so a pause
 // holds and a stop lands inside the file rather than after it. A stop, like
-// any other failure, takes the half-written file away with it.
+// any other failure, takes the half-written file away with it. `stamp` is the
+// time and, where the format keeps them, the Unix permissions to give it.
 fn unpack(
     path: &Path,
-    mtime: Option<i64>,
+    (mtime, mode): (Option<i64>, Option<u32>),
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     progress: (usize, usize, &str),
     fill: impl FnOnce(&mut dyn Write) -> arca_core::Result<u64>,
@@ -77,6 +78,7 @@ fn unpack(
         result.and_then(|n| {
             inner.flush()?;
             arca_core::extraction::set_mtime(inner.get_ref(), mtime);
+            arca_core::extraction::set_executable(inner.get_ref(), mode);
             Ok(n)
         })
     };
@@ -448,9 +450,13 @@ pub(crate) fn extract_one_into(
                 fs::create_dir_all(parent)?;
             }
             let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
-            unpack(&path, entry.mtime, notify, (0, 1, &entry.name), |out| {
-                arca_zip::extract_entry_with(&mut source, entry, out, password)
-            })?;
+            unpack(
+                &path,
+                (entry.mtime, None),
+                notify,
+                (0, 1, &entry.name),
+                |out| arca_zip::extract_entry_with(&mut source, entry, out, password),
+            )?;
             Ok(path)
         }
         Container::Tar | Container::TarGz | Container::TarXz => {
@@ -465,7 +471,7 @@ pub(crate) fn extract_one_into(
                 if e.entry.name == entry.name && !e.entry.is_dir {
                     unpack(
                         &path,
-                        entry.mtime,
+                        (entry.mtime, Some(e.mode)),
                         notify,
                         (0, 1, &entry.name),
                         |mut out| r.copy_data(&e, &mut out),
@@ -771,7 +777,7 @@ pub(crate) fn extract(
                 .map(|(e, path)| {
                     let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
                     let at = (done.load(Ordering::Relaxed), total, e.name.as_str());
-                    let w = unpack(path, e.mtime, notify, at, |out| {
+                    let w = unpack(path, (e.mtime, None), notify, at, |out| {
                         arca_zip::extract_entry_with(&mut source, e, out, password)
                     })?;
                     if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &e.name) {
@@ -812,7 +818,7 @@ pub(crate) fn extract(
                 match dest_path(dest, &e.entry.name, e.entry.is_dir, ask, &mut claimed)? {
                     Some(path) => {
                         let at = (i, total, e.entry.name.as_str());
-                        bytes += unpack(&path, e.entry.mtime, notify, at, |out| {
+                        bytes += unpack(&path, (e.entry.mtime, Some(e.mode)), notify, at, |out| {
                             r.with_data(&e, |data| Ok(std::io::copy(data, out)?))
                         })?;
                     }
