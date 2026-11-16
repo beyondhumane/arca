@@ -1100,7 +1100,7 @@ impl Shell {
                 if name.is_empty() {
                     return;
                 }
-                for row in &rows {
+                for row in rows.iter() {
                     if matches_mask(&name, &row.label) {
                         self.controller.dispatch(AppAction::SetChecked {
                             row: row.clone(),

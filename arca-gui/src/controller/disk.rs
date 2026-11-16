@@ -1057,7 +1057,14 @@ impl AppController {
 
     pub(crate) fn folder_total(&self) -> usize {
         if self.on_disk() {
-            children_of(&self.state.entries, &self.state.active_pane().directory).len()
+            self.rows_for(
+                &self.state.active_pane().directory,
+                "",
+                (SortColumn::Name, true),
+                false,
+                false,
+            )
+            .len()
         } else {
             self.state.entries.len()
         }
@@ -1107,6 +1114,7 @@ impl AppController {
         self.state.archive = None;
         self.state.origin = None;
         self.state.entries.clear();
+        self.entries_changed();
         self.state.active_pane_mut().checked.clear();
         self.state.active_pane_mut().cursor = None;
         self.state.folders = tree::folders_of(&[]);
@@ -1175,7 +1183,10 @@ impl AppController {
                 continue;
             }
             match list_directory(&ancestor, show_hidden) {
-                Ok(entries) => self.state.entries.extend(entries),
+                Ok(entries) => {
+                    self.state.entries.extend(entries);
+                    self.entries_changed();
+                }
                 Err(error) => {
                     let name = ancestor
                         .trim_end_matches('/')
@@ -1222,6 +1233,7 @@ impl AppController {
             })
             .collect();
         self.state.entries.clear();
+        self.entries_changed();
         self.state.active_pane_mut().checked.clear();
         self.state.disk = Some(DiskState::default());
         self.load_disk_ancestors(&dir);

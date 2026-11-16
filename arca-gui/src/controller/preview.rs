@@ -766,6 +766,7 @@ mod tests {
         let fixture = Fixture::zip(None);
         let mut c = fixture.controller();
         c.state.entries[0].size = VIEW_LIMIT + 1;
+        c.entries_changed();
         c.request_preview(0);
         assert_eq!(
             c.state.preview.status,
@@ -773,6 +774,7 @@ mod tests {
         );
         assert!(c.state.preview.running.is_none());
         c.state.entries[0].size = 1;
+        c.entries_changed();
         c.request_preview(0);
         settle(&mut c);
         assert!(matches!(c.state.preview.status, PreviewStatus::Error(_)));

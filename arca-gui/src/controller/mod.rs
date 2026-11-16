@@ -52,7 +52,25 @@ pub(crate) struct AppController {
     pub(crate) volumes: Vec<disk::Volume>,
     volumes_at: Option<std::time::Instant>,
     volume_job: Option<disk::DeviceJob>,
+    // Bumped by every change to `state.entries`; the rows built from them
+    // are kept until it moves. See `entries_changed`.
+    entries_gen: u64,
+    rows: std::cell::RefCell<RowCache>,
 }
+
+/// Rows already built, so that drawing a frame does not build them again. A
+/// list of 100,000 entries costs that many strings to sort into folders, and
+/// the list is asked for several times a frame.
+#[derive(Default)]
+struct RowCache {
+    stamp: (u64, usize, usize),
+    slots: Vec<(RowKey, std::rc::Rc<Vec<Row>>)>,
+    by_name: Option<std::rc::Rc<Vec<(String, usize)>>>,
+}
+
+type RowKey = (String, String, (SortColumn, bool), bool, bool);
+
+const ROW_SLOTS: usize = 8;
 
 fn rename_destination(path: &str, name: &str) -> String {
     let path = path.trim_end_matches('/');
@@ -698,8 +716,8 @@ impl AppController {
     }
     pub(crate) fn select_all_visible(&mut self) {
         self.cancel_preview();
-        for row in self.visible_rows() {
-            self.set_checked_projection(&row, true);
+        for row in self.visible_rows().iter() {
+            self.set_checked_projection(row, true);
         }
     }
     pub(crate) fn invert_visible(&mut self) {
@@ -759,6 +777,8 @@ impl AppController {
             volumes: Vec::new(),
             volumes_at: None,
             volume_job: None,
+            entries_gen: 0,
+            rows: Default::default(),
             state: AppState {
                 view: View::Browse,
                 settings,
@@ -834,7 +854,13 @@ impl AppController {
     pub(crate) fn summary(&self) -> String {
         let s = self.s();
         if self.on_disk() {
-            let rows = children_of(&self.state.entries, &self.state.active_pane().directory);
+            let rows = self.rows_for(
+                &self.state.active_pane().directory,
+                "",
+                (SortColumn::Name, true),
+                false,
+                false,
+            );
             let raw: u64 = rows
                 .iter()
                 .filter(|row| !row.is_dir)
@@ -1088,6 +1114,7 @@ impl AppController {
             e.name = arca_zip::pages::decode(&e.raw_name, page);
             e.is_dir = e.name.ends_with('/') || e.name.ends_with('\\');
         }
+        self.entries_changed();
         self.state.folders = tree::folders_of(&self.state.entries);
         self.clear_picked();
         self.state.active_pane_mut().cursor = None;
@@ -1885,6 +1912,7 @@ impl AppController {
                     self.state.active_pane_mut().checked = vec![false; v.len()];
                     self.state.folders = tree::folders_of(&v);
                     self.state.entries = v;
+                    self.entries_changed();
                     if let Some(f) = detect(&path) {
                         self.state.format = f;
                     }
@@ -1999,7 +2027,7 @@ impl AppController {
         }
     }
 
-    pub(crate) fn visible_rows(&self) -> Vec<Row> {
+    pub(crate) fn visible_rows(&self) -> std::rc::Rc<Vec<Row>> {
         self.rows_for(
             &self.state.active_pane().directory,
             &self.state.active_pane().filter,
@@ -2009,6 +2037,28 @@ impl AppController {
         )
     }
 
+    /// Every change to `state.entries` goes through here or is followed by
+    /// it, so that rows built from the old ones are not shown again.
+    pub(crate) fn entries_changed(&mut self) {
+        self.entries_gen = self.entries_gen.wrapping_add(1);
+    }
+
+    fn row_cache(&self) -> std::cell::RefMut<'_, RowCache> {
+        let stamp = (
+            self.entries_gen,
+            self.state.entries.as_ptr() as usize,
+            self.state.entries.len(),
+        );
+        let mut cache = self.rows.borrow_mut();
+        if cache.stamp != stamp {
+            *cache = RowCache {
+                stamp,
+                ..RowCache::default()
+            };
+        }
+        cache
+    }
+
     pub(crate) fn rows_for(
         &self,
         directory: &str,
@@ -2016,8 +2066,48 @@ impl AppController {
         order: (SortColumn, bool),
         flat: bool,
         up: bool,
-    ) -> Vec<Row> {
+    ) -> std::rc::Rc<Vec<Row>> {
         let filter = filter.trim().to_lowercase();
+        let key: RowKey = (directory.to_string(), filter, order, flat, up);
+        if let Some((_, rows)) = self.row_cache().slots.iter().find(|(k, _)| *k == key) {
+            return rows.clone();
+        }
+        let rows = std::rc::Rc::new(self.build_rows(&key.0, &key.1, order, flat, up));
+        let mut cache = self.row_cache();
+        if cache.slots.len() >= ROW_SLOTS {
+            cache.slots.remove(0);
+        }
+        cache.slots.push((key, rows.clone()));
+        rows
+    }
+
+    /// The entries sorted by their name with forward slashes, so that the ones
+    /// under a folder are one run that starts where its path would sort.
+    fn name_index(&self) -> std::rc::Rc<Vec<(String, usize)>> {
+        if let Some(index) = &self.row_cache().by_name {
+            return index.clone();
+        }
+        let mut index: Vec<(String, usize)> = self
+            .state
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.name.replace('\\', "/"), i))
+            .collect();
+        index.sort_unstable();
+        let index = std::rc::Rc::new(index);
+        self.row_cache().by_name = Some(index.clone());
+        index
+    }
+
+    fn build_rows(
+        &self,
+        directory: &str,
+        filter: &str,
+        order: (SortColumn, bool),
+        flat: bool,
+        up: bool,
+    ) -> Vec<Row> {
         // A search reaches down through the folders, so it starts where you
         // are: from the root it still walks the whole archive, and inside a
         // folder it stays under that folder. The flat view is the same list
@@ -2026,7 +2116,7 @@ impl AppController {
             search_under(
                 &self.state.entries,
                 if flat { "" } else { directory },
-                &filter,
+                filter,
             )
         } else if flat {
             self.state
@@ -2244,6 +2334,7 @@ impl AppController {
         self.state.password_wrong = false;
         self.state.reread_dir = None;
         self.state.entries.clear();
+        self.entries_changed();
         self.state.active_pane_mut().checked.clear();
         self.state.folders = tree::Folder::default();
         self.state.active_pane_mut().directory.clear();
@@ -2517,8 +2608,13 @@ impl AppController {
         match row.entry {
             Some(i) => selected(i),
             None => {
-                let under = entries_under(&self.state.entries, &row.path);
-                !under.is_empty() && under.into_iter().all(selected)
+                let index = self.name_index();
+                let start = index.partition_point(|(name, _)| name.as_str() < row.path.as_str());
+                let mut under = index[start..]
+                    .iter()
+                    .take_while(|(name, _)| name.starts_with(&row.path))
+                    .peekable();
+                under.peek().is_some() && under.all(|(_, i)| selected(*i))
             }
         }
     }
@@ -3088,7 +3184,8 @@ mod filter_tests {
         controller.state.active_pane_mut().filter = filter.to_string();
         controller
             .visible_rows()
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|r| r.label)
             .collect()
     }
