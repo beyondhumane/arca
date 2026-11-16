@@ -877,3 +877,34 @@ fn undoing_puts_back_an_archive_a_rewrite_left_missing() {
     assert!(!app.state.error, "{}", app.state.notice);
     assert_eq!(app.state.entries.len(), after + 1);
 }
+
+#[test]
+fn opening_an_archive_can_be_given_up_on() {
+    let room = Room::new();
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("a.txt"), b"contents").unwrap();
+    let archive = room.path("slow.zip");
+    crate::archive_ops::compress(
+        &archive,
+        &[source],
+        crate::Format::Zip,
+        Codec::Deflate,
+        Level::NORMAL,
+        &|_, _, _| true,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = AppController::new(Settings::default());
+    app.browse_disk(&room.path(""));
+    settle(&mut app);
+    app.open_with_password(archive.clone(), None);
+    assert!(app.state.listing);
+    app.cancel_opening();
+    assert!(!app.state.listing && !app.state.busy);
+    assert!(app.state.channel.is_none());
+    std::thread::sleep(Duration::from_millis(100));
+    app.receive();
+    assert!(app.on_disk(), "the window went back to the folder");
+    assert_ne!(app.state.archive.as_ref(), Some(&archive));
+}

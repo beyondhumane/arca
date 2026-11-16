@@ -1030,6 +1030,24 @@ impl AppController {
     // stands for all of them, so a copy hands the clipboard one folder instead
     // of the fifteen hundred files inside it, and the Explorer pastes a folder
     // rather than a heap of loose files.
+    /// Gives up on an archive still being read and goes back to where the
+    /// window was. The reading thread is told to stop and whatever it still
+    /// sends is not listened to.
+    pub(crate) fn cancel_opening(&mut self) {
+        if !self.state.listing {
+            return;
+        }
+        self.state
+            .stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.state.channel = None;
+        self.state.busy = false;
+        self.state.listing = false;
+        self.state.overlay = false;
+        self.state.view = View::Browse;
+        self.close_archive();
+    }
+
     pub(crate) fn cancel_password(&mut self) {
         let was_job = matches!(self.state.waiting_on_password, Some(Pending::Extract(_)));
         let was_opening = matches!(self.state.waiting_on_password, Some(Pending::OpenArchive));
