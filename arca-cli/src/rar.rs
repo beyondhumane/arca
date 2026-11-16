@@ -50,7 +50,7 @@ pub(super) fn create(
     inputs: &[PathBuf],
     level: Level,
     codec: CodecArg,
-    _requested_threads: usize,
+    requested_threads: usize,
     password: Option<&str>,
     hide_names: bool,
 ) -> Result<()> {
@@ -61,9 +61,24 @@ pub(super) fn create(
     let cancelled = interruption()?;
     let walk = collect(out, inputs, Bounds::WRITER, &cancelled)?;
     let t0 = Instant::now();
-    create_rar(out, &walk.sources, &options, &|_, _, _| {
-        !cancelled.load(Ordering::SeqCst)
-    })?;
+    let run = || {
+        create_rar(out, &walk.sources, &options, &|_, _, _| {
+            !cancelled.load(Ordering::SeqCst)
+        })
+    };
+    // The writer works on whatever rayon pool it runs in, so -j is a pool of
+    // that many threads; without it, every core.
+    let threads = if requested_threads > 0 {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(requested_threads)
+            .build()
+            .map_err(|e| Error::Format(format!("cannot start the thread pool: {e}")))?
+            .install(run)?;
+        requested_threads
+    } else {
+        run()?;
+        rayon::current_num_threads()
+    };
     println!(
         "{}: {} files, {} -> {} in {:.3} s \u{b7} {} threads",
         out.display(),
@@ -71,7 +86,7 @@ pub(super) fn create(
         human(walk.bytes),
         human(fs::metadata(out)?.len()),
         t0.elapsed().as_secs_f64(),
-        rayon::current_num_threads()
+        threads
     );
     Ok(())
 }
