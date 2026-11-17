@@ -97,32 +97,50 @@ fn quick_output_name(paths: &[PathBuf]) -> String {
     format!("{stem}.zip")
 }
 
+// arca_core::Format::SUFFIXES, in the same order: the shell lives outside the
+// workspace and cannot depend on it. The installer's tests read this array and
+// fail when the two differ. Order matters, as there: tar.xz before xz, or the
+// label for backup.tar.xz would promise a folder called backup.tar.
+const SUFFIXES: [&str; 29] = [
+    "zip", "7z", "tar.gz", "tgz", "tar.xz", "txz", "xz", "tar.bz2", "tbz2", "tbz", "bz2",
+    "tar.zst", "tzst", "zst", "tar", "rar", "cbr", "apk", "aar", "jar", "war", "ear", "epub",
+    "cbz", "xpi", "whl", "nupkg", "ipa", "iso",
+];
+
+// arca_core::Format::split_name, returning the stem.
+fn split_name(name: &str) -> Option<&str> {
+    let lower = name.to_ascii_lowercase();
+    SUFFIXES.iter().find_map(|suffix| {
+        let stem = lower.strip_suffix(suffix)?.strip_suffix('.')?;
+        Some(&name[..stem.len()])
+    })
+}
+
 // Has to agree with archive_stem in arca-gui, which is what actually creates
-// the folder: this only writes the label. The shell lives outside the
-// workspace and cannot share the function, so the pair of extensions lists has
-// to be kept in step by hand.
+// the folder: this only writes the label.
 fn archive_stem(p: &std::path::Path) -> String {
     let name = p
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
-    let lower = name.to_ascii_lowercase();
-    for ext in [".tar.gz", ".tgz", ".zip", ".tar", ".7z"] {
-        if lower.ends_with(ext) {
-            return name[..name.len() - ext.len()].to_string();
-        }
-    }
-    name
+    split_name(&name).map_or_else(|| name.clone(), str::to_string)
 }
 
 // The name is all this looks at. Nothing here opens a file, let alone parses
 // one: this DLL runs inside Explorer, and the only thing it is allowed to do
-// with an archive is hand its path to arca.exe.
+// with an archive is hand its path to arca.exe. Same answer as
+// arca_core::Format::detect, legacy RAR volumes (.r00 to .z99) included.
 fn is_archive(p: &std::path::Path) -> bool {
-    let n = p.to_string_lossy().to_ascii_lowercase();
-    [".zip", ".tar", ".tar.gz", ".tgz", ".7z"]
-        .iter()
-        .any(|e| n.ends_with(e))
+    if split_name(&p.to_string_lossy()).is_some() {
+        return true;
+    }
+    let Some(ext) = p.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    let ext = ext.as_bytes();
+    ext.len() == 3
+        && (b'r'..=b'z').contains(&ext[0].to_ascii_lowercase())
+        && ext[1..].iter().all(u8::is_ascii_digit)
 }
 
 fn to_pwstr(s: PCWSTR) -> Result<PWSTR> {
@@ -646,6 +664,21 @@ mod tests {
             (r"C:\x\plain.tar", "plain"),
             (r"C:\x\UPPER.ZIP", "UPPER"),
             (r"C:\x\dots.in.name.zip", "dots.in.name"),
+            (r"C:\x\backup.tar.xz", "backup"),
+            (r"C:\x\notes.txt.xz", "notes.txt"),
+            (r"C:\x\backup.TBZ2", "backup"),
+            (r"C:\x\notes.txt.bz2", "notes.txt"),
+            (r"C:\x\backup.tar.zst", "backup"),
+            (r"C:\x\backup.tzst", "backup"),
+            (r"C:\x\notes.txt.ZST", "notes.txt"),
+            (r"C:\x\backup.part1.rar", "backup.part1"),
+            (r"C:\x\comic.CBR", "comic"),
+            (r"C:\x\My.Book.EPUB", "My.Book"),
+            (r"C:\x\app-release.apk", "app-release"),
+            (
+                r"C:\x\ubuntu-24.04-desktop-amd64.iso",
+                "ubuntu-24.04-desktop-amd64",
+            ),
         ] {
             assert_eq!(archive_stem(std::path::Path::new(file)), folder, "{file}");
             assert_eq!(
@@ -765,6 +798,19 @@ mod tests {
             ]
         );
         assert_eq!(quick_output_name(&archive), "backup.zip");
+    }
+
+    #[test]
+    fn every_format_arca_reads_gets_the_archive_actions() {
+        for name in [
+            "a.zip", "a.7z", "a.tar", "a.tgz", "a.tar.gz", "a.txz", "a.xz", "a.tbz", "a.bz2",
+            "a.tzst", "a.zst", "a.RAR", "a.r00", "a.z99", "a.cbr", "a.jar", "a.epub", "a.iso",
+        ] {
+            assert!(is_archive(std::path::Path::new(name)), "{name}");
+        }
+        for name in ["a.gz", "a.txt", "a.r0", "a.rev", "zip", "a.q00"] {
+            assert!(!is_archive(std::path::Path::new(name)), "{name}");
+        }
     }
 
     #[test]
