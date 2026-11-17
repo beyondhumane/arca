@@ -45,6 +45,19 @@ Local changes:
   stream on the calling thread with `Lzma2Reader`, streaming. Unit tests
   cover runs decoded on threads and in place, truncation and corruption at
   many offsets, and errors after the runs before them.
+- **Gathering errors in that reader come in order too**
+  (`src/lzma2_reader_mt.rs`). A source that ended or an invalid control
+  byte met while a run was being gathered was returned at once, ahead of the
+  runs already queued, and a failure while reading ahead dropped a run that
+  had just been decoded: a damaged solid 7z gave out none of its entries on
+  many threads where one thread gave out most. Now the run being gathered,
+  as far as it was read, is decoded on the calling thread with
+  `Lzma2Reader` once every run before it has been returned, so the output
+  and the error are those of a single-threaded reader; a thread that cannot
+  be started or reached is reported after the runs before it, and a decoded
+  run is never dropped. A unit test cuts a stream at fixed fractions and at
+  every chunk boundary and damages control bytes, and holds the output to
+  the single-threaded reader's.
 
 Feature audit:
 

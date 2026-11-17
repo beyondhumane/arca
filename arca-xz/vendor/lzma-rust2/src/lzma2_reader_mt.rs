@@ -7,6 +7,13 @@
 // queued beyond its threads, returns runs and errors strictly in order, and
 // decodes the rest of the stream on the calling thread, streaming, from the
 // first run that is longer than `run_max`.
+//
+// Arca: a stream that breaks off or goes bad while a run is being gathered
+// (a source that ends, an invalid control byte) is also decoded on the
+// calling thread from the start of that run, once every run before it has
+// been returned, so it gives out what a single-threaded reader would before
+// the same error. A run already decoded is never dropped because reading
+// ahead failed; the failure is returned after it.
 
 use std::{
     collections::BTreeMap,
@@ -35,10 +42,11 @@ type Outcome = (u64, io::Result<Vec<u8>>);
 enum Gather {
     /// A whole run, ended with an end marker of its own.
     Run(Vec<u8>, usize),
-    /// The stream ended, or the source did.
+    /// The stream ended.
     End,
-    /// The run went past `run_max`; what was read of it stays in `run`.
-    TooLong,
+    /// Arca: the run went past `run_max`, or the source ended or went bad
+    /// inside it; what was read of it stays in `run`, to be decoded inline.
+    Inline,
 }
 
 enum Source<R: Read> {
@@ -62,7 +70,8 @@ pub struct Lzma2ReaderMt<R: Read> {
     run: Vec<u8>,
     run_size: usize,
     ended: bool,
-    too_long: bool,
+    inline: bool,
+    halt: Option<io::Error>,
     jobs: Option<mpsc::Sender<Job>>,
     queue: Arc<Mutex<mpsc::Receiver<Job>>>,
     done: mpsc::Sender<Outcome>,
@@ -114,7 +123,8 @@ impl<R: Read> Lzma2ReaderMt<R> {
             run: Vec::new(),
             run_size: 0,
             ended: false,
-            too_long: false,
+            inline: false,
+            halt: None,
             jobs: Some(jobs),
             queue: Arc::new(Mutex::new(queue)),
             done,
@@ -141,56 +151,48 @@ impl<R: Read> Lzma2ReaderMt<R> {
         Gather::Run(core::mem::take(&mut self.run), size)
     }
 
-    fn gather(&mut self) -> io::Result<Gather> {
+    fn gather(&mut self) -> Gather {
         loop {
             let Source::Scanning(inner) = &mut self.source else {
-                return Ok(Gather::End);
+                return Gather::End;
             };
             let control = match self.pending_control.take() {
                 Some(control) => control,
                 None => {
                     let mut byte = [0u8; 1];
-                    match inner.read_exact(&mut byte) {
-                        Ok(()) => byte[0],
-                        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
-                            self.ended = true;
-                            if self.run.is_empty() {
-                                return Err(error);
-                            }
-                            return Ok(self.take_run());
-                        }
-                        Err(error) => return Err(error),
+                    if read_up_to(inner, &mut byte) == 0 {
+                        return Gather::Inline;
                     }
+                    byte[0]
                 }
             };
             if control == 0x00 {
                 self.ended = true;
                 if self.run.is_empty() {
-                    return Ok(Gather::End);
+                    return Gather::End;
                 }
                 self.run.push(0x00);
-                return Ok(self.take_run());
+                return self.take_run();
             }
             let independent = control >= 0xE0 || control == 0x01;
             if independent && !self.run.is_empty() {
                 self.pending_control = Some(control);
                 self.run.push(0x00);
-                return Ok(self.take_run());
+                return self.take_run();
             }
             let uncompressed = control == 0x01 || control == 0x02;
+            self.run.push(control);
             let header_len = match control {
                 0xC0..=0xFF => 5,
                 0x80..=0xBF => 4,
                 0x01 | 0x02 => 2,
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("invalid LZMA2 control byte: {control:X}"),
-                    ));
-                }
+                _ => return Gather::Inline,
             };
-            let mut header = [0u8; 5];
-            inner.read_exact(&mut header[..header_len])?;
+            let at = self.run.len();
+            if !read_onto(inner, &mut self.run, header_len) {
+                return Gather::Inline;
+            }
+            let header = &self.run[at..];
             let first = u16::from_be_bytes([header[0], header[1]]) as usize + 1;
             let (packed, size) = if uncompressed {
                 (first, first)
@@ -200,14 +202,12 @@ impl<R: Read> Lzma2ReaderMt<R> {
                     (((control & 0x1F) as usize) << 16) + first,
                 )
             };
-            self.run.push(control);
-            self.run.extend_from_slice(&header[..header_len]);
-            let start = self.run.len();
-            self.run.resize(start + packed, 0);
-            inner.read_exact(&mut self.run[start..])?;
+            if !read_onto(inner, &mut self.run, packed) {
+                return Gather::Inline;
+            }
             self.run_size += size;
             if self.run.len() > self.run_max || self.run_size > self.run_max {
-                return Ok(Gather::TooLong);
+                return Gather::Inline;
             }
         }
     }
@@ -237,34 +237,45 @@ impl<R: Read> Lzma2ReaderMt<R> {
         Ok(())
     }
 
-    fn dispatch(&mut self) -> io::Result<()> {
-        while !self.ended
-            && !self.too_long
+    /// Arca: a failure here is kept in `halt`, to be returned once every run
+    /// dispatched before it has been.
+    fn dispatch(&mut self) {
+        while self.halt.is_none()
+            && !self.ended
+            && !self.inline
             && self.dispatched - self.returned <= self.max_workers as u64
         {
-            match self.gather()? {
+            match self.gather() {
                 Gather::Run(bytes, size) => {
                     if self.workers.len() < self.max_workers
                         && self.workers.len() as u64 <= self.dispatched - self.returned
                     {
-                        self.spawn_worker()?;
+                        if let Err(error) = self.spawn_worker() {
+                            if self.workers.is_empty() {
+                                self.halt = Some(error);
+                                return;
+                            }
+                        }
                     }
                     let job = Job {
                         seq: self.dispatched,
                         bytes,
                         size,
                     };
-                    let sent = self.jobs.as_ref().is_some_and(|jobs| jobs.send(job).is_ok());
+                    let sent = self
+                        .jobs
+                        .as_ref()
+                        .is_some_and(|jobs| jobs.send(job).is_ok());
                     if !sent {
-                        return Err(io::Error::other("the LZMA2 decoding threads stopped"));
+                        self.halt = Some(io::Error::other("the LZMA2 decoding threads stopped"));
+                        return;
                     }
                     self.dispatched += 1;
                 }
                 Gather::End => {}
-                Gather::TooLong => self.too_long = true,
+                Gather::Inline => self.inline = true,
             }
         }
-        Ok(())
     }
 
     fn next_run(&mut self) -> io::Result<Vec<u8>> {
@@ -293,19 +304,47 @@ impl<R: Read> Lzma2ReaderMt<R> {
     }
 
     fn fill(&mut self) -> io::Result<bool> {
-        self.dispatch()?;
+        self.dispatch();
         if self.returned < self.dispatched {
             self.current = self.next_run()?;
             self.at = 0;
-            self.dispatch()?;
+            self.dispatch();
             return Ok(true);
         }
-        if self.too_long {
+        if let Some(error) = self.halt.take() {
+            return Err(error);
+        }
+        if self.inline {
             self.go_inline();
             return Ok(true);
         }
         Ok(false)
     }
+}
+
+/// Arca: reads into `buf` until it is full or `inner` ends or fails, and
+/// says how much it read.
+fn read_up_to<R: Read>(inner: &mut R, buf: &mut [u8]) -> usize {
+    let mut got = 0;
+    while got < buf.len() {
+        match inner.read(&mut buf[got..]) {
+            Ok(0) => break,
+            Ok(n) => got += n,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+    got
+}
+
+/// Arca: appends `len` bytes of `inner` to `run`, or as many as there are
+/// before it ends or fails, and says whether it got them all.
+fn read_onto<R: Read>(inner: &mut R, run: &mut Vec<u8>, len: usize) -> bool {
+    let start = run.len();
+    run.resize(start + len, 0);
+    let got = read_up_to(inner, &mut run[start..]);
+    run.truncate(start + got);
+    got == len
 }
 
 fn decode_run(
@@ -498,5 +537,85 @@ mod tests {
         }
         assert!(out.len() >= 32 << 10);
         assert!(out[..] == data[..out.len()] || out.len() == data.len());
+    }
+
+    fn until_error<R: Read>(mut reader: R) -> (Vec<u8>, bool) {
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => return (out, false),
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+                Err(_) => return (out, true),
+            }
+        }
+    }
+
+    fn chunk_starts(packed: &[u8]) -> Vec<usize> {
+        let mut starts = Vec::new();
+        let mut at = 0;
+        while packed[at] != 0x00 {
+            starts.push(at);
+            let c = packed[at];
+            let first = u16::from_be_bytes([packed[at + 1], packed[at + 2]]) as usize + 1;
+            at += match c {
+                0x01 | 0x02 => 3 + first,
+                _ => {
+                    let packed_len = u16::from_be_bytes([packed[at + 3], packed[at + 4]]) as usize;
+                    (if c >= 0xC0 { 6 } else { 5 }) + packed_len + 1
+                }
+            };
+        }
+        starts.push(at);
+        starts
+    }
+
+    #[test]
+    fn a_stream_that_breaks_off_gives_out_what_a_single_thread_does() {
+        let data = sample(512 << 10);
+        let packed = runs(&data, 16 << 10);
+        let starts = chunk_starts(&packed);
+        assert!(starts.len() >= 8, "{}", starts.len());
+        let mut cuts: Vec<usize> = [50, 70, 90, 99]
+            .iter()
+            .map(|p| packed.len() * p / 100)
+            .collect();
+        cuts.extend(starts.iter().flat_map(|&s| [s, s + 1, s + 3]));
+        cuts.retain(|&cut| cut < packed.len());
+        let bad_controls = starts[1..starts.len() - 1].iter().step_by(5);
+        for run_max in [1 << 20, 10 << 10] {
+            for &cut in &cuts {
+                let single = until_error(Lzma2Reader::new(&packed[..cut], 64 << 10, None));
+                let multi = until_error(Lzma2ReaderMt::new_bounded(
+                    &packed[..cut],
+                    64 << 10,
+                    None,
+                    4,
+                    run_max,
+                ));
+                assert!(single.1 && multi.1, "cut at {cut} did not fail");
+                assert!(data.starts_with(&multi.0), "cut at {cut}");
+                assert!(
+                    multi.0.len() >= single.0.len(),
+                    "cut at {cut}: {} < {}",
+                    multi.0.len(),
+                    single.0.len()
+                );
+            }
+            for &at in bad_controls.clone() {
+                let mut bad = packed.clone();
+                bad[at] = 0x03;
+                let single = until_error(Lzma2Reader::new(&bad[..], 64 << 10, None));
+                let multi = until_error(Lzma2ReaderMt::new_bounded(
+                    &bad[..],
+                    64 << 10,
+                    None,
+                    4,
+                    run_max,
+                ));
+                assert!(single.1 && multi.1, "control at {at}");
+                assert!(multi.0 == single.0, "control at {at}");
+            }
+        }
     }
 }
