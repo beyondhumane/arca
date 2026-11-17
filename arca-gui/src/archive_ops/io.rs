@@ -107,7 +107,7 @@ pub(crate) fn open_source(archive: &Path, format: Format) -> arca_core::Result<B
 
 /// Passes the bytes through and asks `notify` every few megabytes whether to
 /// carry on, so one large stream can still be stopped halfway.
-struct Paced<'a, R> {
+pub(crate) struct Paced<'a, R> {
     inner: R,
     name: &'a str,
     notify: &'a (dyn Fn(usize, usize, &str) -> bool + Sync),
@@ -117,7 +117,7 @@ struct Paced<'a, R> {
 }
 
 impl<'a, R: Read> Paced<'a, R> {
-    fn new(
+    pub(crate) fn new(
         inner: R,
         name: &'a str,
         notify: &'a (dyn Fn(usize, usize, &str) -> bool + Sync),
@@ -138,7 +138,7 @@ impl<'a, R: Read> Paced<'a, R> {
         self
     }
 
-    fn check<T>(&self, result: arca_core::Result<T>) -> arca_core::Result<T> {
+    pub(crate) fn check<T>(&self, result: arca_core::Result<T>) -> arca_core::Result<T> {
         if self.stopped {
             return Err(arca_core::Error::Cancelled);
         }
@@ -1268,7 +1268,7 @@ fn add_links<W: Write>(w: &mut TarWriter<W>, links: &[Link]) -> arca_core::Resul
     Ok(())
 }
 
-fn mtime_of(m: &fs::Metadata) -> i64 {
+pub(crate) fn mtime_of(m: &fs::Metadata) -> i64 {
     m.modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())

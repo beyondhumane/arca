@@ -614,7 +614,7 @@ impl Shell {
             }
             if ui
                 .add_enabled(
-                    idle && archive && writable,
+                    idle && archive && self.controller.state.format == crate::Format::Zip,
                     egui::Button::new(s.password_action),
                 )
                 .clicked()
