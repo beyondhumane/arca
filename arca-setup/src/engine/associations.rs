@@ -110,6 +110,7 @@ mod tests {
         let mut open_with = BTreeSet::new();
         let mut supported = BTreeSet::new();
         let mut capabilities = BTreeSet::new();
+        let mut classes = BTreeSet::new();
         let asked_for: Vec<FileType> = file_types()
             .into_iter()
             .filter(|kind| kind.on_request)
@@ -138,8 +139,37 @@ mod tests {
                 supported.insert(name.clone());
             } else if key.ends_with(r"Capabilities\FileAssociations") {
                 capabilities.insert((name.clone(), parts.get(2).cloned().unwrap_or_default()));
+            } else if key.starts_with(r"Software\Classes\Arca.") {
+                classes.insert(key.clone());
             }
         }
+        let mut expected_classes = BTreeSet::new();
+        for kind in file_types() {
+            let task = if kind.on_request {
+                r"fileassoc\iso"
+            } else {
+                "fileassoc"
+            };
+            let class = format!(r"Software\Classes\{}", kind.progid);
+            let open = format!(r"{class}\shell\open\command");
+            let icon = format!(r"{class}\DefaultIcon");
+            for wanted in [
+                format!(
+                    r#"Root: HKCU; Subkey: "{class}"; ValueType: string; ValueName: ""; ValueData: "{}"; Flags: uninsdeletekey; Tasks: {task}"#,
+                    kind.description
+                ),
+                format!(
+                    r#"Root: HKCU; Subkey: "{icon}"; ValueType: string; ValueName: ""; ValueData: "{{app}}\arca-gui.exe,0"; Tasks: {task}"#
+                ),
+                format!(
+                    r#"Root: HKCU; Subkey: "{open}"; ValueType: string; ValueName: ""; ValueData: """{{app}}\arca-gui.exe"" ""%1"""; Tasks: {task}"#
+                ),
+            ] {
+                assert!(script.lines().any(|line| line == wanted), "{wanted}");
+            }
+            expected_classes.extend([class, icon, open]);
+        }
+        assert_eq!(classes, expected_classes);
         let expected: BTreeSet<(String, String)> = file_types()
             .into_iter()
             .map(|kind| (kind.extension, kind.progid))
