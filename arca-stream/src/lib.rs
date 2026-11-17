@@ -97,6 +97,26 @@ pub fn open(path: &Path, format: Format) -> Result<Box<dyn Read + Send>> {
     }
 }
 
+/// The standalone stream whose magic number `magic` starts with: XZ, BZ2 or
+/// ZST, or `None` for anything else. Ten bytes are enough to tell.
+pub fn sniff(magic: &[u8]) -> Option<Format> {
+    Codec::sniff(magic).map(Codec::single)
+}
+
+/// Decodes one of these streams read from anywhere, such as a range inside
+/// another file, with the checks the decoders make while they read.
+pub fn decoder<R: Read + Send + 'static>(
+    format: Format,
+    source: R,
+) -> Result<Box<dyn Read + Send>> {
+    let source = BufReader::with_capacity(BUF, source);
+    Ok(match codec(format).ok_or_else(|| not_a_stream(format))? {
+        Codec::Xz => Box::new(arca_xz::Decoder::new(source)),
+        Codec::Bzip2 => Box::new(bz2::decoder(source)),
+        Codec::Zstd => zst::decoder(source)?,
+    })
+}
+
 /// What a standalone stream decompresses to. None of the three keeps a name,
 /// so it comes from the file: `notes.txt.bz2` gives `notes.txt`, `a.tzst`
 /// gives `a.tar`, and a name without a known suffix gets `.out` appended.
