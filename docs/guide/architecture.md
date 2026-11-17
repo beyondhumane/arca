@@ -20,6 +20,7 @@ Arca is a Cargo workspace. Each crate has one job and a declared stance on unsaf
 | `arca-7z` | Bounded 7z parsing, solid extraction, creation (LZMA2, LZMA, PPMd, BZip2, Deflate, Store) with branch/Delta filters, and AES | forbidden |
 | `arca-rar` | RAR/CBR reading and single-volume RAR5 creation, enabled by default in CLI/GUI | forbidden |
 | `arca-extra` | Read-only CPIO, AR, DEB, RPM, CAB (MSZIP, LZX) and LZH | forbidden |
+| `arca-disk` | Read-only VHD, VHDX, VMDK, DMG and raw disk images: MBR and GPT partitions, FAT, exFAT, NTFS and HFS+ (ISO 9660 through `arca-iso`) | forbidden |
 | `arca-cli` | The arca binary | allowed, unused |
 | `arca-gui` | The arca-gui window | forbidden |
 | `arca-icons` | The icon the desktop shows for a file type | Windows only, for the shell call |

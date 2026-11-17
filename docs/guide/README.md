@@ -22,3 +22,4 @@ User documentation. The website renders these files under `/docs/<file name>/` (
 18. [ZIP containers](zip-containers.md)
 19. [ISO images](iso.md)
 20. [CPIO, AR, DEB, RPM, CAB and LZH](more-formats.md)
+21. [Disk images](disk-images.md)
