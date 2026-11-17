@@ -186,6 +186,28 @@ pub fn read_only() -> Error {
     arca_core::Format::Iso.read_only()
 }
 
+/// An image read from any seekable source rather than a file: what a disk
+/// image's partition holds.
+pub struct Index {
+    pub entries: Vec<Entry>,
+    /// For each entry, where its data lies in the source: start and length.
+    pub extents: Vec<Vec<(u64, u64)>>,
+    pub notices: Vec<String>,
+}
+
+pub fn index<R: Read + Seek>(source: &mut R, progress: &dyn Fn() -> bool) -> Result<Index> {
+    let parsed = parse::parse(source, progress)?;
+    Ok(Index {
+        entries: parsed.entries,
+        extents: parsed
+            .extents
+            .into_iter()
+            .map(|parts| parts.into_iter().map(|e| (e.start, e.len)).collect())
+            .collect(),
+        notices: parsed.notices,
+    })
+}
+
 fn copy(
     source: &mut File,
     extents: &[Extent],
