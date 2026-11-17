@@ -1533,6 +1533,12 @@ impl<W: Write + Seek> ZipWriter<W> {
                     extra.len()
                 )));
             }
+            if comment.len() > u16::MAX as usize {
+                return Err(Error::Limit(format!(
+                    "entry comment of {} bytes",
+                    comment.len()
+                )));
+            }
 
             let mut h = Vec::with_capacity(CD_FIXED + r.name_str.len() + extra.len());
             h.extend_from_slice(&SIG_CD.to_le_bytes());
@@ -1761,6 +1767,7 @@ pub fn rewrite_password(
         &|_| true,
         &keep_name,
         &[],
+        &Comments::default(),
         notify,
     )
 }
@@ -1812,6 +1819,7 @@ pub fn add_entries(
         &|e| !taken.contains(&slashed(&e.name)),
         &keep_name,
         extra,
+        &Comments::default(),
         notify,
     )
 }
@@ -1846,6 +1854,7 @@ pub fn remove_entries(
         keep,
         &keep_name,
         &[],
+        &Comments::default(),
         notify,
     )
 }
@@ -1885,6 +1894,38 @@ pub fn rename_entries(
         &|_| true,
         name,
         &[],
+        &Comments::default(),
+        notify,
+    )
+}
+
+/// The comments a rewrite writes in place of the ones the archive had: its
+/// own, and one entry's, found by name. An empty one clears it.
+#[derive(Default)]
+pub struct Comments<'a> {
+    pub archive: Option<&'a [u8]>,
+    pub entry: Option<(&'a str, &'a [u8])>,
+}
+
+/// Writes a copy of `archive` at `out` with the comments `comments` sets.
+/// Every entry is copied through as it stands, encrypted or not, so no
+/// password is needed. A folder answers to its name with or without the
+/// slash, and a name that matches no entry is an error.
+pub fn set_comments(
+    archive: &std::path::Path,
+    out: &std::path::Path,
+    comments: &Comments<'_>,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+) -> Result<u64> {
+    rewrite(
+        archive,
+        out,
+        None,
+        None,
+        &|_| true,
+        &keep_name,
+        &[],
+        comments,
         notify,
     )
 }
@@ -1898,6 +1939,7 @@ fn rewrite(
     keep: &dyn Fn(&Entry) -> bool,
     name: &dyn Fn(&Entry) -> String,
     extra: &[Addition],
+    comments: &Comments<'_>,
     // Told how far along this is, and answers whether to carry on: false is
     // somebody pressing stop, and the rewrite gives up where it stands rather
     // than finishing a copy nobody is waiting for.
@@ -1917,15 +1959,35 @@ fn rewrite(
     if let (true, Some(pw)) = (raw, current) {
         check_password(&mut File::open(archive)?, &source.entries_list, pw)?;
     }
-    let entries: Vec<(Entry, Kept)> = source
+    let mut entries: Vec<(Entry, Kept)> = source
         .entries_list
         .into_iter()
         .zip(source.kept)
         .filter(|(e, _)| keep(e))
         .collect();
+    if let Some((target, text)) = comments.entry {
+        if text.len() > MAX_COMMENT {
+            return Err(Error::Limit(format!(
+                "entry comment of {} bytes",
+                text.len()
+            )));
+        }
+        let target = slashed(target);
+        let target = target.trim_end_matches('/');
+        let mut found = false;
+        for (e, k) in entries.iter_mut() {
+            if slashed(&e.name).trim_end_matches('/') == target {
+                k.comment = text.to_vec();
+                found = true;
+            }
+        }
+        if !found {
+            return Err(Error::Format(format!("no entry named '{target}'")));
+        }
+    }
     let total = entries.len() + extra.len();
     let mut w = ZipWriter::new(BufWriter::with_capacity(STREAM_BUF, File::create(out)?));
-    w.set_comment(&source.comment)?;
+    w.set_comment(comments.archive.unwrap_or(&source.comment))?;
     let mut bytes = 0u64;
     let mut src = BufReader::with_capacity(STREAM_BUF, File::open(archive)?);
 
@@ -4183,6 +4245,119 @@ mod tests {
         let mut fake = b"before ".to_vec();
         fake.extend_from_slice(&SIG_EOCD.to_le_bytes());
         assert!(w.set_comment(&fake).is_err());
+    }
+
+    #[test]
+    fn comments_are_set_and_cleared_without_touching_the_rest() {
+        let mut buf = commented_archive(b"caf\x82");
+        let set = |buf: &[u8], tag: &str, c: Comments<'_>| {
+            through_files(tag, buf, |f, t| set_comments(f, t, &c, &|_, _, _| true))
+        };
+        let out = set(
+            &buf,
+            "comment-entry",
+            Comments {
+                archive: None,
+                entry: Some(("b.txt", "segunda l\u{ed}nea\notra".as_bytes())),
+            },
+        );
+        let a = ZipArchive::open(IoCursor::new(out.clone())).unwrap();
+        assert_eq!(a.comment(), "caf\u{e9}");
+        assert_eq!(a.entry_comment(0).as_deref(), Some("nota de la entrada"));
+        assert_eq!(
+            a.entry_comment(1).as_deref(),
+            Some("segunda l\u{ed}nea\notra")
+        );
+        let out = set(
+            &out,
+            "comment-archive",
+            Comments {
+                archive: Some(b"nuevo"),
+                entry: Some(("a.txt", b"")),
+            },
+        );
+        let mut a = ZipArchive::open(IoCursor::new(out)).unwrap();
+        assert_eq!(a.comment(), "nuevo");
+        assert_eq!(a.entry_comment(0), None);
+        let mut got = Vec::new();
+        a.extract_to(1, &mut got).unwrap();
+        assert_eq!(got, b"dos");
+
+        buf = commented_archive(b"");
+        let room = std::env::temp_dir().join(format!("arca-comment-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&room).unwrap();
+        let (from, to) = (room.join("a.zip"), room.join("b.zip"));
+        std::fs::write(&from, &buf).unwrap();
+        let missing = Comments {
+            archive: None,
+            entry: Some(("nope.txt", b"x")),
+        };
+        assert!(matches!(
+            set_comments(&from, &to, &missing, &|_, _, _| true),
+            Err(Error::Format(_))
+        ));
+        let long = vec![b'a'; MAX_COMMENT + 1];
+        let too_long = Comments {
+            archive: None,
+            entry: Some(("a.txt", &long)),
+        };
+        assert!(matches!(
+            set_comments(&from, &to, &too_long, &|_, _, _| true),
+            Err(Error::Limit(_))
+        ));
+        let fake = [b"x".as_slice(), &SIG_EOCD.to_le_bytes()].concat();
+        let hostile = Comments {
+            archive: Some(&fake),
+            entry: None,
+        };
+        assert!(set_comments(&from, &to, &hostile, &|_, _, _| true).is_err());
+        std::fs::remove_dir_all(&room).unwrap();
+    }
+
+    #[test]
+    fn a_folder_comment_answers_with_or_without_the_slash_and_encryption_stays() {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        w.add_with_password("dir/", io::empty(), Codec::Store, Level::STORE, None, None)
+            .unwrap();
+        w.add_with_password(
+            "dir/s.txt",
+            &b"secreto"[..],
+            Codec::Deflate,
+            Level::NORMAL,
+            None,
+            Some("pw"),
+        )
+        .unwrap();
+        let buf = w.finish().unwrap().into_inner();
+        let out = through_files("comment-folder", &buf, |f, t| {
+            set_comments(
+                f,
+                t,
+                &Comments {
+                    archive: None,
+                    entry: Some(("dir", b"carpeta")),
+                },
+                &|_, _, _| true,
+            )
+        });
+        let out = through_files("comment-secret", &out, |f, t| {
+            set_comments(
+                f,
+                t,
+                &Comments {
+                    archive: None,
+                    entry: Some(("dir\\s.txt", b"cifrado")),
+                },
+                &|_, _, _| true,
+            )
+        });
+        let mut a = ZipArchive::open(IoCursor::new(out)).unwrap();
+        assert_eq!(a.entry_comment(0).as_deref(), Some("carpeta"));
+        assert_eq!(a.entry_comment(1).as_deref(), Some("cifrado"));
+        assert!(a.entries()[1].encrypted);
+        let mut got = Vec::new();
+        a.extract_to_with(1, &mut got, Some("pw")).unwrap();
+        assert_eq!(got, b"secreto");
     }
 
     #[test]
