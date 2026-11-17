@@ -142,6 +142,7 @@ pub struct Parallel<R> {
     current: Vec<u8>,
     at: usize,
     failed: bool,
+    halted: bool,
     stop: Arc<AtomicBool>,
     workers: Vec<thread::JoinHandle<()>>,
 }
@@ -193,38 +194,50 @@ impl<R: Read> Parallel<R> {
             current: Vec::new(),
             at: 0,
             failed: false,
+            halted: false,
             stop,
             workers,
         })
     }
 
-    fn dispatch(&mut self) -> io::Result<()> {
-        while self.dispatched < self.blocks.len() as u64
+    /// Sends blocks to the workers until the window is full. A block that
+    /// cannot be read or sent takes its place in the order as a failure,
+    /// returned once every block before it has been; nothing goes after it.
+    fn dispatch(&mut self) {
+        while !self.halted
+            && self.dispatched < self.blocks.len() as u64
             && self.dispatched - self.returned < self.window
         {
-            let block = self.blocks[self.dispatched as usize];
-            let len = usize::try_from(block.padded())
-                .map_err(|_| io::Error::new(io::ErrorKind::OutOfMemory, "XZ block too large"))?;
-            let mut bytes = Vec::new();
-            bytes
-                .try_reserve_exact(len)
-                .map_err(|_| io::Error::new(io::ErrorKind::OutOfMemory, "XZ block too large"))?;
-            bytes.resize(len, 0);
-            self.source.read_exact(&mut bytes).map_err(describe)?;
-            let job = Job {
-                seq: self.dispatched,
-                block,
-                bytes,
-            };
-            let sent = self
-                .jobs
-                .as_ref()
-                .is_some_and(|jobs| jobs.send(job).is_ok());
-            if !sent {
-                return Err(io::Error::other("the XZ decoding threads stopped"));
+            if let Err(error) = self.send_next() {
+                self.ready.insert(self.dispatched, Err(error));
+                self.halted = true;
             }
-            self.dispatched += 1;
         }
+    }
+
+    fn send_next(&mut self) -> io::Result<()> {
+        let block = self.blocks[self.dispatched as usize];
+        let len = usize::try_from(block.padded())
+            .map_err(|_| io::Error::new(io::ErrorKind::OutOfMemory, "XZ block too large"))?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(len)
+            .map_err(|_| io::Error::new(io::ErrorKind::OutOfMemory, "XZ block too large"))?;
+        bytes.resize(len, 0);
+        self.source.read_exact(&mut bytes).map_err(describe)?;
+        let job = Job {
+            seq: self.dispatched,
+            block,
+            bytes,
+        };
+        let sent = self
+            .jobs
+            .as_ref()
+            .is_some_and(|jobs| jobs.send(job).is_ok());
+        if !sent {
+            return Err(io::Error::other("the XZ decoding threads stopped"));
+        }
+        self.dispatched += 1;
         Ok(())
     }
 
@@ -260,16 +273,11 @@ impl<R: Read> Read for Parallel<R> {
             }
             self.current = Vec::new();
             self.at = 0;
-            let next = self.dispatch().and_then(|()| self.next_block());
+            self.dispatch();
+            let next = self.next_block();
             self.failed = next.is_err();
             self.current = next?;
-            self.failed = self.dispatch().is_err();
-            if self.failed {
-                self.current = Vec::new();
-                return Err(io::Error::other(
-                    "corrupt XZ data: the blocks could not be read",
-                ));
-            }
+            self.dispatch();
         }
     }
 }

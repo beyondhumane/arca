@@ -442,3 +442,40 @@ fn a_damaged_block_stops_the_parallel_stream_after_the_blocks_before_it() {
     let _ = error;
     assert!(decoder.read(&mut buf).is_err());
 }
+
+#[test]
+fn a_file_cut_short_gives_out_every_block_before_the_cut() {
+    let data = sample(200_000);
+    let packed = small_blocks(&data, 16 << 10);
+    let (list, start) = records(&packed);
+    let blocks: Vec<parallel::Block> = list
+        .iter()
+        .map(|&(unpadded, size)| parallel::Block { unpadded, size })
+        .collect();
+    let header: [u8; 12] = packed[..12].try_into().unwrap();
+    for cut in [start * 3 / 10, start / 2, start * 7 / 10, start - 1] {
+        let mut whole = 0;
+        let mut end = 12;
+        for &(unpadded, size) in &list {
+            end += (unpadded + 3) & !3;
+            if end > cut as u64 {
+                break;
+            }
+            whole += size as usize;
+        }
+        let source = Cursor::new(packed[12..cut].to_vec());
+        let mut reader = parallel::Parallel::new(source, header, blocks.clone(), 4).unwrap();
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        let failed = loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break false,
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+                Err(_) => break true,
+            }
+        };
+        assert!(failed, "cut at {cut}");
+        assert_eq!(out.len(), whole, "cut at {cut}");
+        assert!(out == data[..whole], "cut at {cut}");
+    }
+}
