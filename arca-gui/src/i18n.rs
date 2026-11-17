@@ -482,6 +482,19 @@ pub struct Strings {
     pub preparing_move: &'static str,
     pub preparing_copy: &'static str,
     pub progress_status: &'static str,
+    pub compare_with: &'static str,
+    pub compare_with_folder: &'static str,
+    pub comparing: &'static str,
+    pub compare_word: &'static str,
+    pub compare_subject: &'static str,
+    pub compare_done: &'static str,
+    pub compare_identical: &'static str,
+    pub compare_all: &'static str,
+    pub compare_only_first: &'static str,
+    pub compare_only_second: &'static str,
+    pub compare_changed: &'static str,
+    pub compare_none_shown: &'static str,
+    pub compare_legend: &'static str,
 }
 
 const EN: Strings = Strings {
@@ -918,6 +931,19 @@ const EN: Strings = Strings {
     preparing_move: "Preparing selected files to move…",
     preparing_copy: "Preparing selected files to copy…",
     progress_status: "{verb} · {progress}",
+    compare_with: "Compare with archive\u{2026}",
+    compare_with_folder: "Compare with folder\u{2026}",
+    comparing: "Comparing",
+    compare_word: "Comparison",
+    compare_subject: "{a} and {b}",
+    compare_done: "Differences: {n}",
+    compare_identical: "No differences",
+    compare_all: "All",
+    compare_only_first: "Only in the first",
+    compare_only_second: "Only in the second",
+    compare_changed: "Changed",
+    compare_none_shown: "No differences of this kind",
+    compare_legend: "+ only in the second   - only in the first   M contents differ   T file, folder or link   m only the date",
 };
 
 const ES: Strings = Strings {
@@ -1354,6 +1380,19 @@ const ES: Strings = Strings {
     preparing_move: "Preparando los archivos seleccionados para mover…",
     preparing_copy: "Preparando los archivos seleccionados para copiar…",
     progress_status: "{verb} · {progress}",
+    compare_with: "Comparar con un archivo\u{2026}",
+    compare_with_folder: "Comparar con una carpeta\u{2026}",
+    comparing: "Comparando",
+    compare_word: "Comparación",
+    compare_subject: "{a} y {b}",
+    compare_done: "Diferencias: {n}",
+    compare_identical: "Sin diferencias",
+    compare_all: "Todas",
+    compare_only_first: "Solo en el primero",
+    compare_only_second: "Solo en el segundo",
+    compare_changed: "Cambiadas",
+    compare_none_shown: "Ninguna diferencia de este tipo",
+    compare_legend: "+ solo en el segundo   - solo en el primero   M contenido distinto   T archivo, carpeta o enlace   m solo la fecha",
 };
 
 const UK: Strings = Strings {
@@ -1790,6 +1829,19 @@ const UK: Strings = Strings {
     preparing_move: "Підготовка вибраних файлів до переміщення…",
     preparing_copy: "Підготовка вибраних файлів до копіювання…",
     progress_status: "{verb} · {progress}",
+    compare_with: "Порівняти з архівом\u{2026}",
+    compare_with_folder: "Порівняти з папкою\u{2026}",
+    comparing: "Порівняння",
+    compare_word: "Порівняння",
+    compare_subject: "{a} і {b}",
+    compare_done: "Відмінностей: {n}",
+    compare_identical: "Відмінностей немає",
+    compare_all: "Усі",
+    compare_only_first: "Лише в першому",
+    compare_only_second: "Лише в другому",
+    compare_changed: "Змінені",
+    compare_none_shown: "Відмінностей такого типу немає",
+    compare_legend: "+ лише в другому   - лише в першому   M інший вміст   T файл, папка чи посилання   m лише дата",
 };
 pub fn strings(l: Lang) -> &'static Strings {
     match l {

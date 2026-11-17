@@ -280,6 +280,7 @@ name = "arca-cli"
 version = "0.10.0"
 dependencies = [
  "arca-7z",
+ "arca-compare",
  "arca-core",
  "arca-iso",
  "arca-rar",
@@ -293,6 +294,22 @@ dependencies = [
  "signal-hook",
  "tempfile",
  "winresource",
+]
+
+[[package]]
+name = "arca-compare"
+version = "0.10.0"
+dependencies = [
+ "arca-7z",
+ "arca-core",
+ "arca-iso",
+ "arca-rar",
+ "arca-stream",
+ "arca-tar",
+ "arca-zip",
+ "flate2",
+ "rayon",
+ "tempfile",
 ]
 
 [[package]]
@@ -323,6 +340,7 @@ dependencies = [
  "arboard",
  "arca-7z",
  "arca-brand",
+ "arca-compare",
  "arca-core",
  "arca-drag",
  "arca-icons",

@@ -31,10 +31,12 @@ pub(crate) enum RowAction {
     Delete,
     ExtractAll,
     TestArchive,
+    Compare,
+    CompareFolder,
 }
 
 impl RowAction {
-    pub(crate) const ALL: [RowAction; 27] = [
+    pub(crate) const ALL: [RowAction; 29] = [
         RowAction::NewFolderWith,
         RowAction::Open,
         RowAction::OpenInPane,
@@ -62,6 +64,8 @@ impl RowAction {
         RowAction::Delete,
         RowAction::ExtractAll,
         RowAction::TestArchive,
+        RowAction::Compare,
+        RowAction::CompareFolder,
     ];
 
     /// What the menu offers where there is no row under the pointer: the
@@ -157,6 +161,8 @@ impl RowAction {
             RowAction::Pin => (s.pin_word, ""),
             RowAction::ExtractAll => (s.extract_all, "ctrl-e"),
             RowAction::TestArchive => (s.test_word, "ctrl-t"),
+            RowAction::Compare => (s.compare_with, ""),
+            RowAction::CompareFolder => (s.compare_with_folder, ""),
         }
     }
 
@@ -189,6 +195,8 @@ impl RowAction {
             RowAction::Compress => icon::PACKAGE,
             RowAction::CopyPath => icon::LINK,
             RowAction::Pin => icon::PUSH_PIN,
+            RowAction::Compare => icon::GIT_DIFF,
+            RowAction::CompareFolder => icon::FOLDERS,
         }
     }
 
@@ -207,6 +215,7 @@ impl RowAction {
                 | RowAction::Trash
                 | RowAction::NewFolder
                 | RowAction::ExtractAll
+                | RowAction::Compare
         )
     }
 
@@ -331,6 +340,7 @@ pub(crate) enum ModalKind {
     Properties,
     Update,
     Checksums,
+    Compare,
     Label,
     Format,
 }
@@ -415,6 +425,10 @@ pub(crate) enum DialogKind {
     CarryTo {
         roots: Vec<String>,
         copy: bool,
+    },
+    Compare {
+        first: Option<PathBuf>,
+        folder: bool,
     },
 }
 

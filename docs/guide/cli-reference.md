@@ -25,6 +25,7 @@ Commands:
   hash      Print or check checksums of files, in the sha256sum format
   password  Add, change or remove the password of an existing archive
   repair    Rebuild a damaged ZIP from the entries that can still be read
+  diff      Compare two archives, or an archive and a folder
   bench     Measure the R1 and R2 performance requirements
 
 Options:
@@ -99,6 +100,39 @@ arca hash -a crc32 setup.exe
 
 Paths are printed as given, with `/` between folders on every system. A sum file may use `*` before the name (binary mode), Windows line endings, a byte-order mark and the escaped names `sha256sum` writes for names holding a backslash or a line break. Lines that aren’t checksums are reported and skipped. A file that can’t be read, a checksum that doesn’t match, or a sum file with no checksum lines at all, gives exit status 1. BLAKE3 isn’t offered: its Rust crate needs a C compiler by default.
 
+## diff
+
+Compare two archives, or an archive and a folder, and print one line for each name the two sides hold differently. Either side can be any archive `list` reads, a RAR volume set named by any of its volumes, or a folder. Entries are read straight out of the archives, never extracted.
+
+| Argument / option | Default | Description |
+| --- | --- | --- |
+| `<A>` | required | First archive or folder. |
+| `<B>` | required | Second archive or folder. |
+| `--quick` | off | Compare sizes, and the CRC32 where both sides store one, without reading any contents. |
+| `--times` | off | Also report files whose contents match but whose modification times are more than 2 seconds apart. |
+| `-p, --password <PASSWORD>` | none | Password of the first archive, and of the second unless `--password-b` is given. |
+| `--password-b <PASSWORD>` | the `-p` one | Password of the second archive. |
+
+```sh
+arca diff release-1.0.zip release-1.1.zip
+arca diff backup.tar.zst ~/project       # does the backup still match the folder?
+arca diff --quick -p secret a.7z b.zip
+```
+
+| Line | Meaning |
+| --- | --- |
+| `+ path` | Only in B. |
+| `- path` | Only in A. |
+| `M path` | In both, with different contents, or a link pointing somewhere else. |
+| `T path` | A file on one side and a folder or a link on the other. |
+| `m path` | Same contents, different modification time (only with `--times`). |
+
+- Lines come in name order. Names use `/` and folders end in `/`. They are compared exactly as written, so case matters. A leading `./` and doubled slashes are ignored, and a backslash reads as `/`.
+- A folder is compared by what it holds, not by its own name: `arca diff a.zip out` after `arca x a.zip -o out` prints nothing. Folders that only appear in the paths of their files count as folders, so an archive without folder entries still matches its extraction.
+- By default, files of the same size are read on both sides and compared by SHA-256, unless both sides store CRC32s and those differ. A standalone `.xz`, `.bz2` or `.zst` has no reliable size, so it is always read, except with `--quick`, which never reports it as changed.
+- Links can only be told apart in TAR and on the disk. A TAR hard link counts as the file it names. Devices and pipes are left out.
+- A side that can’t be opened, a wrong or missing password, or an entry that has to be read and can’t be, gives exit status 2 rather than a difference.
+
 ## password
 
 Rewrite a `.zip` with a different password, or with none. Entries aren’t compressed again, because WinZip AES encrypts the already-compressed bytes.
@@ -143,5 +177,5 @@ Measure the R1 and R2 performance requirements against an archive.
 | Status | Meaning |
 | --- | --- |
 | `0` | Success. |
-| `1` | Archive/I/O error, including wrong password or corrupted encrypted data. Printed to standard error as `arca: <message>`. Also a `hash` that couldn’t read a file or found a checksum that didn’t match. |
-| `2` | Invalid command-line syntax/options, reported by the argument parser. |
+| `1` | Archive/I/O error, including wrong password or corrupted encrypted data. Printed to standard error as `arca: <message>`. Also a `hash` that couldn’t read a file or found a checksum that didn’t match, and a `diff` that found differences. |
+| `2` | Invalid command-line syntax/options, reported by the argument parser. Also a `diff` that couldn’t read one of its sides: for `diff`, 1 only ever means the two differ. |
