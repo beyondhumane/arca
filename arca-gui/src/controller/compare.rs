@@ -277,6 +277,13 @@ mod tests {
             second: dir,
         });
         let id = app.state.tasks.last().expect("a task").id;
+        app.hold_task(id, true);
+        let until = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < until {
+            app.receive();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(app.task(id).unwrap().status, TaskStatus::Running);
         app.cancel_task(id);
         settle(&mut app);
         assert!(app.comparison().is_none());
