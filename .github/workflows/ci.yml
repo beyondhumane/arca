@@ -80,6 +80,17 @@ jobs:
         run: cargo build --no-default-features -p arca-cli
       - name: Build CLI with the default codecs
         run: cargo build -p arca-cli
+      # p7zip 16.02 has no ARM64 filter, which 7-Zip gained in 23.01 and Arca
+      # writes for ARM64 programs. The same pinned 7-Zip the build job uses
+      # checks those cases; everything else stays on p7zip.
+      - name: 7-Zip for the ARM64 filter
+        run: |
+          mkdir -p "$RUNNER_TEMP/7zz"
+          cd "$RUNNER_TEMP/7zz"
+          curl -fsSL -o 7z.txz https://github.com/ip7z/7zip/releases/download/24.09/7z2409-linux-x64.tar.xz
+          echo "914c7e20ad5ef8e4d3cf08620ff8894b28fe11b7eb99809d6930870fbe48a281  7z.txz" | sha256sum -c
+          tar -xJf 7z.txz 7zz
+          echo "SEVENZIP=$PWD/7zz" >> "$GITHUB_ENV"
       - name: Interoperability verified by hash
         run: ARCA="$GITHUB_WORKSPACE/target/debug/arca" bash interop.sh
 
