@@ -1330,14 +1330,13 @@ impl<B: Budget> OptimalCollector<B> {
             allowance,
         )?;
         // Arca: history goes into the tree too, rather than sending the parse
-        // to the chain finder, which carried it worst: on a 20 MiB log cut
-        // into the writer's 4 MiB runs, level 3 searched 32 candidates per
-        // position through chains for 45.9 s and 3,309,368 bytes. A tree takes
-        // history one descent per position, so only the newest quarter of a
-        // dictionary is seeded, and older history is out of reach. Seeded
-        // with 1 MiB the same log took 20.2 s for 3,042,817 bytes, seeded with
-        // all 4 MiB 30.6 s for 3,025,106. A descent with no reach reports
-        // nothing, so seeding collects nothing.
+        // to the chain finder, which carries a search at every position worst.
+        // A tree takes history one descent per position, so only the newest
+        // quarter of a dictionary is seeded, and older history is out of reach
+        // of the run's first matches. On the 20 MiB log of Arca's benchmark
+        // corpus (`arca-rar/tests/rar-bench.ps1`), `arca create -l 9` took 28 s
+        // of CPU rather than 99 s and packed 0.5% smaller. A descent with no
+        // reach reports nothing, so seeding collects nothing.
         let seeded = (options.max_match_distance / HISTORY_SEED_DIVISOR).min(start);
         let mut nothing = Buffer::new(allowance);
         for pos in start - seeded..start {

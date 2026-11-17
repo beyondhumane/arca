@@ -73,11 +73,11 @@ const MAX_WINDOW_HASH_BITS: u32 = 22;
 /// of them is a node a tree descent or a chain walk visits and compares, each a
 /// cache miss, for no match. Scaling the table with the window, as LZMA sizes
 /// its own, leaves about two. Positions that share their first four bytes
-/// still share a head, so no match is lost. On 4 MiB of incompressible bytes,
-/// one thread, the best of three runs on a busy machine, level 1 took 1.33 s
-/// rather than 1.60 s and level 3 1.17 s rather than 2.49 s; text, whose
-/// heads hold real matches, was unchanged. The table costs two bytes per byte
-/// of window, which the writer's workspace estimate charges.
+/// still share a head, so no match is lost. `arca create out.rar random -l 1`
+/// on the 8 MiB random kind of Arca's benchmark corpus
+/// (`arca-rar/tests/rar-bench.ps1`) took 4.2 s of CPU rather than 6.7 s, and
+/// 2.4 s rather than 4.6 s at `-l 6`. The table costs two bytes per byte of
+/// window, which the writer's workspace estimate charges.
 pub(crate) fn window_hash_bits(window: usize, floor: u32) -> u32 {
     let window = window.max(1).checked_next_power_of_two().unwrap_or(1 << 31);
     window
