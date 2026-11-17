@@ -9,7 +9,7 @@ if [ ! -x "$ARCA" ]; then
   echo "binary not found at $ARCA (build it with: cargo build --release)" >&2
   exit 1
 fi
-for tool in zip unzip tar 7z xz python3; do
+for tool in zip unzip tar 7z xz bzip2 zstd python3; do
   command -v "$tool" >/dev/null 2>&1 || { echo "required tool not found: $tool" >&2; exit 1; }
 done
 W=$(mktemp -d "${TMPDIR:-/tmp}/arca-interop.XXXXXX") || exit 1
@@ -368,6 +368,62 @@ $ARCA extract out/bad.xz -o y >/dev/null 2>&1 && ko "corrupt .xz extracted" || o
 head -c 100000 out/a-normal-1.tar.xz > out/cut.tar.xz
 rm -rf y; mkdir y
 $ARCA extract out/cut.tar.xz -o y >/dev/null 2>&1 && ko "truncated .tar.xz extracted" || ok "truncated .tar.xz fails"
+echo
+echo "J) bzip2 and Zstandard, both directions"
+for codec in bz2 zst; do
+  for j in 1 4; do
+    $ARCA create out/a-$j.tar.$codec src -l fast -j $j >/dev/null 2>&1 || { ko "arca create .tar.$codec (-j $j)"; continue; }
+    if [ $codec = bz2 ]; then bzip2 -tq out/a-$j.tar.$codec 2>/dev/null; else zstd -tq out/a-$j.tar.$codec 2>/dev/null; fi &&
+      ok "the $codec tool accepts Arca's .tar.$codec (-j $j)" || ko "the $codec tool rejects Arca's .tar.$codec (-j $j)"
+    rm -rf x; mkdir x
+    if [ $codec = bz2 ]; then tar xjf out/a-$j.tar.$codec -C x 2>/dev/null; else zstd -dc out/a-$j.tar.$codec 2>/dev/null | tar xf - -C x 2>/dev/null; fi
+    H=$(cd x/src 2>/dev/null && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+    [ "$H" = "$REF" ] && ok "tar returns identical bytes from Arca's .tar.$codec (-j $j)" || ko "tar returns different data from Arca's .tar.$codec (-j $j)"
+  done
+  $ARCA create out/one.bin.$codec src/binary.bin >/dev/null 2>&1
+  if [ $codec = bz2 ]; then D="bzip2 -dc"; else D="zstd -dcq"; fi
+  [ "$($D out/one.bin.$codec 2>/dev/null | sha256sum)" = "$(sha256sum < src/binary.bin)" ] && ok "$D reads Arca's standalone .$codec" || ko "$D fails on Arca's standalone .$codec"
+  $ARCA create out/two.$codec src/text.txt src/binary.bin >/dev/null 2>&1 && ko "a standalone .$codec accepted two inputs" || ok "a standalone .$codec refuses two inputs"
+done
+
+tar cjf out/t.tar.bz2 src
+cp out/t.tar.bz2 out/t.tbz2
+zstd -qc out/a.tar > out/t.tar.zst
+cp out/t.tar.zst out/t.tzst
+for f in t.tar.bz2 t.tbz2 t.tar.zst t.tzst; do
+  rm -rf y; mkdir y
+  $ARCA test out/$f >/dev/null 2>&1 || ko "Arca tests the tools' $f"
+  $ARCA extract out/$f -o y >/dev/null 2>&1 || { ko "arca extract $f"; continue; }
+  H=$(cd y/src && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+  [ "$H" = "$REF" ] && ok "Arca extracts the tools' $f without losing a byte" || ko "Arca mis-extracts $f"
+done
+bzip2 -kc src/text.txt > out/cat.bz2; bzip2 -kc src/binary.bin >> out/cat.bz2
+zstd -qc src/text.txt > out/cat.zst; zstd -qc --no-check src/binary.bin >> out/cat.zst
+for f in cat.bz2 cat.zst; do
+  rm -rf y; mkdir y
+  $ARCA extract out/$f -o y >/dev/null 2>&1 && [ "$(sha256sum < y/cat)" = "$(cat src/text.txt src/binary.bin | sha256sum)" ] && ok "Arca joins concatenated streams in $f" || ko "Arca mishandles concatenated streams in $f"
+done
+cp out/t.tar.zst out/renamed.bz2
+$ARCA list out/renamed.bz2 2>/dev/null | grep -q 'src/a/b/c/deep.dat' && ok "a Zstandard TAR named .bz2 is still listed as a TAR" || ko "a Zstandard TAR named .bz2 was not recognised"
+
+for codec in bz2 zst; do
+  cp out/one.bin.$codec out/bad.$codec
+  printf '\xDE\xAD\xBE\xEF' | dd of=out/bad.$codec bs=1 seek=4000 conv=notrunc 2>/dev/null
+  rm -rf y; mkdir y
+  $ARCA test out/bad.$codec >/dev/null 2>&1 && ko "corrupt .$codec not detected" || ok "corrupt .$codec detected, exits with an error"
+  $ARCA extract out/bad.$codec -o y >/dev/null 2>&1 && ko "corrupt .$codec extracted" || ok "corrupt .$codec extraction fails"
+  [ -z "$(ls -A y)" ] && ok "a corrupt .$codec publishes nothing" || ko "a corrupt .$codec left a partial file"
+  head -c 100000 out/a-1.tar.$codec > out/cut.tar.$codec
+  rm -rf y; mkdir y
+  $ARCA extract out/cut.tar.$codec -o y >/dev/null 2>&1 && ko "truncated .tar.$codec extracted" || ok "truncated .tar.$codec fails"
+done
+
+zip -qr -Z bzip2 out/bzip2.zip src
+rm -rf y; mkdir y
+$ARCA test out/bzip2.zip >/dev/null 2>&1 && ok "Arca tests a ZIP with bzip2 entries" || ko "Arca fails to test a ZIP with bzip2 entries"
+$ARCA extract out/bzip2.zip -o y >/dev/null 2>&1
+H=$(cd y/src 2>/dev/null && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+[ "$H" = "$REF" ] && ok "Arca extracts bzip2 ZIP entries without losing a byte" || ko "Arca mis-extracts bzip2 ZIP entries"
 
 echo
 if [ "${ARCA_TEST_RAR:-1}" = 1 ]; then
