@@ -956,7 +956,16 @@ function Secs([string]$med, [string]$lo, [string]$hi, [int]$n) {
 function Show-Cmd($r) {
     $short = $Tools[$r.tool].short
     if (-not $short) { $short = $r.tool }
-    return ("$short $($r.args)").Replace($Work, "<work>")
+    return Redact "$short $($r.args)"
+}
+
+# The report is meant for the docs, so it names no user folder; results.csv
+# and results.json keep the absolute paths.
+function Redact([string]$s) {
+    $s = $s -ireplace [regex]::Escape($Work), "<work>"
+    $s = $s -ireplace [regex]::Escape($Repo), "<repo>"
+    if ($env:USERPROFILE) { $s = $s -ireplace [regex]::Escape($env:USERPROFILE), "%USERPROFILE%" }
+    return $s
 }
 
 function Level-Text([string]$tool, [string]$level) {
@@ -970,7 +979,6 @@ function Level-Text([string]$tool, [string]$level) {
     }
 }
 
-function Show-Cwd([string]$cwd) { return $cwd.Replace($Work, "<work>") }
 
 function Write-Reports {
     $rows = Latest-Results
@@ -986,7 +994,7 @@ function Write-Reports {
     [void]$md.Append("# Arca against other archivers$nl$nl")
     if ($Quick) { [void]$md.Append("> [!WARNING]$nl> Dry run (``-Quick``): tiny corpora and one run each. These numbers prove the script works and must not be published.$nl$nl") }
     [void]$md.Append("Generated $((Get-Date).ToString('yyyy-MM-dd HH:mm', $Inv)) by ``benchmarks/compare.ps1``. Reproduce with:$nl$nl``````powershell$nl")
-    [void]$md.Append("cargo build --release -p arca-cli$nl$ReproCommand$nl``````$nl$nl")
+    [void]$md.Append("cargo build --release -p arca-cli$nl$(Redact $ReproCommand)$nl``````$nl$nl")
     [void]$md.Append("## Machine$nl$nl| | |$nl| --- | --- |$nl")
     foreach ($k in $Machine.Keys) { [void]$md.Append("| $k | $($Machine[$k]) |$nl") }
     [void]$md.Append("| threads given to every tool | $AllThreads |$nl$nl")
@@ -994,9 +1002,9 @@ function Write-Reports {
     foreach ($t in $Tools.Values) {
         $h = $t.sha256
         if ($h.Length -ge 16) { $h = $h.Substring(0, 16) }
-        [void]$md.Append("| $($t.name) | $($t.version) | ``$($t.exe)`` | ``$h`` |$nl")
+        [void]$md.Append("| $($t.name) | $($t.version) | ``$(Redact $t.exe)`` | ``$h`` |$nl")
     }
-    foreach ($n in $ToolNotes) { [void]$md.Append("$nl- $n") }
+    foreach ($n in $ToolNotes) { [void]$md.Append("$nl- $(Redact $n)") }
     [void]$md.Append("$nl$nl## Corpora$nl$nl| Corpus | What | Files | Bytes | File list SHA-256 | Made with |$nl| --- | --- | --- | --- | --- | --- |$nl")
     foreach ($c in $CorpusInfo.Values) {
         [void]$md.Append("| ``$($c.name)`` | $($c.description) | $(F '{0:N0}' ([long]$c.files)) | $(F '{0:N0}' ([long]$c.bytes)) | ``$($c.listHash.Substring(0, 16))`` | ``$($c.command)`` |$nl")
@@ -1048,9 +1056,9 @@ function Write-Reports {
     }
     if ($failed.Count -gt 0) {
         [void]$md.Append("$nl## Failed rows$nl$nl")
-        foreach ($r in $failed) { [void]$md.Append("- ``$($r.key)``: $($r.verify)$nl") }
+        foreach ($r in $failed) { [void]$md.Append("- ``$($r.key)``: $(Redact $r.verify)$nl") }
     }
-    [void]$md.Append("$nl## Working folders$nl$nl``<work>`` is ``$(Show-Cwd $Work)`` on the measuring machine, here ``$Work``. Creation commands run in ``<work>\c\<corpus>`` (xz in ``<work>\out``, on a hard link to ``<work>\tar\<corpus>.tar``); readers of RAR and ZIP made by WinRAR, and xz, run in their output folder ``<work>\x\<tool>``; the rest in ``<work>``. results.csv and results.json hold every command with its absolute paths.$nl")
+    [void]$md.Append("$nl## Working folders$nl$nl``<work>`` is the work folder (``-Work``, by default ``%TEMP%\arca-compare``) and ``<repo>`` this repository. Creation commands run in ``<work>\c\<corpus>`` (xz in ``<work>\out``, on a hard link to ``<work>\tar\<corpus>.tar``); readers of RAR and ZIP made by WinRAR, and xz, run in their output folder ``<work>\x\<tool>``; the rest in ``<work>``. results.csv and results.json hold every command with its absolute paths.$nl")
     [IO.File]::WriteAllText((Join-Path $ResDir "results.md"), $md.ToString(), $Utf8)
 }
 
