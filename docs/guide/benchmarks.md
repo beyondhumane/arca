@@ -2,7 +2,7 @@
 description: Every measurement, the machine behind it, and the cases Arca loses.
 group: Reference
 order: 14
-keywords: performance speed benchmarks nanazip 7-zip zip numbers rating codecs threads
+keywords: performance speed benchmarks nanazip 7-zip zip numbers rating codecs threads rar rar5 winrar
 ---
 
 # Benchmarks
@@ -169,3 +169,60 @@ The disk sustained 327 MB/s before the four runs and 90 MB/s after them. Arca ra
 > **Why Arca wins here**
 >
 > NanaZip’s wall time equals its CPU time: its own processor is the limit. Arca burns slightly more CPU than wall clock (1.1 cores), so decompression overlaps with writing and the wall clock settles against the disk: 6.28 GB in 21.9 s is 294 MB/s against a 327 MB/s ceiling. The faster decoder is what gets it there.
+
+## RAR 5 against WinRAR
+
+Arca writes RAR 5 with its own compressor, a patched copy of `rars` (see `arca-rar/vendor/PATCHES.md`). These figures compare it with WinRAR's console `Rar.exe` 7.23 at the level each Arca level stands in for: Arca `-l 1`, `3`, `6`, `7` and `9` against `-m1` to `-m5`.
+
+AMD Ryzen 7 3700X (8 cores, 16 threads), 32 GB, Windows 11. **The machine was busy**: other builds ran throughout, and the processor load sampled before each run was mostly 60–100%. Wall times swing by a factor of two or more from run to run, so the tables lead with the CPU time of the whole process (all its threads) and the size, which load moves far less. Each figure is the median of 3 runs; the CSV the script writes keeps every run and its load.
+
+The corpus is generated, so anyone can rebuild the same bytes, plus this repository at a pinned commit as real data:
+
+```powershell
+cargo build --release -p arca-cli
+cargo run --release -p arca-rar --example rar-corpus -- $env:TEMP\rar-corpus
+mkdir $env:TEMP\rar-corpus\repo
+git archive --format=tar 4b1d67b | tar -x -C $env:TEMP\rar-corpus\repo
+powershell -ExecutionPolicy Bypass -File arca-rar\tests\rar-bench.ps1 `
+    -Corpus $env:TEMP\rar-corpus -Runs 3 `
+    -Kinds "text,log,source,exe,media,random,small,repo,all"
+```
+
+Each run is `arca create out.rar <dir> -l N` or `Rar.exe a -mN -ep1 -r -idq out.rar <dir>`, both non-solid, and every archive Arca writes is checked with `Rar.exe t`. "Before" is Arca at commit `4b1d67b`, measured the same way the same day.
+
+### The whole corpus
+
+`all` is the whole tree as one archive: the 77 MiB the generator writes plus the 16 MiB `repo` kind, 97,441,208 bytes in 4,286 files.
+
+| Level | Before: CPU | wall | size | **Now: CPU** | wall | size | WinRAR: CPU | wall | size |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `-l 1` / `-m1` | 33.8 s | 123.1 s | 46,836,620 | **21.3 s** | 36.8 s | 46,936,551 | 8.1 s | 2.9 s | 47,234,842 |
+| `-l 3` / `-m2` | 81.4 s | 104.6 s | 44,067,047 | **62.2 s** | 32.5 s | 43,880,430 | 12.5 s | 2.9 s | 44,341,281 |
+| `-l 6` / `-m3` | 96.7 s | 46.9 s | 43,648,504 | **89.8 s** | 51.9 s | 43,419,805 | 21.2 s | 5.7 s | 42,537,059 |
+| `-l 7` / `-m4` | 188.2 s | 135.7 s | 43,332,800 | **79.5 s** | 44.3 s | 43,353,431 | 29.9 s | 6.5 s | 42,258,443 |
+| `-l 9` / `-m5` | 181.5 s | 201.7 s | 43,244,674 | **101.7 s** | 82.0 s | 43,240,314 | 31.7 s | 6.2 s | 42,206,709 |
+
+Arca's wall time here is mostly not the compressor: the writer spools every member to its own temporary file before assembling the archive, and on Windows that costs milliseconds per file (see below). CPU time is the figure to compare codecs by. Against WinRAR, Arca now uses 2.6× its CPU time at `-l 1`, 4.2× at `-l 6` and 3.2× at `-l 9`, against 4.9×, 5.3× and 4.9× before. Its archives are 0.6% and 1.0% smaller at `-l 1` and `-l 3`, and 2.1% to 2.6% larger from `-l 6` up, almost all of it the `media` kind, where WinRAR applies a delta filter and Arca none.
+
+### By kind, `-l 6` against `-m3`
+
+| Kind | Before: CPU | size | **Now: CPU** | size | WinRAR: CPU | size |
+| --- | --- | --- | --- | --- | --- | --- |
+| `text` | 12.48 s | 3,106,714 | **12.45 s** | 3,106,714 | 2.09 s | 3,303,767 |
+| `log` | 32.89 s | 3,311,320 | **21.12 s** | 3,042,982 | 5.95 s | 3,524,354 |
+| `source` | 3.78 s | 2,125,845 | **4.11 s** | 2,125,845 | 1.11 s | 2,188,815 |
+| `exe` | 15.45 s | 7,255,811 | **12.02 s** | 7,255,835 | 3.64 s | 7,711,395 |
+| `media` | 8.80 s | 7,985,548 | **1.59 s** | 8,023,086 | 2.30 s | 6,056,962 |
+| `random` | 7.62 s | 8,388,863 | **1.11 s** | 8,388,863 | 1.58 s | 8,388,944 |
+| `small` | 8.91 s | 3,668,621 | **7.81 s** | 3,668,621 | 1.31 s | 3,549,840 |
+| `repo` | 10.30 s | 7,774,219 | **6.84 s** | 7,776,296 | 2.25 s | 7,778,575 |
+
+On text, logs and source Arca writes 3% to 14% less than WinRAR at three to six times its CPU time; on the real `repo` kind the two are within 0.1% of each other at three times. `media` and `random` are now quicker than WinRAR, because the search steps over input that keeps finding nothing.
+
+### Where Arca still loses
+
+- **CPU time.** The optimal parse searches a binary tree at every position and prices every match length. It packs smaller than WinRAR on text, logs and source, and from `-l 3` up it still costs three to six times WinRAR's CPU time.
+- **Audio, images and executables.** Arca's writer applies no data filter (`FilterPolicy::None` in `arca-rar/src/writer.rs`), so the delta filter WinRAR uses on the PCM and bitmap of the `media` kind is missing: 32% larger there at `-l 6`. Real executables lose the E8/E9 filter the same way, which the synthetic `exe` kind does not show.
+- **Many small files.** For each member the writer spools its packed bytes to a temporary file next to the output before assembling the archive. On Windows that costs milliseconds per file, so the 3,000 files of the `small` kind take seconds of wall time with far less CPU time. This is the writer's spool, not the compressor: `arca create out.rar small -l 0` takes 2.6 s on the same files.
+- **Headers.** Arca records a BLAKE2sp hash for every file where WinRAR records a CRC32, 28 bytes more per file: about 84 KB of the `small` kind.
+- **A few big files.** A member is compressed in runs of one dictionary each (1 to 16 MiB by level), and each run is one job, so a single 4 MiB file at `-l 6` uses one core.
