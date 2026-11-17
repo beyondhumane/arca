@@ -1997,7 +1997,9 @@ impl AppController {
                     if let Some(f) = detect(&path) {
                         self.state.format = f;
                     }
-                    self.state.archive_bytes = fs::metadata(&path).ok().map(|m| m.len());
+                    self.state.archive_bytes = arca_core::volumes::open(&path)
+                        .and_then(|source| Ok(source.len()?))
+                        .ok();
                     // The name of what is open goes where every other
                     // program puts it, which frees a whole row above the
                     // list for nothing at all.
