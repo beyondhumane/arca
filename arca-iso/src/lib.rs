@@ -102,6 +102,27 @@ impl IsoArchive {
         Ok(out)
     }
 
+    /// Streams one file into `out` without the preview's size limit, asking
+    /// `progress` whether to carry on as it goes. Returns the bytes written.
+    pub fn read_entry_to(
+        &self,
+        index: usize,
+        out: &mut dyn Write,
+        progress: &Progress<'_>,
+    ) -> Result<u64> {
+        let (Some(entry), Some(extents)) = (self.entries.get(index), self.extents.get(index))
+        else {
+            return Err(Error::Format("ISO entry not found".into()));
+        };
+        if entry.is_dir {
+            return Err(Error::Unsupported("ISO entry is a directory".into()));
+        }
+        let total = self.entries.len();
+        copy(&mut File::open(&self.path)?, extents, out, &|| {
+            progress(index, total, &entry.name)
+        })
+    }
+
     /// Each file is written to a temporary name next to its destination and
     /// renamed into place once complete, so a cancelled or failed run leaves
     /// no partial files behind. Files finished before the failure stay.
