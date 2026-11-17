@@ -15,6 +15,14 @@ fn thread_choices() -> Vec<usize> {
     v
 }
 
+fn codec_name(s: &'static Strings, codec: Codec) -> &'static str {
+    if codec == Codec::Store {
+        s.codec_store
+    } else {
+        codec.label()
+    }
+}
+
 fn threads_text(s: &'static Strings, n: usize) -> String {
     if n == 1 {
         s.bench_one_thread.to_string()
@@ -83,7 +91,7 @@ impl Shell {
                     ui.label(cell(format!("{:>8}", speed_text(v.map(|v| v.decompress)))));
                 };
                 for codec in Codec::ALL {
-                    ui.label(codec.label());
+                    ui.label(codec_name(s, codec));
                     match state
                         .rows
                         .iter()
@@ -124,7 +132,7 @@ impl Shell {
                 (Phase::Generating, _) | (_, None) => s.bench_generating.to_string(),
                 (phase, Some(codec)) => format!(
                     "{} \u{b7} {} \u{b7} {}",
-                    codec.label(),
+                    codec_name(s, codec),
                     threads_text(s, at.threads),
                     if phase == Phase::Compressing {
                         s.bench_compressing
