@@ -475,11 +475,12 @@ fn corruption_and_sink_errors_are_not_success_or_misclassified() {
 
 #[test]
 fn sevenz_methods_have_no_zip_code() {
-    for method in [Method::Lzma, Method::Lzma2, Method::Bzip2, Method::Other7z] {
+    for method in [Method::Lzma, Method::Lzma2, Method::Other7z] {
         assert!(method.code().is_err());
     }
     assert_eq!(Method::Store.code().unwrap(), 0);
     assert_eq!(Method::Deflate.code().unwrap(), 8);
+    assert_eq!(Method::Bzip2.code().unwrap(), 12);
 }
 
 #[test]
