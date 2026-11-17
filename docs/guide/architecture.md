@@ -72,10 +72,10 @@ match ZipArchive::open(file) {
 
 - Encoded/decoded headers: 16 MiB each; entries, blocks and streams: 100,000.
 - At most four single-input/output coders per block; multi-input BCJ2 is unsupported.
-- LZMA dictionaries: 256 MiB per stage; Zstd window: 256 MiB. These are not a
-  global memory quota. There is no total extracted-byte or CPU-time quota.
-- Baseline decoding: Copy, LZMA, LZMA2, DEFLATE, AES, single-stream BCJ/Delta.
-  Default `codecs-native` adds Bzip2 and Zstd. PPMd, Brotli and LZ4 are unsupported.
+- LZMA dictionaries and PPMd models: 256 MiB per stage; Zstd window: 256 MiB.
+  These are not a global memory quota. There is no total extracted-byte or CPU-time quota.
+- Baseline decoding: Copy, LZMA, LZMA2, PPMd, DEFLATE, AES, single-stream
+  BCJ/Delta. Default `codecs-native` adds Bzip2 and Zstd. Brotli and LZ4 are unsupported.
 - Encrypted extraction validates the entire stable source before destination
   callbacks, then streams selected blocks. CRC-32 is not authentication.
 - Progress/cancellation is cooperative; bounded header parsing and KDF setup

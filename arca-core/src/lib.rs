@@ -93,6 +93,7 @@ pub enum Method {
     Lzma,
     Lzma2,
     Bzip2,
+    Ppmd,
     Other7z,
     Rar,
 }
@@ -106,6 +107,7 @@ impl Method {
             Method::Lzma => "lzma",
             Method::Lzma2 => "lzma2",
             Method::Bzip2 => "bzip2",
+            Method::Ppmd => "ppmd",
             Method::Other7z => "7z",
             Method::Rar => "rar",
         }

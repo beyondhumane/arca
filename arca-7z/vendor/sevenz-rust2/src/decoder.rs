@@ -28,7 +28,7 @@ pub enum Decoder<R: Read> {
     Lzma2(Box<Lzma2Reader<R>>),
     Lzma2Mt(Box<Lzma2ReaderMt<R>>),
     #[cfg(feature = "ppmd")]
-    Ppmd(Box<Ppmd7Decoder<R>>),
+    Ppmd(io::Take<Box<Ppmd7Decoder<R>>>),
     Bcj(BcjReader<R>),
     Delta(DeltaReader<R>),
     #[cfg(feature = "brotli")]
@@ -137,7 +137,10 @@ pub fn add_decoder<I: Read>(
             let (order, memory_size) = get_ppmd_order_memory_size(coder, max_mem_limit_kb)?;
             let ppmd = Ppmd7Decoder::new(input, order, memory_size)
                 .map_err(|err| Error::other(err.to_string()))?;
-            Ok(Decoder::Ppmd(Box::new(ppmd)))
+            // Arca: a 7z PPMd stream has no end marker, so the decoder would go
+            // on turning whatever follows the last symbol into bytes. Stop it at
+            // the size the block gives this coder.
+            Ok(Decoder::Ppmd(Box::new(ppmd).take(uncompressed_len as u64)))
         }
         #[cfg(feature = "brotli")]
         EncoderMethod::ID_BROTLI => {
