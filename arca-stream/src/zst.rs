@@ -129,7 +129,6 @@ mod native {
     use super::declared_size;
     use crate::BUF;
     use arca_core::{Level, Result};
-    use std::fs::File;
     use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
     use std::path::Path;
 
@@ -205,7 +204,7 @@ mod native {
     }
 
     pub(crate) fn open(path: &Path) -> Result<Box<dyn Read + Send>> {
-        let mut file = File::open(path)?;
+        let mut file = arca_core::volumes::open(path)?;
         let size = declared_size(&mut file)?;
         file.seek(SeekFrom::Start(0))?;
         decoder_with(BufReader::with_capacity(BUF, file), size)

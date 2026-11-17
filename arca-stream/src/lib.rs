@@ -7,7 +7,6 @@ mod bz2;
 mod zst;
 
 use arca_core::{Container, Entry, Error, Format, Level, Method, Result};
-use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -68,7 +67,7 @@ impl Codec {
         }
     }
 
-    fn decoder(self, file: File) -> Result<Box<dyn Read + Send>> {
+    fn decoder(self, file: arca_core::volumes::Source) -> Result<Box<dyn Read + Send>> {
         Ok(match self {
             Codec::Xz => Box::new(arca_xz::Decoder::new(BufReader::new(file))),
             Codec::Bzip2 => Box::new(bz2::decoder(BufReader::new(file))),
@@ -102,6 +101,7 @@ pub fn open(path: &Path, format: Format) -> Result<Box<dyn Read + Send>> {
 /// so it comes from the file: `notes.txt.bz2` gives `notes.txt`, `a.tzst`
 /// gives `a.tar`, and a name without a known suffix gets `.out` appended.
 pub fn output_name(path: &Path) -> String {
+    let path = arca_core::volumes::whole_name(path);
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -121,7 +121,7 @@ pub fn output_name(path: &Path) -> String {
 /// count it.
 pub fn entry(path: &Path, format: Format) -> Result<Entry> {
     let codec = codec(format).ok_or_else(|| not_a_stream(format))?;
-    let mut file = File::open(path)?;
+    let mut file = arca_core::volumes::open(path)?;
     let size = match codec {
         Codec::Xz => arca_xz::uncompressed_size(&mut file)?,
         Codec::Bzip2 => {
@@ -135,7 +135,7 @@ pub fn entry(path: &Path, format: Format) -> Result<Entry> {
         raw_name: name.as_bytes().to_vec(),
         name,
         size,
-        compressed_size: file.metadata()?.len(),
+        compressed_size: file.len()?,
         method: codec.method(),
         crc32: None,
         is_dir: false,
@@ -156,11 +156,11 @@ pub fn entry(path: &Path, format: Format) -> Result<Entry> {
 /// whatever the name; without one it is a standalone stream, even if named
 /// `.tar.bz2`. Any other name is trusted as it is.
 pub fn identify(path: &Path) -> Option<Format> {
-    let named = Format::detect(path);
+    let named = Format::detect(path).or_else(|| split_format(path));
     if named.is_some_and(|format| !handles(format)) {
         return named;
     }
-    let Ok(mut file) = File::open(path) else {
+    let Ok(mut file) = arca_core::volumes::open(path) else {
         return named;
     };
     let mut magic = [0u8; 10];
@@ -206,6 +206,15 @@ pub fn identify(path: &Path) -> Option<Format> {
             found.single()
         },
     )
+}
+
+// A part of a split set is read as the archive it was cut from, named by
+// what comes before the part number. RAR has volumes of its own and an ISO
+// is read by path, so neither is joined this way.
+fn split_format(path: &Path) -> Option<Format> {
+    let (whole, _) = arca_core::volumes::split_part(path)?;
+    Format::detect(&whole)
+        .filter(|format| !matches!(format.container(), Container::Rar | Container::Iso))
 }
 
 // An empty tar is only its end marker: at least two zero blocks, padded with

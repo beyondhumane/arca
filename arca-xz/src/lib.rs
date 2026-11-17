@@ -5,7 +5,6 @@
 
 use arca_core::{Error, Level, Result};
 use lzma_rust2::{LzmaOptions, XzOptions, XzReader, XzWriter, XzWriterMt};
-use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU64;
 use std::path::Path;
@@ -223,9 +222,10 @@ impl<R: Read> Read for Decoder<R> {
     }
 }
 
-/// Opens a file for decoding, after reading its indexes.
-pub fn open(path: &Path) -> Result<Decoder<BufReader<File>>> {
-    let mut file = File::open(path)?;
+/// Opens a file, or a set of split parts, for decoding, after reading its
+/// indexes.
+pub fn open(path: &Path) -> Result<Decoder<BufReader<arca_core::volumes::Source>>> {
+    let mut file = arca_core::volumes::open(path)?;
     let size = uncompressed_size(&mut file)?;
     file.seek(SeekFrom::Start(0))?;
     let mut decoder = Decoder::new(BufReader::with_capacity(BUF, file));
