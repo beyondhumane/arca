@@ -366,7 +366,7 @@ fn write_limited_volumes(
     let shape = PlanShape::new()
         .compressed(true)
         .volumes(true)
-        .filtered(extras.filter_policy != FilterPolicy::None);
+        .filtered(extras.filter_policy.filters_whole_members());
     // One option at a time, so a refusal names the one that was asked for.
     // This used to be a single check over all three, which reported a string
     // naming every option it covered whichever one the caller had set. Quick
@@ -549,7 +549,7 @@ pub(crate) fn write_streaming_archive_reporting(
         options,
         PlanShape::new()
             .compressed(true)
-            .filtered(extras.filter_policy != FilterPolicy::None),
+            .filtered(extras.filter_policy.filters_whole_members()),
     )?;
     if let Some(percent) = recovery_percent {
         validate_recovery_percent(percent)?;

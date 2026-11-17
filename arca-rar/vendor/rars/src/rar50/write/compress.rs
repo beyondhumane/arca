@@ -20,7 +20,9 @@ use super::filter_policy::{
 use super::FilterPolicy;
 #[cfg(test)]
 use crate::codec::rar50::EncodeOptions;
-use crate::codec::rar50::{streaming_blocks_with_allowance, BlockSplitter};
+use crate::codec::rar50::{
+    detect_filters, filtered_streaming_blocks_with_allowance, BlockSplitter, EncodeFilter,
+};
 use crate::codec::workspace::{Allowance, Budget, Buffer};
 use crate::crc32::Crc32;
 use crate::rar50::blake2sp;
@@ -219,6 +221,9 @@ struct BlockJob<B: Budget> {
     history: Buffer<u8, B>,
     /// Member index, end within `data`, and final-block flag.
     blocks: Records<(usize, usize, bool)>,
+    /// Arca: the filter records `data` was transformed under, with offsets
+    /// into it.
+    filters: Buffer<EncodeFilter, B>,
 }
 
 impl<B: Budget> BlockJob<B> {
@@ -875,6 +880,7 @@ where
                     data: Buffer::new(allowance),
                     history: Buffer::copied(&histories[member], allowance)?,
                     blocks: Records::new(0, resources)?,
+                    filters: Buffer::new(allowance),
                 };
                 while stream.has_more() && job.data.len() < run_size(plan) {
                     job.append(
@@ -883,6 +889,23 @@ where
                     )?;
                     job.blocks
                         .push_growing((member, job.data.len(), !stream.has_more()))?;
+                }
+                // Arca: the filters are decided here, before the run becomes the
+                // history of the next one, because the decoder matches against
+                // the filtered bytes.
+                if let FilterPolicy::Detect { max_member } = plan.filter_policy {
+                    if stream.input_size <= max_member {
+                        let start = stream.input_size
+                            - stream.remaining
+                            - stream.pushback.len() as u64
+                            - job.data.len() as u64;
+                        job.filters = detect_filters(
+                            &mut job.data,
+                            start,
+                            job.blocks.iter().map(|&(_, end, _)| end),
+                            allowance,
+                        )?;
+                    }
                 }
                 histories[member].remember(&job.data, plan.encode_options.max_match_distance)?;
                 jobs.push(job)?;
@@ -963,6 +986,7 @@ where
                 data: Buffer::new(allowance),
                 history: Buffer::copied(&history, allowance)?,
                 blocks: Records::new(0, resources)?,
+                filters: Buffer::new(allowance),
             };
             while job.data.len() < run_size(plan) {
                 while next < streams.len() && !streams[next].has_more() {
@@ -1148,12 +1172,13 @@ fn encode_block_job<B: Budget, C: Budget>(
     allowance: &C,
 ) -> Result<PackedBlocks<C>> {
     let mut block_done = |bytes: usize| progress.advance(bytes as u64);
-    let packed = streaming_blocks_with_allowance(
+    let packed = filtered_streaming_blocks_with_allowance(
         &job.data,
         &job.history,
         &boundaries,
         plan.algorithm_version,
         plan.encode_options,
+        &job.filters,
         Some(&mut block_done),
         allowance,
     )?;

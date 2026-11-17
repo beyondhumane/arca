@@ -725,7 +725,7 @@ fn encode_rar29_policy_filtered_payload(
         })
     };
     match (method, policy) {
-        (Rar29Method::Ppmd, FilterPolicy::None) => ppmd(data),
+        (Rar29Method::Ppmd, FilterPolicy::None | FilterPolicy::Detect { .. }) => ppmd(data),
         (Rar29Method::Ppmd, FilterPolicy::Explicit(filter)) => Ok(EncodedPayload {
             data: with_codec_progress(progress, |report| {
                 crate::codec::rar29::unpack29_encode_ppmd_with_progress(
@@ -741,7 +741,7 @@ fn encode_rar29_policy_filtered_payload(
         // Filtered writes are rejected before encoding; plain compressed writes
         // use FilterPolicy::None when PPMd is forced.
         (Rar29Method::Ppmd, FilterPolicy::Auto) => unreachable!(),
-        (Rar29Method::Lz, FilterPolicy::None) => {
+        (Rar29Method::Lz, FilterPolicy::None | FilterPolicy::Detect { .. }) => {
             encode_rar29_lz_member(data, options, lz_method, progress)
         }
         (Rar29Method::Lz, FilterPolicy::Auto) => encode_rar29_auto_filtered_member_with_progress(
@@ -814,7 +814,7 @@ fn validate_rar29_filter_policy(policy: &FilterPolicy, method: Rar29Method) -> R
     }
     let filter = match policy {
         FilterPolicy::Explicit(filter) => filter,
-        FilterPolicy::None | FilterPolicy::Auto => return Ok(()),
+        FilterPolicy::None | FilterPolicy::Auto | FilterPolicy::Detect { .. } => return Ok(()),
     };
     match filter.kind {
         FilterKind::Delta { channels } => {
@@ -2058,7 +2058,7 @@ fn encode_filtered_payload(
         // the member. `--no-filter` used to answer that question too, and answer
         // it LZ, so asking a solid archive not to filter its binaries also took
         // PPMd away from its text.
-        FilterPolicy::Explicit(_) | FilterPolicy::None => {
+        FilterPolicy::Explicit(_) | FilterPolicy::None | FilterPolicy::Detect { .. } => {
             encode_rar29_chain_member(data, options, encoder, false, &mut advance)?
         }
         FilterPolicy::Auto => {

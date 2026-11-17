@@ -50,7 +50,7 @@ impl ExecutionPlan {
             return Ok(Self::Stored);
         }
         let whole_members = !settings.solid
-            && (settings.filter_policy != FilterPolicy::None || settings.candidates.len() > 1);
+            && (settings.filter_policy.filters_whole_members() || settings.candidates.len() > 1);
         if !whole_members {
             return Ok(Self::Blocks {
                 workspace: streaming_workspace(settings, true),

@@ -8,6 +8,9 @@ use std::io::Write;
 /// chained by a hash of their first 4 bytes.
 type Rar50MatchFinder<B = Allowance> = match_finder::MatchFinder<4, B>;
 
+mod detect;
+pub(crate) use detect::detect_filters;
+
 const MAX_ENCODER_MATCH_OFFSET: usize = DEFAULT_DICTIONARY_SIZE;
 
 const MAX_ENCODER_MATCH_LENGTH: usize = 4096;
@@ -764,12 +767,41 @@ pub(crate) fn encode_lz_streaming_blocks(
     .map(|outputs| outputs.into_iter().map(Buffer::into_vec).collect())
 }
 
+#[cfg(test)]
 pub(crate) fn streaming_blocks_with_allowance<B: Budget>(
     data: &[u8],
     history: &[u8],
     blocks: &[(usize, bool)],
     algorithm_version: u8,
     options: EncodeOptions,
+    block_done: Option<&mut dyn FnMut(usize) -> bool>,
+    allowance: &B,
+) -> Result<Buffer<Buffer<u8, B>, B>> {
+    filtered_streaming_blocks_with_allowance(
+        data,
+        history,
+        blocks,
+        algorithm_version,
+        options,
+        &[],
+        block_done,
+        allowance,
+    )
+}
+
+/// Arca: as [`streaming_blocks_with_allowance`], for a run that
+/// [`detect_filters`] has already transformed. `filters` are its records, in
+/// order and with offsets into `data`; each block carries the ones that start
+/// in it, and one that runs past the end of its block is refused, since the
+/// transform was applied to the whole range.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn filtered_streaming_blocks_with_allowance<B: Budget>(
+    data: &[u8],
+    history: &[u8],
+    blocks: &[(usize, bool)],
+    algorithm_version: u8,
+    options: EncodeOptions,
+    filters: &[EncodeFilter],
     mut block_done: Option<&mut dyn FnMut(usize) -> bool>,
     allowance: &B,
 ) -> Result<Buffer<Buffer<u8, B>, B>> {
@@ -818,14 +850,35 @@ pub(crate) fn streaming_blocks_with_allowance<B: Budget>(
             &combined, at, options, allowance,
         )?)
     };
+    let mut pending = filters.iter().peekable();
+    let mut block_start = 0usize;
     for &(end, is_last) in blocks {
+        let mut records = Buffer::new(allowance);
+        while let Some(filter) = pending.next_if(|filter| filter.offset < end) {
+            if filter.offset < block_start
+                || filter.length == 0
+                || filter.length > MAX_FILTER_BLOCK_LENGTH
+                || filter.length > end - filter.offset
+            {
+                return Err(Error::InvalidData(
+                    "RAR 5 filter record crosses a streaming block",
+                ));
+            }
+            records
+                .push(EncodeFilter {
+                    offset: filter.offset - block_start,
+                    ..*filter
+                })
+                .map_err(Into::into)?;
+        }
+        block_start = end;
         let end = start + end;
         output.push_admitted(encode_lz_block_with_allowance(
             &combined,
             at..end,
             search.borrow(),
             algorithm_version,
-            &[],
+            &records,
             options,
             is_last,
             None,
@@ -835,6 +888,11 @@ pub(crate) fn streaming_blocks_with_allowance<B: Budget>(
         if !report(end - start, &mut block_done) {
             return Err(Error::Cancelled);
         }
+    }
+    if pending.next().is_some() {
+        return Err(Error::InvalidData(
+            "RAR 5 filter record lies outside the streaming blocks",
+        ));
     }
     Ok(output)
 }
