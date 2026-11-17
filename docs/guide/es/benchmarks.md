@@ -368,7 +368,7 @@ Cada ejecución es `arca create out.rar <dir> -l N` o `Rar.exe a -mN -ep1 -r -id
 | `-l 7` / `-m4` | 188.2 s | 135.7 s | 43,332,800 | **79.5 s** | 44.3 s | 43,353,431 | 29.9 s | 6.5 s | 42,258,443 |
 | `-l 9` / `-m5` | 181.5 s | 201.7 s | 43,244,674 | **101.7 s** | 82.0 s | 43,240,314 | 31.7 s | 6.2 s | 42,206,709 |
 
-Aquí el tiempo real de Arca no es sobre todo el del compresor: el escritor guarda cada miembro en su propio archivo temporal antes de montar el archivo, y en Windows eso cuesta milisegundos por archivo (véase más abajo). Para comparar compresores, la cifra que vale es el tiempo de CPU. Frente a WinRAR, Arca usa ahora 2.6× su tiempo de CPU con `-l 1`, 4.2× con `-l 6` y 3.2× con `-l 9`, frente a 4.9×, 5.3× y 4.9× antes. Sus archivos salen un 0.6% y un 1.0% más pequeños con `-l 1` y `-l 3`, y entre un 2.1% y un 2.6% más grandes de `-l 6` en adelante, casi todo por el tipo `media`, donde WinRAR aplica un filtro delta y Arca ninguno.
+Cuando se tomaron estas cifras, el tiempo real de Arca aquí no era sobre todo el del compresor: el escritor guardaba cada miembro en su propio archivo temporal antes de montar el archivo, y en Windows eso costaba milisegundos por archivo. Ahora los datos se quedan en memoria; véase «Muchos archivos pequeños» más abajo. Para comparar compresores, la cifra que vale es el tiempo de CPU. Frente a WinRAR, Arca usa ahora 2.6× su tiempo de CPU con `-l 1`, 4.2× con `-l 6` y 3.2× con `-l 9`, frente a 4.9×, 5.3× y 4.9× antes. Sus archivos salen un 0.6% y un 1.0% más pequeños con `-l 1` y `-l 3`, y entre un 2.1% y un 2.6% más grandes de `-l 6` en adelante, casi todo por el tipo `media`, donde WinRAR aplica un filtro delta y Arca ninguno.
 
 ### Por tipo, `-l 6` contra `-m3`
 
@@ -385,11 +385,34 @@ Aquí el tiempo real de Arca no es sobre todo el del compresor: el escritor guar
 
 Con texto, registros y código fuente Arca escribe entre un 3% y un 14% menos que WinRAR con entre tres y seis veces su tiempo de CPU; con el tipo real `repo` los dos quedan a menos de un 0.1% con tres veces. `media` y `random` son ahora más rápidos que en WinRAR, porque la búsqueda salta la entrada que no deja de fallar.
 
+### Muchos archivos pequeños
+
+El escritor daba a los bytes comprimidos de cada miembro un archivo temporal propio junto a la salida: lo creaba, lo volvía a abrir por su ruta en cada tanda de trabajo que le añadía datos y otra vez para copiarlo al archivo, y después lo borraba. En Windows esas 3000 vueltas por el sistema de archivos tardaban mucho más que comprimir el tipo `small`. Ahora los datos se quedan en memoria, hasta 1 MiB cada miembro y 128 MiB en total, contados dentro del presupuesto de 4 GiB de memoria gestionada del escritor; un miembro más grande, o uno que ya no cabe en los 128 MiB, sigue yendo a un archivo temporal. Los archivos que salen son idénticos byte a byte.
+
+La misma máquina, otra vez compartida y ocupada (carga mediana medida entre el 59 y el 71%). El tipo `small` son 3000 archivos y 7,246,984 bytes, sin modo sólido y con 16 hilos; cada cifra es la mediana de 5 ejecuciones con el rango entre corchetes, y el script comprueba con `Rar.exe t` el archivo que escribe Arca en cada nivel. «Antes» es el commit `17769b4` y «después», `2c4e246`.
+
+| Nivel | Antes: real | CPU | **Después: real** | **CPU** | WinRAR: real | CPU |
+| --- | --- | --- | --- | --- | --- | --- |
+| `-l 1` / `-m1` | 23.73 s [22.66–32.66] | 7.81 s [6.48–8.50] | **1.63 s** [1.63–1.66] | **3.52 s** [3.19–4.27] | 0.93 s [0.90–6.02] | 1.08 s [1.02–1.23] |
+| `-l 6` / `-m3` | 21.62 s [17.81–29.10] | 9.81 s [7.81–10.23] | **2.05 s** [1.99–2.26] | **5.97 s** [5.59–6.17] | 1.21 s [1.19–1.26] | 1.61 s [1.23–1.64] |
+
+Los tamaños no cambian: 3,752,642 y 3,668,621 bytes, frente a los 3,814,162 y 3,549,840 de WinRAR.
+
+```powershell
+cargo build --release -p arca-cli
+cargo run --release -p arca-rar --example rar-corpus -- $env:TEMP\rar-corpus 1.0 small
+powershell -ExecutionPolicy Bypass -File arca-rar\tests\rar-bench.ps1 `
+    -Corpus $env:TEMP\rar-corpus -Kinds small -Levels "1,3" -Runs 5 -Tools "arca,rar"
+```
+
+La fila de «antes» es la misma orden con `-Arca` apuntando a una compilación de `17769b4` y `-Tools arca`.
+
 ### Dónde sigue perdiendo Arca
 
 - **Tiempo de CPU.** El análisis óptimo busca en un árbol binario en cada posición y pone precio a cada longitud de coincidencia. Comprime más que WinRAR texto, registros y código fuente, pero de `-l 3` en adelante sigue costando entre tres y seis veces el tiempo de CPU de WinRAR.
 - **Audio, imágenes y ejecutables.** El escritor de Arca no aplica ningún filtro de datos (`FilterPolicy::None` en `arca-rar/src/writer.rs`), así que falta el filtro delta que WinRAR usa con el PCM y el mapa de bits del tipo `media`: ahí sale un 32% más grande con `-l 6`. Los ejecutables reales pierden del mismo modo el filtro E8/E9, cosa que el tipo sintético `exe` no refleja.
-- **Muchos archivos pequeños.** El escritor guarda los bytes comprimidos de cada miembro en un archivo temporal junto a la salida antes de montar el archivo. En Windows eso cuesta milisegundos por archivo, así que los 3000 archivos del tipo `small` tardan segundos de tiempo real con mucho menos tiempo de CPU. Es cosa de ese almacenamiento intermedio del escritor, no del compresor: `arca create out.rar small -l 0` tarda 2.6 s con los mismos archivos.
+- **Muchos archivos pequeños.** Sigue siendo más lento que WinRAR, aunque ya no veinte veces: 2.05 s frente a 1.21 s con `-l 6`, y casi toda la diferencia es tiempo de CPU del compresor. Cada origen se sigue consultando para leer sus metadatos al planificar el archivo y se vuelve a abrir para leerlo, y un miembro guardado sin comprimir se lee dos veces.
+- **Archivos cifrados con muchos miembros.** Cada miembro cifrado lleva su propia sal, así que el escritor repite la derivación de la clave de 2^15 rondas, unos 15 ms, una vez por miembro y uno tras otro, y la comprobación posterior la vuelve a hacer con cada miembro que descifra.
 - **Cabeceras.** Arca guarda un hash BLAKE2sp de cada archivo donde WinRAR guarda un CRC32: 28 bytes más por archivo, unos 84 KB en el tipo `small`.
 - **Pocos archivos grandes.** Un miembro se comprime en tramos de un diccionario cada uno (de 1 a 16 MiB según el nivel), y cada tramo es un trabajo, así que un único archivo de 4 MiB con `-l 6` ocupa un solo núcleo.
 </content>
