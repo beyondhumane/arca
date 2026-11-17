@@ -77,11 +77,16 @@ struct Longer {
     link: Option<String>,
     size: Option<u64>,
     mtime: Option<i64>,
+    comment: Option<String>,
 }
 
 impl Longer {
     fn is_empty(&self) -> bool {
-        self.name.is_none() && self.link.is_none() && self.size.is_none() && self.mtime.is_none()
+        self.name.is_none()
+            && self.link.is_none()
+            && self.size.is_none()
+            && self.mtime.is_none()
+            && self.comment.is_none()
     }
 
     fn apply_pax(&mut self, data: &[u8]) -> Result<()> {
@@ -90,6 +95,7 @@ impl Longer {
             match key {
                 b"path" => self.name = Some(value.to_string()),
                 b"linkpath" => self.link = Some(value.to_string()),
+                b"comment" => self.comment = Some(value.to_string()),
                 b"size" => self.size = Some(value.parse().map_err(|_| bad_pax())?),
                 b"mtime" => {
                     let whole = value.split('.').next().unwrap_or(value);
@@ -233,6 +239,8 @@ pub struct TarEntry {
     /// What a link points to: for a symbolic link the path it holds, for a
     /// hard link the name of an earlier entry. `None` for anything else.
     pub link: Option<String>,
+    /// What a pax `comment` record says about the entry.
+    pub comment: Option<String>,
     headers: Option<Vec<u8>>,
 }
 
@@ -455,6 +463,7 @@ impl<R: Read> TarReader<R> {
             mode: octal(&header[100..108], "mode").map_or(0, |m| (m & 0o7777) as u32),
             kind,
             link,
+            comment: longer.comment,
             headers,
         }))
     }
@@ -1127,6 +1136,33 @@ mod tests {
         assert_eq!(got[0].0, long);
         assert_eq!((got[0].1, got[0].2), (3, 1_234_567_890));
         assert_eq!(got[0].3, b"abc");
+    }
+
+    #[test]
+    fn a_pax_comment_is_read_and_a_global_one_is_not_taken_for_the_entry() {
+        let global = pax(&[("comment", "made by git archive")]);
+        let mut tar = header("pax_global_header", b'g', global.len() as u64);
+        tar.extend(padded(&global));
+        tar.extend(header("plain", b'0', 0));
+        let local = pax(&[("comment", "nota en línea")]);
+        tar.extend(header("PaxHeaders/x", b'x', local.len() as u64));
+        tar.extend(padded(&local));
+        tar.extend(header("noted", b'0', 0));
+        tar.extend(end());
+        let mut r = TarReader::new(&tar[..]);
+        let first = r.next_entry().unwrap().unwrap();
+        assert_eq!(first.comment, None);
+        let second = r.next_entry().unwrap().unwrap();
+        assert_eq!(second.comment.as_deref(), Some("nota en línea"));
+
+        let mut dangling = header("PaxHeaders/x", b'x', local.len() as u64);
+        dangling.extend(padded(&local));
+        assert!(TarReader::new(&dangling[..]).next_entry().is_err());
+        let bad = pax(&[("comment", "x")]);
+        let mut broken = header("PaxHeaders/x", b'x', bad.len() as u64 + 4);
+        broken.extend(padded(&bad));
+        broken.extend(header("after", b'0', 0));
+        assert!(TarReader::new(&broken[..]).next_entry().is_err());
     }
 
     #[test]
