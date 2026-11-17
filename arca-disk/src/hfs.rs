@@ -8,6 +8,7 @@ const ROOT: u32 = 2;
 const CATALOG_FILE: u32 = 4;
 const MAX_PARENTS: usize = 256;
 const MAX_LINK: u64 = 4096;
+const MAX_TREE: u64 = 1024 * 1024 * 1024;
 const HFS_EPOCH: i64 = 2_082_844_800;
 const PRIVATE_FILES: &str = "\0\0\0\0HFS+ Private Data";
 const PRIVATE_FOLDERS: &str = ".HFS+ Private Directory Data\r";
@@ -163,7 +164,11 @@ fn name(key: &[u8]) -> Option<String> {
     Some(fs::utf16(&units).replace('/', ":"))
 }
 
-pub(crate) fn list(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<Listing> {
+pub(crate) fn list(
+    vol: &mut Volume<'_>,
+    runs: &mut Runs,
+    carry_on: &dyn Fn() -> bool,
+) -> Result<Listing> {
     let header = vol.bytes(1024, 512)?;
     let block = u64::from(be32(&header, 40));
     if !block.is_power_of_two() || !(512..=1 << 20).contains(&block) {
@@ -175,7 +180,7 @@ pub(crate) fn list(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<
     };
     let extents_fork = Fork::parse(&header[192..272]);
     let mut catalog_fork = Fork::parse(&header[272..352]);
-    let limit = vol.len;
+    let limit = vol.len.min(MAX_TREE);
     let mut overflow: Overflow = HashMap::new();
     if extents_fork.size > 0 {
         let tree = read_fork(vol, &geo, &extents_fork, limit)?;
@@ -264,7 +269,7 @@ pub(crate) fn list(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<
             return Err(Error::Limit("too many entries".into()));
         }
     }
-    build(vol, &geo, folders, files)
+    build(vol, &geo, folders, files, runs)
 }
 
 fn path_of(
@@ -303,6 +308,7 @@ fn build(
     geo: &Geometry,
     folders: HashMap<u32, Item>,
     files: Vec<Item>,
+    runs: &mut Runs,
 ) -> Result<Listing> {
     let base = vol.base;
     let private: Vec<u32> = folders
@@ -317,7 +323,6 @@ fn build(
         .collect();
     let mut memo = HashMap::new();
     let mut listing = Listing::default();
-    let mut runs = Runs::default();
     let (mut lost, mut compressed, mut skipped, mut damaged) = (0usize, 0usize, 0usize, 0usize);
     let mut ids: Vec<&u32> = folders.keys().collect();
     ids.sort_unstable();
@@ -396,7 +401,7 @@ fn build(
             continue;
         }
         let mut pieces = Vec::new();
-        if !data.runs(geo, base, &mut runs, &mut pieces)? {
+        if !data.runs(geo, base, runs, &mut pieces)? {
             damaged += 1;
             continue;
         }

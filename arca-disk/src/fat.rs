@@ -231,7 +231,11 @@ struct Item {
     accessed: Option<i64>,
 }
 
-pub(crate) fn list(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<Listing> {
+pub(crate) fn list(
+    vol: &mut Volume<'_>,
+    runs: &mut Runs,
+    carry_on: &dyn Fn() -> bool,
+) -> Result<Listing> {
     let mut first = [0u8; 512];
     vol.read(0, &mut first)?;
     let bpb = Bpb::parse(&first)?;
@@ -244,21 +248,35 @@ pub(crate) fn list(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<
         bpb,
         pages: HashMap::new(),
     };
-    let mut runs = Runs::default();
     let mut listing = Listing::default();
     let mut seen = HashSet::new();
     let mut broken = 0usize;
-    let root = if bpb.width == Width::Fat32 {
-        seen.insert(bpb.root_cluster);
-        directory(vol, &mut table, bpb.root_cluster)?
-            .ok_or_else(|| Error::Format("the FAT root folder chain is broken".into()))?
-    } else {
-        vol.bytes(bpb.root_at, bpb.root_len)?
-    };
+    let mut read = 0u64;
+    let root = (bpb.width == Width::Fat32).then_some(bpb.root_cluster);
+    seen.extend(root);
     let mut pending = vec![(root, String::new(), 0usize)];
-    while let Some((bytes, path, depth)) = pending.pop() {
+    while let Some((start, path, depth)) = pending.pop() {
         if !carry_on() {
             return Err(Error::Cancelled);
+        }
+        let bytes = match start {
+            None => vol.bytes(bpb.root_at, bpb.root_len)?,
+            Some(start) => match directory(vol, &mut table, start)? {
+                Some(bytes) => bytes,
+                None if path.is_empty() => {
+                    return Err(Error::Format("the FAT root folder chain is broken".into()))
+                }
+                None => {
+                    broken += 1;
+                    continue;
+                }
+            },
+        };
+        read += bytes.len() as u64;
+        if read > fs::MAX_FOLDER_BYTES {
+            return Err(Error::Limit(
+                "the folders of a FAT volume hold too much".into(),
+            ));
         }
         for item in items(&bytes) {
             let name = fs::join(&path, &item.name);
@@ -281,16 +299,13 @@ pub(crate) fn list(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<
                 } else if !seen.insert(item.start) {
                     broken += 1;
                 } else {
-                    match directory(vol, &mut table, item.start)? {
-                        Some(bytes) => pending.push((bytes, name, depth + 1)),
-                        None => broken += 1,
-                    }
+                    pending.push((Some(item.start), name, depth + 1));
                 }
                 continue;
             }
             let mut data = Vec::new();
             if item.size > 0 {
-                table.chain(vol, item.start, item.size, &mut runs, &mut data)?;
+                table.chain(vol, item.start, item.size, runs, &mut data)?;
             }
             listing.push(Member {
                 entry,

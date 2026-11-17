@@ -92,13 +92,18 @@ impl DiskArchive {
         }
         .filter(|found| !found.is_empty());
         let mut members = Vec::new();
+        let mut runs = fs::Runs::default();
         match partitions {
             Some(partitions) => {
                 for (i, p) in partitions.iter().enumerate() {
                     if !carry_on() {
                         return Err(Error::Cancelled);
                     }
-                    partition(dev.as_mut(), i, p, &carry_on, &mut members, &mut notices)?;
+                    let out = (&mut members, &mut notices);
+                    partition(dev.as_mut(), i, p, &mut runs, &carry_on, out)?;
+                    if members.len() as u64 >= arca_core::limits::MAX_ENTRIES {
+                        return Err(Error::Limit("too many entries".into()));
+                    }
                 }
             }
             None => {
@@ -110,7 +115,7 @@ impl DiskArchive {
                 };
                 match fs::detect(&mut vol)? {
                     Some(found) => {
-                        let listing = fs::list(found, &mut vol, &carry_on)?;
+                        let listing = fs::list(found, &mut vol, &mut runs, &carry_on)?;
                         notices.extend(listing.notices);
                         members.extend(listing.members);
                     }
@@ -308,9 +313,9 @@ fn partition(
     dev: &mut dyn Device,
     index: usize,
     p: &part::Partition,
+    runs: &mut fs::Runs,
     carry_on: &dyn Fn() -> bool,
-    members: &mut Vec<Member>,
-    notices: &mut Vec<String>,
+    (members, notices): (&mut Vec<Member>, &mut Vec<String>),
 ) -> Result<()> {
     let mut vol = Volume {
         dev,
@@ -329,7 +334,7 @@ fn partition(
         return Ok(());
     };
     let folder = format!("{index}.{}", found.tag());
-    match fs::list(found, &mut vol, carry_on) {
+    match fs::list(found, &mut vol, runs, carry_on) {
         Ok(listing) => {
             members.push(Member {
                 entry: fs::entry(folder.clone(), 0, true, None),
@@ -352,6 +357,14 @@ fn partition(
         }
         Err(Error::Cancelled) => Err(Error::Cancelled),
         Err(e @ Error::Limit(_)) => Err(e),
+        Err(Error::Unsupported(why)) => {
+            notices.push(format!(
+                "partition {index} holds a {} file system Arca cannot read here ({why}); it is listed as a raw image",
+                found.label()
+            ));
+            members.push(raw(format!("{index}.img"), p.start, p.len));
+            Ok(())
+        }
         Err(e) => {
             notices.push(format!(
                 "partition {index} holds a damaged {} file system ({e}); it is listed as a raw image",

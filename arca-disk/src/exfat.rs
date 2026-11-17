@@ -253,7 +253,11 @@ fn items(bytes: &[u8], broken: &mut usize) -> Vec<Item> {
     out
 }
 
-pub(crate) fn list(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<Listing> {
+pub(crate) fn list(
+    vol: &mut Volume<'_>,
+    runs: &mut Runs,
+    carry_on: &dyn Fn() -> bool,
+) -> Result<Listing> {
     let boot = vol.bytes(0, 512)?;
     let bad = |what: &str| Error::Format(format!("exFAT boot sector: {what}"));
     if &boot[3..11] != b"EXFAT   " {
@@ -285,18 +289,24 @@ pub(crate) fn list(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<
         pages: HashMap::new(),
     };
     let mut listing = Listing::default();
-    let mut runs = Runs::default();
     let mut seen = HashSet::from([root]);
     let mut broken = 0usize;
     let mut skipped = 0usize;
-    let root_bytes = table.read(vol, root, MAX_DIRECTORY_BYTES, false)?;
-    if root_bytes.is_empty() {
-        return Err(bad("root folder"));
-    }
-    let mut pending = vec![(root_bytes, String::new(), 0usize)];
-    while let Some((bytes, path, depth)) = pending.pop() {
+    let mut read = 0u64;
+    let mut pending = vec![(root, MAX_DIRECTORY_BYTES, false, String::new(), 0usize)];
+    while let Some((first, len, contiguous, path, depth)) = pending.pop() {
         if !carry_on() {
             return Err(Error::Cancelled);
+        }
+        let bytes = table.read(vol, first, len, contiguous)?;
+        if path.is_empty() && bytes.is_empty() {
+            return Err(bad("root folder"));
+        }
+        read += bytes.len() as u64;
+        if read > fs::MAX_FOLDER_BYTES {
+            return Err(Error::Limit(
+                "the folders of an exFAT volume hold too much".into(),
+            ));
         }
         for item in items(&bytes, &mut broken) {
             let name = fs::join(&path, &item.name);
@@ -315,20 +325,12 @@ pub(crate) fn list(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<
                     continue;
                 }
                 let len = item.size.min(MAX_DIRECTORY_BYTES);
-                let bytes = table.read(vol, item.first, len, item.contiguous)?;
-                pending.push((bytes, name, depth + 1));
+                pending.push((item.first, len, item.contiguous, name, depth + 1));
                 continue;
             }
             let mut data = Vec::new();
             let stored = item.valid.min(item.size);
-            table.runs(
-                vol,
-                item.first,
-                stored,
-                item.contiguous,
-                &mut runs,
-                &mut data,
-            )?;
+            table.runs(vol, item.first, stored, item.contiguous, runs, &mut data)?;
             if data.iter().map(Run::len).sum::<u64>() == stored {
                 runs.add(&mut data, Run::Zero(item.size - stored))?;
             }

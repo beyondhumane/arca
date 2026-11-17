@@ -261,3 +261,21 @@ fn an_mbr_that_lists_nothing_falls_back_to_a_raw_image() {
     assert_eq!(names(&a), ["disk.img"]);
     assert!(a.notices().iter().any(|n| n.contains("GPT are damaged")));
 }
+
+#[test]
+fn many_gpt_entries_over_one_volume_share_one_budget() {
+    let mut image = gpt(&[&sample_fat(12)]);
+    let entry = image[1024..1024 + 128].to_vec();
+    for i in 1..128 {
+        image[1024 + 128 * i..1024 + 128 * (i + 1)].copy_from_slice(&entry);
+    }
+    let crc = crc32fast::hash(&image[1024..1024 + 128 * 128]);
+    image[512 + 88..512 + 92].copy_from_slice(&crc.to_le_bytes());
+    image[512 + 16..512 + 20].fill(0);
+    let header = crc32fast::hash(&image[512..512 + 92]);
+    image[512 + 16..512 + 20].copy_from_slice(&header.to_le_bytes());
+    let (_dir, a) = open(Format::Img, &image);
+    let a = a.unwrap();
+    check_sample(&a, "0.fat");
+    check_sample(&a, "127.fat");
+}

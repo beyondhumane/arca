@@ -205,7 +205,11 @@ impl Map {
     }
 }
 
-pub(crate) fn list(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<Listing> {
+pub(crate) fn list(
+    vol: &mut Volume<'_>,
+    runs: &mut Runs,
+    carry_on: &dyn Fn() -> bool,
+) -> Result<Listing> {
     let boot = vol.bytes(0, 512)?;
     let bad = |what: &str| Error::Format(format!("NTFS boot sector: {what}"));
     let bps = u64::from(le16(&boot, 11));
@@ -277,7 +281,7 @@ pub(crate) fn list(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<
         }
     }
     let records = scan(vol, &map, &geo, carry_on)?;
-    build(&records, &geo, vol.base)
+    build(&records, &geo, vol.base, runs)
 }
 
 // The records an attribute list puts the rest of the MFT's own data in.
@@ -451,7 +455,12 @@ fn place(
     Place::Path(path)
 }
 
-fn build(records: &HashMap<u64, Record>, geo: &Geometry, base: u64) -> Result<Listing> {
+fn build(
+    records: &HashMap<u64, Record>,
+    geo: &Geometry,
+    base: u64,
+    runs: &mut Runs,
+) -> Result<Listing> {
     let mut numbers: Vec<u64> = records
         .iter()
         .filter(|(n, r)| **n >= FIRST_USER_RECORD && r.used && !r.names.is_empty())
@@ -460,7 +469,6 @@ fn build(records: &HashMap<u64, Record>, geo: &Geometry, base: u64) -> Result<Li
     numbers.sort_unstable();
     let mut memo = HashMap::new();
     let mut listing = Listing::default();
-    let mut runs = Runs::default();
     let (mut lost, mut links, mut packed, mut broken) = (0usize, 0usize, 0usize, 0usize);
     for n in numbers {
         let rec = &records[&n];

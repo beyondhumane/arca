@@ -4,6 +4,7 @@ use crate::device::{le16, Volume};
 
 pub(crate) const MAX_DEPTH: usize = 128;
 const MAX_RUNS: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_FOLDER_BYTES: u64 = 1024 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Run {
@@ -163,17 +164,24 @@ pub(crate) fn detect(vol: &mut Volume<'_>) -> Result<Option<Fs>> {
     Ok(None)
 }
 
-pub(crate) fn list(fs: Fs, vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<Listing> {
+/// The listing of one file system. `runs` is the budget of data runs the
+/// whole disk shares, whatever partition the runs are in.
+pub(crate) fn list(
+    fs: Fs,
+    vol: &mut Volume<'_>,
+    runs: &mut Runs,
+    carry_on: &dyn Fn() -> bool,
+) -> Result<Listing> {
     match fs {
-        Fs::Fat => crate::fat::list(vol, carry_on),
-        Fs::Exfat => crate::exfat::list(vol, carry_on),
-        Fs::Ntfs => crate::ntfs::list(vol, carry_on),
-        Fs::Hfs => crate::hfs::list(vol, carry_on),
-        Fs::Iso => iso(vol, carry_on),
+        Fs::Fat => crate::fat::list(vol, runs, carry_on),
+        Fs::Exfat => crate::exfat::list(vol, runs, carry_on),
+        Fs::Ntfs => crate::ntfs::list(vol, runs, carry_on),
+        Fs::Hfs => crate::hfs::list(vol, runs, carry_on),
+        Fs::Iso => iso(vol, runs, carry_on),
     }
 }
 
-fn iso(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<Listing> {
+fn iso(vol: &mut Volume<'_>, runs: &mut Runs, carry_on: &dyn Fn() -> bool) -> Result<Listing> {
     let base = vol.base;
     let mut reader = crate::device::VolumeReader {
         volume: vol,
@@ -184,7 +192,6 @@ fn iso(vol: &mut Volume<'_>, carry_on: &dyn Fn() -> bool) -> Result<Listing> {
         notices: image.notices,
         ..Listing::default()
     };
-    let mut runs = Runs::default();
     for (entry, extents) in image.entries.into_iter().zip(image.extents) {
         let mut data = Vec::new();
         for (start, len) in extents {
