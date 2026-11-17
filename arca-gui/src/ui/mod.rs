@@ -415,6 +415,7 @@ impl Shell {
         if self.controller.receive() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        self.follow_vault();
         if !conflict_was_open && self.controller.conflict().is_some() {
             ctx.memory_mut(|memory| {
                 if let Some(id) = memory.focused() {

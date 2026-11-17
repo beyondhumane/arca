@@ -33,8 +33,19 @@ struct Draft {
     show: bool,
 }
 
-fn secret_field<'t>(ui: &egui::Ui, text: &'t mut String, hint: &str) -> egui::TextEdit<'t> {
+pub(super) const MASTER_FIELD: &str = "arca-vault-master";
+pub(super) const AGAIN_FIELD: &str = "arca-vault-again";
+pub(super) const PROMPT_MASTER_FIELD: &str = "arca-vault-prompt-master";
+pub(super) const SAVED_PASSWORD_FIELD: &str = "arca-saved-password";
+
+fn secret_field<'t>(
+    ui: &egui::Ui,
+    text: &'t mut String,
+    hint: &str,
+    id: &str,
+) -> egui::TextEdit<'t> {
     field(ui, text)
+        .id(egui::Id::new(id))
         .password(true)
         .hint_text(hint)
         .desired_width(f32::INFINITY)
@@ -44,6 +55,22 @@ impl PasswordsPage {
     fn clear_master(&mut self) {
         self.master = Zeroizing::default();
         self.again = Zeroizing::default();
+    }
+
+    fn follow_lock(&mut self, unlocked: bool) {
+        if unlocked == self.was_unlocked {
+            return;
+        }
+        self.was_unlocked = unlocked;
+        self.shown = None;
+        self.clear_master();
+        self.prompt_master = Zeroizing::default();
+        if !unlocked {
+            self.changing = false;
+        }
+        if !unlocked || self.draft.as_ref().is_some_and(|d| d.before.is_some()) {
+            self.draft = None;
+        }
     }
 
     fn said(&mut self, result: Result<(), String>, done: Option<&str>) -> bool {
@@ -61,19 +88,20 @@ impl PasswordsPage {
 }
 
 impl Shell {
+    /// Lets go of whatever the page holds for the vault once it locks or
+    /// unlocks, whether or not the page is on screen when it happens.
+    pub(super) fn follow_vault(&mut self) {
+        let unlocked = self.controller.state.saved.keyring.unlocked();
+        self.passwords.follow_lock(unlocked);
+    }
+
     pub(super) fn settings_passwords(&mut self, ui: &mut egui::Ui) {
+        self.follow_vault();
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
         let keyring = &self.controller.state.saved.keyring;
         let (unlocked, has_file, can_keep) =
             (keyring.unlocked(), keyring.has_file(), keyring.can_keep());
-        if unlocked != self.passwords.was_unlocked {
-            self.passwords.was_unlocked = unlocked;
-            self.passwords.shown = None;
-            if !unlocked {
-                self.passwords.draft = None;
-            }
-        }
         let minutes = (LOCK_AFTER.as_secs() / 60).to_string();
         let status = if unlocked {
             fill(s.vault_state_open, &[("minutes", &minutes)])
@@ -115,9 +143,11 @@ impl Shell {
     fn vault_new(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
         let page = &mut self.passwords;
-        let first = ui.add(secret_field(ui, &mut page.master, s.master_password));
+        let edit = secret_field(ui, &mut page.master, s.master_password, MASTER_FIELD);
+        let first = secret_edit(ui, edit);
         named(&first, s.master_password);
-        let second = ui.add(secret_field(ui, &mut page.again, s.master_again));
+        let edit = secret_field(ui, &mut page.again, s.master_again, AGAIN_FIELD);
+        let second = secret_edit(ui, edit);
         named(&second, s.master_again);
         ui.add_space(6.0);
         let ready = !page.master.is_empty();
@@ -136,7 +166,8 @@ impl Shell {
     fn vault_locked(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
         let page = &mut self.passwords;
-        let typed = ui.add(secret_field(ui, &mut page.master, s.master_password));
+        let edit = secret_field(ui, &mut page.master, s.master_password, MASTER_FIELD);
+        let typed = secret_edit(ui, edit);
         named(&typed, s.master_password);
         let entered = typed.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         ui.add_space(6.0);
@@ -201,9 +232,11 @@ impl Shell {
         }
         ui.add_space(6.0);
         let page = &mut self.passwords;
-        let first = ui.add(secret_field(ui, &mut page.master, s.master_password));
+        let edit = secret_field(ui, &mut page.master, s.master_password, MASTER_FIELD);
+        let first = secret_edit(ui, edit);
         named(&first, s.master_password);
-        let second = ui.add(secret_field(ui, &mut page.again, s.master_again));
+        let edit = secret_field(ui, &mut page.again, s.master_again, AGAIN_FIELD);
+        let second = secret_edit(ui, edit);
         named(&second, s.master_again);
         let mut save = false;
         ui.horizontal(|ui| {
@@ -351,12 +384,14 @@ impl Shell {
                 if icon_button(ui, glyph, tip, true).clicked() {
                     draft.show = !draft.show;
                 }
-                let secret = ui.add(
-                    field(ui, &mut *draft.password)
-                        .password(!draft.show)
-                        .hint_text(s.password_word)
-                        .desired_width(f32::INFINITY),
-                );
+                let edit = secret_field(
+                    ui,
+                    &mut draft.password,
+                    s.password_word,
+                    SAVED_PASSWORD_FIELD,
+                )
+                .password(!draft.show);
+                let secret = secret_edit(ui, edit);
                 named(&secret, s.password_word);
             });
             ui.add_space(6.0);
@@ -429,7 +464,13 @@ impl Shell {
                 let page = &mut self.passwords;
                 unlock =
                     secondary_button(ui, s.unlock_word, !page.prompt_master.is_empty()).clicked();
-                let typed = ui.add(secret_field(ui, &mut page.prompt_master, s.unlock_saved));
+                let edit = secret_field(
+                    ui,
+                    &mut page.prompt_master,
+                    s.unlock_saved,
+                    PROMPT_MASTER_FIELD,
+                );
+                let typed = secret_edit(ui, edit);
                 named(&typed, s.unlock_saved);
                 unlock |= typed.lost_focus()
                     && ui.input(|i| i.key_pressed(egui::Key::Enter))
@@ -494,5 +535,181 @@ mod tests {
         shell.passwords.setting_aside = true;
         draw(&mut shell, &ctx);
         assert!(shell.controller.state.saved.keyring.entries.is_empty());
+    }
+
+    struct Frames {
+        ctx: egui::Context,
+        time: f64,
+    }
+
+    impl Frames {
+        fn new() -> Self {
+            Frames {
+                ctx: egui::Context::default(),
+                time: 0.0,
+            }
+        }
+
+        fn run(&mut self, events: Vec<egui::Event>, mut draw: impl FnMut(&mut egui::Ui)) {
+            self.time += 0.1;
+            let input = egui::RawInput {
+                time: Some(self.time),
+                events,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 800.0),
+                )),
+                ..Default::default()
+            };
+            let mut output = self.ctx.run_ui(input, |ui| draw(ui));
+            output.textures_delta.clear();
+        }
+
+        fn idle(&mut self, frames: usize, mut draw: impl FnMut(&mut egui::Ui)) {
+            for _ in 0..frames {
+                self.run(Vec::new(), &mut draw);
+            }
+        }
+
+        fn focus(&mut self, id: &str) {
+            self.ctx
+                .memory_mut(|memory| memory.request_focus(egui::Id::new(id)));
+        }
+    }
+
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn undo() -> egui::Event {
+        key(egui::Key::Z, egui::Modifiers::COMMAND)
+    }
+
+    fn enter() -> egui::Event {
+        key(egui::Key::Enter, egui::Modifiers::NONE)
+    }
+
+    fn typed(text: &str) -> egui::Event {
+        egui::Event::Text(text.into())
+    }
+
+    fn shell_with_vault(room: &crate::test_support::Room, frames: &Frames) -> Shell {
+        let mut shell = Shell::new(&frames.ctx, crate::Startup::Browse(None));
+        shell.controller =
+            crate::controller::AppController::new(crate::settings::Settings::default());
+        shell.controller.state.saved.keyring = Keyring::cheap(room.path("passwords.vault"));
+        shell.controller.create_vault("hunter2-master").unwrap();
+        shell.controller.lock_vault();
+        shell
+    }
+
+    #[test]
+    fn undo_in_a_secret_field_never_brings_back_what_was_taken_out() {
+        let mut frames = Frames::new();
+        let mut text = String::new();
+        let draw = |ui: &mut egui::Ui, text: &mut String| {
+            let edit = field(ui, text).id(egui::Id::new("secret")).password(true);
+            secret_edit(ui, edit);
+        };
+        frames.focus("secret");
+        frames.run(Vec::new(), |ui| draw(ui, &mut text));
+        frames.run(vec![typed("hunter2-master")], |ui| draw(ui, &mut text));
+        frames.idle(30, |ui| draw(ui, &mut text));
+        assert_eq!(text, "hunter2-master");
+        drop(std::mem::take(&mut text));
+        frames.idle(30, |ui| draw(ui, &mut text));
+        frames.run(vec![undo()], |ui| draw(ui, &mut text));
+        frames.idle(2, |ui| draw(ui, &mut text));
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn the_master_password_is_gone_from_its_field_after_unlocking_and_locking() {
+        let room = crate::test_support::Room::new();
+        let mut frames = Frames::new();
+        let mut shell = shell_with_vault(&room, &frames);
+        frames.focus(MASTER_FIELD);
+        frames.run(Vec::new(), |ui| shell.settings_passwords(ui));
+        frames.run(vec![typed("hunter2-master")], |ui| {
+            shell.settings_passwords(ui)
+        });
+        frames.idle(30, |ui| shell.settings_passwords(ui));
+        frames.run(vec![enter()], |ui| shell.settings_passwords(ui));
+        assert!(shell.controller.state.saved.keyring.unlocked());
+        assert!(shell.passwords.master.is_empty());
+        frames.idle(30, |ui| shell.settings_passwords(ui));
+        shell.controller.lock_vault();
+        frames.idle(3, |ui| shell.settings_passwords(ui));
+        frames.focus(MASTER_FIELD);
+        frames.run(Vec::new(), |ui| shell.settings_passwords(ui));
+        frames.run(vec![undo()], |ui| shell.settings_passwords(ui));
+        frames.idle(2, |ui| shell.settings_passwords(ui));
+        assert!(shell.passwords.master.is_empty());
+    }
+
+    #[test]
+    fn the_unlock_box_beside_the_archive_password_forgets_the_master() {
+        let room = crate::test_support::Room::new();
+        let mut frames = Frames::new();
+        let mut shell = shell_with_vault(&room, &frames);
+        shell.controller.state.waiting_on_password = Some(Pending::OpenArchive);
+        frames.focus(PROMPT_MASTER_FIELD);
+        frames.run(Vec::new(), |ui| {
+            shell.saved_password_rows(ui);
+        });
+        frames.run(vec![typed("hunter2-master")], |ui| {
+            shell.saved_password_rows(ui);
+        });
+        frames.idle(30, |ui| {
+            shell.saved_password_rows(ui);
+        });
+        frames.run(vec![enter()], |ui| {
+            shell.saved_password_rows(ui);
+        });
+        assert!(shell.controller.state.saved.keyring.unlocked());
+        shell.controller.lock_vault();
+        frames.idle(3, |ui| {
+            shell.saved_password_rows(ui);
+        });
+        frames.focus(PROMPT_MASTER_FIELD);
+        frames.run(vec![undo()], |ui| {
+            shell.saved_password_rows(ui);
+        });
+        frames.idle(2, |ui| {
+            shell.saved_password_rows(ui);
+        });
+        assert!(shell.passwords.prompt_master.is_empty());
+    }
+
+    #[test]
+    fn the_archive_password_box_forgets_what_was_typed_in_it() {
+        let mut frames = Frames::new();
+        let mut shell = Shell::new(&frames.ctx, crate::Startup::Browse(None));
+        shell.controller =
+            crate::controller::AppController::new(crate::settings::Settings::default());
+        shell.controller.state.waiting_on_password = Some(Pending::OpenArchive);
+        let field = super::super::dialogs::ARCHIVE_PASSWORD_FIELD;
+        frames.focus(field);
+        frames.run(Vec::new(), |ui| shell.password_dialog(ui));
+        frames.run(vec![typed("archive-secret")], |ui| {
+            shell.password_dialog(ui)
+        });
+        frames.idle(30, |ui| shell.password_dialog(ui));
+        assert_eq!(shell.controller.state.password_input, "archive-secret");
+        frames.run(vec![enter()], |ui| shell.password_dialog(ui));
+        assert!(shell.controller.state.waiting_on_password.is_none());
+        assert!(shell.controller.state.password_input.is_empty());
+        shell.controller.state.waiting_on_password = Some(Pending::OpenArchive);
+        frames.idle(3, |ui| shell.password_dialog(ui));
+        frames.focus(field);
+        frames.run(vec![undo()], |ui| shell.password_dialog(ui));
+        frames.idle(2, |ui| shell.password_dialog(ui));
+        assert!(shell.controller.state.password_input.is_empty());
     }
 }

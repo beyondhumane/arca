@@ -151,6 +151,19 @@ pub(crate) fn sort_entry(
     ui.add(egui::Button::new(job).shortcut_text(mark))
 }
 
+/// Adds a field that holds a secret. egui keeps every field's undo history
+/// in its memory and never wipes it, so this field's is emptied each frame it
+/// is drawn: otherwise Ctrl+Z would bring back a password the window has
+/// already taken out of the field and let go of.
+pub(crate) fn secret_edit(ui: &mut Ui, edit: egui::TextEdit<'_>) -> Response {
+    let response = ui.add(edit);
+    if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), response.id) {
+        state.clear_undoer();
+        state.store(ui.ctx(), response.id);
+    }
+    response
+}
+
 /// A one-line text field as tall as the buttons beside it, with the text
 /// centred in it; egui's own comes out shorter and sits oddly in a row.
 pub(crate) fn field<'t>(ui: &Ui, text: &'t mut dyn egui::TextBuffer) -> egui::TextEdit<'t> {

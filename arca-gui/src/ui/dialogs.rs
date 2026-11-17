@@ -6,6 +6,8 @@ use crate::settings::{TitleBar, TEXT_LEAST, TEXT_MOST};
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
 
+pub(super) const ARCHIVE_PASSWORD_FIELD: &str = "arca-archive-password";
+
 pub(crate) fn dialog_width(kind: ModalKind, window: f32) -> f32 {
     let wanted: f32 = match kind {
         ModalKind::Settings => 1040.0,
@@ -261,7 +263,7 @@ impl Shell {
         );
     }
 
-    fn password_dialog(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn password_dialog(&mut self, ui: &mut egui::Ui) {
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
         let state = &self.controller.state;
@@ -293,11 +295,11 @@ impl Shell {
         ui.label(RichText::new(hint).color(hex(if warn { p.danger } else { p.muted })));
         ui.add_space(8.0);
         let mut value = self.controller.state.password_input.clone();
-        let field = ui.add(
-            super::widgets::field(ui, &mut value)
-                .password(true)
-                .desired_width(f32::INFINITY),
-        );
+        let edit = super::widgets::field(ui, &mut value)
+            .id(egui::Id::new(ARCHIVE_PASSWORD_FIELD))
+            .password(true)
+            .desired_width(f32::INFINITY);
+        let field = super::widgets::secret_edit(ui, edit);
         super::widgets::named(&field, hint);
         // Read before the focus is handed back below: once the field has it
         // again, egui no longer counts it as lost and Enter would do nothing.
@@ -985,11 +987,11 @@ impl Shell {
                         let eye = if show { icon::EYE_SLASH } else { icon::EYE };
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             toggle = icon_button(ui, eye, s.show_password_word, true).clicked();
-                            let field = ui.add(
+                            let edit =
                                 super::widgets::field(ui, &mut self.controller.state.add_password)
                                     .password(!show)
-                                    .desired_width(f32::INFINITY),
-                            );
+                                    .desired_width(f32::INFINITY);
+                            let field = secret_edit(ui, edit);
                             super::widgets::named(&field, s.password_word);
                         });
                     });
