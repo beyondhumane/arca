@@ -57,7 +57,7 @@ pub fn run(job: &Job, report: &mut dyn FnMut(Event)) -> Result<(), String> {
         }
         report(Event::Progress(overall(2, 0.25)));
         if job.choices.assoc {
-            system::register_associations(dir)?;
+            system::register_associations(dir, job.choices.iso)?;
         } else {
             system::unregister_associations()?;
         }

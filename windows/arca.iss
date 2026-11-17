@@ -61,16 +61,21 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Tasks]
 Name: "shellmenu"; Description: "{cm:TaskShellMenu}"; GroupDescription: "{cm:GroupIntegration}"
 Name: "fileassoc"; Description: "{cm:TaskFileAssoc}"; GroupDescription: "{cm:GroupIntegration}"
+; Off unless asked for: Explorer mounts disc images itself, and that stays the
+; default either way.
+Name: "fileassoc\iso"; Description: "{cm:TaskFileAssocIso}"; GroupDescription: "{cm:GroupIntegration}"; Flags: unchecked
 Name: "addtopath"; Description: "{cm:TaskAddToPath}"; GroupDescription: "{cm:GroupIntegration}"
 
 [CustomMessages]
 english.TaskShellMenu=Add Arca to the Explorer context menu
-english.TaskFileAssoc=Let Arca open .zip, .7z, .tar, .gz and .tgz files
+english.TaskFileAssoc=Let Arca open ZIP, 7z, RAR, TAR and other archives
+english.TaskFileAssocIso=Disc images (.iso) too
 english.TaskAddToPath=Add the arca command to PATH
 english.GroupIntegration=System integration:
 english.RestartExplorer=The Explorer needs to restart for the context menu to appear. Restart it now?
 spanish.TaskShellMenu=Anadir Arca al menu contextual del Explorador
-spanish.TaskFileAssoc=Permitir que Arca abra ficheros .zip, .7z, .tar, .gz y .tgz
+spanish.TaskFileAssoc=Permitir que Arca abra ZIP, 7z, RAR, TAR y otros archivos comprimidos
+spanish.TaskFileAssocIso=Tambien imagenes de disco (.iso)
 spanish.TaskAddToPath=Anadir el comando arca al PATH
 spanish.GroupIntegration=Integracion con el sistema:
 spanish.RestartExplorer=El Explorador tiene que reiniciarse para que aparezca el menu contextual. Reiniciarlo ahora?
@@ -117,21 +122,57 @@ Root: HKCU; Subkey: "Software\Classes\Arca.zip\shell\open\command"; ValueType: s
 Root: HKCU; Subkey: "Software\Classes\Arca.7z"; ValueType: string; ValueName: ""; ValueData: "7z archive"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.7z\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.7z\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.targz"; ValueType: string; ValueName: ""; ValueData: "TAR.GZ archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.targz\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.targz\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tgz"; ValueType: string; ValueName: ""; ValueData: "TAR.GZ archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tgz\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tgz\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.xz"; ValueType: string; ValueName: ""; ValueData: "XZ archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.xz\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.xz\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.txz"; ValueType: string; ValueName: ""; ValueData: "TAR.XZ archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.txz\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.txz\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.bz2"; ValueType: string; ValueName: ""; ValueData: "BZ2 archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.bz2\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.bz2\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tbz2"; ValueType: string; ValueName: ""; ValueData: "TAR.BZ2 archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tbz2\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tbz2\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tbz"; ValueType: string; ValueName: ""; ValueData: "TAR.BZ2 archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tbz\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tbz\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.zst"; ValueType: string; ValueName: ""; ValueData: "ZST archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.zst\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.zst\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tzst"; ValueType: string; ValueName: ""; ValueData: "TAR.ZST archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tzst\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.tzst\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.tar"; ValueType: string; ValueName: ""; ValueData: "TAR archive"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.tar\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.tar\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
-Root: HKCU; Subkey: "Software\Classes\Arca.targz"; ValueType: string; ValueName: ""; ValueData: "Compressed TAR archive"; Flags: uninsdeletekey; Tasks: fileassoc
-Root: HKCU; Subkey: "Software\Classes\Arca.targz\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
-Root: HKCU; Subkey: "Software\Classes\Arca.targz\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
-Root: HKCU; Subkey: "Software\Classes\Arca.tgz"; ValueType: string; ValueName: ""; ValueData: "Compressed TAR archive"; Flags: uninsdeletekey; Tasks: fileassoc
-Root: HKCU; Subkey: "Software\Classes\Arca.tgz\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
-Root: HKCU; Subkey: "Software\Classes\Arca.tgz\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.rar"; ValueType: string; ValueName: ""; ValueData: "RAR archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.rar\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.rar\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.iso"; ValueType: string; ValueName: ""; ValueData: "ISO disc image"; Flags: uninsdeletekey; Tasks: fileassoc\iso
+Root: HKCU; Subkey: "Software\Classes\Arca.iso\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc\iso
+Root: HKCU; Subkey: "Software\Classes\Arca.iso\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc\iso
 
 Root: HKCU; Subkey: "Software\Classes\.zip\OpenWithProgids"; ValueType: string; ValueName: "Arca.zip"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\.7z\OpenWithProgids"; ValueType: string; ValueName: "Arca.7z"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
-Root: HKCU; Subkey: "Software\Classes\.tar\OpenWithProgids"; ValueType: string; ValueName: "Arca.tar"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\.gz\OpenWithProgids"; ValueType: string; ValueName: "Arca.targz"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\.tgz\OpenWithProgids"; ValueType: string; ValueName: "Arca.tgz"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\.xz\OpenWithProgids"; ValueType: string; ValueName: "Arca.xz"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\.txz\OpenWithProgids"; ValueType: string; ValueName: "Arca.txz"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\.bz2\OpenWithProgids"; ValueType: string; ValueName: "Arca.bz2"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\.tbz2\OpenWithProgids"; ValueType: string; ValueName: "Arca.tbz2"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\.tbz\OpenWithProgids"; ValueType: string; ValueName: "Arca.tbz"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\.zst\OpenWithProgids"; ValueType: string; ValueName: "Arca.zst"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\.tzst\OpenWithProgids"; ValueType: string; ValueName: "Arca.tzst"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\.tar\OpenWithProgids"; ValueType: string; ValueName: "Arca.tar"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\.rar\OpenWithProgids"; ValueType: string; ValueName: "Arca.rar"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\.iso\OpenWithProgids"; ValueType: string; ValueName: "Arca.iso"; ValueData: ""; Flags: uninsdeletevalue; Tasks: fileassoc\iso
 
 ; Windows shows FriendlyAppName in "Open with" and in Settings. Without it the
 ; list falls back to the executable name, which reads like something the user
@@ -140,17 +181,35 @@ Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe"; ValueType: str
 Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".zip"; ValueData: ""; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".7z"; ValueData: ""; Tasks: fileassoc
-Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".tar"; ValueData: ""; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".gz"; ValueData: ""; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".tgz"; ValueData: ""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".xz"; ValueData: ""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".txz"; ValueData: ""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".bz2"; ValueData: ""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".tbz2"; ValueData: ""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".tbz"; ValueData: ""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".zst"; ValueData: ""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".tzst"; ValueData: ""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".tar"; ValueData: ""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".rar"; ValueData: ""; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".iso"; ValueData: ""; Tasks: fileassoc\iso
 
 Root: HKCU; Subkey: "Software\Arca\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "Arca"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Arca\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "Fast, safe archiver"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".zip"; ValueData: "Arca.zip"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".7z"; ValueData: "Arca.7z"; Tasks: fileassoc
-Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tar"; ValueData: "Arca.tar"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".gz"; ValueData: "Arca.targz"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tgz"; ValueData: "Arca.tgz"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".xz"; ValueData: "Arca.xz"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".txz"; ValueData: "Arca.txz"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".bz2"; ValueData: "Arca.bz2"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tbz2"; ValueData: "Arca.tbz2"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tbz"; ValueData: "Arca.tbz"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".zst"; ValueData: "Arca.zst"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tzst"; ValueData: "Arca.tzst"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tar"; ValueData: "Arca.tar"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".rar"; ValueData: "Arca.rar"; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".iso"; ValueData: "Arca.iso"; Tasks: fileassoc\iso
 Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "Arca"; ValueData: "Software\Arca\Capabilities"; Flags: uninsdeletevalue; Tasks: fileassoc
 
 [Code]
@@ -297,16 +356,25 @@ end;
 // extension back to whatever Windows decides on its own.
 procedure ForgetDefaults();
 var
-  Exts: array[0..4] of string;
+  Exts: array[0..13] of string;
   Key, ProgId: string;
   I: Integer;
 begin
   Exts[0] := '.zip';
-  Exts[1] := '.tar';
+  Exts[1] := '.7z';
   Exts[2] := '.gz';
   Exts[3] := '.tgz';
-  Exts[4] := '.7z';
-  for I := 0 to 4 do
+  Exts[4] := '.xz';
+  Exts[5] := '.txz';
+  Exts[6] := '.bz2';
+  Exts[7] := '.tbz2';
+  Exts[8] := '.tbz';
+  Exts[9] := '.zst';
+  Exts[10] := '.tzst';
+  Exts[11] := '.tar';
+  Exts[12] := '.rar';
+  Exts[13] := '.iso';
+  for I := 0 to 13 do
   begin
     Key := 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\' + Exts[I] + '\UserChoice';
     if RegQueryStringValue(HKCU, Key, 'ProgId', ProgId) then

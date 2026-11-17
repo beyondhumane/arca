@@ -1,3 +1,5 @@
+#[cfg(any(windows, test))]
+mod associations;
 #[cfg(windows)]
 mod install;
 mod payload;
@@ -37,6 +39,7 @@ pub enum Mode {
 pub struct Choices {
     pub menu: bool,
     pub assoc: bool,
+    pub iso: bool,
     pub path: bool,
 }
 
@@ -45,6 +48,7 @@ impl Default for Choices {
         Choices {
             menu: true,
             assoc: true,
+            iso: false,
             path: true,
         }
     }

@@ -10,9 +10,11 @@
 # Usage:  .\install.ps1              installs
 #         .\install.ps1 -Remove      uninstalls
 #         .\install.ps1 -Dest D:\Arca
+#         .\install.ps1 -Iso         also offers Arca for .iso disc images
 
 param(
     [switch]$Remove,
+    [switch]$Iso,
     [string]$Dest = "$env:LOCALAPPDATA\Programs\Arca"
 )
 
@@ -24,14 +26,33 @@ $MenuTypes    = @("*", "Directory")
 $UninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\Arca"
 
 # Extensions Arca can open. Each needs its own ProgID: Windows maps the
-# extension to a ProgID, and the ProgID to a command.
+# extension to a ProgID, and the ProgID to a command. The list is
+# arca_core::Format::desktop_extensions(); arca-setup's tests fail when the two
+# differ. ZIP containers such as .jar or .epub are left to their own
+# applications on purpose.
 $Formats = @{
     ".zip"    = @{ ProgId = "Arca.zip";    Text = "ZIP archive" }
     ".7z"     = @{ ProgId = "Arca.7z";     Text = "7z archive" }
+    ".gz"     = @{ ProgId = "Arca.targz";  Text = "TAR.GZ archive" }
+    ".tgz"    = @{ ProgId = "Arca.tgz";    Text = "TAR.GZ archive" }
+    ".xz"     = @{ ProgId = "Arca.xz";     Text = "XZ archive" }
+    ".txz"    = @{ ProgId = "Arca.txz";    Text = "TAR.XZ archive" }
+    ".bz2"    = @{ ProgId = "Arca.bz2";    Text = "BZ2 archive" }
+    ".tbz2"   = @{ ProgId = "Arca.tbz2";   Text = "TAR.BZ2 archive" }
+    ".tbz"    = @{ ProgId = "Arca.tbz";    Text = "TAR.BZ2 archive" }
+    ".zst"    = @{ ProgId = "Arca.zst";    Text = "ZST archive" }
+    ".tzst"   = @{ ProgId = "Arca.tzst";   Text = "TAR.ZST archive" }
     ".tar"    = @{ ProgId = "Arca.tar";    Text = "TAR archive" }
-    ".gz"     = @{ ProgId = "Arca.targz";  Text = "Compressed TAR archive" }
-    ".tgz"    = @{ ProgId = "Arca.tgz";    Text = "Compressed TAR archive" }
+    ".rar"    = @{ ProgId = "Arca.rar";    Text = "RAR archive" }
 }
+
+# Only with -Iso: Explorer mounts disc images itself.
+$OnRequest = @{
+    ".iso"    = @{ ProgId = "Arca.iso";    Text = "ISO disc image" }
+}
+
+$Known = $Formats + $OnRequest
+$Registered = if ($Iso) { $Known } else { $Formats }
 
 # Three separate registrations, and all three are needed:
 #   1. The ProgID, which says what command opens it.
@@ -39,10 +60,10 @@ $Formats = @{
 #   3. Capabilities + RegisteredApplications, which is what makes Arca show up
 #      under Settings > Default apps.
 function Register-Associations($gui) {
-    foreach ($ext in $Formats.Keys) {
-        $progid = $Formats[$ext].ProgId
+    foreach ($ext in $Registered.Keys) {
+        $progid = $Registered[$ext].ProgId
         $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Classes\$progid")
-        $k.SetValue("", $Formats[$ext].Text)
+        $k.SetValue("", $Registered[$ext].Text)
         $k.Close()
         $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Classes\$progid\DefaultIcon")
         $k.SetValue("", "$gui,0")
@@ -60,7 +81,7 @@ function Register-Associations($gui) {
     $k.SetValue("", "`"$gui`" `"%1`"")
     $k.Close()
     $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Classes\Applications\arca-gui.exe\SupportedTypes")
-    foreach ($ext in $Formats.Keys) { $k.SetValue($ext, "") }
+    foreach ($ext in $Registered.Keys) { $k.SetValue($ext, "") }
     $k.Close()
 
     $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Arca\Capabilities")
@@ -68,7 +89,7 @@ function Register-Associations($gui) {
     $k.SetValue("ApplicationDescription", "Fast, safe archiver")
     $k.Close()
     $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Arca\Capabilities\FileAssociations")
-    foreach ($ext in $Formats.Keys) { $k.SetValue($ext, $Formats[$ext].ProgId) }
+    foreach ($ext in $Registered.Keys) { $k.SetValue($ext, $Registered[$ext].ProgId) }
     $k.Close()
     $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\RegisteredApplications")
     $k.SetValue("Arca", "Software\Arca\Capabilities")
@@ -76,8 +97,8 @@ function Register-Associations($gui) {
 }
 
 function Unregister-Associations {
-    foreach ($ext in $Formats.Keys) {
-        $progid = $Formats[$ext].ProgId
+    foreach ($ext in $Known.Keys) {
+        $progid = $Known[$ext].ProgId
         [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree("Software\Classes\$progid", $false)
         $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Software\Classes\$ext\OpenWithProgids", $true)
         if ($k) { $k.DeleteValue($progid, $false); $k.Close() }

@@ -117,9 +117,11 @@ fn job_from(options: &Options) -> Job {
         Mode::Install => engine::default_location(),
         Mode::Uninstall => engine::uninstall_location(),
     });
+    let mut choices = engine::initial_choices(&dir);
+    choices.iso |= options.iso;
     Job {
         mode: options.mode,
-        choices: engine::initial_choices(&dir),
+        choices,
         dir,
         quiet_update: options.update,
         files_only: options.files_only,

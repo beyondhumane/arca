@@ -1,4 +1,5 @@
 use super::{
+    associations::{file_types, FileType},
     encoded_command, path_with, path_without, quote_ps, Choices, GUI_EXE, MANIFEST, SHELL_DLL,
     UNINSTALLER, VERSION,
 };
@@ -23,13 +24,7 @@ const PUBLISHER: &str = "Arca Project";
 const URL: &str = "https://github.com/beyondhumane/arca";
 const POWERSHELL_TIMEOUT: Duration = Duration::from_secs(90);
 
-const ASSOCIATIONS: [(&str, &str, &str); 5] = [
-    (".zip", "Arca.zip", "ZIP archive"),
-    (".7z", "Arca.7z", "7z archive"),
-    (".tar", "Arca.tar", "TAR archive"),
-    (".gz", "Arca.targz", "Compressed TAR archive"),
-    (".tgz", "Arca.tgz", "Compressed TAR archive"),
-];
+const FILE_ASSOCIATIONS: &str = r"Software\Arca\Capabilities\FileAssociations";
 
 pub fn ctx<E: Display>(what: impl Into<String>) -> impl FnOnce(E) -> String {
     let what = what.into();
@@ -159,12 +154,25 @@ pub fn unregister_classic_menu() -> Res<()> {
     delete_tree(&format!(r"Software\Classes\CLSID\{CLASSIC_CLSID}"))
 }
 
-pub fn register_associations(dir: &Path) -> Res<()> {
+fn application() -> String {
+    format!(r"Software\Classes\Applications\{GUI_EXE}")
+}
+
+pub fn register_associations(dir: &Path, iso: bool) -> Res<()> {
     let exe = dir.join(GUI_EXE).display().to_string();
     let command = format!("\"{exe}\" \"%1\"");
-    let application = format!(r"Software\Classes\Applications\{GUI_EXE}");
-    let associations = r"Software\Arca\Capabilities\FileAssociations";
-    for (extension, progid, description) in ASSOCIATIONS {
+    let application = application();
+    for kind in file_types() {
+        if kind.on_request && !iso {
+            unregister_type(&kind)?;
+            continue;
+        }
+        let FileType {
+            extension,
+            progid,
+            description,
+            ..
+        } = &kind;
         let class = format!(r"Software\Classes\{progid}");
         set(&class, "", description)?;
         set(&format!(r"{class}\DefaultIcon"), "", &format!("{exe},0"))?;
@@ -175,7 +183,7 @@ pub fn register_associations(dir: &Path) -> Res<()> {
             "",
         )?;
         set(&format!(r"{application}\SupportedTypes"), extension, "")?;
-        set(associations, extension, progid)?;
+        set(FILE_ASSOCIATIONS, extension, progid)?;
     }
     set(&application, "FriendlyAppName", "Arca")?;
     set(&format!(r"{application}\shell\open\command"), "", &command)?;
@@ -258,32 +266,50 @@ fn give_back_zip() -> Res<()> {
     delete_tree(ZIP_BEFORE)
 }
 
+fn delete_type_keys(kind: &FileType) -> Res<()> {
+    delete_tree(&format!(r"Software\Classes\{}", kind.progid))?;
+    delete_value(
+        &format!(r"Software\Classes\{}\OpenWithProgids", kind.extension),
+        &kind.progid,
+    )
+}
+
+fn unregister_type(kind: &FileType) -> Res<()> {
+    forget_default(&kind.extension);
+    delete_type_keys(kind)?;
+    delete_value(
+        &format!(r"{}\SupportedTypes", application()),
+        &kind.extension,
+    )?;
+    delete_value(FILE_ASSOCIATIONS, &kind.extension)
+}
+
 pub fn unregister_associations() -> Res<()> {
     give_back_zip()?;
-    for (extension, progid, _) in ASSOCIATIONS {
-        delete_tree(&format!(r"Software\Classes\{progid}"))?;
-        delete_value(
-            &format!(r"Software\Classes\{extension}\OpenWithProgids"),
-            progid,
-        )?;
+    for kind in file_types() {
+        delete_type_keys(&kind)?;
     }
-    delete_tree(&format!(r"Software\Classes\Applications\{GUI_EXE}"))?;
+    delete_tree(&application())?;
     delete_tree(r"Software\Arca")?;
     delete_value(r"Software\RegisteredApplications", "Arca")
 }
 
 pub fn forget_defaults() {
-    for (extension, _, _) in ASSOCIATIONS {
-        let choice = format!(
-            r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{extension}\UserChoice"
-        );
-        let ours = hkcu()
-            .open_subkey(&choice)
-            .and_then(|key| key.get_value::<String, _>("ProgId"))
-            .is_ok_and(|progid| progid.starts_with("Arca."));
-        if ours {
-            let _ = delete_tree(&choice);
-        }
+    for kind in file_types() {
+        forget_default(&kind.extension);
+    }
+}
+
+fn forget_default(extension: &str) {
+    let choice = format!(
+        r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{extension}\UserChoice"
+    );
+    let ours = hkcu()
+        .open_subkey(&choice)
+        .and_then(|key| key.get_value::<String, _>("ProgId"))
+        .is_ok_and(|progid| progid.starts_with("Arca."));
+    if ours {
+        let _ = delete_tree(&choice);
     }
 }
 
@@ -327,6 +353,7 @@ pub fn installed_choices(dir: &Path) -> Choices {
     Choices {
         menu: exists(&format!(r"Software\Classes\CLSID\{CLASSIC_CLSID}")),
         assoc: exists(r"Software\Arca\Capabilities"),
+        iso: exists(r"Software\Classes\Arca.iso"),
         path: super::path_has(&current, &dir.display().to_string()),
     }
 }

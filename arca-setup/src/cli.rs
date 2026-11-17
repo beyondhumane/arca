@@ -9,6 +9,7 @@ pub struct Options {
     pub relaunched: bool,
     pub preview: bool,
     pub files_only: bool,
+    pub iso: bool,
     pub dir: Option<PathBuf>,
     pub lang: Option<Lang>,
     pub screen: Option<Screen>,
@@ -24,6 +25,7 @@ impl Default for Options {
             relaunched: false,
             preview: false,
             files_only: false,
+            iso: false,
             dir: None,
             lang: None,
             screen: None,
@@ -49,6 +51,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Options {
             ("relaunched", _) => options.relaunched = true,
             ("preview", _) => options.preview = true,
             ("files-only", _) => options.files_only = true,
+            ("iso", _) => options.iso = true,
             ("dir", Some(value)) if !value.is_empty() => {
                 options.dir = Some(PathBuf::from(value.trim_matches('"')));
             }
@@ -94,6 +97,8 @@ mod tests {
         assert_eq!(options(&["--UNINSTALL"]).mode, Mode::Uninstall);
         assert!(!options(&["/update=0"]).update);
         assert!(!options(&["/update"]).update);
+        assert!(options(&["--ISO"]).iso);
+        assert!(!options(&[]).iso);
     }
 
     #[test]
