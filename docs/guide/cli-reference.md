@@ -22,6 +22,7 @@ Commands:
   list      List the contents without extracting them                  [aliases: l]
   extract   Extract the contents                                       [aliases: x]
   test      Check integrity without writing to disk                    [aliases: t]
+  hash      Print or check checksums of files, in the sha256sum format
   password  Add, change or remove the password of an existing archive
   bench     Measure the R1 and R2 performance requirements
 
@@ -77,6 +78,24 @@ Check integrity without writing to disk.
 | `<ARCHIVE>` | required | Archive to check. |
 | `-p, --password <PASSWORD>` | none | Password of an encrypted archive (AES-256 or ZipCrypto). |
 
+## hash
+
+Print a checksum for every file, one line each in the format `sha256sum` writes (`<hex>  <path>`), or verify a file of such lines. Directories are read recursively, in name order. Files are read in pieces, never whole into memory, and several are hashed at once across the cores; the lines still come out in order.
+
+| Argument / option | Default | Description |
+| --- | --- | --- |
+| `<PATHS>...` | required unless `--check` | Files or directories to hash. |
+| `-a, --algorithm <ALGORITHM>` | sha256 | crc32 · sha1 · sha256. With `--check`, each line’s algorithm is taken from the length of its checksum unless this is given. |
+| `-c, --check <SUMS>` | none | Verify the files listed in `SUMS` and print `<path>: OK` or `<path>: FAILED` for each. |
+
+```sh
+arca hash photos > SHA256SUMS
+arca hash --check SHA256SUMS     # or: sha256sum -c SHA256SUMS
+arca hash -a crc32 setup.exe
+```
+
+Paths are printed as given, with `/` between folders on every system. A sum file may use `*` before the name (binary mode), Windows line endings, a byte-order mark and the escaped names `sha256sum` writes for names holding a backslash or a line break. Lines that aren’t checksums are reported and skipped. A file that can’t be read, a checksum that doesn’t match, or a sum file with no checksum lines at all, gives exit status 1. BLAKE3 isn’t offered: its Rust crate needs a C compiler by default.
+
 ## password
 
 Rewrite a `.zip` with a different password, or with none. Entries aren’t compressed again, because WinZip AES encrypts the already-compressed bytes.
@@ -103,5 +122,5 @@ Measure the R1 and R2 performance requirements against an archive.
 | Status | Meaning |
 | --- | --- |
 | `0` | Success. |
-| `1` | Archive/I/O error, including wrong password or corrupted encrypted data. Printed to standard error as `arca: <message>`. |
+| `1` | Archive/I/O error, including wrong password or corrupted encrypted data. Printed to standard error as `arca: <message>`. Also a `hash` that couldn’t read a file or found a checksum that didn’t match. |
 | `2` | Invalid command-line syntax/options, reported by the argument parser. |

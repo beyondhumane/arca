@@ -10,6 +10,7 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+mod hash;
 mod rar;
 mod sevenz;
 
@@ -97,6 +98,29 @@ enum Cmd {
         archive: PathBuf,
         #[arg(short = 'p', long, help = "Password of an encrypted archive")]
         password: Option<String>,
+    },
+    #[command(about = "Print or check checksums of files, in the sha256sum format")]
+    Hash {
+        #[arg(
+            required_unless_present = "check",
+            help = "Files or directories (read recursively)"
+        )]
+        paths: Vec<PathBuf>,
+        #[arg(
+            short,
+            long,
+            value_enum,
+            help = "Checksum to compute [default: sha256]; with --check, taken from each line unless given"
+        )]
+        algorithm: Option<hash::Kind>,
+        #[arg(
+            short,
+            long,
+            value_name = "SUMS",
+            conflicts_with = "paths",
+            help = "Verify the files listed in SUMS, a file in the sha256sum format"
+        )]
+        check: Option<PathBuf>,
     },
     #[command(
         about = "Add, change or remove the password of an existing archive",
@@ -252,6 +276,16 @@ fn run(cli: Cli) -> Result<()> {
             password,
         } => extract(&archive, &dest, on_conflict, threads, password.as_deref()),
         Cmd::Test { archive, password } => test_archive(&archive, password.as_deref()),
+        Cmd::Hash {
+            paths,
+            algorithm,
+            check,
+        } => {
+            if !hash::run(&paths, algorithm, check.as_deref())? {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Cmd::Password {
             archive,
             password,
