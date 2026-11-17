@@ -61,6 +61,54 @@ pub struct ZipArchive<R: Read + Seek> {
     source: R,
     entries_list: Vec<Entry>,
     kept: Vec<Kept>,
+    comment: Vec<u8>,
+}
+
+fn read_tail<R: Read + Seek>(source: &mut R) -> Result<(Vec<u8>, usize, u64)> {
+    let total = source.seek(SeekFrom::End(0))?;
+    if total < EOCD_MIN as u64 {
+        return Err(Error::Format("too short to be a ZIP".into()));
+    }
+
+    let tail_len = (EOCD_MIN + MAX_COMMENT).min(total as usize);
+    let tail_start = total - tail_len as u64;
+    source.seek(SeekFrom::Start(tail_start))?;
+    let mut tail = vec![0u8; tail_len];
+    source.read_exact(&mut tail)?;
+
+    let pos_eocd = find_backwards(&tail, SIG_EOCD).ok_or_else(|| {
+        Error::Format("end of central directory not found (is this a ZIP?)".into())
+    })?;
+    Ok((tail, pos_eocd, total))
+}
+
+// A comment whose length runs past the end of the file keeps what is there:
+// the archive opened before anything looked at that field, and a cut-off
+// comment is no reason for it to stop opening now.
+fn eocd_comment(tail: &[u8], pos_eocd: usize) -> &[u8] {
+    let start = pos_eocd + EOCD_MIN;
+    let Some(len) = tail.get(start - 2..start) else {
+        return &[];
+    };
+    let len = u16::from_le_bytes([len[0], len[1]]) as usize;
+    let end = start.saturating_add(len).min(tail.len());
+    tail.get(start..end).unwrap_or(&[])
+}
+
+pub fn read_comment<R: Read + Seek>(mut source: R) -> Result<String> {
+    let (tail, pos_eocd, _) = read_tail(&mut source)?;
+    Ok(decode_comment(eocd_comment(&tail, pos_eocd), false))
+}
+
+// Comments carry no code page of their own beyond the entry's UTF-8 flag, and
+// plenty of tools write UTF-8 without setting it, so text that is valid UTF-8
+// is taken as such and anything else as code page 437, like names.
+fn decode_comment(bytes: &[u8], utf8: bool) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_owned(),
+        Err(_) if utf8 => String::from_utf8_lossy(bytes).into_owned(),
+        Err(_) => from_cp437(bytes),
+    }
 }
 
 /// What the central directory says about an entry beyond what `Entry` holds,
@@ -111,20 +159,8 @@ fn has_extra(extra: &[u8], id: u16) -> bool {
 
 impl<R: Read + Seek> ZipArchive<R> {
     pub fn open(mut source: R) -> Result<Self> {
-        let total = source.seek(SeekFrom::End(0))?;
-        if total < EOCD_MIN as u64 {
-            return Err(Error::Format("too short to be a ZIP".into()));
-        }
-
-        let tail_len = (EOCD_MIN + MAX_COMMENT).min(total as usize);
-        let tail_start = total - tail_len as u64;
-        source.seek(SeekFrom::Start(tail_start))?;
-        let mut tail = vec![0u8; tail_len];
-        source.read_exact(&mut tail)?;
-
-        let pos_eocd = find_backwards(&tail, SIG_EOCD).ok_or_else(|| {
-            Error::Format("end of central directory not found (is this a ZIP?)".into())
-        })?;
+        let (tail, pos_eocd, total) = read_tail(&mut source)?;
+        let comment = eocd_comment(&tail, pos_eocd).to_vec();
 
         let mut c = Cursor::at(&tail, pos_eocd)?;
         c.skip(4, "EOCD signature")?;
@@ -209,11 +245,21 @@ impl<R: Read + Seek> ZipArchive<R> {
             source,
             entries_list,
             kept,
+            comment,
         })
     }
 
     pub fn entries(&self) -> &[Entry] {
         &self.entries_list
+    }
+
+    pub fn comment(&self) -> String {
+        decode_comment(&self.comment, false)
+    }
+
+    pub fn entry_comment(&self, idx: usize) -> Option<String> {
+        let k = self.kept.get(idx).filter(|k| !k.comment.is_empty())?;
+        Some(decode_comment(&k.comment, k.flags & 0x800 != 0))
     }
 
     pub fn len(&self) -> usize {
@@ -920,6 +966,7 @@ pub struct ZipWriter<W: Write + Seek> {
     registros: Vec<Record>,
     pos: u64,
     stream_threads: usize,
+    comment: Vec<u8>,
 }
 
 impl<W: Write + Seek> ZipWriter<W> {
@@ -929,7 +976,26 @@ impl<W: Write + Seek> ZipWriter<W> {
             registros: Vec::new(),
             pos: 0,
             stream_threads: 0,
+            comment: Vec::new(),
         }
+    }
+
+    // The end record is found by searching backwards for its signature, so a
+    // comment that holds one would make the archive end somewhere else.
+    pub fn set_comment(&mut self, comment: &[u8]) -> Result<()> {
+        if comment.len() > MAX_COMMENT {
+            return Err(Error::Limit(format!(
+                "archive comment of {} bytes",
+                comment.len()
+            )));
+        }
+        if find_backwards(comment, SIG_EOCD).is_some() {
+            return Err(Error::Format(
+                "the archive comment holds an end of central directory signature".into(),
+            ));
+        }
+        self.comment = comment.to_vec();
+        Ok(())
     }
 
     pub fn add<R: Read>(
@@ -1515,7 +1581,8 @@ impl<W: Write + Seek> ZipWriter<W> {
         e.extend_from_slice(&(n.min(0xFFFF) as u16).to_le_bytes());
         e.extend_from_slice(&(cd_size.min(0xFFFF_FFFF) as u32).to_le_bytes());
         e.extend_from_slice(&(cd_offset.min(0xFFFF_FFFF) as u32).to_le_bytes());
-        e.extend_from_slice(&0u16.to_le_bytes());
+        e.extend_from_slice(&(self.comment.len() as u16).to_le_bytes());
+        e.extend_from_slice(&self.comment);
         self.out.write_all(&e)?;
         self.out.flush()?;
         Ok(self.out)
@@ -1847,6 +1914,7 @@ fn rewrite(
         .collect();
     let total = entries.len() + extra.len();
     let mut w = ZipWriter::new(BufWriter::with_capacity(STREAM_BUF, File::create(out)?));
+    w.set_comment(&source.comment)?;
     let mut bytes = 0u64;
     let mut src = BufReader::with_capacity(STREAM_BUF, File::open(archive)?);
 
@@ -4007,5 +4075,111 @@ mod tests {
         let mut got = Vec::new();
         a.extract_to_with(0, &mut got, Some("nueva")).unwrap();
         assert_eq!(got, plain);
+    }
+
+    fn commented_archive(comment: &[u8]) -> Vec<u8> {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        w.add("a.txt", &b"uno"[..], Codec::Store, Level::STORE, None)
+            .unwrap();
+        w.add("b.txt", &b"dos"[..], Codec::Store, Level::STORE, None)
+            .unwrap();
+        w.registros[0].kept = Some(Kept {
+            made_by: 0x031E,
+            needed: 20,
+            flags: 0x0800,
+            method: 0,
+            time: w.registros[0].time_val,
+            date: w.registros[0].date_val,
+            comment: "nota de la entrada".as_bytes().to_vec(),
+            ..Kept::default()
+        });
+        w.set_comment(comment).unwrap();
+        w.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn comments_are_read_and_survive_every_rewrite() {
+        let text = "Archivo de prueba\ncon dos l\u{ed}neas";
+        let buf = commented_archive(text.as_bytes());
+        let a = ZipArchive::open(IoCursor::new(buf.clone())).unwrap();
+        assert_eq!(a.comment(), text);
+        assert_eq!(read_comment(IoCursor::new(buf.clone())).unwrap(), text);
+        assert_eq!(a.entry_comment(0).as_deref(), Some("nota de la entrada"));
+        assert_eq!(a.entry_comment(1), None);
+        assert_eq!(a.entry_comment(99), None);
+
+        let room = std::env::temp_dir().join(format!("arca-comment-source-{}", std::process::id()));
+        std::fs::create_dir_all(&room).unwrap();
+        let file = room.join("c.txt");
+        std::fs::write(&file, b"tres").unwrap();
+        let addition = [Addition {
+            source: Some(file.clone()),
+            name: "c.txt".into(),
+            codec: Codec::Deflate,
+            level: Level::NORMAL,
+        }];
+        let outputs = [
+            through_files("comment-remove", &buf, |f, t| {
+                remove_entries(f, t, None, &|e| e.name != "b.txt", &|_, _, _| true)
+            }),
+            through_files("comment-rename", &buf, |f, t| {
+                rename_entries(f, t, None, &|e| format!("x/{}", e.name), &|_, _, _| true)
+            }),
+            through_files("comment-add", &buf, |f, t| {
+                add_entries(f, t, None, &addition, &|_, _, _| true)
+            }),
+            through_files("comment-password", &buf, |f, t| {
+                rewrite_password(f, t, None, Some("k"), &|_, _, _| true)
+            }),
+        ];
+        std::fs::remove_dir_all(&room).unwrap();
+        for out in outputs {
+            let a = ZipArchive::open(IoCursor::new(out)).unwrap();
+            assert_eq!(a.comment(), text);
+            assert_eq!(a.entry_comment(0).as_deref(), Some("nota de la entrada"));
+        }
+    }
+
+    #[test]
+    fn a_comment_that_is_not_utf8_reads_as_code_page_437() {
+        let buf = commented_archive(b"caf\x82");
+        let a = ZipArchive::open(IoCursor::new(buf)).unwrap();
+        assert_eq!(a.comment(), "caf\u{e9}");
+    }
+
+    #[test]
+    fn comments_the_writer_cannot_keep_are_refused() {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        assert!(w.set_comment(&vec![b'a'; MAX_COMMENT]).is_ok());
+        assert!(matches!(
+            w.set_comment(&vec![b'a'; MAX_COMMENT + 1]),
+            Err(Error::Limit(_))
+        ));
+        let mut fake = b"before ".to_vec();
+        fake.extend_from_slice(&SIG_EOCD.to_le_bytes());
+        assert!(w.set_comment(&fake).is_err());
+    }
+
+    #[test]
+    fn a_comment_cut_short_or_overlong_does_not_panic_or_stop_the_archive() {
+        let buf = commented_archive(b"a comment that will be cut");
+        let eocd = buf.len() - EOCD_MIN - 26;
+        for cut in 0..=26 {
+            let short = buf[..buf.len() - cut].to_vec();
+            let a = ZipArchive::open(IoCursor::new(short)).unwrap();
+            assert_eq!(a.comment().len(), 26 - cut);
+            assert_eq!(a.len(), 2);
+        }
+        for len in [0u16, 1, 27, 1000, u16::MAX] {
+            let mut bad = buf.clone();
+            bad[eocd + 20..eocd + 22].copy_from_slice(&len.to_le_bytes());
+            let a = ZipArchive::open(IoCursor::new(bad.clone())).unwrap();
+            assert_eq!(a.comment().len(), (len as usize).min(26));
+            let _ = read_comment(IoCursor::new(bad));
+        }
+        for cut in 0..buf.len() {
+            let _ = read_comment(IoCursor::new(buf[..cut].to_vec()));
+            let _ = ZipArchive::open(IoCursor::new(buf[..cut].to_vec()));
+        }
     }
 }
