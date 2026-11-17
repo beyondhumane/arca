@@ -2,7 +2,9 @@ use crate::corpus::{Kind, CHUNK, SEED};
 use crate::{Outcome, Report, Row, Speeds, LEVEL, RATED};
 use std::fmt::Write;
 
-fn mb_s(value: Option<f64>) -> String {
+/// A speed as the table prints it: no decimals from 1000 MB/s up, one below,
+/// and a dash for one not measured.
+pub fn speed_text(value: Option<f64>) -> String {
     match value {
         Some(v) if v >= 1000.0 => format!("{v:.0}"),
         Some(v) => format!("{v:.1}"),
@@ -75,14 +77,14 @@ pub fn table(report: &Report) -> String {
     let mut rating = format!(
         "Rating    {}: {}",
         threads_word(1),
-        mb_s(report.rating(false))
+        speed_text(report.rating(false))
     );
     if multi {
         let _ = write!(
             rating,
             "   {}: {}",
             threads_word(o.threads),
-            mb_s(report.rating(true))
+            speed_text(report.rating(true))
         );
     }
     let _ = writeln!(t, "{rating}");
@@ -124,8 +126,8 @@ fn line(row: &Row, multi: bool, threads: usize) -> String {
             let cells = |s: &Option<Speeds>| {
                 format!(
                     "{:>10}{:>12}",
-                    mb_s(s.map(|s| s.compress)),
-                    mb_s(s.map(|s| s.decompress))
+                    speed_text(s.map(|s| s.compress)),
+                    speed_text(s.map(|s| s.decompress))
                 )
             };
             let mut l = format!("{label:<10}{:>7.1}%  {}", ratio * 100.0, cells(single));

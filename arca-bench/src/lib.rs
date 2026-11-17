@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-pub use report::{json, table};
+pub use report::{json, speed_text, table};
 
 /// Every codec runs at Arca's default level, the one `arca create` uses.
 pub const LEVEL: Level = Level::NORMAL;
