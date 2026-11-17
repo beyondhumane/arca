@@ -40,3 +40,15 @@ executables (1,382 files), Windows 11, 16 threads, together with the
 `parallel` feature and the 4 GiB writer budget set in `arca-rar`; every
 archive passes `UnRAR t`. See the commit that brought this copy in for the
 numbers.
+
+Container fixes, which do not touch the encoder:
+
+- **Locator offsets from the main header.** The quick-open and recovery
+  offsets in the main header's locator were measured from the end of the
+  signature. WinRAR measures them from the start of the main header, which
+  follows the HEAD_CRYPT block when headers are encrypted. WinRAR 7.23 then
+  failed sets with encrypted headers, a recovery record and a member split
+  across volumes ("Corrupt header is found", "Recovery record is corrupt").
+  Archives without encrypted headers are unchanged. The reader finds the
+  recovery record by scanning, not by the locator, so it is unaffected
+  (`rar50/write/layout.rs`, with `locator_counts_from_the_main_header_after_head_crypt`).

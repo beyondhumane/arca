@@ -442,7 +442,7 @@ pub(super) fn write_archive(
         debug_assert_eq!(layout.recovery_prefix_len, Some(mirror.len()));
         debug_assert_eq!(
             layout.recovery_offset,
-            Some(mirror.len() - RAR50_SIGNATURE.len() as u64),
+            Some(mirror.len() - RAR50_SIGNATURE.len() as u64 - head_crypt.len() as u64),
             "recovery record is not where the locator points"
         );
         write_recovery_service(
