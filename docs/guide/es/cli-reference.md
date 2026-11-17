@@ -127,9 +127,9 @@ arca diff --quick -p secreto a.7z b.zip
 | `T ruta` | Un fichero en un lado y una carpeta o un enlace en el otro. |
 | `m ruta` | Mismo contenido y distinta fecha de modificación (solo con `--times`). |
 
-- Las líneas salen por orden de nombre. Los nombres usan `/` y las carpetas terminan en `/`. Se comparan tal como están escritos, así que las mayúsculas cuentan. Se ignoran un `./` inicial, las barras dobles y las barras invertidas.
+- Las líneas salen por orden de nombre. Los nombres usan `/` y las carpetas terminan en `/`. Se comparan tal como están escritos, así que las mayúsculas cuentan. Se ignoran un `./` inicial y las barras dobles, y una barra invertida se lee como `/`.
 - Una carpeta se compara por lo que contiene, no por su propio nombre: `arca diff a.zip salida` después de `arca x a.zip -o salida` no imprime nada. Las carpetas que solo aparecen en la ruta de sus ficheros cuentan como carpetas, así que un archivo sin entradas de carpeta sigue coincidiendo con lo que se extrae de él.
-- Por defecto, los ficheros del mismo tamaño se leen en los dos lados y se comparan por SHA-256, salvo que los dos lados guarden CRC32 y no coincidan. Un `.xz`, `.bz2` o `.zst` suelto no tiene un tamaño fiable, así que siempre se lee.
+- Por defecto, los ficheros del mismo tamaño se leen en los dos lados y se comparan por SHA-256, salvo que los dos lados guarden CRC32 y no coincidan. Un `.xz`, `.bz2` o `.zst` suelto no tiene un tamaño fiable, así que siempre se lee, salvo con `--quick`, que nunca lo da por cambiado.
 - Los enlaces solo se distinguen en TAR y en el disco. Un enlace duro de TAR cuenta como el fichero que nombra. Los dispositivos y las tuberías se dejan fuera.
 - Un lado que no se puede abrir, una contraseña incorrecta o ausente, o una entrada que hay que leer y no se puede, dan el estado de salida 2 en vez de una diferencia.
 

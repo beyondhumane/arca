@@ -127,9 +127,9 @@ arca diff --quick -p secret a.7z b.zip
 | `T path` | A file on one side and a folder or a link on the other. |
 | `m path` | Same contents, different modification time (only with `--times`). |
 
-- Lines come in name order. Names use `/` and folders end in `/`. They are compared exactly as written, so case matters. A leading `./`, doubled slashes and backslashes are ignored.
+- Lines come in name order. Names use `/` and folders end in `/`. They are compared exactly as written, so case matters. A leading `./` and doubled slashes are ignored, and a backslash reads as `/`.
 - A folder is compared by what it holds, not by its own name: `arca diff a.zip out` after `arca x a.zip -o out` prints nothing. Folders that only appear in the paths of their files count as folders, so an archive without folder entries still matches its extraction.
-- By default, files of the same size are read on both sides and compared by SHA-256, unless both sides store CRC32s and those differ. A standalone `.xz`, `.bz2` or `.zst` has no reliable size, so it is always read.
+- By default, files of the same size are read on both sides and compared by SHA-256, unless both sides store CRC32s and those differ. A standalone `.xz`, `.bz2` or `.zst` has no reliable size, so it is always read, except with `--quick`, which never reports it as changed.
 - Links can only be told apart in TAR and on the disk. A TAR hard link counts as the file it names. Devices and pipes are left out.
 - A side that can’t be opened, a wrong or missing password, or an entry that has to be read and can’t be, gives exit status 2 rather than a difference.
 
