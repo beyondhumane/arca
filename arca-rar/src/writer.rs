@@ -172,14 +172,17 @@ fn write(
     reporter: &Reporter<'_>,
 ) -> rars::Result<()> {
     let (writer_options, extras) = settings(options);
+    let mut out = io::BufWriter::new(&mut *file);
     write_streaming_archive_with_progress(
         entries,
         writer_options,
         extras,
         resources,
         Some(reporter),
-        file,
+        &mut out,
     )?;
+    out.flush()?;
+    drop(out);
     file.sync_all()?;
     Ok(())
 }
