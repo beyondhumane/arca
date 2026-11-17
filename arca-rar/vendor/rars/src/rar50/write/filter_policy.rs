@@ -251,7 +251,11 @@ pub(super) fn encode_options_for_level(
             2 => 1,
             3 => 2,
             _ => PARSE_PASSES_FULL,
-        }))
+        })
+        // Arca: stop searching every position of data that keeps missing,
+        // which is mostly data that is already compressed. Level 1 starts
+        // stepping after 16 misses in a row, the parse after 64.
+        .with_skip_after_misses(if level == 1 { 16 } else { 64 }))
 }
 
 /// What levels 4 and 5 keep: the encoder's own defaults.

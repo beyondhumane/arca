@@ -58,6 +58,12 @@ source was consulted for any of it.
   workspace with the reference implementation compare the arrivals (price,
   length, distance), since the remembered distances are now only settled at
   positions the parse prices.
+- **Stepping over data that keeps missing.** `EncodeOptions` gains
+  `skip_after_misses`: after that many searches in a row find nothing, the
+  lazy parse and the optimal parse's collector step over one more position
+  per further run of misses, emitting them as literals without searching or
+  inserting them, until a match turns up. Level 1 starts after 16 misses,
+  the other levels after 64 (`rar50/write/filter_policy.rs`).
 
 Measured with `arca create out.rar <dir> -l <level>` on 144 MiB of source and
 executables (1,382 files), Windows 11, 16 threads, together with the

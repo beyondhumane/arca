@@ -505,6 +505,10 @@ pub struct EncodeOptions {
     /// Arca: how many times the optimal parse prices a block, at most
     /// [`OPTIMAL_PARSE_PASSES`].
     pub parse_passes: usize,
+    /// Arca: after this many searches in a row find nothing, the search
+    /// starts stepping over positions, one more for each further run of as
+    /// many misses, until a match turns up. Zero searches everywhere.
+    pub skip_after_misses: usize,
 }
 
 impl EncodeOptions {
@@ -517,12 +521,20 @@ impl EncodeOptions {
             optimal_parse: false,
             nice_length: NICE_MATCH_LENGTH,
             parse_passes: OPTIMAL_PARSE_PASSES,
+            skip_after_misses: 0,
         }
     }
 
     /// Arca: a shorter nice length searches and prices less per position.
     pub const fn with_nice_length(mut self, length: usize) -> Self {
         self.nice_length = if length < 8 { 8 } else { length };
+        self
+    }
+
+    /// Arca: let a search that keeps missing step over positions. See
+    /// [`Self::skip_after_misses`].
+    pub const fn with_skip_after_misses(mut self, misses: usize) -> Self {
+        self.skip_after_misses = misses;
         self
     }
 
@@ -1378,9 +1390,15 @@ impl<B: Budget> OptimalCollector<B> {
         // reaches the same decision from the same lengths, so the two agree on
         // which positions matter without having to be told.
         let mut committed_through = block.start;
+        // Arca: where the next search happens once misses start stepping over
+        // positions, and how many searches in a row have found nothing.
+        let mut next_search = block.start;
+        let mut misses = 0usize;
         for pos in block.clone() {
             matches.starts.push_admitted(matches.runs.len() as u32);
-            let searching = pos >= committed_through && options.max_match_candidates != 0;
+            let searching = pos >= committed_through
+                && pos >= next_search
+                && options.max_match_candidates != 0;
             let max_distance = pos.min(options.max_match_distance);
             let before = matches.runs.len();
             match &mut self.finder {
@@ -1413,6 +1431,14 @@ impl<B: Budget> OptimalCollector<B> {
                         if last.0 as usize == len_limit && len_limit < limit {
                             last.0 = match_length(combined, pos, last.1 as usize, limit) as u32;
                         }
+                    }
+                    if options.skip_after_misses != 0 {
+                        if matches.runs.len() == before {
+                            misses += 1;
+                        } else {
+                            misses = 0;
+                        }
+                        next_search = pos + 1 + misses / options.skip_after_misses;
                     }
                 }
             }
@@ -2687,6 +2713,7 @@ fn encode_tokens_with_allowance<B: Budget>(
     let mut state = EncoderMatchState::default();
     let mut next_report = 0usize;
     let mut pending_match: Option<MatchCandidate> = None;
+    let mut misses = 0usize;
     while pos < end {
         let candidate = pending_match
             .take()
@@ -2722,12 +2749,26 @@ fn encode_tokens_with_allowance<B: Budget>(
                 finder.insert(combined, history_pos);
             }
             pos += length;
+            misses = 0;
         } else {
             tokens
                 .push(EncodeToken::Literal(combined[pos]))
                 .map_err(Into::into)?;
             finder.insert(combined, pos);
             pos += 1;
+            // Arca: a search that keeps missing steps over the positions
+            // after it, emitted as literals and left out of the finder. See
+            // [`EncodeOptions::skip_after_misses`].
+            if options.skip_after_misses != 0 {
+                misses += 1;
+                let skip = (misses / options.skip_after_misses).min(end - pos);
+                for &byte in &combined[pos..pos + skip] {
+                    tokens
+                        .push(EncodeToken::Literal(byte))
+                        .map_err(Into::into)?;
+                }
+                pos += skip;
+            }
         }
         let consumed = pos - start;
         if consumed >= next_report {
