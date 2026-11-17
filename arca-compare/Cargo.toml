@@ -1,0 +1,25 @@
+[package]
+name = "arca-compare"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Checksums of archive entries without extracting them"
+
+# No features of its own: the binaries turn on `rar` in arca-rar and the
+# native codecs in arca-zip, arca-7z and arca-stream, and cargo hands those to
+# this crate as well.
+[dependencies]
+arca-core.workspace = true
+arca-zip.workspace = true
+arca-tar.workspace = true
+arca-stream.workspace = true
+arca-7z.workspace = true
+arca-rar.workspace = true
+arca-iso.workspace = true
+flate2.workspace = true
+rayon.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"

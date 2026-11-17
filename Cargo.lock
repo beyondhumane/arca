@@ -296,6 +296,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "arca-compare"
+version = "0.10.0"
+dependencies = [
+ "arca-7z",
+ "arca-core",
+ "arca-iso",
+ "arca-rar",
+ "arca-stream",
+ "arca-tar",
+ "arca-zip",
+ "flate2",
+ "rayon",
+]
+
+[[package]]
 name = "arca-core"
 version = "0.10.0"
 dependencies = [
@@ -323,6 +338,7 @@ dependencies = [
  "arboard",
  "arca-7z",
  "arca-brand",
+ "arca-compare",
  "arca-core",
  "arca-drag",
  "arca-icons",
