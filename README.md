@@ -23,7 +23,7 @@ A file explorer and archiver in one window, written in Rust. Browse your disk, s
 
 | Feature | Details |
 |---|---|
-| **Formats** | ZIP with Zip64 (store, Deflate, Zstandard), [7z](docs/guide/creating-archives.md#7z) (Store/LZMA2, solid reading), [RAR5 creation](docs/guide/rar.md#creating-rar5-archives) (single volume, four levels), ustar TAR, `.tar.gz`, [`.tar.xz` and `.xz`](docs/guide/creating-archives.md#xz) |
+| **Formats** | ZIP with Zip64 (store, Deflate, Zstandard; bzip2 entries are read), [7z](docs/guide/creating-archives.md#7z) (Store/LZMA2, solid reading), [RAR5 creation](docs/guide/rar.md#creating-rar5-archives) (single volume, four levels), ustar TAR, `.tar.gz`, [`.tar.xz` and `.xz`](docs/guide/creating-archives.md#xz), [`.tar.bz2`, `.bz2`, `.tar.zst` and `.zst`](docs/guide/creating-archives.md#bzip2-and-zstandard) |
 | **Read-only formats** | [Existing RAR/CBR, including multivolume](docs/guide/rar.md), enabled by default; never modified, CBR never created |
 | **Read-only** | [ZIP containers](docs/guide/zip-containers.md): `.apk` `.aar` `.jar` `.war` `.ear` `.epub` `.cbz` `.xpi` `.whl` `.nupkg` `.ipa`; [ISO 9660 images](docs/guide/iso.md) with Rock Ridge and Joliet names |
 | **Speed** | Multi-threaded compression, parallel `.zip` extraction, sub-millisecond start |

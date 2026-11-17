@@ -63,8 +63,12 @@ Cuatro comandos cubren casi todo. Cada uno imprime una única línea de resumen 
 | `.tar.gz` · `.tgz` | TAR dentro de un flujo gzip |
 | `.tar.xz` · `.txz` | TAR dentro de un flujo XZ |
 | `.xz` | Un fichero en un flujo XZ, sin contenedor |
+| `.tar.bz2` · `.tbz2` · `.tbz` | TAR dentro de un flujo bzip2 |
+| `.bz2` | Un fichero en un flujo bzip2 |
+| `.tar.zst` · `.tzst` | TAR dentro de un flujo Zstandard |
+| `.zst` | Un fichero en un flujo Zstandard |
 
-Cualquier otra extensión se rechaza con un error que enumera las admitidas. Al leer, un flujo XZ se reconoce por su firma, y si lleva un TAR dentro lo decide su contenido, no el nombre.
+Cualquier otra extensión se rechaza con un error que enumera las admitidas. Al leer, un flujo XZ, bzip2 o Zstandard se reconoce por su firma, y si lleva un TAR dentro lo decide su contenido, no el nombre.
 
 ## Obtener ayuda
 

@@ -16,6 +16,7 @@ Arca es un workspace de Cargo. Cada crate tiene una sola tarea y una postura dec
 | `arca-core` | Errores, límites, lecturas de cabecera acotadas, fechas MS-DOS, defensa contra Zip Slip | prohibido |
 | `arca-zip` | ZIP con Zip64; store, Deflate sobre zlib-rs, Zstandard, AES-256 | prohibido |
 | `arca-tar` | TAR ustar con verificación de suma de comprobación | prohibido |
+| `arca-stream` | Flujos XZ (a través de `arca-xz`), bzip2 y Zstandard, sueltos o alrededor de un TAR, distinguidos por su contenido | prohibido |
 | `arca-7z` | Análisis 7z acotado, extracción sólida, creación Store/LZMA2 y AES | prohibido |
 | `arca-rar` | Lectura RAR/CBR y creación RAR5 de un solo volumen, activo por defecto en CLI/GUI | prohibido |
 | `arca-cli` | El binario arca | permitido, sin usar |
@@ -60,6 +61,7 @@ match ZipArchive::open(file) {
 | --- | --- |
 | `flate2` + `zlib-rs` | Deflate, usando la implementación en Rust más rápida medida durante el diseño |
 | `zstd` | Bindings de Zstandard a libzstd, con su multihilo interno activado |
+| `bzip2` 0.6 / `libbz2-rs-sys` | bzip2 en entradas ZIP y flujos `.bz2`; un port a Rust puro de libbzip2 (usa `unsafe` por dentro), así que no necesita compilador de C ni `codecs-native` |
 | `crc32fast` | Comprobaciones CRC-32 |
 | `sevenz-rust2` 0.23.0 / `lzma-rust2` 0.21.0 | 7z/AES y LZMA Apache-2.0; parser reforzado, optimización unsafe de LZMA desactivada |
 | `rayon` | El pool de hilos detrás de la compresión y extracción en paralelo |

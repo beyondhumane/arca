@@ -25,7 +25,10 @@ CBR creation are not supported.
 Standalone `.xz` and `.tar.xz`/`.txz` can be created, listed, tested and
 extracted in CLI and desktop. See
 [issue #18](https://github.com/beyondhumane/arca/issues/18) and
-[Creating archives](creating-archives.md#xz).
+[Creating archives](creating-archives.md#xz). bzip2 and Zstandard work the same
+way, standalone and around a TAR; see
+[Creating archives](creating-archives.md#bzip2-and-zstandard). ZIP entries
+compressed with bzip2 are read.
 
 ## Not yet
 

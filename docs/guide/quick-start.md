@@ -63,8 +63,12 @@ Four commands cover almost everything. Each one prints a single summary line whe
 | `.tar.gz` · `.tgz` | TAR inside a gzip stream |
 | `.tar.xz` · `.txz` | TAR inside an XZ stream |
 | `.xz` | One file in an XZ stream, with no container |
+| `.tar.bz2` · `.tbz2` · `.tbz` | TAR inside a bzip2 stream |
+| `.bz2` | One file in a bzip2 stream |
+| `.tar.zst` · `.tzst` | TAR inside a Zstandard stream |
+| `.zst` | One file in a Zstandard stream |
 
-Any other extension is refused with an error that lists the supported ones. When reading, an XZ stream is recognised by its signature, and whether it holds a TAR is decided by its contents, not by the name.
+Any other extension is refused with an error that lists the supported ones. When reading, an XZ, bzip2 or Zstandard stream is recognised by its signature, and whether it holds a TAR is decided by its contents, not by the name.
 
 ## Getting help
 
