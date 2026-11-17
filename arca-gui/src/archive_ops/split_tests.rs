@@ -140,12 +140,13 @@ fn a_stop_leaves_no_part_behind() {
 }
 
 #[test]
-fn rar_is_not_split() {
+fn rar_is_written_as_rar_volumes_not_split_parts() {
     let room = Room::new();
     let (source, _) = sample(&room);
+    let out = room.path("a.rar");
     let result = compress_split(
-        &room.path("a.rar"),
-        Some(1 << 20),
+        &out,
+        Some(64 << 10),
         &[source],
         Format::Rar,
         Codec::Store,
@@ -153,7 +154,15 @@ fn rar_is_not_split() {
         GO,
         (None, false),
     );
-    assert!(matches!(result, Err(Error::Unsupported(_))), "{result:?}");
+    if cfg!(not(feature = "rar")) {
+        assert!(matches!(result, Err(Error::Unsupported(_))), "{result:?}");
+        return;
+    }
+    result.unwrap();
+    let first = room.path("a.part1.rar");
+    assert!(first.is_file() && room.path("a.part2.rar").is_file());
+    assert!(!out.exists() && !part_path(&out, 1).exists());
+    assert_eq!(created_first(&out, Format::Rar, Some(64 << 10)), first);
 }
 
 #[test]
@@ -243,7 +252,12 @@ fn the_compress_box_turns_its_choice_into_a_volume_size() {
         assert_eq!(volume_of(&app), None, "{typed}");
     }
     app.state.format = Format::Rar;
-    assert_eq!(app.volume_size(), Ok(None));
+    app.state.volume_text = "64k".into();
+    assert_eq!(app.volume_size(), Ok(Some(64 << 10)));
+    app.state.volume_text = "63k".into();
+    assert!(app.volume_size().is_err());
+    app.state.volume = VolumeChoice::Mb100;
+    assert_eq!(app.volume_size(), Ok(Some(100 << 20)));
     for choice in VolumeChoice::ALL {
         for lang in [
             crate::i18n::Lang::En,

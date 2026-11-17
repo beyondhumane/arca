@@ -35,6 +35,13 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
+/// What a new RAR can have that the other formats have no place for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RarExtras {
+    pub(crate) solid: bool,
+    pub(crate) recovery: Option<u8>,
+}
+
 pub(crate) enum Job {
     Extract {
         archives: Vec<PathBuf>,
@@ -110,6 +117,8 @@ pub(crate) enum Job {
         level: Level,
         password: Option<String>,
         hide_names: bool,
+        // What only a RAR takes; the other formats ignore it.
+        rar: RarExtras,
         volume: Option<u64>,
     },
     // Putting files in. Same rebuild as Delete, and for the same reason: the
@@ -220,6 +229,7 @@ pub(crate) fn parse_args() -> Startup {
             level: Level::NORMAL,
             password: None,
             hide_names: false,
+            rar: RarExtras::default(),
             volume: None,
         }),
         other if !other.starts_with("--") => Startup::Browse(Some(PathBuf::from(other))),
@@ -619,6 +629,7 @@ pub(crate) fn run_job_blocking(
             level,
             password,
             hide_names,
+            rar,
             volume,
         } => {
             if inputs.is_empty() {
@@ -637,7 +648,7 @@ pub(crate) fn run_job_blocking(
                 volume,
                 &inputs,
                 format,
-                (codec, sevenz),
+                (codec, sevenz, rar),
                 level,
                 notify,
                 (password.as_deref(), hide_names),
@@ -653,9 +664,7 @@ pub(crate) fn run_job_blocking(
                 &[
                     (
                         "name",
-                        &arca_core::volumes::first_output(&out, volume)
-                            .display()
-                            .to_string(),
+                        &created_first(&out, format, volume).display().to_string(),
                     ),
                     ("from", &human(from)),
                     ("to", &human(to)),

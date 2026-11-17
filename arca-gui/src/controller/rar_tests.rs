@@ -9,7 +9,11 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn settle(controller: &mut AppController) {
-    let limit = Instant::now() + Duration::from_secs(10);
+    settle_within(controller, Duration::from_secs(10));
+}
+
+fn settle_within(controller: &mut AppController, wait: Duration) {
+    let limit = Instant::now() + wait;
     while controller.state.busy || controller.working() {
         controller.receive();
         assert!(Instant::now() < limit, "listing worker did not complete");
@@ -430,6 +434,7 @@ fn rar_job(out: PathBuf, inputs: Vec<PathBuf>, level: Level) -> Job {
         level,
         password: None,
         hide_names: false,
+        rar: Default::default(),
         volume: None,
     }
 }
@@ -453,7 +458,7 @@ fn rar_creation_shows_its_policy_instead_of_zip_controls() {
     app.set_create_format(Format::Rar);
     let note = app.create_policy_note().expect("RAR policy note");
     assert_eq!(note, crate::i18n::strings(Lang::En).rar_create_policy);
-    assert!(note.contains("no password"));
+    assert!(note.contains("New archives only"));
     app.dispatch(AppAction::SetLanguage(Some(Lang::Es)));
     assert_eq!(
         app.create_policy_note(),
@@ -464,7 +469,7 @@ fn rar_creation_shows_its_policy_instead_of_zip_controls() {
 }
 
 #[test]
-fn rar_create_jobs_carry_only_the_options_the_writer_takes() {
+fn rar_create_jobs_carry_the_password_hidden_names_volumes_and_rar_options() {
     let mut app = AppController::new(Settings::default());
     app.prepare_compress(vec![PathBuf::from("/source/a.txt")]);
     assert_eq!(app.state.format, Format::Zip);
@@ -473,7 +478,13 @@ fn rar_create_jobs_carry_only_the_options_the_writer_takes() {
     app.state.hide_names = true;
     app.set_create_format(Format::Rar);
     assert!(app.state.output_name.ends_with(".rar"));
-    assert!(!app.state.hide_names);
+    assert!(app.state.hide_names);
+    app.state.rar = crate::archive_ops::RarExtras {
+        solid: true,
+        recovery: Some(3),
+    };
+    app.state.volume = VolumeChoice::Custom;
+    app.state.volume_text = "64k".into();
     for level in [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST] {
         app.state.level = level;
         let Some(Job::Compress {
@@ -482,6 +493,8 @@ fn rar_create_jobs_carry_only_the_options_the_writer_takes() {
             level: actual,
             password,
             hide_names,
+            rar,
+            volume,
             ..
         }) = app.compression_job()
         else {
@@ -490,14 +503,81 @@ fn rar_create_jobs_carry_only_the_options_the_writer_takes() {
         assert_eq!(out.extension().unwrap(), "rar");
         assert_eq!(format, Format::Rar);
         assert_eq!(actual, level);
-        assert!(password.is_none());
-        assert!(!hide_names);
+        assert_eq!(password.as_deref(), Some("secret"));
+        assert!(hide_names);
+        assert_eq!(rar, app.state.rar);
+        assert_eq!(volume, Some(64 * 1024));
     }
+    app.state.volume_text = "63k".into();
+    assert!(app.volume_size().is_err());
+    assert!(app.compression_job().is_none());
     app.set_create_format(Format::Zip);
-    let Some(Job::Compress { password, .. }) = app.compression_job() else {
+    assert!(app.volume_size().unwrap().is_some());
+    let Some(Job::Compress {
+        password,
+        hide_names,
+        rar,
+        ..
+    }) = app.compression_job()
+    else {
         panic!("compression job")
     };
     assert_eq!(password.as_deref(), Some("secret"));
+    assert!(!hide_names);
+    assert_eq!(rar, crate::archive_ops::RarExtras::default());
+}
+
+#[test]
+fn a_rar_volume_set_is_created_and_opened_from_its_first_volume() {
+    let room = crate::test_support::Room::new();
+    let source = room.path("source");
+    fs::create_dir_all(&source).unwrap();
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let noise: Vec<u8> = (0..200_000)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect();
+    fs::write(source.join("noise.bin"), &noise).unwrap();
+    fs::write(source.join("a.txt"), b"first contents").unwrap();
+    let out = room.path("set.rar");
+    let mut controller = AppController::new(Settings::default());
+    controller.run_job(Job::Compress {
+        out: out.clone(),
+        inputs: vec![source.clone()],
+        format: Format::Rar,
+        codec: Codec::Store,
+        sevenz: arca_7z::Compression::Lzma2,
+        level: Level::STORE,
+        password: Some("contraseña".into()),
+        hide_names: true,
+        rar: crate::archive_ops::RarExtras {
+            solid: true,
+            recovery: Some(5),
+        },
+        volume: Some(64 * 1024),
+    });
+    settle_within(&mut controller, Duration::from_secs(120));
+    assert!(!controller.state.error, "{}", controller.state.notice);
+    let first = room.path("set.part1.rar");
+    assert!(
+        controller.state.notice.contains("set.part1.rar"),
+        "{}",
+        controller.state.notice
+    );
+    assert_eq!(controller.state.archive.as_ref(), Some(&first));
+    assert!(!out.exists());
+    for n in 1..=4 {
+        let part = room.path(&format!("set.part{n}.rar"));
+        assert!(fs::metadata(&part).unwrap().len() <= 64 * 1024, "{n}");
+    }
+    let archive = arca_rar::RarArchive::open(&first, Some("contraseña")).unwrap();
+    archive.test(Some("contraseña"), &|_, _, _| true).unwrap();
+    let names: Vec<_> = archive.entries().iter().map(|e| e.name.clone()).collect();
+    assert!(names.contains(&"source/noise.bin".to_string()), "{names:?}");
 }
 
 #[test]
@@ -568,11 +648,11 @@ fn rar_creation_rejects_unsupported_options_before_writing() {
         (
             Format::Rar,
             out.clone(),
-            Some("secret"),
+            Some(""),
             false,
-            "encryption",
+            "nonempty password",
         ),
-        (Format::Rar, out.clone(), None, true, "hidden names"),
+        (Format::Rar, out.clone(), None, true, "nonempty password"),
         (Format::Rar, room.path("comic.cbr"), None, false, "CBR"),
         (
             Format::Cbr,
@@ -593,6 +673,7 @@ fn rar_creation_rejects_unsupported_options_before_writing() {
                 level: Level::NORMAL,
                 password: password.map(str::to_string),
                 hide_names,
+                rar: Default::default(),
                 volume: None,
             },
             strings(Lang::En),
