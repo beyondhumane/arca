@@ -867,6 +867,61 @@ fn the_cabinet_checksum_matches_the_specification() {
     );
 }
 
+/// A cabinet without files whose `folders` folders of `kind` all declare
+/// `count` data blocks from `start`, followed by `blocks`.
+fn cab_folders(folders: u16, start: u32, count: u16, kind: u16, blocks: &[u8]) -> Vec<u8> {
+    let files_at = 36 + 8 * u32::from(folders);
+    let mut out = b"MSCF".to_vec();
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&files_at.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&[3, 1]);
+    out.extend_from_slice(&folders.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&[0; 6]);
+    for _ in 0..folders {
+        out.extend_from_slice(&start.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&kind.to_le_bytes());
+    }
+    out.resize(start as usize, 0);
+    out.extend_from_slice(blocks);
+    out
+}
+
+fn stored_blocks(n: usize) -> Vec<u8> {
+    (0..n)
+        .flat_map(|_| [0, 0, 0, 0, 1, 0, 1, 0, b'x'])
+        .collect()
+}
+
+#[test]
+fn cabinet_folders_that_share_their_blocks_are_refused() {
+    let (_dir, a) = open(Format::Cab, &cab_folders(1, 64, 4, 0, &stored_blocks(4)));
+    assert!(a.unwrap().entries().is_empty());
+    let (_dir, a) = open(Format::Cab, &cab_folders(2, 64, 4, 0, &stored_blocks(4)));
+    assert!(matches!(a, Err(Error::Format(_))), "{:?}", a.err());
+}
+
+#[test]
+fn cabinet_folders_cannot_declare_more_blocks_than_the_file_holds() {
+    let start = 36 + 8 * 4000;
+    let bytes = cab_folders(4000, start, 4000, 0, &stored_blocks(4000));
+    let began = std::time::Instant::now();
+    let (_dir, a) = open(Format::Cab, &bytes);
+    assert!(matches!(a, Err(Error::Format(_))), "{:?}", a.err());
+    assert!(began.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[test]
+fn an_empty_compressed_cabinet_block_is_refused() {
+    let block = [0, 0, 0, 0, 0, 0, 1, 0];
+    let (_dir, a) = open(Format::Cab, &cab_folders(1, 64, 1, 1, &block));
+    assert!(matches!(a, Err(Error::Format(_))), "{:?}", a.err());
+}
+
 // --- LZH -----------------------------------------------------------------
 
 fn crc16(data: &[u8]) -> u16 {
