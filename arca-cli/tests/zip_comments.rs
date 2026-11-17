@@ -84,3 +84,106 @@ fn list_shows_comments_on_stderr_without_terminal_escapes() {
     assert!(stderr.contains("second \u{FFFD}[31mline"), "{stderr}");
     assert!(!stderr.contains('\x1b'), "an escape reached the terminal");
 }
+
+fn text(out: &Output) -> (String, String) {
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn comment_shows_sets_and_clears_archive_and_entry_comments() {
+    let dir = tempfile::tempdir().unwrap();
+    let zip = dir.path().join("c.zip");
+    std::fs::write(&zip, commented_zip("a.txt", b"hola", b"old note", b"old")).unwrap();
+    let arca = |args: &[&str]| {
+        let mut all: Vec<&std::ffi::OsStr> = vec!["comment".as_ref(), zip.as_os_str()];
+        all.extend(args.iter().map(std::ffi::OsStr::new));
+        run(&all)
+    };
+
+    let shown = arca(&[]);
+    assert!(shown.status.success());
+    assert_eq!(text(&shown).0.trim_end(), "old");
+    assert_eq!(text(&arca(&["--entry", "a.txt"])).0.trim_end(), "old note");
+
+    let set = arca(&["--set", "l\u{ed}nea uno\nl\u{ed}nea dos"]);
+    assert!(set.status.success(), "{}", text(&set).1);
+    assert_eq!(
+        text(&arca(&[])).0.trim_end(),
+        "l\u{ed}nea uno\nl\u{ed}nea dos"
+    );
+    assert_eq!(text(&arca(&["--entry", "a.txt"])).0.trim_end(), "old note");
+
+    let note = dir.path().join("note.txt");
+    std::fs::write(&note, "de un fichero").unwrap();
+    let from_file = arca(&["--entry", "a.txt", "--file", note.to_str().unwrap()]);
+    assert!(from_file.status.success(), "{}", text(&from_file).1);
+    assert_eq!(
+        text(&arca(&["--entry", "a.txt"])).0.trim_end(),
+        "de un fichero"
+    );
+
+    assert!(arca(&["--clear"]).status.success());
+    assert_eq!(text(&arca(&[])).0, "");
+    let test = run(&["test".as_ref(), zip.as_os_str()]);
+    assert!(test.status.success());
+
+    let missing = arca(&["--entry", "nope.txt", "--set", "x"]);
+    assert!(!missing.status.success());
+    assert!(text(&missing).1.contains("no entry named"));
+    assert!(!arca(&["--set", "a", "--clear"]).status.success());
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("arca-new"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+#[test]
+fn comment_writes_elsewhere_with_out_and_refuses_what_it_cannot_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let zip = dir.path().join("c.zip");
+    let original = commented_zip("a.txt", b"hola", b"", b"");
+    std::fs::write(&zip, &original).unwrap();
+    let copy = dir.path().join("copy.zip");
+    let out = run(&[
+        "comment".as_ref(),
+        zip.as_os_str(),
+        "--set".as_ref(),
+        "nuevo".as_ref(),
+        "-o".as_ref(),
+        copy.as_os_str(),
+    ]);
+    assert!(out.status.success(), "{}", text(&out).1);
+    assert_eq!(std::fs::read(&zip).unwrap(), original);
+    assert_eq!(
+        text(&run(&["comment".as_ref(), copy.as_os_str()]))
+            .0
+            .trim_end(),
+        "nuevo"
+    );
+
+    let tar = dir.path().join("t.tar");
+    let input = dir.path().join("in.txt");
+    std::fs::write(&input, b"x").unwrap();
+    assert!(
+        run(&["create".as_ref(), tar.as_os_str(), input.as_os_str()])
+            .status
+            .success()
+    );
+    let refused = run(&[
+        "comment".as_ref(),
+        tar.as_os_str(),
+        "--set".as_ref(),
+        "x".as_ref(),
+    ]);
+    assert!(!refused.status.success());
+    assert!(text(&refused)
+        .1
+        .contains("only ZIP comments can be changed"));
+    assert!(run(&["comment".as_ref(), tar.as_os_str()]).status.success());
+}

@@ -131,6 +131,28 @@ Windows only.
 
 **More > Benchmark…** opens the same benchmark as [`arca bench --codecs`](benchmarks.md#measure-your-own-machine): every codec Arca writes, on data generated in memory, on one thread and on the number of threads picked at the top (every core by default). **Start** runs it in the background and the table fills in as each codec is measured, with a bar for the progress; **Stop**, **Close**, Escape or quitting the app stop it between runs. When it ends the window shows the rating, and **Copy** puts on the clipboard the same text the command line prints, ending with the command that reproduces it. The run uses the defaults of the command, 16 MiB and 1 second per measurement.
 
+## Comments and repair
+
+**More > Comment…** opens the archive comment in a multi-line editor; in a ZIP
+it can be changed or emptied to remove it, and in a RAR it is shown read-only.
+**Comment…** in the row menu of a ZIP entry does the same for that entry, and
+an entry that carries a comment shows it as a tooltip on its row. Saving
+rewrites the archive like any other change: every entry is copied unchanged,
+so no password is needed even for encrypted entries, the new file is read back
+before it takes the old one's place, and **Undo** puts the previous version
+back. Only ZIP comments can be changed; 7z has none, and the comments TAR keeps
+in pax records are shown by [`arca comment`](cli-reference.md#comment) only.
+
+**Repair…**, in the row menu of a ZIP, TAR, 7z or RAR on the disk and under
+**More** for the open archive, runs [`arca repair`](cli-reference.md#repair) as
+a task in **Operations**: a ZIP whose directory is gone opens this way even
+though it cannot be opened directly. The damaged archive is only read; the
+result goes to a new file beside it, `name (repaired).zip`, read back before it
+takes that name. When the task ends, a dialog says how many entries came back
+and how many were lost, and offers to open the repaired copy. A RAR can only be
+repaired from a recovery record it was made with; when that record finds
+nothing wrong, nothing is written.
+
 ## Jobs and keyboard access
 
 Every operation (extract, test, compress, add, delete, rename, change password, copy) is a row in the **Operations** panel, which floats over the lower-right corner of the workspace and can be hidden and reopened from the footer button that counts them. Each row shows its own progress, elapsed and remaining time, pause/resume and cancel; finished rows keep their result until cleared. Pause and cancel also act inside a single large entry: a cancelled extraction removes the file it was writing and keeps the ones it had finished.

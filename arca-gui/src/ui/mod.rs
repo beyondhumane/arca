@@ -1,6 +1,7 @@
 mod actions;
 mod bench;
 mod browser;
+mod comments;
 mod compare;
 mod dialogs;
 mod hashes;
@@ -11,6 +12,7 @@ mod layout;
 mod passwords;
 mod pathbar;
 mod preview;
+mod repair;
 mod search;
 mod sidebar;
 #[cfg(test)]
@@ -213,6 +215,7 @@ pub(crate) struct Shell {
     pane_action: Option<PaneAction>,
     properties: Option<Props>,
     properties_job: Option<Receiver<Props>>,
+    comment_edit: Option<comments::CommentEdit>,
     // Set by the opening screen when somebody gives up waiting for an
     // archive to be read; acted on once the frame is drawn.
     stop_opening: std::cell::Cell<bool>,
@@ -335,6 +338,7 @@ impl Shell {
             marquee: None,
             pane_action: None,
             properties: None,
+            comment_edit: None,
             properties_job: None,
             stop_opening: Default::default(),
             input_facts: None,
@@ -574,6 +578,10 @@ impl Shell {
             Some(ModalKind::Format)
         } else if self.properties.is_some() {
             Some(ModalKind::Properties)
+        } else if self.comment_edit.is_some() {
+            Some(ModalKind::Comment)
+        } else if self.controller.repair_offer().is_some() {
+            Some(ModalKind::Repaired)
         } else if self.controller.checksums().is_some() {
             Some(ModalKind::Checksums)
         } else if self.controller.comparison().is_some() {
@@ -612,6 +620,8 @@ impl Shell {
             ModalKind::Shortcuts => self.controller.state.show_shortcuts = false,
             ModalKind::Search => self.search = None,
             ModalKind::Properties => self.properties = None,
+            ModalKind::Comment => self.comment_edit = None,
+            ModalKind::Repaired => self.controller.answer_repair_offer(false),
             ModalKind::Checksums => self.controller.close_checksums(),
             ModalKind::Compare => self.controller.close_comparison(),
             ModalKind::Benchmark => self.controller.close_bench(),
@@ -1103,6 +1113,8 @@ impl Shell {
                 self.controller.state.asking_folder = true;
             }
             OverflowAction::Undo => self.controller.undo_last(),
+            OverflowAction::Comment => self.begin_archive_comment(),
+            OverflowAction::Repair => self.begin_repair_of_archive(),
             OverflowAction::SaveCopy => {
                 let Some(archive) = self.controller.state.archive.clone() else {
                     return;
@@ -1346,6 +1358,8 @@ impl Shell {
             }),
             RowAction::TestArchive => self.shortcut(Shortcut::Test),
             RowAction::Checksums => self.controller.dispatch(AppAction::Checksums),
+            RowAction::Comment => self.begin_entry_comment(index),
+            RowAction::Repair => self.begin_repair_of_row(index),
             RowAction::Compare | RowAction::CompareFolder => {
                 self.begin_compare(action == RowAction::CompareFolder)
             }

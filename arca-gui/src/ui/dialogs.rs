@@ -237,6 +237,8 @@ impl Shell {
                     ModalKind::Compare => self.compare_dialog(ui),
                     ModalKind::Update => self.update_dialog(ui),
                     ModalKind::Benchmark => self.bench_dialog(ui),
+                    ModalKind::Comment => self.comment_dialog(ui),
+                    ModalKind::Repaired => self.repaired_dialog(ui),
                 });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(measured, shown.content_size.y));
@@ -249,7 +251,7 @@ impl Shell {
         }
     }
 
-    fn footer_buttons(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    pub(super) fn footer_buttons(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         ui.add_space(12.0);
         let height = ui.spacing().interact_size.y + 8.0;
         ui.allocate_ui_with_layout(

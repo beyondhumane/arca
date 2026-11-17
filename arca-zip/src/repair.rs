@@ -39,8 +39,20 @@ struct Budget {
     inflated_cap: u64,
 }
 
-pub fn repair<R: Read + Seek, W: Write + Seek>(mut source: R, out: W) -> Result<(W, Repaired)> {
+pub fn repair<R: Read + Seek, W: Write + Seek>(source: R, out: W) -> Result<(W, Repaired)> {
+    repair_with(source, out, &|_, _, _| true)
+}
+
+/// [`repair`], telling `notify` how many MiB of the file it has got through,
+/// of how many, before each header it looks at. False stops it with
+/// [`Error::Cancelled`].
+pub fn repair_with<R: Read + Seek, W: Write + Seek>(
+    mut source: R,
+    out: W,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+) -> Result<(W, Repaired)> {
     let total = source.seek(SeekFrom::End(0))?;
+    let mib = |bytes: u64| usize::try_from(bytes >> 20).unwrap_or(usize::MAX);
     let mut w = ZipWriter::new(out);
     let mut report = Repaired::default();
     let mut index: Option<Index> = None;
@@ -60,6 +72,10 @@ pub fn repair<R: Read + Seek, W: Write + Seek>(mut source: R, out: W) -> Result<
     let mut seen = 0u64;
 
     while let Some(pos) = next_header(&mut source, at, total)? {
+        let last = report.recovered.last().map_or("", |r| r.name.as_str());
+        if !notify(mib(pos), mib(total).max(1), last) {
+            return Err(Error::Cancelled);
+        }
         seen += 1;
         if seen > limits::MAX_ENTRIES {
             return Err(Error::Limit(format!(
@@ -658,6 +674,34 @@ mod tests {
             noise[i..i + 4].copy_from_slice(&sig.to_le_bytes());
         }
         let _ = repair(IoCursor::new(noise), IoCursor::new(Vec::new()));
+    }
+
+    #[test]
+    fn a_repair_can_be_stopped_and_hears_how_far_it_got() {
+        let buf = without_directory(&made_by_arca(&[
+            ("a.txt", b"uno", Codec::Store),
+            ("b.txt", b"dos", Codec::Store),
+        ]));
+        let heard = std::sync::Mutex::new(Vec::new());
+        let (_, report) = repair_with(
+            IoCursor::new(buf.clone()),
+            IoCursor::new(Vec::new()),
+            &|done, total, name| {
+                heard.lock().unwrap().push((done, total, name.to_owned()));
+                true
+            },
+        )
+        .unwrap();
+        assert_eq!(report.recovered.len(), 2);
+        let heard = heard.into_inner().unwrap();
+        assert_eq!(heard.len(), 2);
+        assert_eq!(heard[1], (0, 1, "a.txt".to_owned()));
+        assert!(matches!(
+            repair_with(IoCursor::new(buf), IoCursor::new(Vec::new()), &|_, _, _| {
+                false
+            }),
+            Err(Error::Cancelled)
+        ));
     }
 
     #[test]

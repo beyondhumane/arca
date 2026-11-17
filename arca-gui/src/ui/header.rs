@@ -621,6 +621,23 @@ impl Shell {
             {
                 self.controller.dispatch(AppAction::BeginPasswordChange);
             }
+            let comment =
+                self.controller.can_comment() || !self.controller.archive_comment().is_empty();
+            if ui
+                .add_enabled(idle && comment, egui::Button::new(s.comment_action))
+                .clicked()
+            {
+                self.overflow_action(OverflowAction::Comment);
+            }
+            if ui
+                .add_enabled(
+                    idle && archive && crate::repairable(self.controller.state.format),
+                    egui::Button::new(s.repair_action),
+                )
+                .clicked()
+            {
+                self.overflow_action(OverflowAction::Repair);
+            }
             if self.controller.can_close_archive()
                 && ui
                     .add_enabled(idle, egui::Button::new(s.close_archive))

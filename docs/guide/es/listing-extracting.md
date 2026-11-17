@@ -27,7 +27,7 @@ arca list arca.zip --time
 
 Con `--time`, el resumen va a la salida de error estándar, así que canalizar el listado hacia otras herramientas queda limpio.
 
-Los comentarios ZIP, tanto el del archivo como los de cada entrada, también van a la salida de error estándar después de la lista. La ventana de escritorio muestra el comentario del archivo en la barra de estado al abrirlo.
+Los comentarios ZIP, tanto el del archivo como los de cada entrada, también van a la salida de error estándar después de la lista, igual que el comentario de un RAR y los registros pax `comment` de las entradas de un TAR. [`arca comment`](cli-reference.md#comment) muestra un comentario, o lo cambia en un ZIP. La ventana de escritorio muestra el comentario de un ZIP o un RAR en la barra de estado al abrirlo, y el de una entrada de un ZIP como ayuda emergente sobre su fila; consulta [Comentarios y reparación](desktop-app.md).
 
 ## Extraer
 

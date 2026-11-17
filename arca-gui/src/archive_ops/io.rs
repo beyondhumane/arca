@@ -252,26 +252,11 @@ pub(crate) fn list_entries(
 // The status line holds one short line, and the comment is whatever the
 // archive's author typed: control characters go, and a long one is cut.
 pub(crate) fn comment_notice(archive: &Path, label: &str) -> Option<String> {
-    const SHOWN: usize = 160;
     if detect(archive).map(|f| f.container()) != Some(Container::Zip) {
         return None;
     }
     let comment = arca_zip::read_comment(arca_core::volumes::open(archive).ok()?).ok()?;
-    let line = comment
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if line.is_empty() {
-        return None;
-    }
-    let mut shown: String = line.chars().take(SHOWN).collect();
-    if line.chars().count() > SHOWN {
-        shown.push('…');
-    }
-    Some(format!("{label}: {shown}"))
+    super::notice_line(&comment, label)
 }
 
 pub(crate) fn check_access(

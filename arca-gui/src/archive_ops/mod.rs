@@ -1,11 +1,17 @@
 //! Blocking archive jobs and their command-line entry points.
 
+mod comments;
+#[cfg(test)]
+mod comments_tests;
 mod edit;
 #[cfg(test)]
 mod edit_tests;
 mod io;
 #[cfg(all(test, feature = "rar"))]
 mod rar_tests;
+mod repair;
+#[cfg(test)]
+mod repair_tests;
 #[cfg(test)]
 mod sevenz_tests;
 #[cfg(test)]
@@ -14,8 +20,10 @@ mod split_tests;
 mod streams_tests;
 #[cfg(test)]
 mod xz_tests;
+pub(crate) use comments::{notice_line, read_comments, Comments};
 pub(crate) use edit::{can_edit, editable};
 pub(crate) use io::*;
+pub(crate) use repair::{repairable, repaired_name};
 
 use crate::i18n::Strings;
 use crate::{archive_stem, detect, human, moved_name, sum_for, Format, INSTALLER_LIMIT};
@@ -114,6 +122,17 @@ pub(crate) enum Job {
         dir: String,
         codec: Codec,
         level: Level,
+        password: Option<String>,
+    },
+    Comment {
+        archive: PathBuf,
+        entry: Option<String>,
+        text: String,
+        password: Option<String>,
+    },
+    Repair {
+        archive: PathBuf,
+        out: PathBuf,
         password: Option<String>,
     },
 }
@@ -388,7 +407,8 @@ pub(crate) fn run_job_blocking(
         | Job::Rename { archive, .. }
         | Job::Move { archive, .. }
         | Job::NewFolder { archive, .. }
-        | Job::Add { archive, .. } => Some(archive),
+        | Job::Add { archive, .. }
+        | Job::Comment { archive, .. } => Some(archive),
         _ => None,
     };
     if let Some(format) = mutation.and_then(|p| detect(p)).filter(|f| !f.can_write()) {
@@ -678,6 +698,29 @@ pub(crate) fn run_job_blocking(
             })?;
             Ok(fill(s.added, &[("n", &n.to_string())]))
         }
+        Job::Comment {
+            archive,
+            entry,
+            text,
+            ..
+        } => {
+            if detect(&archive) != Some(Format::Zip) {
+                return Err(s.comment_only_zip.to_string());
+            }
+            let comments = arca_zip::Comments {
+                archive: entry.is_none().then_some(text.as_bytes()),
+                entry: entry.as_deref().map(|name| (name, text.as_bytes())),
+            };
+            rewrite_zip(&archive, |temp| {
+                arca_zip::set_comments(&archive, temp, &comments, notify)
+            })?;
+            Ok(s.comment_saved.to_string())
+        }
+        Job::Repair {
+            archive,
+            out,
+            password,
+        } => repair::repair(&archive, &out, password.as_deref(), s, notify).map(|(text, _)| text),
         // Not reached: getting the new version is handled earlier, on the
         // thread that starts the job, because it ends in a file to run and not
         // in a text to show.

@@ -2,10 +2,12 @@
 
 mod edit;
 mod read;
+mod salvage;
 mod write;
 
 pub use edit::{rewrite_7z, Addition, Change, Recoded};
 pub use read::{Phase, Progress, SevenZArchive};
+pub use salvage::{salvage_7z, Salvaged};
 pub use write::{
     create_7z, create_7z_into, ppmd_parameters, workers, Compression, CreateOptions, Source,
     PPMD_MEMORY_MAX,

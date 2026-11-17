@@ -27,7 +27,7 @@ arca list arca.zip --time
 
 With `--time`, the summary goes to standard error, so piping the listing into other tools stays clean.
 
-ZIP comments, both the archive’s and any entry’s, also go to standard error after the list. The desktop window shows an archive comment in the status line when the archive opens.
+ZIP comments, both the archive’s and any entry’s, also go to standard error after the list, as do a RAR archive’s comment and the pax `comment` records of TAR entries. [`arca comment`](cli-reference.md#comment) prints one comment, or changes it in a ZIP. The desktop window shows a ZIP or RAR archive comment in the status line when the archive opens, and a ZIP entry’s comment as a tooltip on its row; see [Comments and repair](desktop-app.md#comments-and-repair).
 
 ## Extracting
 

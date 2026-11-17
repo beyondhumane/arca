@@ -117,6 +117,16 @@ pub fn decoder<R: Read + Send + 'static>(
     })
 }
 
+/// Opens a file for decoding without reading anything at its end first, for
+/// getting back what still decodes from one that is damaged: [`open`]
+/// refuses an XZ file whose index is broken before giving a single byte.
+/// Every check the decoder makes as it goes is still made, so the stream
+/// fails where the damage is.
+pub fn open_salvage(path: &Path, format: Format) -> Result<Box<dyn Read + Send>> {
+    let codec = codec(format).ok_or_else(|| not_a_stream(format))?;
+    codec.decoder(arca_core::volumes::open(path)?)
+}
+
 /// What a standalone stream decompresses to. None of the three keeps a name,
 /// so it comes from the file: `notes.txt.bz2` gives `notes.txt`, `a.tzst`
 /// gives `a.tar`, and a name without a known suffix gets `.out` appended.

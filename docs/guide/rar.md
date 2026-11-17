@@ -99,8 +99,10 @@ An unhandled SIGHUP, SIGKILL or power loss can leave `.arca-*.rar.part` and
 
 Not supported in this increment, and refused rather than approximated: solid
 archives, multivolume output, encryption, recovery records, RAR data filters,
-RAR4 output, CBR creation, and adding to, removing from, renaming inside or
-repairing an existing archive.
+RAR4 output, CBR creation, and adding to, removing from or renaming inside an
+existing archive. A damaged archive that has a recovery record is rebuilt into
+a new file by [`arca repair`](cli-reference.md#repair); the archive comment is
+shown by `arca list`, `arca comment` and the desktop window's status line.
 
 ## Multivolume sets
 
@@ -180,7 +182,7 @@ Integrity guarantees depend on the checksums/authenticators the archive carries.
 
 ## Deliberate exclusions and dependency notes
 
-- No recovery/repair, modification of existing archives, automatic OS
+- No writing of recovery records or comments, modification of existing archives, automatic OS
   associations or claim of exhaustive RAR compatibility. Unsupported methods/metadata return
   errors. Creation is limited to the single-volume RAR5 profile above.
 - Independent fixtures, multivolume regressions, official UnRAR comparisons and
