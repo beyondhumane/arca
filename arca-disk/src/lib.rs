@@ -89,7 +89,8 @@ impl DiskArchive {
         let partitions = match opened.partitions {
             Some(listed) => Some(listed),
             None => part::scan(dev.as_mut(), &mut notices)?,
-        };
+        }
+        .filter(|found| !found.is_empty());
         let mut members = Vec::new();
         match partitions {
             Some(partitions) => {

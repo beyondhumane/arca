@@ -36,6 +36,7 @@ pub(crate) fn scan(
         if let Some(found) = gpt(dev, notices)? {
             return Ok(Some(found));
         }
+        notices.push("the disk has a protective MBR but both copies of its GPT are damaged".into());
     }
     let mut found = Vec::new();
     for s in &slots {
@@ -49,7 +50,7 @@ pub(crate) fn scan(
             push(dev, &mut found, start * 512, count * 512, notices);
         }
     }
-    Ok(Some(found))
+    Ok(Some(found).filter(|found| !found.is_empty()))
 }
 
 fn push(

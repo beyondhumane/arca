@@ -243,3 +243,21 @@ fn damaged_vhds_never_panic() {
         let (_dir, _) = open(Format::Vhd, &flipped);
     }
 }
+
+#[test]
+fn an_mbr_that_lists_nothing_falls_back_to_a_raw_image() {
+    let mut image = vec![0u8; 64 * 512];
+    image[510] = 0x55;
+    image[511] = 0xaa;
+    let (_dir, a) = open(Format::Img, &image);
+    let a = a.unwrap();
+    assert_eq!(names(&a), ["disk.img"]);
+    let mut protective = gpt(&[&sample_fat(12)]);
+    protective[512 + 24] ^= 1;
+    let last = protective.len() - 512;
+    protective[last + 24] ^= 1;
+    let (_dir, a) = open(Format::Img, &protective);
+    let a = a.unwrap();
+    assert_eq!(names(&a), ["disk.img"]);
+    assert!(a.notices().iter().any(|n| n.contains("GPT are damaged")));
+}
