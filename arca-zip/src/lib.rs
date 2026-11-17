@@ -1054,6 +1054,7 @@ impl<W: Write + Seek> ZipWriter<W> {
             date_val,
             time_val,
             aes_extra.as_deref(),
+            None,
         )?;
         let extra_offset = offset + LFH_FIXED as u64 + name_bytes.len() as u64;
         let extra_len = EXTRA_Z64 + aes_extra.as_ref().map_or(0, |x| x.len());
@@ -1181,6 +1182,7 @@ impl<W: Write + Seek> ZipWriter<W> {
             date_val,
             time_val,
             aes_extra.as_deref(),
+            None,
         )?;
         let extra_offset = offset + LFH_FIXED as u64 + name_bytes.len() as u64;
         let extra_len = EXTRA_Z64 + aes_extra.as_ref().map_or(0, |x| x.len());
@@ -1352,23 +1354,22 @@ impl<W: Write + Seek> ZipWriter<W> {
         let zip_code = method_code.code()?;
         let aes_extra = encrypted.then(|| aes::extra_field(zip_code));
         let stored_code = if encrypted { aes::METHOD_AE } else { zip_code };
-        self.write_lfh(
+        let comp_size = body.len() as u64;
+        let header = self.write_lfh(
             &name_bytes,
             stored_code,
             date_val,
             time_val,
             aes_extra.as_deref(),
+            Some((crc_val, comp_size, uncompressed)),
         )?;
-        let extra_offset = offset + LFH_FIXED as u64 + name_bytes.len() as u64;
-        let extra_len = EXTRA_Z64 + aes_extra.as_ref().map_or(0, |x| x.len());
         self.out.write_all(body)?;
-        self.close_entry(
+        self.pos = offset + header + comp_size;
+        self.record(
             name_bytes,
             offset,
-            extra_offset,
-            extra_len,
             crc_val,
-            body.len() as u64,
+            comp_size,
             uncompressed,
             method_code,
             date_val,
@@ -1420,6 +1421,34 @@ impl<W: Write + Seek> ZipWriter<W> {
         self.out.write_all(&comp_size.to_le_bytes())?;
         self.out.seek(SeekFrom::Start(fin))?;
         self.pos = fin;
+        self.record(
+            name_bytes,
+            offset,
+            crc_val,
+            comp_size,
+            uncompressed,
+            method_code,
+            date_val,
+            time_val,
+            is_directory,
+            encrypted,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record(
+        &mut self,
+        name_bytes: Vec<u8>,
+        offset: u64,
+        crc_val: u32,
+        comp_size: u64,
+        uncompressed: u64,
+        method_code: Method,
+        date_val: u16,
+        time_val: u16,
+        is_directory: bool,
+        encrypted: bool,
+    ) -> Result<()> {
         self.registros.push(Record {
             name_str: name_bytes,
             crc_val,
@@ -1443,7 +1472,9 @@ impl<W: Write + Seek> ZipWriter<W> {
 
     // The Zip64 field goes first and keeps its fixed size, because close_entry
     // seeks straight back to it to patch the sizes once they are known. The AES
-    // field, when there is one, goes after it so that offset stays put.
+    // field, when there is one, goes after it so that offset stays put. With
+    // `known` the checksum and sizes go in at once and nothing is patched
+    // later. Answers with the length of the header.
     fn write_lfh(
         &mut self,
         name_str: &[u8],
@@ -1451,7 +1482,10 @@ impl<W: Write + Seek> ZipWriter<W> {
         date_val: u16,
         time_val: u16,
         aes_extra: Option<&[u8]>,
-    ) -> Result<()> {
+        known: Option<(u32, u64, u64)>,
+    ) -> Result<u64> {
+        let (crc_val, comp_size, uncompressed) = known.unwrap_or((0, 0, 0));
+        let short = |n: u64| n.min(0xFFFF_FFFF) as u32;
         let extra_len = EXTRA_Z64 + aes_extra.map_or(0, |x| x.len());
         let flags: u16 = if aes_extra.is_some() { 0x0801 } else { 0x0800 };
         let mut h = Vec::with_capacity(LFH_FIXED + name_str.len() + extra_len);
@@ -1461,21 +1495,21 @@ impl<W: Write + Seek> ZipWriter<W> {
         h.extend_from_slice(&method_code.to_le_bytes());
         h.extend_from_slice(&time_val.to_le_bytes());
         h.extend_from_slice(&date_val.to_le_bytes());
-        h.extend_from_slice(&0u32.to_le_bytes());
-        h.extend_from_slice(&0u32.to_le_bytes());
-        h.extend_from_slice(&0u32.to_le_bytes());
+        h.extend_from_slice(&crc_val.to_le_bytes());
+        h.extend_from_slice(&short(comp_size).to_le_bytes());
+        h.extend_from_slice(&short(uncompressed).to_le_bytes());
         h.extend_from_slice(&(name_str.len() as u16).to_le_bytes());
         h.extend_from_slice(&(extra_len as u16).to_le_bytes());
         h.extend_from_slice(name_str);
         h.extend_from_slice(&0x0001u16.to_le_bytes());
         h.extend_from_slice(&16u16.to_le_bytes());
-        h.extend_from_slice(&0u64.to_le_bytes());
-        h.extend_from_slice(&0u64.to_le_bytes());
+        h.extend_from_slice(&uncompressed.to_le_bytes());
+        h.extend_from_slice(&comp_size.to_le_bytes());
         if let Some(x) = aes_extra {
             h.extend_from_slice(x);
         }
         self.out.write_all(&h)?;
-        Ok(())
+        Ok(h.len() as u64)
     }
 
     pub fn finish(mut self) -> Result<W> {
@@ -2427,6 +2461,62 @@ mod tests {
     #[test]
     fn round_trip_deflate() {
         round_trip(Codec::Deflate, Level::NORMAL);
+    }
+
+    struct Seeks {
+        inner: IoCursor<Vec<u8>>,
+        seeks: usize,
+    }
+
+    impl Write for Seeks {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.inner.write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Seek for Seeks {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.seeks += 1;
+            self.inner.seek(pos)
+        }
+    }
+
+    // A seek flushes whatever buffer sits in front of the file, so patching
+    // each header after its data turned every small entry into several small
+    // writes. A block already in memory has everything its header needs.
+    #[test]
+    fn blocks_already_compressed_are_written_without_seeking_back() {
+        let bodies: Vec<Vec<u8>> = (0..20)
+            .map(|i| format!("{i} ").repeat(i * 9).into_bytes())
+            .collect();
+        let mut w = ZipWriter::new(Seeks {
+            inner: IoCursor::new(Vec::new()),
+            seeks: 0,
+        });
+        for (i, body) in bodies.iter().enumerate() {
+            let (c, m, crc) = compress_block(body, Codec::Deflate, Level::NORMAL).unwrap();
+            w.add_compressed(&format!("f{i}"), &c, crc, body.len() as u64, m, None)
+                .unwrap();
+        }
+        let sealed = seal_block(b"sealed", "pw").unwrap();
+        w.add_sealed("sealed", &sealed, 6, Method::Store, None)
+            .unwrap();
+        let out = w.finish().unwrap();
+        assert_eq!(out.seeks, 0);
+
+        let mut a = ZipArchive::open(IoCursor::new(out.inner.into_inner())).unwrap();
+        for (i, body) in bodies.iter().enumerate() {
+            let mut got = Vec::new();
+            a.extract_to(i, &mut got).unwrap();
+            assert_eq!(&got, body);
+        }
+        let mut got = Vec::new();
+        a.extract_to_with(bodies.len(), &mut got, Some("pw"))
+            .unwrap();
+        assert_eq!(got, b"sealed");
     }
 
     #[cfg(feature = "codecs-native")]
