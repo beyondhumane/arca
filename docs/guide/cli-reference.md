@@ -24,7 +24,8 @@ Commands:
   test      Check integrity without writing to disk                    [aliases: t]
   hash      Print or check checksums of files, in the sha256sum format
   password  Add, change or remove the password of an existing archive
-  repair    Rebuild a damaged ZIP from the entries that can still be read
+  comment   Show or change the comment of an archive or of one entry
+  repair    Rebuild a damaged archive from what can still be read
   diff      Compare two archives, or an archive and a folder
   bench     Measure the R1 and R2 performance requirements
 
@@ -62,7 +63,7 @@ List the contents without extracting them.
 | `-t, --time` | off | Report how long it took (on standard error). |
 | `-p, --password <PASSWORD>` | none | Password for encrypted 7z headers; not needed for visible names. |
 
-For a `.zip`, the archive comment and any entry comments go to standard error after the list, so standard output stays one line per entry. Control characters in them are shown as `�` so a comment can’t drive the terminal.
+For a `.zip`, the archive comment and any entry comments go to standard error after the list, so standard output stays one line per entry. So do a RAR archive’s comment and the pax `comment` records of TAR entries. Control characters in them are shown as `�` so a comment can’t drive the terminal.
 
 ## extract · x
 
@@ -149,23 +150,69 @@ Rewrite a `.zip` with a different password, or with none. Entries aren’t compr
 | `--new <NEW>` | none | New password. Leave it out to remove the encryption. |
 | `-o, --out <PATH>` | in place | Write here instead of replacing the archive in place. |
 
-## repair
+## comment
 
-Rebuild a ZIP whose central directory is missing or damaged. Arca scans the file for local headers, takes each entry’s sizes from its header or, for streamed entries, from the data descriptor that follows the data, decompresses it and compares its CRC, and copies the entries that pass byte for byte into a new archive. Skipped entries are listed on standard error with their offset and the reason.
+Show or change the comment of an archive, or of one entry.
 
 ```sh
-arca repair broken.zip -o fixed.zip
+arca comment notes.zip                          # print the archive comment
+arca comment notes.zip --set "Sent on 3 May"
+arca comment notes.zip --entry docs/a.txt --file note.txt
+arca comment notes.zip --clear -o copy.zip
 ```
 
 | Argument / option | Default | Description |
 | --- | --- | --- |
-| `<ARCHIVE>` | required | Damaged archive. It is only read, never modified. |
-| `-o, --out <PATH>` | required | Where to write the rebuilt archive (.zip). It can’t be the damaged archive itself. |
+| `<ARCHIVE>` | required | Archive: a .zip to change; a .zip, .rar or TAR to read. |
+| `--set <TEXT>` | none | Set the comment to TEXT. |
+| `--file <FILE>` | none | Set the comment to the contents of FILE, byte for byte; `-` reads standard input. |
+| `--clear` | off | Remove the comment. |
+| `--entry <NAME>` | none | The entry whose comment to show or change, by its path inside the archive. A folder answers with or without the trailing `/`. |
+| `-o, --out <PATH>` | in place | Write here instead of replacing the archive in place. |
+| `-p, --password <PASSWORD>` | none | Password of a RAR archive whose headers are encrypted. |
+
+- With none of `--set`, `--file` and `--clear` the comment is printed, with control characters shown as `�`. A TAR has no comment of its own, so without `--entry` it lists the entries that carry a pax `comment` record.
+- Only ZIP comments can be changed. The archive is written again beside itself with every entry copied unchanged, so no password is needed even for encrypted entries; it is read back and only then put in place of the old one.
+- An `--entry` that matches nothing is an error, and nothing is written.
+
+## repair
+
+Rebuild a damaged archive from what can still be read, into a new archive of the same format. The damaged archive is only read.
+
+```sh
+arca repair broken.zip -o fixed.zip
+arca repair backup.tar.gz -o rescued.tar.gz
+```
+
+| Argument / option | Default | Description |
+| --- | --- | --- |
+| `<ARCHIVE>` | required | Damaged archive: ZIP, TAR (plain, gzip, XZ, bzip2 or Zstandard), 7z or RAR. It is only read, never modified. |
+| `-o, --out <PATH>` | required | Where to write the rebuilt archive, with the extension of the same format. It can’t be the damaged archive itself. |
+| `-p, --password <PASSWORD>` | none | Password of an encrypted 7z or RAR. |
+
+The rebuilt archive is written under a temporary name, read back, and only then renamed. If nothing can be recovered, nothing is written and the command fails. Lost entries are listed on standard error with the reason.
+
+**ZIP.** Arca scans the file for local headers, takes each entry’s sizes from its header or, for streamed entries, from the data descriptor that follows the data, decompresses it and compares its CRC, and copies the entries that pass byte for byte into a new archive.
 
 - Encrypted entries can’t be checked without the password: they are copied after a structural check only and named on standard error.
 - What only the central directory held is lost: archive and entry comments, Unix permissions and other external attributes.
 - A ZIP stored inside an entry stays inside it. If that outer entry is damaged, though, the inner entries can surface as entries of their own.
-- The rebuilt archive is written under a temporary name, read back, and only then renamed. If nothing can be recovered, nothing is written and the command fails.
+
+**TAR.** Every entry whose header checksum holds and whose data is all there is copied with its headers unchanged; the new archive is compressed again with the same codec. After a damaged header, Arca looks at the following 512-byte blocks for the next one that is a valid header and carries on from there.
+
+- TAR keeps no checksum over data, so damage inside an entry’s data goes unnoticed. A block inside some entry’s data that happens to look like a header, such as a TAR stored inside the TAR, is taken for one.
+- A hard link whose target was lost is left out.
+- Damage inside the gzip, XZ, bzip2 or Zstandard stream stops the repair there: nothing after it can be decoded. What came before it is kept, but those formats check their data after handing it out, so the last entries kept before the damage are unchecked, and Arca says so.
+
+**7z.** Each solid block is decoded on its own, so damage in one block costs nothing in the others. In a damaged block, the first entry that fails its CRC or doesn’t decode and every entry after it are lost; an entry without a CRC of its own is kept only if its whole block decodes. The survivors are compressed again at the normal level.
+
+- The header at the end of a 7z is what says where every block and entry is: a 7z with a damaged header can’t be repaired.
+
+**RAR.** Rebuilds the archive from its recovery record, which it must have been made with (WinRAR’s *Add recovery record*). Without one, a damaged RAR can’t be repaired. When the record finds nothing wrong, nothing is written.
+
+- Only single archives: a volume set is refused.
+- The recovery record is reached through the archive’s headers, so a RAR whose headers are damaged can’t be repaired.
+- A RAR 4 archive is repaired in memory and is refused over 1 GiB.
 
 ## bench
 

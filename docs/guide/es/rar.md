@@ -102,8 +102,11 @@ ignorado, SIGKILL o un corte de corriente pueden dejar temporales
 
 No se admite en este incremento, y se rechaza en lugar de aproximarse: archivos
 sólidos, salida multivolumen, cifrado, registros de recuperación, filtros de
-datos RAR, salida RAR4, creación de CBR, y añadir, borrar, renombrar o reparar
-dentro de un archivo existente.
+datos RAR, salida RAR4, creación de CBR, y añadir, borrar o renombrar dentro de
+un archivo existente. Un archivo dañado que tenga registro de recuperación se
+reconstruye en un archivo nuevo con [`arca repair`](cli-reference.md#repair); el
+comentario del archivo lo muestran `arca list`, `arca comment` y la barra de
+estado de la ventana.
 
 ## Conjuntos multivolumen
 
@@ -182,7 +185,7 @@ de integridad depende de las sumas y autenticadores presentes en el archivo.
 
 ## Exclusiones y notas sobre dependencias
 
-- No hay modificación de archivos existentes, recuperación/reparación ni
+- No se escriben registros de recuperación ni comentarios, ni hay modificación de archivos existentes ni
   asociaciones automáticas. Los métodos o metadatos no admitidos devuelven un
   error. La creación se limita al perfil RAR5 de un solo volumen descrito arriba.
 - Los fixtures independientes, comparaciones con UnRAR y fuzzing acotado

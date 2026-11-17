@@ -20,8 +20,9 @@ La [lectura RAR/CBR](rar.md) está activa por defecto, incluidos conjuntos
 multivolumen modernos y antiguos, contraseñas, vistas previas y extracción
 verificada. Se pueden crear nuevos archivos RAR5 de un solo volumen con cuatro
 niveles. Los RAR/CBR existentes siguen siendo de solo lectura: no se admite
-modificación, reparación ni recuperación, ni salida cifrada, sólida o
-multivolumen, ni creación de CBR.
+modificación, ni salida cifrada, sólida o multivolumen, ni creación de CBR. Un
+RAR de un solo volumen creado con registro de recuperación se puede reconstruir
+en un archivo nuevo con `arca repair`.
 
 `.xz` suelto y `.tar.xz`/`.txz` se pueden crear, listar, probar y extraer en CLI
 y escritorio. Consulta el

@@ -115,6 +115,29 @@ Arrastrar ficheros virtuales fuera de un 7z está
 desactivado para no descodificar repetidamente bloques sólidos: usa Copiar o
 Extraer. El portapapeles de ficheros depende de la plataforma.
 
+## Comentarios y reparación
+
+**Más > Comentario…** abre el comentario del archivo en un editor de varias
+líneas; en un ZIP se puede cambiar, o vaciar para quitarlo, y en un RAR se
+muestra solo para leerlo. **Comentario…** en el menú de una entrada de un ZIP
+hace lo mismo con esa entrada, y una entrada con comentario lo muestra como
+ayuda emergente sobre su fila. Guardar reescribe el archivo como cualquier otro
+cambio: cada entrada se copia sin cambios, así que no hace falta la contraseña
+ni para las entradas cifradas, el archivo nuevo se vuelve a leer antes de
+ocupar el lugar del antiguo y **Deshacer** devuelve la versión anterior. Solo se
+pueden cambiar los comentarios de un ZIP; un 7z no tiene, y los que un TAR
+guarda en registros pax solo los muestra [`arca comment`](cli-reference.md#comment).
+
+**Reparar…**, en el menú de un ZIP, TAR, 7z o RAR del disco y en **Más** para
+el archivo abierto, ejecuta [`arca repair`](cli-reference.md#repair) como una
+tarea en **Operaciones**: así se rescata un ZIP que ha perdido su directorio,
+aunque no se pueda abrir directamente. El archivo dañado solo se lee; el
+resultado va a un archivo nuevo a su lado, `nombre (reparado).zip`, que se
+vuelve a leer antes de tomar ese nombre. Al terminar, un cuadro dice cuántas
+entradas se recuperaron y cuántas se perdieron, y ofrece abrir la copia
+reparada. Un RAR solo se puede reparar con un registro de recuperación con el
+que se haya creado; si ese registro no encuentra nada mal, no se escribe nada.
+
 ## Operaciones y teclado
 
 Cada operación (extraer, probar, comprimir, añadir, borrar, renombrar, cambiar contraseña, copiar) es una fila del panel **Operaciones**, que flota sobre la esquina inferior derecha del espacio de trabajo y se puede ocultar y reabrir desde el botón del pie que las cuenta. Cada fila muestra su progreso, tiempo transcurrido y restante, pausar/seguir y cancelar; las filas terminadas conservan su resultado hasta que se quitan. Pausar y cancelar también actúan dentro de una sola entrada grande: una extracción cancelada borra el fichero que estaba escribiendo y conserva los que ya había terminado.

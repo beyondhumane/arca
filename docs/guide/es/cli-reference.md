@@ -24,7 +24,8 @@ Commands:
   test      Check integrity without writing to disk                    [aliases: t]
   hash      Print or check checksums of files, in the sha256sum format
   password  Add, change or remove the password of an existing archive
-  repair    Rebuild a damaged ZIP from the entries that can still be read
+  comment   Show or change the comment of an archive or of one entry
+  repair    Rebuild a damaged archive from what can still be read
   diff      Compare two archives, or an archive and a folder
   bench     Measure the R1 and R2 performance requirements
 
@@ -62,7 +63,7 @@ Lista el contenido sin extraerlo.
 | `-t, --time` | desactivado | Informa cuánto tardó (por la salida de error estándar). |
 | `-p, --password <PASSWORD>` | ninguna | Contraseña para cabeceras 7z cifradas; no hace falta si los nombres son visibles. |
 
-En un `.zip`, el comentario del archivo y los de cada entrada salen por la salida de error estándar después de la lista, así que la salida estándar sigue siendo una línea por entrada. Los caracteres de control se muestran como `�` para que un comentario no pueda manejar la terminal.
+En un `.zip`, el comentario del archivo y los de cada entrada salen por la salida de error estándar después de la lista, así que la salida estándar sigue siendo una línea por entrada. Lo mismo ocurre con el comentario de un RAR y con los registros pax `comment` de las entradas de un TAR. Los caracteres de control se muestran como `�` para que un comentario no pueda manejar la terminal.
 
 ## extract · x
 
@@ -149,23 +150,69 @@ No se admite cambiar contraseñas ni modificar archivos 7z existentes. Consulta 
 | `--new <NEW>` | ninguna | Contraseña nueva. Omítela para quitar el cifrado. |
 | `-o, --out <PATH>` | en el mismo sitio | Escribe aquí en vez de reemplazar el archivo en el mismo sitio. |
 
-## repair
+## comment
 
-Reconstruye un ZIP cuyo directorio central falta o está dañado. Arca recorre el archivo en busca de cabeceras locales, toma los tamaños de cada entrada de su cabecera o, en las entradas escritas a chorro, del descriptor de datos que sigue a los datos, la descomprime y compara su CRC, y copia byte a byte las entradas que pasan la comprobación a un archivo nuevo. Las entradas descartadas se listan por la salida de error estándar con su desplazamiento y el motivo.
+Muestra o cambia el comentario de un archivo o de una de sus entradas.
 
 ```sh
-arca repair roto.zip -o reparado.zip
+arca comment notas.zip                          # muestra el comentario del archivo
+arca comment notas.zip --set "Enviado el 3 de mayo"
+arca comment notas.zip --entry docs/a.txt --file nota.txt
+arca comment notas.zip --clear -o copia.zip
 ```
 
 | Argumento / opción | Por defecto | Descripción |
 | --- | --- | --- |
-| `<ARCHIVE>` | obligatorio | Archivo dañado. Solo se lee; nunca se modifica. |
-| `-o, --out <PATH>` | obligatorio | Dónde escribir el archivo reconstruido (.zip). No puede ser el propio archivo dañado. |
+| `<ARCHIVE>` | obligatorio | Archivo: un .zip para cambiarlo; un .zip, .rar o TAR para leerlo. |
+| `--set <TEXT>` | ninguno | Pone TEXT como comentario. |
+| `--file <FILE>` | ninguno | Pone como comentario el contenido de FILE, byte a byte; `-` lee la entrada estándar. |
+| `--clear` | no | Quita el comentario. |
+| `--entry <NAME>` | ninguna | La entrada cuyo comentario mostrar o cambiar, por su ruta dentro del archivo. Una carpeta responde con la `/` final o sin ella. |
+| `-o, --out <PATH>` | en el sitio | Escribe aquí en lugar de reemplazar el archivo. |
+| `-p, --password <PASSWORD>` | ninguna | Contraseña de un RAR con las cabeceras cifradas. |
+
+- Sin `--set`, `--file` ni `--clear` se muestra el comentario, con los caracteres de control como `�`. Un TAR no tiene comentario propio, así que sin `--entry` lista las entradas que llevan un registro pax `comment`.
+- Solo se pueden cambiar los comentarios de un ZIP. El archivo se vuelve a escribir a su lado copiando cada entrada sin cambios, así que no hace falta la contraseña ni para las entradas cifradas; se vuelve a leer y solo entonces sustituye al antiguo.
+- Un `--entry` que no coincide con ninguna entrada es un error y no se escribe nada.
+
+## repair
+
+Reconstruye un archivo dañado con lo que todavía se puede leer, en un archivo nuevo del mismo formato. El archivo dañado solo se lee.
+
+```sh
+arca repair roto.zip -o reparado.zip
+arca repair copia.tar.gz -o rescatado.tar.gz
+```
+
+| Argumento / opción | Por defecto | Descripción |
+| --- | --- | --- |
+| `<ARCHIVE>` | obligatorio | Archivo dañado: ZIP, TAR (sin comprimir, gzip, XZ, bzip2 o Zstandard), 7z o RAR. Solo se lee; nunca se modifica. |
+| `-o, --out <PATH>` | obligatorio | Dónde escribir el archivo reconstruido, con la extensión del mismo formato. No puede ser el propio archivo dañado. |
+| `-p, --password <PASSWORD>` | ninguna | Contraseña de un 7z o un RAR cifrado. |
+
+El archivo reconstruido se escribe con un nombre temporal, se vuelve a leer y solo entonces se renombra. Si no se puede recuperar nada, no se escribe nada y la orden falla. Las entradas perdidas se listan por la salida de error estándar con el motivo.
+
+**ZIP.** Arca recorre el archivo en busca de cabeceras locales, toma los tamaños de cada entrada de su cabecera o, en las entradas escritas a chorro, del descriptor de datos que sigue a los datos, la descomprime y compara su CRC, y copia byte a byte las entradas que pasan la comprobación a un archivo nuevo.
 
 - Las entradas cifradas no se pueden comprobar sin la contraseña: se copian tras una comprobación solo estructural y se nombran por la salida de error estándar.
 - Se pierde lo que solo guardaba el directorio central: los comentarios del archivo y de las entradas, los permisos Unix y otros atributos externos.
 - Un ZIP guardado dentro de una entrada se queda dentro de ella. Pero si esa entrada exterior está dañada, las entradas interiores pueden aparecer como entradas propias.
-- El archivo reconstruido se escribe con un nombre temporal, se vuelve a leer y solo entonces se renombra. Si no se puede recuperar nada, no se escribe nada y la orden falla.
+
+**TAR.** Cada entrada cuya cabecera cuadra con su suma de comprobación y cuyos datos están completos se copia con sus cabeceras tal cual; el archivo nuevo se vuelve a comprimir con el mismo códec. Tras una cabecera dañada, Arca mira los bloques de 512 bytes siguientes hasta dar con otra cabecera válida y sigue desde ahí.
+
+- TAR no guarda ninguna suma de comprobación de los datos, así que un daño dentro de los datos de una entrada pasa desapercibido. Un bloque dentro de los datos de una entrada que parezca una cabecera, como un TAR guardado dentro del TAR, se toma por una.
+- Un enlace duro cuyo destino se perdió se deja fuera.
+- Un daño dentro del flujo gzip, XZ, bzip2 o Zstandard detiene la reparación ahí: nada de lo que viene después se puede descomprimir. Lo anterior se conserva, pero esos formatos comprueban sus datos después de entregarlos, así que las últimas entradas conservadas antes del daño quedan sin comprobar, y Arca lo avisa.
+
+**7z.** Cada bloque sólido se descomprime por separado, así que el daño en un bloque no cuesta nada en los demás. En un bloque dañado se pierden la primera entrada que no cuadra con su CRC o no se descomprime y todas las que la siguen; una entrada sin CRC propio solo se conserva si su bloque entero se descomprime. Lo que se salva se vuelve a comprimir al nivel normal.
+
+- La cabecera del final de un 7z es la que dice dónde está cada bloque y cada entrada: un 7z con la cabecera dañada no se puede reparar.
+
+**RAR.** Reconstruye el archivo a partir de su registro de recuperación, con el que tiene que haberse creado (*Añadir registro de recuperación* en WinRAR). Sin él, un RAR dañado no se puede reparar. Si el registro no encuentra nada mal, no se escribe nada.
+
+- Solo archivos sueltos: un conjunto de volúmenes se rechaza.
+- Al registro de recuperación se llega a través de las cabeceras del archivo, así que un RAR con las cabeceras dañadas no se puede reparar.
+- Un RAR 4 se repara en memoria y se rechaza por encima de 1 GiB.
 
 ## bench
 
