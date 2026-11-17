@@ -4,6 +4,7 @@
 //! source; writing cuts as it goes, under temporary names that only become
 //! the real ones once the whole set is there.
 
+use crate::extraction::claim_key;
 use crate::{Error, Result};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -72,12 +73,18 @@ fn broken(message: String) -> Error {
 }
 
 /// The files beside `base` named like its parts with `suffix` after the
-/// number, `base.NNN` or `base.NNN.arca-new`, as numbers and paths, in order.
+/// number, `base.NNN` or `base.NNN.arca-new`, as numbers and the names they
+/// have on disk, in order. Names are compared the way the file system
+/// compares them, and where two differ only in case the one spelled like
+/// `base` is kept.
 fn numbered(base: &Path, suffix: &str) -> io::Result<Vec<(u32, PathBuf)>> {
     let name = base
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default();
+    let folded = |text: &str| claim_key(Path::new(text)).to_string_lossy().into_owned();
+    let prefix = folded(&format!("{name}."));
+    let suffix = folded(suffix);
     let dir = match base.parent() {
         Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
         _ => PathBuf::from("."),
@@ -85,19 +92,23 @@ fn numbered(base: &Path, suffix: &str) -> io::Result<Vec<(u32, PathBuf)>> {
     let mut found = Vec::new();
     for entry in fs::read_dir(&dir)? {
         let file_name = entry?.file_name();
-        let Some(index) = file_name
-            .to_str()
-            .and_then(|n| n.strip_prefix(name))
-            .and_then(|n| n.strip_prefix('.'))
-            .and_then(|n| n.strip_suffix(suffix))
+        let Some(text) = file_name.to_str() else {
+            continue;
+        };
+        let key = folded(text);
+        let Some(index) = key
+            .strip_prefix(prefix.as_str())
+            .and_then(|rest| rest.strip_suffix(suffix.as_str()))
             .and_then(part_number)
         else {
             continue;
         };
-        found.push((index, base.with_file_name(file_name)));
+        let exact = text.starts_with(name) && text.ends_with(suffix.as_str());
+        found.push((index, !exact, base.with_file_name(text)));
     }
     found.sort();
-    Ok(found)
+    found.dedup_by_key(|(index, _, _)| *index);
+    Ok(found.into_iter().map(|(i, _, p)| (i, p)).collect())
 }
 
 /// Every part of the set `path` belongs to, in order, with its size. All of
@@ -106,40 +117,15 @@ fn numbered(base: &Path, suffix: &str) -> io::Result<Vec<(u32, PathBuf)>> {
 pub fn parts_of(path: &Path) -> Result<Vec<(PathBuf, u64)>> {
     let (base, opened) =
         split_part(path).ok_or_else(|| broken(format!("'{}' is not a part", path.display())))?;
-    let name = base
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .to_string();
-    let dir = match base.parent() {
-        Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
-    let mut found = Vec::new();
-    for entry in fs::read_dir(&dir)? {
-        let entry = entry?;
-        let file_name = entry.file_name();
-        let Some(rest) = file_name
-            .to_str()
-            .and_then(|n| n.strip_prefix(name.as_str()))
-            .and_then(|n| n.strip_prefix('.'))
-        else {
-            continue;
-        };
-        if let Some(index) = part_number(rest) {
-            if index > MAX_PARTS {
-                return Err(Error::Limit(format!(
-                    "'{}' has more than {MAX_PARTS} parts",
-                    base.display()
-                )));
-            }
-            found.push(index);
-        }
+    let found = numbered(&base, "")?;
+    if found.last().is_some_and(|(index, _)| *index > MAX_PARTS) {
+        return Err(Error::Limit(format!(
+            "'{}' has more than {MAX_PARTS} parts",
+            base.display()
+        )));
     }
-    found.sort_unstable();
-    found.dedup();
     let mut parts = Vec::with_capacity(found.len());
-    for (at, index) in found.iter().enumerate() {
+    for (at, (index, path)) in found.iter().enumerate() {
         let expected = at as u32 + 1;
         if *index != expected {
             return Err(broken(format!(
@@ -147,10 +133,10 @@ pub fn parts_of(path: &Path) -> Result<Vec<(PathBuf, u64)>> {
                 part_path(&base, expected).display()
             )));
         }
-        let path = part_path(&base, expected);
-        let size = fs::metadata(&path)?.len();
-        parts.push((path, size));
+        let size = fs::metadata(path)?.len();
+        parts.push((path.clone(), size));
     }
+    let found: Vec<u32> = found.into_iter().map(|(index, _)| index).collect();
     if found.last().is_none_or(|last| opened > *last) {
         return Err(broken(format!(
             "part '{}' of the split archive is missing",
@@ -279,10 +265,20 @@ pub enum Source {
     Split(Joined),
 }
 
+/// Whether `path` is named like a part but is the only file of its set and
+/// not its first part, like a `backup.zip.100` kept on its own.
+fn stands_alone(path: &Path) -> bool {
+    let Some((base, index)) = split_part(path) else {
+        return true;
+    };
+    index != 1 && path.is_file() && numbered(&base, "").is_ok_and(|found| found.len() == 1)
+}
+
 /// Opens `path` for reading. A name like `backup.zip.002` opens the whole
-/// set it belongs to, from its first byte.
+/// set it belongs to, from its first byte, unless no other part of that set
+/// is there, in which case it is a file of its own.
 pub fn open(path: &Path) -> Result<Source> {
-    if is_part(path) {
+    if is_part(path) && !stands_alone(path) {
         Ok(Source::Split(Joined::open(path)?))
     } else {
         Ok(Source::Single(File::open(path)?))
@@ -763,9 +759,36 @@ mod tests {
             error.contains("a.bin.002") && error.contains("missing"),
             "{error}"
         );
+        let base = write_set(dir.path(), "b.bin", &[b"ab", b"cd", b"ef"]);
         fs::remove_file(part_path(&base, 1)).unwrap();
         let error = read_all(&part_path(&base, 3)).unwrap_err().to_string();
-        assert!(error.contains("a.bin.001"), "{error}");
+        assert!(error.contains("b.bin.001"), "{error}");
+    }
+
+    #[test]
+    fn a_lone_numbered_file_opens_as_itself() {
+        let dir = room();
+        let lone = dir.path().join("backup.zip.100");
+        fs::write(&lone, b"whole file").unwrap();
+        assert_eq!(read_all(&lone).unwrap(), b"whole file");
+        let base = write_set(dir.path(), "a.bin", &[b"ab", b"cd", b"ef"]);
+        fs::remove_file(part_path(&base, 1)).unwrap();
+        fs::remove_file(part_path(&base, 2)).unwrap();
+        assert_eq!(read_all(&part_path(&base, 3)).unwrap(), b"ef");
+        assert!(read_all(&dir.path().join("gone.zip.100")).is_err());
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn parts_are_found_whatever_case_they_are_asked_for_in() {
+        let dir = room();
+        let base = write_set(dir.path(), "set.zip", &[b"ab", b"cd", b"e"]);
+        assert_eq!(read_all(&dir.path().join("SET.ZIP.002")).unwrap(), b"abcde");
+        let staged = dir.path().join("Set.Zip.002.ARCA-NEW");
+        fs::write(&staged, b"stale").unwrap();
+        discard(&dir.path().join("SET.ZIP"), Some(2));
+        assert!(!staged.exists());
+        assert_eq!(read_all(&part_path(&base, 1)).unwrap(), b"abcde");
     }
 
     #[test]
