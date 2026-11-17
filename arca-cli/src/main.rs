@@ -62,6 +62,14 @@ enum Cmd {
             help = "Encrypt file names too (.7z only; requires a nonempty password)"
         )]
         hide_names: bool,
+        #[arg(
+            short = 'v',
+            long,
+            value_name = "SIZE",
+            value_parser = arca_core::volumes::parse_size,
+            help = "Split the archive into parts of SIZE bytes, or k, m or g (KiB, MiB, GiB): out.zip.001, out.zip.002, ... as 7-Zip does. Not for .rar"
+        )]
+        volume: Option<u64>,
     },
     #[command(
         visible_alias = "l",
@@ -191,6 +199,16 @@ fn detect_archive(p: &Path) -> Result<Format> {
 }
 
 fn unrecognized(p: &Path) -> Error {
+    let whole = arca_core::volumes::whole_name(p);
+    if let Some(format) = Format::detect(&whole)
+        .filter(|f| whole != p && matches!(f.container(), Container::Rar | Container::Iso))
+    {
+        return Error::Unsupported(format!(
+            "'{}' is part of a split {}; Arca joins split parts only for ZIP, 7z, TAR and the compressed streams",
+            p.display(),
+            format.label()
+        ));
+    }
     {
         let known: Vec<String> = Format::SUFFIXES
             .iter()
@@ -204,11 +222,17 @@ fn unrecognized(p: &Path) -> Error {
     }
 }
 
+fn split_is_read_only() -> Error {
+    Error::Unsupported(
+        "a split archive is read-only: extract it and create it again to change it".into(),
+    )
+}
+
 fn tar_source(archive: &Path, format_kind: Format) -> Result<Box<dyn Read>> {
     Ok(match format_kind {
         f if arca_stream::handles(f) => arca_stream::open(archive, f)?,
         _ => {
-            let f = BufReader::with_capacity(BUF, File::open(archive)?);
+            let f = BufReader::with_capacity(BUF, arca_core::volumes::open(archive)?);
             if format_kind == Format::TarGz {
                 Box::new(flate2::read::MultiGzDecoder::new(f))
             } else {
@@ -243,18 +267,17 @@ fn staged_path(out: &Path) -> PathBuf {
     out.with_file_name(name)
 }
 
-fn staged<T>(out: &Path, write: impl FnOnce(BufWriter<File>) -> Result<T>) -> Result<T> {
-    let temp = staged_path(out);
-    let result = File::create(&temp)
-        .map_err(Error::from)
-        .and_then(|f| write(BufWriter::with_capacity(BUF, f)));
-    match result.and_then(|v| fs::rename(&temp, out).map(|()| v).map_err(Error::from)) {
-        Ok(v) => Ok(v),
-        Err(e) => {
-            let _ = fs::remove_file(&temp);
-            Err(e)
-        }
-    }
+// Built under a temporary name beside `out`, or as staged parts when split,
+// and renamed only once complete, so a failed or interrupted run never leaves
+// a half-written archive behind. Answers with the bytes written in all.
+fn staged<T>(
+    out: &Path,
+    volume: Option<u64>,
+    write: impl FnOnce(BufWriter<arca_core::volumes::Output>) -> Result<T>,
+) -> Result<(T, u64)> {
+    arca_core::volumes::staged(out, volume, false, |o| {
+        write(BufWriter::with_capacity(BUF, o))
+    })
 }
 
 fn main() {
@@ -275,14 +298,15 @@ fn run(cli: Cli) -> Result<()> {
             threads,
             password,
             hide_names,
+            volume,
         } => create(
             &out,
             &inputs,
             level,
             codec,
             threads,
-            password.as_deref(),
-            hide_names,
+            (password.as_deref(), hide_names),
+            volume,
         ),
         Cmd::List {
             archive,
@@ -406,15 +430,29 @@ fn create(
     level: Level,
     codec_arg: CodecArg,
     requested_threads: usize,
-    password: Option<&str>,
-    hide_names: bool,
+    (password, hide_names): (Option<&str>, bool),
+    volume: Option<u64>,
 ) -> Result<()> {
+    let whole = volume.map(|_| arca_core::volumes::whole_name(out));
+    let out = whole.as_deref().unwrap_or(out);
     let format_kind = detect(out)?;
     if !format_kind.can_create() {
         return Err(format_kind.read_only());
     }
     if format_kind == Format::SevenZ {
-        return sevenz::create(out, inputs, level, codec_arg, password, hide_names);
+        return sevenz::create(
+            out,
+            inputs,
+            level,
+            codec_arg,
+            (password, hide_names),
+            volume,
+        );
+    }
+    if format_kind == Format::Rar && volume.is_some() {
+        return Err(Error::Unsupported(
+            "-v does not split .rar archives; RAR has volumes of its own that Arca does not write yet. Split a .zip or .7z instead".into(),
+        ));
     }
     if format_kind == Format::Rar {
         return rar::create(
@@ -493,41 +531,44 @@ fn create(
     }
 
     let t0 = Instant::now();
-    match format_kind.container() {
+    let final_size = match format_kind.container() {
         Container::SevenZ => unreachable!(),
         // Nothing to report while it runs -- the summary is printed at the end
         // -- so the answer to "carry on?" is always yes.
         Container::Rar | Container::Iso => return Err(format_kind.read_only()),
         Container::Zip => {
-            let temp = staged_path(out);
-            arca_zip::create_zip(&temp, &files, threads, password, &|_, _, _| true)?;
-            if let Err(e) = fs::rename(&temp, out) {
-                let _ = fs::remove_file(&temp);
-                return Err(e.into());
-            }
+            staged(out, volume, |w| {
+                arca_zip::create_zip_into(w, &files, threads, password, &|_, _, _| true)?
+                    .flush()?;
+                Ok(())
+            })?
+            .1
         }
-        Container::Tar | Container::TarGz => staged(out, |f| {
-            let dest: Box<dyn Write> = if format_kind == Format::TarGz {
-                Box::new(flate2::write::GzEncoder::new(
-                    f,
-                    flate2::Compression::new(level.to_flate2()),
-                ))
-            } else {
-                Box::new(f)
-            };
-            let mut w = TarWriter::new(dest);
-            for s in &files {
-                let file = File::open(&s.path)?;
-                let mode = arca_tar::mode_of(&file.metadata()?);
-                let entrada = BufReader::with_capacity(BUF, file);
-                w.add(&s.name, s.size, s.mtime, mode, entrada)?;
-            }
-            add_links(&mut w, &links)?;
-            w.finish()?.flush()?;
-            Ok(())
-        })?,
+        Container::Tar | Container::TarGz => {
+            staged(out, volume, |f| {
+                let dest: Box<dyn Write> = if format_kind == Format::TarGz {
+                    Box::new(flate2::write::GzEncoder::new(
+                        f,
+                        flate2::Compression::new(level.to_flate2()),
+                    ))
+                } else {
+                    Box::new(f)
+                };
+                let mut w = TarWriter::new(dest);
+                for s in &files {
+                    let file = File::open(&s.path)?;
+                    let mode = arca_tar::mode_of(&file.metadata()?);
+                    let entrada = BufReader::with_capacity(BUF, file);
+                    w.add(&s.name, s.size, s.mtime, mode, entrada)?;
+                }
+                add_links(&mut w, &links)?;
+                w.finish()?.flush()?;
+                Ok(())
+            })?
+            .1
+        }
         Container::TarXz | Container::TarBz2 | Container::TarZst => {
-            threads = staged(out, |f| {
+            let (used, written) = staged(out, volume, |f| {
                 let e = arca_stream::encoder(f, format_kind, level, requested_threads, None)?;
                 let used = e.workers();
                 let mut w = TarWriter::new(e);
@@ -541,9 +582,11 @@ fn create(
                 w.finish()?.finish()?.flush()?;
                 Ok(used)
             })?;
+            threads = used;
+            written
         }
         Container::Xz | Container::Bz2 | Container::Zst => {
-            threads = staged(out, |f| {
+            let (used, written) = staged(out, volume, |f| {
                 let mut e = arca_stream::encoder(
                     f,
                     format_kind,
@@ -559,11 +602,12 @@ fn create(
                 e.finish()?.flush()?;
                 Ok(used)
             })?;
+            threads = used;
+            written
         }
-    }
+    };
 
     let dt = t0.elapsed();
-    let final_size = fs::metadata(out)?.len();
     let ratio = if total > 0 {
         100.0 * (1.0 - final_size as f64 / total as f64)
     } else {
@@ -575,17 +619,26 @@ fn create(
         0.0
     };
     println!(
-        "{}: {} files, {} -> {} ({:.1}% smaller) in {:.3} s · {:.0} MiB/s · {} threads",
-        out.display(),
+        "{}: {} files, {} -> {} ({:.1}% smaller) in {:.3} s · {:.0} MiB/s · {} threads{}",
+        arca_core::volumes::first_output(out, volume).display(),
         files.len(),
         human(total),
         human(final_size),
         ratio,
         dt.as_secs_f64(),
         mbs,
-        threads
+        threads,
+        parts_note(final_size, volume)
     );
     Ok(())
+}
+
+/// How many parts a split archive came out in, for the summary line.
+fn parts_note(written: u64, volume: Option<u64>) -> String {
+    match volume {
+        Some(size) => format!(" · {} parts", written.div_ceil(size).max(1)),
+        None => String::new(),
+    }
 }
 
 fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
@@ -598,7 +651,7 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
     let mut out = BufWriter::new(io::stdout().lock());
     match format_kind.container() {
         Container::SevenZ => {
-            let a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let a = arca_7z::SevenZArchive::open(arca_core::volumes::open(archive)?, password)?;
             for e in a.entries() {
                 writeln!(
                     out,
@@ -643,7 +696,7 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
             }
         }
         Container::Zip => {
-            let a = ZipArchive::open(File::open(archive)?)?;
+            let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             for (i, e) in a.entries().iter().enumerate() {
                 writeln!(
                     out,
@@ -842,7 +895,7 @@ fn extract(
             return Ok(());
         }
         Container::Zip => {
-            let a = ZipArchive::open(File::open(archive)?)?;
+            let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             // Directories and conflicts are settled here, single threaded: two
             // threads racing on create_dir_all or on picking a free name would
             // give a result that depends on who won.
@@ -891,8 +944,10 @@ fn extract(
             let written: Vec<u64> = pool.install(|| {
                 jobs.par_chunks(chunk)
                     .map(|batch| {
-                        let mut source =
-                            ExtractionReader::with_capacity(BUF, File::open(archive)?)?;
+                        let mut source = ExtractionReader::with_capacity(
+                            BUF,
+                            arca_core::volumes::open(archive)?,
+                        )?;
                         let mut staging = Vec::new();
                         let mut total = 0u64;
                         // Nothing already on disk is touched until the entry has
@@ -1029,6 +1084,9 @@ fn change_password(
     current: Option<&str>,
     new: Option<&str>,
 ) -> Result<()> {
+    if arca_core::volumes::is_part(archive) {
+        return Err(split_is_read_only());
+    }
     let format_kind = detect(archive)?;
     if !format_kind.can_write() {
         return Err(format_kind.read_only());
@@ -1048,7 +1106,9 @@ fn change_password(
             ));
         }
     }
-    let entries = ZipArchive::open(File::open(archive)?)?.entries().to_vec();
+    let entries = ZipArchive::open(arca_core::volumes::open(archive)?)?
+        .entries()
+        .to_vec();
     let was_encrypted = entries.iter().any(|e| e.encrypted);
     if !was_encrypted && new.is_none() {
         return Err(Error::Format(format!(
@@ -1141,7 +1201,7 @@ fn repair_zip(archive: &Path, out: &Path) -> Result<()> {
     let t0 = Instant::now();
     let temp = staged_path(out);
     let result = (|| {
-        let source = BufReader::with_capacity(BUF, File::open(archive)?);
+        let source = BufReader::with_capacity(BUF, arca_core::volumes::open(archive)?);
         let sink = BufWriter::with_capacity(BUF, File::create(&temp)?);
         let (mut sink, report) = arca_zip::repair(source, sink)?;
         sink.flush()?;
@@ -1204,7 +1264,7 @@ fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
 
     match format_kind.container() {
         Container::SevenZ => {
-            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let mut a = arca_7z::SevenZArchive::open(arca_core::volumes::open(archive)?, password)?;
             a.test(&mut |_| true)?;
             n = a.len() as u64;
         }
@@ -1219,7 +1279,7 @@ fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
             n = a.entries().iter().filter(|e| !e.is_dir).count() as u64;
         }
         Container::Zip => {
-            let mut a = ZipArchive::open(File::open(archive)?)?;
+            let mut a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             for i in 0..a.len() {
                 if a.entries()[i].is_dir {
                     continue;
@@ -1272,7 +1332,7 @@ fn bench(archive: &Path) -> Result<()> {
     let mut inputs = 0usize;
     for _ in 0..5 {
         let t = Instant::now();
-        let a = ZipArchive::open(File::open(archive)?)?;
+        let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
         inputs = a.len();
         let d = t.elapsed().as_secs_f64() * 1000.0;
         if d < best_of {

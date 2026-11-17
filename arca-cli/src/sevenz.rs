@@ -1,9 +1,9 @@
-use super::{human, CodecArg, OnConflict};
-use arca_7z::{create_7z, CreateOptions, SevenZArchive, Source};
+use super::{human, parts_note, staged, CodecArg, OnConflict};
+use arca_7z::{create_7z_into, CreateOptions, SevenZArchive, Source};
 use arca_core::extraction::{Conflict, Destination};
 use arca_core::{Error, Level, Result};
-use std::fs::{self, File};
-use std::io;
+use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -12,8 +12,8 @@ pub(super) fn create(
     inputs: &[PathBuf],
     level: Level,
     codec: CodecArg,
-    password: Option<&str>,
-    hide_names: bool,
+    (password, hide_names): (Option<&str>, bool),
+    volume: Option<u64>,
 ) -> Result<()> {
     if !matches!(codec, CodecArg::Auto | CodecArg::Store | CodecArg::Lzma2) {
         return Err(Error::Unsupported(
@@ -49,18 +49,22 @@ pub(super) fn create(
         )?;
     }
     let t0 = Instant::now();
-    create_7z(out, &sources, &options, &mut |_| true)?;
+    let (_, written) = staged(out, volume, |w| {
+        create_7z_into(w, &sources, &options, &mut |_| true)?.flush()?;
+        Ok(())
+    })?;
     println!(
-        "{}: {files} files, {} -> {} in {:.3} s \u{b7} {} threads",
-        out.display(),
+        "{}: {files} files, {} -> {} in {:.3} s \u{b7} {} threads{}",
+        arca_core::volumes::first_output(out, volume).display(),
         human(bytes),
-        human(fs::metadata(out)?.len()),
+        human(written),
         t0.elapsed().as_secs_f64(),
         if options.level == Level::STORE {
             1
         } else {
             arca_7z::workers(options.level)
-        }
+        },
+        parts_note(written, volume)
     );
     Ok(())
 }
@@ -128,7 +132,7 @@ pub(super) fn extract(
     password: Option<&str>,
 ) -> Result<()> {
     let t0 = Instant::now();
-    let mut archive = SevenZArchive::open(File::open(archive)?, password)?;
+    let mut archive = SevenZArchive::open(arca_core::volumes::open(archive)?, password)?;
     let indices = (0..archive.len()).collect::<Vec<_>>();
     let mut destination = Destination::new(dest);
     let mut files = 0;
