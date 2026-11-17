@@ -231,7 +231,7 @@ arca bench big.zip
 | --- | --- | --- |
 | `<ARCHIVE>` | obligatorio sin `--codecs` | Archivo contra el que medir R1 y R2. No va con `--codecs`. |
 | `--codecs` | desactivado | Mide la velocidad de compresión y de descompresión y la relación de Store, Deflate, Zstandard, LZMA2, bzip2 y RAR5, e imprime una puntuación. No se lee ni se escribe nada en el disco. |
-| `-j, --threads <N>` | `0` | Hilos de la segunda medición; `0` significa todos los núcleos. Con `1` solo se mide un hilo. |
+| `-j, --threads <N>` | `0` | Hilos de la segunda medición, de 0 a 256; `0` significa todos los núcleos. Con `1` solo se mide un hilo. |
 | `--seconds <S>` | `1` | Segundos que cada medición repite sus pasadas, de 0 a 3600. Siempre se hace al menos una. |
 | `--size <MIB>` | `16` | MiB de datos generados, de 1 a 4096; se suben a 1 MiB por hilo. |
 | `--json` | desactivado | Imprime un objeto JSON en lugar de la tabla: velocidades en MB/s, relaciones como tamaño comprimido entre original y `null` para lo que no se midió. |

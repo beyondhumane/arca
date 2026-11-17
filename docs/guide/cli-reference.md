@@ -231,7 +231,7 @@ arca bench big.zip
 | --- | --- | --- |
 | `<ARCHIVE>` | required without `--codecs` | Archive to measure R1 and R2 against. Not with `--codecs`. |
 | `--codecs` | off | Measure compression and decompression speed and ratio of Store, Deflate, Zstandard, LZMA2, bzip2 and RAR5, and print a rating. Nothing is read from or written to the disk. |
-| `-j, --threads <N>` | `0` | Threads for the second measurement; `0` means every core. With `1` only one thread is measured. |
+| `-j, --threads <N>` | `0` | Threads for the second measurement, from 0 to 256; `0` means every core. With `1` only one thread is measured. |
 | `--seconds <S>` | `1` | Seconds each measurement keeps repeating its runs, from 0 to 3600. At least one run is always made. |
 | `--size <MIB>` | `16` | MiB of generated data, from 1 to 4096; raised to 1 MiB per thread. |
 | `--json` | off | Print one JSON object instead of the table: speeds in MB/s, ratios as compressed over original size, and `null` for whatever was not measured. |
