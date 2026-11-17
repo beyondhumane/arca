@@ -429,6 +429,7 @@ fn rar_job(out: PathBuf, inputs: Vec<PathBuf>, level: Level) -> Job {
         level,
         password: None,
         hide_names: false,
+        volume: None,
     }
 }
 
@@ -590,6 +591,7 @@ fn rar_creation_rejects_unsupported_options_before_writing() {
                 level: Level::NORMAL,
                 password: password.map(str::to_string),
                 hide_names,
+                volume: None,
             },
             strings(Lang::En),
             &|_, _, _| true,

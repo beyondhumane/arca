@@ -6,6 +6,8 @@ mod rar_tests;
 #[cfg(test)]
 mod sevenz_tests;
 #[cfg(test)]
+mod split_tests;
+#[cfg(test)]
 mod streams_tests;
 #[cfg(test)]
 mod xz_tests;
@@ -92,6 +94,8 @@ pub(crate) enum Job {
         level: Level,
         password: Option<String>,
         hide_names: bool,
+        // Parts of this many bytes, or one file when there is none.
+        volume: Option<u64>,
     },
     // Putting files in. Same rebuild as Delete, and for the same reason: the
     // central directory is at the end of the file.
@@ -189,6 +193,7 @@ pub(crate) fn parse_args() -> Startup {
             level: Level::NORMAL,
             password: None,
             hide_names: false,
+            volume: None,
         }),
         other if !other.starts_with("--") => Startup::Browse(Some(PathBuf::from(other))),
         _ => Startup::Browse(None),
@@ -580,6 +585,7 @@ pub(crate) fn run_job_blocking(
             level,
             password,
             hide_names,
+            volume,
         } => {
             if inputs.is_empty() {
                 return Err(s.nothing_to_do.to_string());
@@ -592,8 +598,9 @@ pub(crate) fn run_job_blocking(
                     ));
                 }
             }
-            let (from, to) = compress(
+            let (from, to) = compress_split(
                 &out,
+                volume,
                 &inputs,
                 format,
                 codec,
@@ -610,7 +617,12 @@ pub(crate) fn run_job_blocking(
             Ok(fill(
                 s.created,
                 &[
-                    ("name", &out.display().to_string()),
+                    (
+                        "name",
+                        &arca_core::volumes::first_output(&out, volume)
+                            .display()
+                            .to_string(),
+                    ),
                     ("from", &human(from)),
                     ("to", &human(to)),
                     ("pct", &format!("{pct:.1}%")),

@@ -782,7 +782,11 @@ pub(crate) fn format_device(_device: &str, _fs: &str, _label: &str) -> Result<()
 
 impl AppController {
     pub(crate) fn writable(&self) -> bool {
-        self.state.archive.is_some() && self.state.format == Format::Zip
+        self.state
+            .archive
+            .as_ref()
+            .is_some_and(|a| !arca_core::volumes::is_part(a))
+            && self.state.format == Format::Zip
     }
 
     pub(crate) fn on_disk(&self) -> bool {

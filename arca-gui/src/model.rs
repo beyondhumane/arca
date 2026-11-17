@@ -35,6 +35,8 @@ pub(crate) fn open_filter() -> Vec<String> {
             }
         }
     }
+    // The first part of a split set, which opens the whole set.
+    extensions.push("001".into());
     extensions
 }
 
@@ -115,6 +117,7 @@ pub(crate) fn human(n: u64) -> String {
 }
 
 pub(crate) fn archive_stem(p: &Path) -> String {
+    let p = arca_core::volumes::whole_name(p);
     let name = p
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -238,6 +241,47 @@ impl Columns {
             SortColumn::Accessed => s.col_accessed,
             SortColumn::Attributes => s.col_attributes,
             SortColumn::Name => s.col_name,
+        }
+    }
+}
+
+/// The sizes the compress box offers to split a new archive into, the way
+/// 7-Zip's list has them: in MiB, with FAT32's largest file rounded down to
+/// a whole number of them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum VolumeChoice {
+    None,
+    Mb100,
+    Mb700,
+    Fat32,
+    Custom,
+}
+
+impl VolumeChoice {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::None,
+        Self::Mb100,
+        Self::Mb700,
+        Self::Fat32,
+        Self::Custom,
+    ];
+
+    pub(crate) fn bytes(self) -> Option<u64> {
+        match self {
+            Self::None | Self::Custom => None,
+            Self::Mb100 => Some(100 << 20),
+            Self::Mb700 => Some(700 << 20),
+            Self::Fat32 => Some(4092 << 20),
+        }
+    }
+
+    pub(crate) fn label(self, s: &Strings) -> &'static str {
+        match self {
+            Self::None => s.volume_none,
+            Self::Mb100 => s.volume_100m,
+            Self::Mb700 => s.volume_700m,
+            Self::Fat32 => s.volume_fat32,
+            Self::Custom => s.volume_custom,
         }
     }
 }

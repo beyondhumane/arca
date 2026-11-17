@@ -991,6 +991,36 @@ impl Shell {
                 self.controller.state.hide_names = hide_names;
             }
         }
+        if format != Format::Rar {
+            let mut choice = self.controller.state.volume;
+            let custom = choice == crate::model::VolumeChoice::Custom;
+            card(ui, s.split_word, None, true, |ui| {
+                egui::ComboBox::from_id_salt("compress-volume")
+                    .selected_text(choice.label(s))
+                    .width(160.0)
+                    .show_ui(ui, |ui| {
+                        for candidate in crate::model::VolumeChoice::ALL {
+                            ui.selectable_value(&mut choice, candidate, candidate.label(s));
+                        }
+                    });
+                if custom {
+                    let size = ui.add(
+                        super::widgets::field(ui, &mut self.controller.state.volume_text)
+                            .hint_text("250m")
+                            .desired_width(90.0),
+                    );
+                    super::widgets::named(&size, s.volume_custom);
+                }
+            });
+            self.controller.state.volume = choice;
+            if custom {
+                let bad = !self.controller.state.volume_text.trim().is_empty()
+                    && self.controller.volume_size().is_err();
+                let color = if bad { p.warning } else { p.muted };
+                ui.label(RichText::new(s.volume_hint).small().color(hex(color)));
+                ui.add_space(6.0);
+            }
+        }
         if let Some(note) = self.controller.create_policy_note() {
             ui.label(RichText::new(note).small().color(hex(p.warning)));
             ui.add_space(6.0);
@@ -1093,7 +1123,8 @@ impl Shell {
         let mut start = false;
         let mut cancel = false;
         Self::footer_buttons(ui, |ui| {
-            start = primary_button(ui, s.compress_title, count > 0).clicked();
+            let ready = count > 0 && self.controller.volume_size().is_ok();
+            start = primary_button(ui, s.compress_title, ready).clicked();
             cancel = secondary_button(ui, s.cancel, true).clicked();
         });
         if start {

@@ -1,6 +1,7 @@
 //! Archive readers, extractors, and filesystem writers.
 
 use crate::{archive_stem, container_of, detect, Container, Format, Message};
+use arca_core::volumes::Output;
 use arca_core::{Codec, Entry, Level};
 use arca_tar::{TarReader, TarWriter};
 use arca_zip::ZipArchive;
@@ -98,7 +99,7 @@ pub(crate) fn open_source(archive: &Path, format: Format) -> arca_core::Result<B
     if arca_stream::handles(format) {
         return Ok(arca_stream::open(archive, format)?);
     }
-    let f = BufReader::with_capacity(BUF, File::open(archive)?);
+    let f = BufReader::with_capacity(BUF, arca_core::volumes::open(archive)?);
     Ok(match format {
         Format::TarGz => Box::new(flate2::read::MultiGzDecoder::new(f)),
         _ => Box::new(f),
@@ -175,17 +176,22 @@ fn staged_path(out: &Path) -> PathBuf {
 // stop or a failure halfway leaves no truncated archive under the real name.
 pub(crate) fn staged<T>(
     out: &Path,
-    write: impl FnOnce(BufWriter<File>) -> arca_core::Result<T>,
+    write: impl FnOnce(BufWriter<Output>) -> arca_core::Result<T>,
 ) -> arca_core::Result<T> {
-    let temp = staged_path(out);
-    let result = File::create(&temp)
-        .map_err(arca_core::Error::from)
-        .and_then(|f| write(BufWriter::with_capacity(BUF, f)))
-        .and_then(|v| fs::rename(&temp, out).map(|()| v).map_err(Into::into));
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
+    staged_parts(out, None, write).map(|(v, _)| v)
+}
+
+// The same, cut into parts of `volume` bytes when there is one. Whoever calls
+// this has already asked before replacing an existing set. Answers with the
+// bytes written in all.
+fn staged_parts<T>(
+    out: &Path,
+    volume: Option<u64>,
+    write: impl FnOnce(BufWriter<Output>) -> arca_core::Result<T>,
+) -> arca_core::Result<(T, u64)> {
+    arca_core::volumes::staged(out, volume, true, |o| {
+        write(BufWriter::with_capacity(BUF, o))
+    })
 }
 
 pub(crate) fn list_entries(
@@ -209,11 +215,13 @@ pub(crate) fn list_entries(
             Ok((a.entries().to_vec(), a.notices().to_vec()))
         }
         Container::Zip => Ok((
-            ZipArchive::open(File::open(archive)?)?.entries().to_vec(),
+            ZipArchive::open(arca_core::volumes::open(archive)?)?
+                .entries()
+                .to_vec(),
             Vec::new(),
         )),
         Container::SevenZ => Ok((
-            arca_7z::SevenZArchive::open(File::open(archive)?, password)?
+            arca_7z::SevenZArchive::open(arca_core::volumes::open(archive)?, password)?
                 .entries()
                 .to_vec(),
             Vec::new(),
@@ -244,7 +252,7 @@ pub(crate) fn comment_notice(archive: &Path, label: &str) -> Option<String> {
     if detect(archive).map(|f| f.container()) != Some(Container::Zip) {
         return None;
     }
-    let comment = arca_zip::read_comment(File::open(archive).ok()?).ok()?;
+    let comment = arca_zip::read_comment(arca_core::volumes::open(archive).ok()?).ok()?;
     let line = comment
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
@@ -278,18 +286,22 @@ pub(crate) fn check_access(
             }
         }
         Some(Container::SevenZ) => {
-            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let mut a = arca_7z::SevenZArchive::open(arca_core::volumes::open(archive)?, password)?;
             if a.has_encrypted() && password.is_none() {
                 return Err(arca_core::Error::PasswordRequired);
             }
             a.validate_encrypted(&mut |p| notify(p.entries_done, p.entries_total, p.name))
         }
         Some(Container::Zip) => {
-            let a = ZipArchive::open(File::open(archive)?)?;
+            let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             if a.has_encrypted() {
                 let password = password.ok_or(arca_core::Error::PasswordRequired)?;
                 let entries = a.entries().to_vec();
-                arca_zip::check_password(&mut File::open(archive)?, &entries, password)
+                arca_zip::check_password(
+                    &mut arca_core::volumes::open(archive)?,
+                    &entries,
+                    password,
+                )
             } else {
                 Ok(())
             }
@@ -355,7 +367,7 @@ pub(crate) fn read_entry(
     };
     match format.container() {
         Container::SevenZ => {
-            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let mut a = arca_7z::SevenZArchive::open(arca_core::volumes::open(archive)?, password)?;
             *out = a.read_entry(index, crate::VIEW_LIMIT, &mut |p| {
                 notify(p.entries_done, p.entries_total, p.name)
             })?;
@@ -368,7 +380,7 @@ pub(crate) fn read_entry(
             *out = arca_iso::IsoArchive::open(archive)?.read_entry(index)?;
         }
         Container::Zip => {
-            let mut a = ZipArchive::open(File::open(archive)?)?;
+            let mut a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             a.extract_to_with(index, out, password)?;
         }
         Container::Xz | Container::Bz2 | Container::Zst => {
@@ -466,7 +478,7 @@ pub(crate) fn extract_one_into(
         }
         Container::SevenZ => {
             let path = room.join(arca_core::safe_name(&entry.name)?);
-            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let mut a = arca_7z::SevenZArchive::open(arca_core::volumes::open(archive)?, password)?;
             let index = listed_index(entry, a.entries(), "7z")?;
             let mut destination = arca_core::extraction::Destination::new(room);
             a.extract(
@@ -498,7 +510,7 @@ pub(crate) fn extract_one_into(
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
+            let mut source = BufReader::with_capacity(BUF, arca_core::volumes::open(archive)?);
             unpack(
                 &path,
                 (entry.mtime, None),
@@ -689,23 +701,34 @@ pub(crate) fn new_only_output(out: &Path) -> arca_core::Result<PathBuf> {
     Ok(out.to_path_buf())
 }
 
+/// Where a new archive goes, asking first when the name is taken. With a
+/// volume size the name that counts is the set's first part, and a new name
+/// is one whose first part is free.
 pub(crate) fn creation_output(
     out: &Path,
+    volume: Option<u64>,
     ask: &dyn Fn(&Path) -> Answer,
 ) -> arca_core::Result<PathBuf> {
-    if !out.exists() {
+    let first = |p: &Path| arca_core::volumes::first_output(p, volume);
+    if !first(out).exists() {
         return Ok(out.to_path_buf());
     }
-    match ask(out) {
+    match ask(&first(out)) {
         Answer::Replace | Answer::ReplaceAll => Ok(out.to_path_buf()),
         Answer::Rename | Answer::RenameAll => {
-            let renamed = free_name(out, &HashSet::new());
-            if renamed == out {
-                return Err(arca_core::Error::Limit(
-                    "no free archive name available".into(),
-                ));
+            let mut tried = HashSet::new();
+            loop {
+                let renamed = free_name(out, &tried);
+                if renamed == out {
+                    return Err(arca_core::Error::Limit(
+                        "no free archive name available".into(),
+                    ));
+                }
+                if !first(&renamed).exists() {
+                    return Ok(renamed);
+                }
+                tried.insert(arca_core::extraction::claim_key(&renamed));
             }
-            Ok(renamed)
         }
         _ => Err(arca_core::Error::Cancelled),
     }
@@ -816,7 +839,7 @@ pub(crate) fn extract_reporting(
 
     match format.container() {
         Container::SevenZ => {
-            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let mut a = arca_7z::SevenZArchive::open(arca_core::volumes::open(archive)?, password)?;
             let mut destination = arca_core::extraction::Destination::new(dest);
             let indices: Vec<_> = (0..a.len())
                 .filter(|&i| wanted.is_empty() || wanted.get(i).copied().unwrap_or(false))
@@ -832,7 +855,7 @@ pub(crate) fn extract_reporting(
         }
         Container::Rar | Container::Iso => return Err(format.read_only()),
         Container::Zip => {
-            let a = ZipArchive::open(File::open(archive)?)?;
+            let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             let mut jobs: Vec<(Entry, PathBuf)> = Vec::new();
             for (i, e) in a.entries().iter().enumerate() {
                 if !wanted.is_empty() && !wanted.get(i).copied().unwrap_or(true) {
@@ -858,7 +881,8 @@ pub(crate) fn extract_reporting(
             let written: Vec<u64> = jobs
                 .par_iter()
                 .map(|(e, path)| {
-                    let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
+                    let mut source =
+                        BufReader::with_capacity(BUF, arca_core::volumes::open(archive)?);
                     let at = (done.load(Ordering::Relaxed), total, e.name.as_str());
                     let w = unpack(path, (e.mtime, None), notify, at, |out| {
                         arca_zip::extract_entry_with(&mut source, e, out, password)
@@ -957,7 +981,7 @@ pub(crate) fn test_archive(
 
     match format.container() {
         Container::SevenZ => {
-            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let mut a = arca_7z::SevenZArchive::open(arca_core::volumes::open(archive)?, password)?;
             let indices: Vec<_> = a
                 .entries()
                 .iter()
@@ -994,7 +1018,7 @@ pub(crate) fn test_archive(
             good = a.test(&wanted, notify)?;
         }
         Container::Zip => {
-            let mut a = ZipArchive::open(File::open(archive)?)?;
+            let mut a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             let total = a.len();
             for i in 0..total {
                 let name = a.entries()[i].name.clone();
@@ -1276,6 +1300,7 @@ fn mtime_of(m: &fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
+#[cfg(test)]
 pub(crate) fn compress(
     out: &Path,
     inputs: &[PathBuf],
@@ -1284,6 +1309,22 @@ pub(crate) fn compress(
     level: Level,
     // Told how far along this is, and answers whether to carry on. False is
     // somebody pressing stop.
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+    encryption: (Option<&str>, bool),
+) -> arca_core::Result<(u64, u64)> {
+    compress_split(out, None, inputs, format, codec, level, notify, encryption)
+}
+
+/// Creates `out` from `inputs`, cut into parts of `volume` bytes named
+/// `out.001`, `out.002` and so on when there is a volume size.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compress_split(
+    out: &Path,
+    volume: Option<u64>,
+    inputs: &[PathBuf],
+    format: Format,
+    codec: Codec,
+    level: Level,
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     encryption: (Option<&str>, bool),
 ) -> arca_core::Result<(u64, u64)> {
@@ -1305,6 +1346,11 @@ pub(crate) fn compress(
     if hide_names && format != Format::SevenZ {
         return Err(arca_core::Error::Unsupported(
             "hidden names require 7z".into(),
+        ));
+    }
+    if format == Format::Rar && volume.is_some() {
+        return Err(arca_core::Error::Unsupported(
+            "RAR archives are not split into volumes; choose ZIP or 7z to split".into(),
         ));
     }
     if format == Format::Rar {
@@ -1335,7 +1381,7 @@ pub(crate) fn compress(
     let total = files.len();
     let mut source_bytes = 0u64;
 
-    match format.container() {
+    let written = match format.container() {
         Container::SevenZ => {
             let mut sources = Vec::with_capacity(files.len());
             for (path, name) in &files {
@@ -1348,16 +1394,19 @@ pub(crate) fn compress(
                     name: name.clone(),
                 });
             }
-            arca_7z::create_7z(
-                out,
-                &sources,
-                &arca_7z::CreateOptions {
-                    level,
-                    password,
-                    hide_names,
-                },
-                &mut |p| notify(p.entries_done, p.entries_total, p.name),
-            )?;
+            let options = arca_7z::CreateOptions {
+                level,
+                password,
+                hide_names,
+            };
+            staged_parts(out, volume, |w| {
+                arca_7z::create_7z_into(w, &sources, &options, &mut |p| {
+                    notify(p.entries_done, p.entries_total, p.name)
+                })?
+                .flush()?;
+                Ok(())
+            })?
+            .1
         }
         Container::Rar | Container::Iso => return Err(format.read_only()),
         Container::Zip => {
@@ -1374,12 +1423,11 @@ pub(crate) fn compress(
                     level,
                 });
             }
-            let temp = staged_path(out);
-            arca_zip::create_zip(&temp, &sources, 0, password, notify)?;
-            if let Err(e) = fs::rename(&temp, out) {
-                let _ = fs::remove_file(&temp);
-                return Err(e.into());
-            }
+            staged_parts(out, volume, |w| {
+                arca_zip::create_zip_into(w, &sources, 0, password, notify)?.flush()?;
+                Ok(())
+            })?
+            .1
         }
         Container::Tar | Container::TarGz => {
             fn tar_into<W: Write>(
@@ -1408,7 +1456,7 @@ pub(crate) fn compress(
                 w.finish()
             }
             let sources = (files.as_slice(), links.as_slice());
-            staged(out, |raw| {
+            staged_parts(out, volume, |raw| {
                 if format == Format::TarGz {
                     let gz = flate2::write::GzEncoder::new(
                         raw,
@@ -1421,55 +1469,61 @@ pub(crate) fn compress(
                     tar_into(raw, sources, notify, &mut source_bytes)?.flush()?;
                 }
                 Ok(())
-            })?;
+            })?
+            .1
         }
-        Container::TarXz | Container::TarBz2 | Container::TarZst => staged(out, |f| {
-            let mut w = TarWriter::new(arca_stream::encoder(f, format, level, 0, None)?);
-            for (i, (path, name)) in files.iter().enumerate() {
-                if !notify(i, total, name) {
+        Container::TarXz | Container::TarBz2 | Container::TarZst => {
+            staged_parts(out, volume, |f| {
+                let mut w = TarWriter::new(arca_stream::encoder(f, format, level, 0, None)?);
+                for (i, (path, name)) in files.iter().enumerate() {
+                    if !notify(i, total, name) {
+                        return Err(arca_core::Error::Cancelled);
+                    }
+                    let meta = fs::metadata(path)?;
+                    let mut f = Paced::new(
+                        BufReader::with_capacity(BUF, File::open(path)?),
+                        name,
+                        notify,
+                    );
+                    let result = w.add(
+                        name,
+                        meta.len(),
+                        mtime_of(&meta),
+                        arca_tar::mode_of(&meta),
+                        &mut f,
+                    );
+                    f.check(result)?;
+                    source_bytes += meta.len();
+                }
+                if !notify(total, total, "") {
                     return Err(arca_core::Error::Cancelled);
                 }
-                let meta = fs::metadata(path)?;
+                add_links(&mut w, &links)?;
+                w.finish()?.finish()?.flush()?;
+                Ok(())
+            })?
+            .1
+        }
+        Container::Xz | Container::Bz2 | Container::Zst => {
+            staged_parts(out, volume, |f| {
+                let (path, name) = &files[0];
+                let size = fs::metadata(path)?.len();
+                let mut e = arca_stream::encoder(f, format, level, 0, Some(size))?;
                 let mut f = Paced::new(
                     BufReader::with_capacity(BUF, File::open(path)?),
                     name,
                     notify,
                 );
-                let result = w.add(
-                    name,
-                    meta.len(),
-                    mtime_of(&meta),
-                    arca_tar::mode_of(&meta),
-                    &mut f,
-                );
-                f.check(result)?;
-                source_bytes += meta.len();
-            }
-            if !notify(total, total, "") {
-                return Err(arca_core::Error::Cancelled);
-            }
-            add_links(&mut w, &links)?;
-            w.finish()?.finish()?.flush()?;
-            Ok(())
-        })?,
-        Container::Xz | Container::Bz2 | Container::Zst => staged(out, |f| {
-            let (path, name) = &files[0];
-            let size = fs::metadata(path)?.len();
-            let mut e = arca_stream::encoder(f, format, level, 0, Some(size))?;
-            let mut f = Paced::new(
-                BufReader::with_capacity(BUF, File::open(path)?),
-                name,
-                notify,
-            );
-            let result = std::io::copy(&mut f, &mut e).map_err(Into::into);
-            source_bytes = f.check(result)?;
-            e.finish()?.flush()?;
-            Ok(())
-        })?,
-    }
+                let result = std::io::copy(&mut f, &mut e).map_err(Into::into);
+                source_bytes = f.check(result)?;
+                e.finish()?.flush()?;
+                Ok(())
+            })?
+            .1
+        }
+    };
     let _ = notify(total, total, "");
-    let final_size = fs::metadata(out).map(|m| m.len()).unwrap_or(0);
-    Ok((source_bytes, final_size))
+    Ok((source_bytes, written))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

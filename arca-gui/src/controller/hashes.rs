@@ -200,7 +200,8 @@ pub(crate) fn hash_entries(
                         return Err(Error::Cancelled);
                     }
                     let sums = hash_with(notify, at, |out| {
-                        let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
+                        let mut source =
+                            BufReader::with_capacity(BUF, arca_core::volumes::open(archive)?);
                         arca_zip::extract_entry_with(&mut source, entry, out, password)
                     });
                     let checksum = row(&entry.name, sums)?;
@@ -210,7 +211,7 @@ pub(crate) fn hash_entries(
                 .collect::<Result<Vec<_>>>()?;
         }
         Container::SevenZ => {
-            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let mut a = arca_7z::SevenZArchive::open(arca_core::volumes::open(archive)?, password)?;
             a.extract(
                 &picked,
                 &mut |_, entry, reader| {
