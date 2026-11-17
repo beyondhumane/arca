@@ -553,37 +553,38 @@ fn run(cli: Cli) -> Result<()> {
 
 /// A symbolic link to store as one: its name, what it holds, its time.
 type Link = (String, String, i64);
-type Collected = (Vec<(PathBuf, String)>, Vec<Link>);
+type Collected = (Vec<(PathBuf, String, fs::Metadata)>, Vec<Link>);
 
-/// The regular files under `inputs`, and the symbolic links among them,
-/// which are never followed. Only a TAR keeps the links.
+/// The regular files under `inputs`, each with what the folder listing said
+/// about it, and the symbolic links among them, which are never followed.
+/// Only a TAR keeps the links.
 fn collect_files(inputs: &[PathBuf]) -> Result<Collected> {
     let mut v = Vec::new();
     let mut links = Vec::new();
     for e in inputs {
         let base = e.parent().unwrap_or(Path::new(""));
-        walk(e, base, &mut v, &mut links)?;
+        walk(e, fs::symlink_metadata(e)?, base, &mut v, &mut links)?;
     }
     Ok((v, links))
 }
 
 fn walk(
     p: &Path,
+    meta: fs::Metadata,
     base: &Path,
-    out: &mut Vec<(PathBuf, String)>,
+    out: &mut Vec<(PathBuf, String, fs::Metadata)>,
     links: &mut Vec<Link>,
 ) -> Result<()> {
-    let meta = fs::symlink_metadata(p)?;
     let rel = p.strip_prefix(base).unwrap_or(p);
     let name = rel.to_string_lossy().replace('\\', "/");
     if meta.is_dir() {
         let mut children: Vec<_> = fs::read_dir(p)?.collect::<io::Result<Vec<_>>>()?;
         children.sort_by_key(|d| d.file_name());
         for h in children {
-            walk(&h.path(), base, out, links)?;
+            walk(&h.path(), h.metadata()?, base, out, links)?;
         }
     } else if meta.is_file() {
-        out.push((p.to_path_buf(), name));
+        out.push((p.to_path_buf(), name, meta));
     } else if let Some(target) = arca_tar::link_target(p, &meta) {
         links.push((name, target, mtime_of(&meta)));
     }
@@ -810,7 +811,7 @@ fn create(
     let mut threads = resolve_threads(requested_threads);
     let own = arca_core::extraction::OwnOutput::new(out);
     let (mut raw_list, mut links) = collect_files(inputs)?;
-    raw_list.retain(|(path, _)| !own.is_own(path));
+    raw_list.retain(|(path, _, _)| !own.is_own(path));
     if !matches!(
         format_kind.container(),
         Container::Tar | Container::TarGz | Container::TarXz
@@ -823,8 +824,7 @@ fn create(
 
     let mut files: Vec<arca_zip::Source> = Vec::with_capacity(raw_list.len());
     let mut total = 0u64;
-    for (path, name) in raw_list {
-        let m = fs::metadata(&path)?;
+    for (path, name, m) in raw_list {
         total += m.len();
         files.push(arca_zip::Source {
             path,
@@ -871,9 +871,10 @@ fn create(
                 let mut w = TarWriter::new(dest);
                 for s in &files {
                     let file = File::open(&s.path)?;
-                    let mode = arca_tar::mode_of(&file.metadata()?);
+                    let meta = file.metadata()?;
+                    let mode = arca_tar::mode_of(&meta);
                     let entrada = BufReader::with_capacity(BUF, file);
-                    w.add(&s.name, s.size, s.mtime, mode, entrada)?;
+                    w.add(&s.name, meta.len(), s.mtime, mode, entrada)?;
                 }
                 add_links(&mut w, &links)?;
                 w.finish()?.flush()?;
@@ -888,9 +889,10 @@ fn create(
                 let mut w = TarWriter::new(e);
                 for s in &files {
                     let file = File::open(&s.path)?;
-                    let mode = arca_tar::mode_of(&file.metadata()?);
+                    let meta = file.metadata()?;
+                    let mode = arca_tar::mode_of(&meta);
                     let entrada = BufReader::with_capacity(BUF, file);
-                    w.add(&s.name, s.size, s.mtime, mode, entrada)?;
+                    w.add(&s.name, meta.len(), s.mtime, mode, entrada)?;
                 }
                 add_links(&mut w, &links)?;
                 w.finish()?.finish()?.flush()?;
@@ -1367,11 +1369,7 @@ fn extract(
                                     arca_core::extraction::set_mtime(f, e.mtime);
                                     Ok(0)
                                 };
-                                if path.exists() {
-                                    arca_core::extraction::write_staged(path, put)?;
-                                } else {
-                                    put(&mut File::create(path)?)?;
-                                }
+                                arca_core::extraction::write_new_or_staged(path, put)?;
                             } else {
                                 total += arca_core::extraction::write_staged(path, |f| {
                                     let mut w = BufWriter::with_capacity(BUF, &mut *f);

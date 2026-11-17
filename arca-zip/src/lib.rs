@@ -1054,6 +1054,7 @@ impl<W: Write + Seek> ZipWriter<W> {
             date_val,
             time_val,
             aes_extra.as_deref(),
+            None,
         )?;
         let extra_offset = offset + LFH_FIXED as u64 + name_bytes.len() as u64;
         let extra_len = EXTRA_Z64 + aes_extra.as_ref().map_or(0, |x| x.len());
@@ -1181,6 +1182,7 @@ impl<W: Write + Seek> ZipWriter<W> {
             date_val,
             time_val,
             aes_extra.as_deref(),
+            None,
         )?;
         let extra_offset = offset + LFH_FIXED as u64 + name_bytes.len() as u64;
         let extra_len = EXTRA_Z64 + aes_extra.as_ref().map_or(0, |x| x.len());
@@ -1352,23 +1354,22 @@ impl<W: Write + Seek> ZipWriter<W> {
         let zip_code = method_code.code()?;
         let aes_extra = encrypted.then(|| aes::extra_field(zip_code));
         let stored_code = if encrypted { aes::METHOD_AE } else { zip_code };
-        self.write_lfh(
+        let comp_size = body.len() as u64;
+        let header = self.write_lfh(
             &name_bytes,
             stored_code,
             date_val,
             time_val,
             aes_extra.as_deref(),
+            Some((crc_val, comp_size, uncompressed)),
         )?;
-        let extra_offset = offset + LFH_FIXED as u64 + name_bytes.len() as u64;
-        let extra_len = EXTRA_Z64 + aes_extra.as_ref().map_or(0, |x| x.len());
         self.out.write_all(body)?;
-        self.close_entry(
+        self.pos = offset + header + comp_size;
+        self.record(
             name_bytes,
             offset,
-            extra_offset,
-            extra_len,
             crc_val,
-            body.len() as u64,
+            comp_size,
             uncompressed,
             method_code,
             date_val,
@@ -1420,6 +1421,34 @@ impl<W: Write + Seek> ZipWriter<W> {
         self.out.write_all(&comp_size.to_le_bytes())?;
         self.out.seek(SeekFrom::Start(fin))?;
         self.pos = fin;
+        self.record(
+            name_bytes,
+            offset,
+            crc_val,
+            comp_size,
+            uncompressed,
+            method_code,
+            date_val,
+            time_val,
+            is_directory,
+            encrypted,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record(
+        &mut self,
+        name_bytes: Vec<u8>,
+        offset: u64,
+        crc_val: u32,
+        comp_size: u64,
+        uncompressed: u64,
+        method_code: Method,
+        date_val: u16,
+        time_val: u16,
+        is_directory: bool,
+        encrypted: bool,
+    ) -> Result<()> {
         self.registros.push(Record {
             name_str: name_bytes,
             crc_val,
@@ -1443,7 +1472,10 @@ impl<W: Write + Seek> ZipWriter<W> {
 
     // The Zip64 field goes first and keeps its fixed size, because close_entry
     // seeks straight back to it to patch the sizes once they are known. The AES
-    // field, when there is one, goes after it so that offset stays put.
+    // field, when there is one, goes after it so that offset stays put. With
+    // `known` the checksum and sizes go in at once and nothing is patched
+    // later. An entry whose sizes are known to fit in 32 bits then needs
+    // no Zip64 field at all. Answers with the length of the header.
     fn write_lfh(
         &mut self,
         name_str: &[u8],
@@ -1451,8 +1483,12 @@ impl<W: Write + Seek> ZipWriter<W> {
         date_val: u16,
         time_val: u16,
         aes_extra: Option<&[u8]>,
-    ) -> Result<()> {
-        let extra_len = EXTRA_Z64 + aes_extra.map_or(0, |x| x.len());
+        known: Option<(u32, u64, u64)>,
+    ) -> Result<u64> {
+        let (crc_val, comp_size, uncompressed) = known.unwrap_or((0, 0, 0));
+        let short = |n: u64| n.min(0xFFFF_FFFF) as u32;
+        let zip64 = known.is_none_or(|(_, c, u)| c >= 0xFFFF_FFFF || u >= 0xFFFF_FFFF);
+        let extra_len = if zip64 { EXTRA_Z64 } else { 0 } + aes_extra.map_or(0, |x| x.len());
         let flags: u16 = if aes_extra.is_some() { 0x0801 } else { 0x0800 };
         let mut h = Vec::with_capacity(LFH_FIXED + name_str.len() + extra_len);
         h.extend_from_slice(&SIG_LFH.to_le_bytes());
@@ -1461,21 +1497,23 @@ impl<W: Write + Seek> ZipWriter<W> {
         h.extend_from_slice(&method_code.to_le_bytes());
         h.extend_from_slice(&time_val.to_le_bytes());
         h.extend_from_slice(&date_val.to_le_bytes());
-        h.extend_from_slice(&0u32.to_le_bytes());
-        h.extend_from_slice(&0u32.to_le_bytes());
-        h.extend_from_slice(&0u32.to_le_bytes());
+        h.extend_from_slice(&crc_val.to_le_bytes());
+        h.extend_from_slice(&short(comp_size).to_le_bytes());
+        h.extend_from_slice(&short(uncompressed).to_le_bytes());
         h.extend_from_slice(&(name_str.len() as u16).to_le_bytes());
         h.extend_from_slice(&(extra_len as u16).to_le_bytes());
         h.extend_from_slice(name_str);
-        h.extend_from_slice(&0x0001u16.to_le_bytes());
-        h.extend_from_slice(&16u16.to_le_bytes());
-        h.extend_from_slice(&0u64.to_le_bytes());
-        h.extend_from_slice(&0u64.to_le_bytes());
+        if zip64 {
+            h.extend_from_slice(&0x0001u16.to_le_bytes());
+            h.extend_from_slice(&16u16.to_le_bytes());
+            h.extend_from_slice(&uncompressed.to_le_bytes());
+            h.extend_from_slice(&comp_size.to_le_bytes());
+        }
         if let Some(x) = aes_extra {
             h.extend_from_slice(x);
         }
         self.out.write_all(&h)?;
-        Ok(())
+        Ok(h.len() as u64)
     }
 
     pub fn finish(mut self) -> Result<W> {
@@ -2117,6 +2155,21 @@ pub fn seal_block(compressed: &[u8], password: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+#[cfg(feature = "codecs-native")]
+const SCRATCH_MAX: usize = 1 << 20;
+
+#[cfg(feature = "codecs-native")]
+type Deflater = Option<(i32, libdeflater::Compressor, Vec<u8>)>;
+
+#[cfg(feature = "codecs-native")]
+type ZstdBulk = Option<(i32, zstd::bulk::Compressor<'static>)>;
+
+#[cfg(feature = "codecs-native")]
+thread_local! {
+    static DEFLATER: std::cell::RefCell<Deflater> = const { std::cell::RefCell::new(None) };
+    static ZSTD: std::cell::RefCell<ZstdBulk> = const { std::cell::RefCell::new(None) };
+}
+
 /// Deflates a block that is already in memory.
 ///
 /// The same deflate everything reads -- what changes is who does the work.
@@ -2142,14 +2195,29 @@ fn deflate_block(data: &[u8], level: Level) -> Result<Vec<u8>> {
         // libdeflate does not know goes the same way: nothing fails here, it is
         // done by the other road.
         if !data.is_empty() {
-            if let Ok(lvl) = libdeflater::CompressionLvl::new(level.to_libdeflate()) {
-                let mut c = libdeflater::Compressor::new(lvl);
-                let mut out = vec![0u8; c.deflate_compress_bound(data.len())];
+            let n = level.to_libdeflate();
+            if let Ok(lvl) = libdeflater::CompressionLvl::new(n) {
                 // Data that will not compress comes out larger than it went in,
                 // and the bound is there to cover that. If it somehow did not,
                 // zlib finishes the job rather than the archive failing.
-                if let Ok(n) = c.deflate_compress(data, &mut out) {
-                    out.truncate(n);
+                let done = DEFLATER.with(|slot| {
+                    let mut slot = slot.borrow_mut();
+                    let (_, c, scratch) = match &mut *slot {
+                        Some(kept) if kept.0 == n => kept,
+                        other => other.insert((n, libdeflater::Compressor::new(lvl), Vec::new())),
+                    };
+                    let bound = c.deflate_compress_bound(data.len());
+                    if bound > SCRATCH_MAX {
+                        let mut out = vec![0u8; bound];
+                        let n = c.deflate_compress(data, &mut out).ok()?;
+                        out.truncate(n);
+                        return Some(out);
+                    }
+                    scratch.resize(bound.max(scratch.len()), 0);
+                    let n = c.deflate_compress(data, &mut scratch[..bound]).ok()?;
+                    Some(scratch[..n].to_vec())
+                });
+                if let Some(out) = done {
                     return Ok(out);
                 }
             }
@@ -2168,7 +2236,19 @@ pub fn compress_block(data: &[u8], codec: Codec, level: Level) -> Result<(Vec<u8
         Codec::Zstd => {
             #[cfg(feature = "codecs-native")]
             {
-                let c = zstd::bulk::compress(data, level.to_zstd()).map_err(Error::Io)?;
+                let n = level.to_zstd();
+                let c = ZSTD
+                    .with(|slot| {
+                        let mut slot = slot.borrow_mut();
+                        let (_, c) = match &mut *slot {
+                            Some(kept) if kept.0 == n => kept,
+                            other => other.insert((n, zstd::bulk::Compressor::new(n)?)),
+                        };
+                        let mut out = c.compress(data)?;
+                        out.shrink_to_fit();
+                        Ok::<_, io::Error>(out)
+                    })
+                    .map_err(Error::Io)?;
                 Ok((c, Method::Zstd, crc_val))
             }
             #[cfg(not(feature = "codecs-native"))]
@@ -2184,7 +2264,7 @@ pub fn compress_block(data: &[u8], codec: Codec, level: Level) -> Result<(Vec<u8
 /// A file on its way into a new archive: where to read it from, the name it
 /// takes inside, and what its own metadata said.
 ///
-/// The size is here because the batching has to know it before anything is
+/// The size is here because the scheduling has to know it before anything is
 /// read, and the time because an archive that forgets when a file was written
 /// has lost something the file had.
 pub struct Source {
@@ -2203,41 +2283,114 @@ pub struct Source {
 ///
 /// Compressing in parallel means several files are in memory at once, and
 /// without a ceiling a folder of big files would ask for all of them at the
-/// same time. This is the ceiling per thread; the batches are cut so that what
-/// is in flight never goes over it.
+/// same time. This is the ceiling per thread; files are only taken up while
+/// what is in flight stays under it.
 const IN_FLIGHT_PER_THREAD: u64 = 32 * 1024 * 1024;
 
-/// Cuts the list into runs of files that fit in `cap` bytes together.
-///
-/// A file bigger than the whole budget comes out in a batch of its own, which
-/// is the caller's cue to stream it instead of reading it in.
-fn batches(files: &[Source], cap: u64) -> Vec<Vec<usize>> {
-    let mut v = Vec::new();
-    let mut current: Vec<usize> = Vec::new();
-    let mut sum = 0u64;
-    for (i, f) in files.iter().enumerate() {
-        if f.size > cap {
-            if !current.is_empty() {
-                v.push(std::mem::take(&mut current));
-                sum = 0;
-            }
-            v.push(vec![i]);
-            continue;
-        }
-        if sum + f.size > cap && !current.is_empty() {
-            v.push(std::mem::take(&mut current));
-            sum = 0;
-        }
-        current.push(i);
-        sum += f.size;
-    }
-    if !current.is_empty() {
-        v.push(current);
-    }
-    v
+struct Flow<T> {
+    next: usize,
+    held: u64,
+    ready: Vec<Option<T>>,
+    stop: bool,
+    lost: bool,
 }
 
-type Block = (usize, Vec<u8>, Method, u32);
+struct Lost<'a, T>(&'a std::sync::Mutex<Flow<T>>, &'a std::sync::Condvar);
+
+impl<T> Drop for Lost<'_, T> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            let mut flow = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            flow.stop = true;
+            flow.lost = true;
+            self.1.notify_all();
+        }
+    }
+}
+
+/// Runs `work` for every index on `threads` threads and hands each result to
+/// `take`, on the calling thread, in index order.
+///
+/// Indices are taken up in order, and one is only taken while the `weights`
+/// of those taken and not yet handed over stay within `budget`, or when
+/// nothing is held at all, so a single item larger than the budget still
+/// gets through on its own. That keeps memory bounded however far `take`
+/// falls behind. The first error `take` returns stops everything: no index
+/// is taken up after it, and it is what this answers with.
+fn in_order<T: Send>(
+    weights: &[u64],
+    budget: u64,
+    threads: usize,
+    work: impl Fn(usize) -> T + Sync,
+    mut take: impl FnMut(usize, T) -> Result<()>,
+) -> Result<()> {
+    use std::sync::{Condvar, Mutex};
+    let n = weights.len();
+    let flow = Mutex::new(Flow {
+        next: 0,
+        held: 0,
+        ready: (0..n).map(|_| None).collect(),
+        stop: false,
+        lost: false,
+    });
+    let (room, arrived) = (Condvar::new(), Condvar::new());
+    let lock = || flow.lock().unwrap_or_else(|e| e.into_inner());
+    std::thread::scope(|scope| {
+        for _ in 0..threads.clamp(1, n.max(1)) {
+            scope.spawn(|| {
+                let _lost = Lost(&flow, &arrived);
+                loop {
+                    let i = {
+                        let mut f = lock();
+                        loop {
+                            if f.stop || f.next >= n {
+                                return;
+                            }
+                            let w = weights[f.next];
+                            if f.held == 0 || f.held.saturating_add(w) <= budget {
+                                break;
+                            }
+                            f = room.wait(f).unwrap_or_else(|e| e.into_inner());
+                        }
+                        let i = f.next;
+                        f.next += 1;
+                        f.held = f.held.saturating_add(weights[i]);
+                        i
+                    };
+                    let out = work(i);
+                    lock().ready[i] = Some(out);
+                    arrived.notify_all();
+                }
+            });
+        }
+        let result = (0..n).try_for_each(|i| {
+            let out = {
+                let mut f = lock();
+                loop {
+                    if let Some(out) = f.ready[i].take() {
+                        break out;
+                    }
+                    if f.lost {
+                        return Err(Error::Format("a compression thread stopped".into()));
+                    }
+                    f = arrived.wait(f).unwrap_or_else(|e| e.into_inner());
+                }
+            };
+            let taken = take(i, out);
+            lock().held -= weights[i];
+            room.notify_all();
+            taken
+        });
+        lock().stop = true;
+        room.notify_all();
+        result
+    })
+}
+
+enum Ready {
+    Block(Vec<u8>, Method, u32, u64),
+    Stream,
+}
 
 /// Writes a new archive at `out` holding `files`, compressing on every core.
 ///
@@ -2247,8 +2400,9 @@ type Block = (usize, Vec<u8>, Method, u32);
 /// single thread. Nothing about the file that comes out says it was made this
 /// way -- it is an ordinary zip.
 ///
-/// Files are read in batches so that the memory held at once stays bounded, and
-/// one too big for the whole budget is streamed straight through instead.
+/// Files are read ahead of the writer only while what is in flight stays
+/// within a budget, so the memory held at once stays bounded, and one too big
+/// for the whole budget is streamed straight through instead.
 /// Streaming deflate uses a single core; zstd shares the requested thread budget
 /// with the streaming caller.
 ///
@@ -2319,8 +2473,9 @@ pub fn create_zip_into<W: Write + Seek>(
 /// single thread. Nothing about the file that comes out says it was made this
 /// way -- it is an ordinary zip.
 ///
-/// Files are read in batches so that the memory held at once stays bounded, and
-/// one too big for the whole budget is streamed straight through instead.
+/// Files are read ahead of the writer only while what is in flight stays
+/// within a budget, so the memory held at once stays bounded, and one too big
+/// for the whole budget is streamed straight through instead.
 /// Streaming deflate uses a single core; zstd shares the requested thread budget
 /// with the streaming caller.
 ///
@@ -2340,58 +2495,55 @@ fn write_in_parallel<W: Write + Seek>(
     total: usize,
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
 ) -> Result<u64> {
-    use rayon::prelude::*;
     use std::sync::atomic::Ordering;
 
     let threads = resolve_threads(threads);
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
-        .map_err(|e| Error::Format(format!("could not create the thread pool: {e}")))?;
     let cap = IN_FLIGHT_PER_THREAD * threads as u64;
     w.stream_threads = threads;
+    let weights: Vec<u64> = files.iter().map(|s| s.size.min(cap)).collect();
     let mut bytes = 0u64;
 
-    for batch in batches(files, cap) {
-        if batch.len() == 1 && files[batch[0]].size > cap {
-            let s = &files[batch[0]];
-            if !notify(done.load(Ordering::Relaxed), total, &s.name) {
-                return Err(Error::Cancelled);
-            }
-            let source = io::BufReader::with_capacity(STREAM_BUF, std::fs::File::open(&s.path)?);
-            w.add_with_password(&s.name, source, s.codec, s.level, Some(s.mtime), password)?;
-            done.fetch_add(1, Ordering::Relaxed);
-            bytes += s.size;
-            continue;
+    let compress = |i: usize| -> Result<Ready> {
+        let s = &files[i];
+        if s.size > cap {
+            return Ok(Ready::Stream);
         }
-        let produced: Vec<Result<Block>> = pool.install(|| {
-            batch
-                .par_iter()
-                .map(|&i| {
-                    let s = &files[i];
-                    let data = std::fs::read(&s.path)?;
-                    let (c, m, crc) = compress_block(&data, s.codec, s.level)?;
-                    let c = match password {
-                        Some(pw) => seal_block(&c, pw)?,
-                        None => c,
-                    };
-                    if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &s.name) {
-                        return Err(Error::Cancelled);
-                    }
-                    Ok((i, c, m, crc))
-                })
-                .collect()
-        });
-        for h in produced {
-            let (i, c, m, crc) = h?;
-            let s = &files[i];
-            match password {
-                Some(_) => w.add_sealed(&s.name, &c, s.size, m, Some(s.mtime))?,
-                None => w.add_compressed(&s.name, &c, crc, s.size, m, Some(s.mtime))?,
-            }
-            bytes += s.size;
+        let data = std::fs::read(&s.path)?;
+        let (c, m, crc) = compress_block(&data, s.codec, s.level)?;
+        let size = data.len() as u64;
+        drop(data);
+        let c = match password {
+            Some(pw) => seal_block(&c, pw)?,
+            None => c,
+        };
+        if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &s.name) {
+            return Err(Error::Cancelled);
         }
-    }
+        Ok(Ready::Block(c, m, crc, size))
+    };
+    in_order(&weights, cap, threads, compress, |i, ready| {
+        let s = &files[i];
+        match ready? {
+            Ready::Stream => {
+                if !notify(done.load(Ordering::Relaxed), total, &s.name) {
+                    return Err(Error::Cancelled);
+                }
+                let source =
+                    io::BufReader::with_capacity(STREAM_BUF, std::fs::File::open(&s.path)?);
+                w.add_with_password(&s.name, source, s.codec, s.level, Some(s.mtime), password)?;
+                done.fetch_add(1, Ordering::Relaxed);
+                bytes += s.size;
+            }
+            Ready::Block(c, m, crc, size) => {
+                match password {
+                    Some(_) => w.add_sealed(&s.name, &c, size, m, Some(s.mtime))?,
+                    None => w.add_compressed(&s.name, &c, crc, size, m, Some(s.mtime))?,
+                }
+                bytes += size;
+            }
+        }
+        Ok(())
+    })?;
     Ok(bytes)
 }
 
@@ -2425,6 +2577,78 @@ mod tests {
     #[test]
     fn round_trip_deflate() {
         round_trip(Codec::Deflate, Level::NORMAL);
+    }
+
+    struct Seeks {
+        inner: IoCursor<Vec<u8>>,
+        seeks: usize,
+    }
+
+    impl Write for Seeks {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.inner.write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Seek for Seeks {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.seeks += 1;
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn blocks_already_compressed_are_written_without_seeking_back() {
+        let bodies: Vec<Vec<u8>> = (0..20)
+            .map(|i| format!("{i} ").repeat(i * 9).into_bytes())
+            .collect();
+        let mut w = ZipWriter::new(Seeks {
+            inner: IoCursor::new(Vec::new()),
+            seeks: 0,
+        });
+        for (i, body) in bodies.iter().enumerate() {
+            let (c, m, crc) = compress_block(body, Codec::Deflate, Level::NORMAL).unwrap();
+            w.add_compressed(&format!("f{i}"), &c, crc, body.len() as u64, m, None)
+                .unwrap();
+        }
+        let sealed = seal_block(b"sealed", "pw").unwrap();
+        w.add_sealed("sealed", &sealed, 6, Method::Store, None)
+            .unwrap();
+        let out = w.finish().unwrap();
+        assert_eq!(out.seeks, 0);
+
+        let buf = out.inner.into_inner();
+        let mut a = ZipArchive::open(IoCursor::new(buf.clone())).unwrap();
+        for (i, body) in bodies.iter().enumerate() {
+            let at = a.entries()[i].offset as usize;
+            let extra_len = u16::from_le_bytes([buf[at + 28], buf[at + 29]]);
+            assert_eq!(extra_len, 0, "{}", a.entries()[i].name);
+            let mut got = Vec::new();
+            a.extract_to(i, &mut got).unwrap();
+            assert_eq!(&got, body);
+        }
+        let mut got = Vec::new();
+        a.extract_to_with(bodies.len(), &mut got, Some("pw"))
+            .unwrap();
+        assert_eq!(got, b"sealed");
+    }
+
+    #[test]
+    fn a_local_header_keeps_its_zip64_field_when_a_size_needs_it() {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        let big = 0x1_0000_0000u64;
+        w.add_compressed("big", b"x", 0, big, Method::Store, None)
+            .unwrap();
+        let buf = w.finish().unwrap().into_inner();
+        assert_eq!(&buf[18..26], &[1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(u16::from_le_bytes([buf[28], buf[29]]), EXTRA_Z64 as u16);
+        let field = &buf[LFH_FIXED + 3..LFH_FIXED + 3 + EXTRA_Z64];
+        assert_eq!(&field[..4], &[0x01, 0x00, 0x10, 0x00]);
+        assert_eq!(field[4..12], big.to_le_bytes());
+        assert_eq!(field[12..20], 1u64.to_le_bytes());
     }
 
     #[cfg(feature = "codecs-native")]
@@ -2465,6 +2689,30 @@ mod tests {
                     .read_to_end(&mut got)
                     .unwrap();
                 assert_eq!(got, want, "level {level:?}, {} bytes", want.len());
+            }
+        }
+    }
+
+    #[cfg(feature = "codecs-native")]
+    #[test]
+    fn a_kept_compressor_gives_the_bytes_a_fresh_one_would() {
+        let text = b"a kept compressor and its scratch buffer ".repeat(60_000);
+        let inputs: [&[u8]; 3] = [&text[..5_000], &text, &text[..70]];
+        for level in [Level::NORMAL, Level::FAST, Level::BEST, Level::NORMAL] {
+            for data in inputs {
+                let n = level.to_libdeflate();
+                let mut fresh =
+                    libdeflater::Compressor::new(libdeflater::CompressionLvl::new(n).unwrap());
+                let mut want = vec![0u8; fresh.deflate_compress_bound(data.len())];
+                let len = fresh.deflate_compress(data, &mut want).unwrap();
+                want.truncate(len);
+                assert_eq!(deflate_block(data, level).unwrap(), want);
+
+                let (zstd_got, ..) = compress_block(data, Codec::Zstd, level).unwrap();
+                assert_eq!(
+                    zstd_got,
+                    zstd::bulk::compress(data, level.to_zstd()).unwrap()
+                );
             }
         }
     }
@@ -3246,15 +3494,65 @@ mod tests {
         assert_eq!(e.name, "caf\u{FFFD}.txt");
     }
 
-    // What is held in memory at once is the whole point of the cut, so this
-    // checks the two things that can go wrong: a run that adds up to more than
-    // the budget, and a single file that is bigger than the budget on its own
-    // -- that one has to come out alone, because the caller reads a batch in
-    // full and a file it cannot hold has to be streamed instead.
+    // What is held in memory at once is the whole point of the budget, so
+    // this checks what can go wrong: items taken up past it while the writer
+    // lags, an item larger than the whole budget never getting through, the
+    // order changing, and an error that does not stop the rest.
     #[test]
-    fn batches_never_hold_more_than_the_budget_at_once() {
-        let sizes = [3u64, 4, 3, 20, 1, 9, 1];
-        let files: Vec<Source> = sizes
+    fn in_order_hands_over_in_order_and_never_holds_more_than_the_budget() {
+        use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+        let weights: Vec<u64> = (0..400).map(|i| [3, 4, 3, 20, 1, 9, 1, 0][i % 8]).collect();
+        let held = AtomicU64::new(0);
+        let most = AtomicU64::new(0);
+        let mut seen = Vec::new();
+        in_order(
+            &weights,
+            10,
+            6,
+            |i| {
+                let now = held.fetch_add(weights[i], Ordering::SeqCst) + weights[i];
+                most.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_micros((i % 7) as u64 * 50));
+                i * 2
+            },
+            |i, out| {
+                assert_eq!(out, i * 2);
+                held.fetch_sub(weights[i], Ordering::SeqCst);
+                seen.push(i);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(seen, (0..weights.len()).collect::<Vec<_>>());
+        assert!(most.load(Ordering::SeqCst) <= 20, "held {most:?}");
+
+        let started = AtomicUsize::new(0);
+        let mut taken = 0;
+        let stopped = in_order(
+            &[1; 1000],
+            4,
+            4,
+            |_| started.fetch_add(1, Ordering::SeqCst),
+            |i, _| {
+                taken += 1;
+                if i == 10 {
+                    return Err(Error::Cancelled);
+                }
+                Ok(())
+            },
+        );
+        assert!(matches!(stopped, Err(Error::Cancelled)));
+        assert_eq!(taken, 11);
+        assert!(started.load(Ordering::SeqCst) <= 15);
+        in_order(&[], 4, 4, |_| (), |_, _| Ok(())).unwrap();
+    }
+
+    // A file too big for the budget is streamed by the writer on the threads
+    // it was given, so nothing else may be compressing while it is written.
+    #[test]
+    fn a_streamed_entry_has_the_budget_to_itself() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let files: Vec<Source> = [5u64, 50, 5, 5]
             .iter()
             .enumerate()
             .map(|(i, &size)| Source {
@@ -3262,31 +3560,36 @@ mod tests {
                 name: format!("{i}"),
                 size,
                 mtime: 0,
-                codec: Codec::Deflate,
-                level: Level::NORMAL,
+                codec: Codec::Store,
+                level: Level::STORE,
             })
             .collect();
-        let cut = batches(&files, 10);
-
-        let seen: Vec<usize> = cut.iter().flatten().copied().collect();
-        assert_eq!(
-            seen,
-            (0..sizes.len()).collect::<Vec<_>>(),
-            "every file, in order"
-        );
-        for b in &cut {
-            let sum: u64 = b.iter().map(|&i| files[i].size).sum();
-            if b.len() > 1 {
-                assert!(sum <= 10, "batch of {} adds up to {sum}", b.len());
-            } else {
-                assert_eq!(b.len(), 1);
-            }
-        }
-        assert_eq!(
-            cut.iter().find(|b| b.contains(&3)).unwrap(),
-            &vec![3],
-            "the big one goes alone"
-        );
+        let cap = 10;
+        let weights: Vec<u64> = files.iter().map(|s| s.size.min(cap)).collect();
+        let streaming = AtomicBool::new(false);
+        let overlapped = AtomicBool::new(false);
+        in_order(
+            &weights,
+            cap,
+            4,
+            |i| {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                if streaming.load(Ordering::SeqCst) {
+                    overlapped.store(true, Ordering::SeqCst);
+                }
+                i
+            },
+            |i, _| {
+                if files[i].size > cap {
+                    streaming.store(true, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    streaming.store(false, Ordering::SeqCst);
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(!overlapped.load(Ordering::SeqCst));
     }
 
     // One call builds the archive both the window and the command line ask for,
@@ -3341,6 +3644,44 @@ mod tests {
                 .parse()
                 .unwrap();
             assert_eq!(out_bytes, bodies[i]);
+        }
+        let _ = std::fs::remove_dir_all(&room);
+    }
+
+    // The size a file had when the folder was walked is only an estimate by
+    // the time it is read: the entry has to record what was read, or a file
+    // that grew or shrank in between comes out as an archive that lies.
+    #[test]
+    fn a_file_that_changed_size_since_the_walk_is_recorded_as_read() {
+        let room = std::env::temp_dir().join(format!("arca-resized-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&room);
+        std::fs::create_dir_all(&room).unwrap();
+        let bodies = [b"grew after the walk".repeat(50), b"shrank".to_vec()];
+        let files: Vec<Source> = bodies
+            .iter()
+            .enumerate()
+            .map(|(i, body)| {
+                let path = room.join(format!("f{i}"));
+                std::fs::write(&path, body).unwrap();
+                Source {
+                    path,
+                    name: format!("f{i}"),
+                    size: [3, 4_000][i],
+                    mtime: 0,
+                    codec: Codec::Deflate,
+                    level: Level::NORMAL,
+                }
+            })
+            .collect();
+        let out = room.join("out.zip");
+        create_zip(&out, &files, 2, None, &|_, _, _| true).unwrap();
+        let mut source = std::fs::File::open(&out).unwrap();
+        let entries = ZipArchive::open(&mut source).unwrap().entries().to_vec();
+        for (e, body) in entries.iter().zip(&bodies) {
+            assert_eq!(e.size, body.len() as u64);
+            let mut got = Vec::new();
+            extract_entry_with(&mut source, e, &mut got, None).unwrap();
+            assert_eq!(&got, body);
         }
         let _ = std::fs::remove_dir_all(&room);
     }

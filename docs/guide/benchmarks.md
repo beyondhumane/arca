@@ -110,7 +110,99 @@ arca create c1.zip src
 7z a -tzip -mx5 c2.zip src
 ```
 
-With large files Arca compressed 5.7× faster at the cost of 3.7% in size; with many small files 7-Zip was somewhat ahead at the same size. The winner depends on the corpus.
+With large files Arca compressed 5.7× faster at the cost of 3.7% in size; with many small files 7-Zip was somewhat ahead at the same size. The winner depends on the corpus. Those figures predate the small-file work in the next section.
+
+### Many small files on Windows 11
+
+Ryzen 7 3700X (8 cores, 16 threads), Windows 11, Microsoft Defender real-time protection on, a DRAM-less SATA SSD (Kingston A400), warm cache. Other builds were running on the machine at the same time, so wall times move: each row is the median of the runs in A B B A order with the range in brackets, and the process CPU time (user plus kernel) is given as well because it moves less. Before is Arca 0.10.0 at commit `4b1d67b`.
+
+The corpus is 50,000 files of 0 to 16,384 bytes in 100 folders, 410,069,593 bytes in all, three parts prose-like text to one part random bytes, generated from a fixed seed:
+
+```sh
+cargo run --release -p arca-bench --example small_files -- C:/b/small
+```
+
+| Creating, 16 threads, 16 runs | Wall | CPU | Peak memory | Archive |
+| --- | --- | --- | --- | --- |
+| Before | 5.003 s [4.420–7.743] | 19.75 s | 463 MiB | 252,139,697 |
+| **After** | **1.246 s** [1.067–2.490] | **12.33 s** | **59 MiB** | **251,139,697** |
+
+| Creating, `-j 1`, 6 runs | Wall | CPU | Peak memory |
+| --- | --- | --- | --- |
+| Before | 14.284 s [12.426–24.841] | 14.02 s | 64 MiB |
+| **After** | **11.504 s** [10.039–12.117] | **11.75 s** | **34 MiB** |
+
+```powershell
+powershell -File benchmarks\time.ps1 -Exes arca-0.10.0.exe,arca.exe `
+  -ArgLine "create C:\b\out.zip C:\b\small" -Runs 16 -Clean C:\b\out.zip
+powershell -File benchmarks\time.ps1 -Exes arca-0.10.0.exe,arca.exe `
+  -ArgLine "create C:\b\out.zip C:\b\small -j 1" -Runs 6 -Clean C:\b\out.zip
+```
+
+Where the time went, and what changed:
+
+- **The walk.** Every file was asked for its metadata twice before it was read, and on Windows each ask opens and closes the file, all on one thread. The size and time now come from the folder listing, which already has them.
+- **The writer.** Each entry’s local header was patched after its data, two seeks back and one forward, and every seek flushed the output buffer. An entry compressed in memory now gets its header complete, without the 20-byte Zip64 field it never needs; that field is what makes the archive 1,000,000 bytes smaller.
+- **The compressor.** A fresh libdeflate or Zstandard compressor per file cost more than compressing a small file. Each thread now keeps its own.
+- **The order.** Every file was compressed before the first one was written. Now files are written as soon as they are next in line, while later ones are still being compressed. At most 32 MiB of file data per thread is in flight, as before, and with small files the writer keeps up, so far less is held.
+
+| Extracting, 16 threads, 6 runs | Wall | CPU |
+| --- | --- | --- |
+| Before | 16.948 s [11.255–24.115] | 34.50 s (kernel 31.89 s) |
+| After | 12.310 s [10.614–19.535] | 33.09 s (kernel 30.38 s) |
+
+```powershell
+arca create C:\b\small.zip C:\b\small
+powershell -File benchmarks\time.ps1 -Exes arca-0.10.0.exe,arca.exe `
+  -ArgLine "extract C:\b\small.zip -o C:\b\out" -Runs 6 -Clean C:\b\out
+```
+
+Extracting is the file system’s time, not Arca’s: of 33 to 35 seconds of CPU, about 30 are spent in the kernel creating 50,000 files, and the two ranges overlap. The command line already read through one buffered reader per thread; it now creates each new file in one call instead of checking for it first, and a write that fails no longer leaves a short file behind. There is no speed claim here.
+
+The desktop app opened the archive again for every entry it extracted, behind a fresh 256 KiB buffer that the seek to the entry then discarded. Counted on one thread with the example that models it, that is 50,001 opens and 26,218,015,557 bytes read for this 251 MB archive, against 2 opens and 251,341,637 bytes now. The window itself was not timed.
+
+```sh
+cargo run --release -p arca-zip --example read_amplification -- C:/b/small.zip baseline
+cargo run --release -p arca-zip --example read_amplification -- C:/b/small.zip both
+```
+
+### Deflate size against WinRAR’s ZIP
+
+Sizes do not depend on the machine. 7-Zip was not installed on the machine, so WinRAR 7.23, which also writes ZIP with Deflate, stands in for it. Archive bytes, everything included:
+
+| Corpus | Arca -l 6 | Arca -l 8 | Arca -l 9 | WinRAR -m3 | WinRAR -m5 |
+| --- | --- | --- | --- | --- | --- |
+| The 50,000 small files, 410,069,593 bytes | 251,139,697 | 247,824,582 | **247,469,613** | 251,926,583 | 251,891,469 |
+| This repository at `4b1d67b`, 973 files, 16,551,105 bytes | 7,939,633 | 7,826,524 | **7,820,343** | 8,145,493 | 8,133,072 |
+| 16 large text files, 326,882,067 bytes | 123,443,446 | 117,071,830 | **117,038,415** | 123,301,735 | 122,832,147 |
+
+```sh
+cargo run --release -p arca-bench --example small_files -- C:/b/small
+cargo run --release -p arca-bench --example small_files -- C:/b/text 16 33554432 text
+mkdir C:/b/src && git archive 4b1d67b | tar -x -C C:/b/src
+arca create C:/b/out.zip C:/b/small -l 6
+```
+
+```powershell
+Start-Process -Wait "C:\Program Files\WinRAR\WinRAR.exe" `
+  -ArgumentList "a -afzip -m5 -ibck -y -r -ep1 C:\b\out.zip C:\b\small\*"
+```
+
+What each level costs, on the same machine and under the same load, 3 runs each, 16 threads:
+
+| Level | libdeflate level | Large text: wall, CPU | Small files: wall, CPU |
+| --- | --- | --- | --- |
+| 6 (default) | 6 | 1.493 s, 8.13 s | 1.325 s, 12.09 s |
+| 8 | 10 | 4.964 s, 38.86 s | 3.307 s, 29.83 s |
+| 9 (best) | 12 | 7.648 s, 58.86 s | 4.494 s, 45.77 s |
+
+```powershell
+powershell -File benchmarks\time.ps1 -Exes arca.exe `
+  -ArgLine "create C:\b\out.zip C:\b\text -l 8" -Runs 3 -Clean C:\b\out.zip
+```
+
+The default is smaller than WinRAR’s best on small files and on source code, and 0.5% larger on large text. Level 8 is the first of libdeflate’s near-optimal parsers: 4.7% smaller than WinRAR’s best on large text and 1.6% smaller on small files, for two and a half to five times the CPU of the default. Level 9 adds very little over 8. The mapping from Arca’s levels to libdeflate’s is unchanged. For the 16-file corpus in the table further up, 7-Zip -mx5 was 3.5% below Arca’s default; level 8 is 5.2% below the default on the large text here, so it should close that gap, but that has not been measured against 7-Zip.
+
 
 ## Parallel extraction
 

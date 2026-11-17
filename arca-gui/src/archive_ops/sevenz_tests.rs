@@ -505,7 +505,14 @@ fn exhausted_extraction_rename_does_not_fall_back_to_overwrite() {
         .map(|n| arca_core::extraction::claim_key(&room.path(&format!("a ({n}).txt"))))
         .collect();
     assert!(matches!(
-        dest_path(&room.0, "a.txt", false, &|_| Answer::Rename, &mut claimed),
+        dest_path(
+            &room.0,
+            "a.txt",
+            false,
+            &|_| Answer::Rename,
+            &mut claimed,
+            &mut Default::default()
+        ),
         Err(Error::Limit(_))
     ));
     assert_eq!(fs::read(original).unwrap(), b"original");
