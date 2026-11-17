@@ -2237,7 +2237,7 @@ fn batches(files: &[Source], cap: u64) -> Vec<Vec<usize>> {
     v
 }
 
-type Block = (usize, Vec<u8>, Method, u32);
+type Block = (usize, Vec<u8>, Method, u32, u64);
 
 /// Writes a new archive at `out` holding `files`, compressing on every core.
 ///
@@ -2371,6 +2371,8 @@ fn write_in_parallel<W: Write + Seek>(
                     let s = &files[i];
                     let data = std::fs::read(&s.path)?;
                     let (c, m, crc) = compress_block(&data, s.codec, s.level)?;
+                    let size = data.len() as u64;
+                    drop(data);
                     let c = match password {
                         Some(pw) => seal_block(&c, pw)?,
                         None => c,
@@ -2378,18 +2380,18 @@ fn write_in_parallel<W: Write + Seek>(
                     if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &s.name) {
                         return Err(Error::Cancelled);
                     }
-                    Ok((i, c, m, crc))
+                    Ok((i, c, m, crc, size))
                 })
                 .collect()
         });
         for h in produced {
-            let (i, c, m, crc) = h?;
+            let (i, c, m, crc, size) = h?;
             let s = &files[i];
             match password {
-                Some(_) => w.add_sealed(&s.name, &c, s.size, m, Some(s.mtime))?,
-                None => w.add_compressed(&s.name, &c, crc, s.size, m, Some(s.mtime))?,
+                Some(_) => w.add_sealed(&s.name, &c, size, m, Some(s.mtime))?,
+                None => w.add_compressed(&s.name, &c, crc, size, m, Some(s.mtime))?,
             }
-            bytes += s.size;
+            bytes += size;
         }
     }
     Ok(bytes)
@@ -3341,6 +3343,44 @@ mod tests {
                 .parse()
                 .unwrap();
             assert_eq!(out_bytes, bodies[i]);
+        }
+        let _ = std::fs::remove_dir_all(&room);
+    }
+
+    // The size a file had when the folder was walked is only an estimate by
+    // the time it is read: the entry has to record what was read, or a file
+    // that grew or shrank in between comes out as an archive that lies.
+    #[test]
+    fn a_file_that_changed_size_since_the_walk_is_recorded_as_read() {
+        let room = std::env::temp_dir().join(format!("arca-resized-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&room);
+        std::fs::create_dir_all(&room).unwrap();
+        let bodies = [b"grew after the walk".repeat(50), b"shrank".to_vec()];
+        let files: Vec<Source> = bodies
+            .iter()
+            .enumerate()
+            .map(|(i, body)| {
+                let path = room.join(format!("f{i}"));
+                std::fs::write(&path, body).unwrap();
+                Source {
+                    path,
+                    name: format!("f{i}"),
+                    size: [3, 4_000][i],
+                    mtime: 0,
+                    codec: Codec::Deflate,
+                    level: Level::NORMAL,
+                }
+            })
+            .collect();
+        let out = room.join("out.zip");
+        create_zip(&out, &files, 2, None, &|_, _, _| true).unwrap();
+        let mut source = std::fs::File::open(&out).unwrap();
+        let entries = ZipArchive::open(&mut source).unwrap().entries().to_vec();
+        for (e, body) in entries.iter().zip(&bodies) {
+            assert_eq!(e.size, body.len() as u64);
+            let mut got = Vec::new();
+            extract_entry_with(&mut source, e, &mut got, None).unwrap();
+            assert_eq!(&got, body);
         }
         let _ = std::fs::remove_dir_all(&room);
     }
