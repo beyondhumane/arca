@@ -48,6 +48,50 @@ fn the_program_is_the_stub_followed_by_a_zip_and_its_trailer() {
         .ends_with(".arca-new")));
 }
 
+// Offsets count from the start of the program, as `zip -A` leaves them, so
+// the file is a ZIP from its first byte for any tool, Arca included.
+#[test]
+fn the_program_reads_as_a_zip_from_its_first_byte() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    corpus(dir);
+    let stub = dir.join("stub.bin");
+    fs::write(&stub, b"not really a program").unwrap();
+    let output = run(dir, Some(&stub), &["create", "setup.exe", "src", "--sfx"]);
+    assert!(output.status.success(), "{output:?}");
+    let mut zip = ZipArchive::open(fs::File::open(dir.join("setup.exe")).unwrap()).unwrap();
+    assert_eq!(zip.entries()[0].offset, 20);
+    let mut data = Vec::new();
+    zip.extract_to(1, &mut data).unwrap();
+    assert_eq!(data, vec![9u8; 100_000]);
+    for (args, says) in [
+        (&["list", "setup.exe"], "src/sub/b.bin"),
+        (&["test", "setup.exe"], "2 entries verified"),
+    ] {
+        let output = run(dir, None, args);
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains(says));
+    }
+    let output = run(dir, None, &["extract", "setup.exe", "-o", "out"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(fs::read(dir.join("out/src/a.txt")).unwrap(), b"alpha");
+}
+
+#[test]
+fn a_program_is_not_named_like_an_archive() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    corpus(dir);
+    let stub = dir.join("stub.bin");
+    fs::write(&stub, b"stub").unwrap();
+    for name in ["out.7z", "out.zip", "out.tar.gz"] {
+        let output = run(dir, Some(&stub), &["create", name, "src", "--sfx"]);
+        assert_eq!(output.status.code(), Some(1), "{name}: {output:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains(".exe"));
+        assert!(!dir.join(name).exists());
+    }
+}
+
 #[test]
 fn the_console_flag_reaches_the_trailer_and_the_program() {
     let temp = tempfile::tempdir().unwrap();

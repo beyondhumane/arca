@@ -80,7 +80,14 @@ fn run(args: &Args, words: &Words, console: &mut bool) -> Result<Option<String>>
     let mut file = File::open(&exe)?;
     let trailer = Trailer::read(&mut file)?;
     *console |= trailer.console();
-    let archive = ZipArchive::open(Window::new(file, trailer.offset, trailer.len))?;
+    let (start, len) = (0, trailer.offset + trailer.len);
+    let (archive, start, len) = match ZipArchive::open(Window::new(file, start, len)) {
+        Ok(archive) => (archive, start, len),
+        Err(_) => {
+            let window = Window::new(File::open(&exe)?, trailer.offset, trailer.len);
+            (ZipArchive::open(window)?, trailer.offset, trailer.len)
+        }
+    };
     if archive.has_encrypted() {
         return Err(Error::Unsupported(words.encrypted.into()));
     }
@@ -95,7 +102,7 @@ fn run(args: &Args, words: &Words, console: &mut bool) -> Result<Option<String>>
             None => return Ok(None),
         },
     };
-    let source = Window::new(File::open(&exe)?, trailer.offset, trailer.len);
+    let source = Window::new(File::open(&exe)?, start, len);
     let files = extract(source, &entries, &dest)?;
     Ok(Some(fill(
         words.done,

@@ -1028,6 +1028,18 @@ impl<W: Write + Seek> ZipWriter<W> {
         }
     }
 
+    /// A writer for an archive that begins where `out` stands now, after
+    /// whatever was written before it, with every offset counted from the
+    /// start of `out`, as `zip -A` leaves a self-extractor: standard tools
+    /// then read the whole file as the archive.
+    pub fn after(mut out: W) -> Result<Self> {
+        let pos = out.stream_position()?;
+        Ok(ZipWriter {
+            pos,
+            ..ZipWriter::new(out)
+        })
+    }
+
     // The end record is found by searching backwards for its signature, so a
     // comment that holds one would make the archive end somewhere else.
     pub fn set_comment(&mut self, comment: &[u8]) -> Result<()> {
@@ -2481,7 +2493,8 @@ fn write_zip(
 }
 
 /// [`create_zip`] into any seekable writer, which it hands back once the
-/// archive is complete. Cleaning up after a failure is left to the caller.
+/// archive is complete. The archive begins where the writer stands, see
+/// [`ZipWriter::after`]. Cleaning up after a failure is left to the caller.
 pub fn create_zip_into<W: Write + Seek>(
     out: W,
     files: &[Source],
@@ -2489,7 +2502,7 @@ pub fn create_zip_into<W: Write + Seek>(
     password: Option<&str>,
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
 ) -> Result<W> {
-    let mut w = ZipWriter::new(out);
+    let mut w = ZipWriter::after(out)?;
     let total = files.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
     write_in_parallel(&mut w, files, threads, password, &done, total, notify)?;
@@ -4640,6 +4653,21 @@ mod tests {
         let buf = commented_archive(b"caf\x82");
         let a = ZipArchive::open(IoCursor::new(buf)).unwrap();
         assert_eq!(a.comment(), "caf\u{e9}");
+    }
+
+    #[test]
+    fn an_archive_written_after_a_prefix_counts_offsets_from_the_file_start() {
+        let mut out = IoCursor::new(Vec::new());
+        out.write_all(b"a program in front").unwrap();
+        let mut w = ZipWriter::after(out).unwrap();
+        w.add("a.txt", &b"uno"[..], Codec::Deflate, Level::NORMAL, None)
+            .unwrap();
+        let buf = w.finish().unwrap().into_inner();
+        let mut a = ZipArchive::open(IoCursor::new(buf)).unwrap();
+        assert_eq!(a.entries()[0].offset, 18);
+        let mut got = Vec::new();
+        a.extract_to(0, &mut got).unwrap();
+        assert_eq!(got, b"uno");
     }
 
     #[test]

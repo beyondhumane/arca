@@ -70,6 +70,33 @@ fn a_self_extractor_extracts_what_it_carries() {
 }
 
 #[test]
+fn a_self_extractor_whose_offsets_count_from_the_program_extracts() {
+    let temp = tempfile::tempdir().unwrap();
+    let bytes = sfx::build(Cursor::new(Vec::new()), &stub(), 0, |w| {
+        let mut z = ZipWriter::after(w)?;
+        z.add("a.txt", &b"alpha"[..], Codec::Deflate, Level::NORMAL, None)?;
+        z.finish()
+    })
+    .unwrap()
+    .into_inner();
+    let names: Vec<String> = arca_zip::ZipArchive::open(Cursor::new(bytes.clone()))
+        .unwrap()
+        .entries()
+        .iter()
+        .map(|e| e.name.clone())
+        .collect();
+    assert_eq!(names, ["a.txt"]);
+    let exe = temp
+        .path()
+        .join(format!("whole{}", std::env::consts::EXE_SUFFIX));
+    fs::write(&exe, bytes).unwrap();
+    let dest = temp.path().join("out");
+    let output = run(&exe, &["-o", dest.to_str().unwrap(), "--console"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"alpha");
+}
+
+#[test]
 fn the_console_flag_asks_on_standard_input() {
     let temp = tempfile::tempdir().unwrap();
     let exe = program(temp.path(), "asks", &zip(&[("a.txt", b"a")]), CONSOLE);

@@ -335,9 +335,17 @@ fn detect(p: &Path) -> Result<Format> {
 }
 
 // For reading: an XZ, bzip2 or Zstandard file is looked inside, so a TAR in a
-// `.xz`, or one with no suffix, still opens as TAR.XZ.
+// `.xz`, or one with no suffix, still opens as TAR.XZ, and a self-extracting
+// program Arca made opens as the ZIP it carries.
 fn detect_archive(p: &Path) -> Result<Format> {
-    arca_stream::identify(p).ok_or_else(|| unrecognized(p))
+    arca_stream::identify(p)
+        .or_else(|| {
+            let mut file = File::open(p).ok()?;
+            arca_core::sfx::Trailer::read(&mut file)
+                .ok()
+                .map(|_| Format::Zip)
+        })
+        .ok_or_else(|| unrecognized(p))
 }
 
 fn unrecognized(p: &Path) -> Error {
@@ -718,6 +726,13 @@ fn create(
     };
     let whole = volume.map(|_| arca_core::volumes::whole_name(out));
     let out = whole.as_deref().unwrap_or(out);
+    if let (Shape::Sfx { .. }, Some(named)) = (shape, Format::detect(out)) {
+        return Err(Error::Unsupported(format!(
+            "'{}' names a .{} archive, but --sfx makes a program; name it .exe",
+            out.display(),
+            named.extension()
+        )));
+    }
     let stub = match shape {
         Shape::Sfx { console } => Some(sfx_stub(console)?),
         _ => None,
