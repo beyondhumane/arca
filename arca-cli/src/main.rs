@@ -43,7 +43,7 @@ enum Cmd {
               help = "Compression level: 0-9, or store, fast, normal, best")]
         level: Level,
         #[arg(short, long, value_enum, default_value_t = CodecArg::Auto,
-              help = "Compressor. 'auto' uses deflate in .zip, LZMA2 in .7z and the RAR compressor in .rar, which accepts only auto or store")]
+              help = "Compressor. 'auto' uses deflate in .zip, LZMA2 in .7z and the RAR compressor in .rar, which accepts only auto or store. .7z also takes lzma, ppmd, bzip2, deflate and store")]
         codec: CodecArg,
         #[arg(
             short = 'j',
@@ -210,10 +210,18 @@ enum CodecArg {
     #[value(help = "Deflate in .zip, LZMA2 in .7z")]
     Auto,
     Store,
+    #[value(help = "Deflate (.zip, .7z)")]
     Deflate,
+    #[value(help = "Zstandard (.zip; .zst and .tar.zst always use it)")]
     Zstd,
     #[value(name = "lzma2", help = "LZMA2 (.7z; .xz and .tar.xz always use it)")]
     Lzma2,
+    #[value(help = "LZMA (.7z)")]
+    Lzma,
+    #[value(help = "PPMd (.7z), the smallest for text")]
+    Ppmd,
+    #[value(help = "BZip2 (.7z; .bz2 and .tar.bz2 always use it)")]
+    Bzip2,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -283,7 +291,7 @@ fn tar_source(archive: &Path, format_kind: Format) -> Result<Box<dyn Read>> {
 fn stream_codec(format_kind: Format) -> Option<(CodecArg, &'static str)> {
     match format_kind.container() {
         Container::Xz | Container::TarXz => Some((CodecArg::Lzma2, "LZMA2")),
-        Container::Bz2 | Container::TarBz2 => Some((CodecArg::Auto, "bzip2")),
+        Container::Bz2 | Container::TarBz2 => Some((CodecArg::Bzip2, "bzip2")),
         Container::Zst | Container::TarZst => Some((CodecArg::Zstd, "Zstandard")),
         _ => None,
     }
@@ -475,6 +483,13 @@ fn resolve_codec(c: CodecArg, format_kind: Format) -> Result<Codec> {
         CodecArg::Deflate => Codec::Deflate,
         CodecArg::Zstd => Codec::Zstd,
         CodecArg::Lzma2 => return Err(Error::Unsupported("LZMA2 creation requires .7z".into())),
+        CodecArg::Lzma => return Err(Error::Unsupported("LZMA creation requires .7z".into())),
+        CodecArg::Ppmd => return Err(Error::Unsupported("PPMd creation requires .7z".into())),
+        CodecArg::Bzip2 => {
+            return Err(Error::Unsupported(
+                "bzip2 creation requires .7z, .bz2 or .tar.bz2".into(),
+            ))
+        }
         CodecArg::Auto => match format_kind {
             Format::Zip => Codec::Deflate,
             _ => Codec::Deflate,

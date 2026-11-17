@@ -1,5 +1,5 @@
 use super::{human, parts_note, staged, CodecArg, OnConflict};
-use arca_7z::{create_7z_into, CreateOptions, SevenZArchive, Source};
+use arca_7z::{create_7z_into, Compression, CreateOptions, SevenZArchive, Source};
 use arca_core::extraction::{Conflict, Destination};
 use arca_core::{Error, Level, Result};
 use std::fs;
@@ -15,10 +15,24 @@ pub(super) fn create(
     (password, hide_names): (Option<&str>, bool),
     volume: Option<u64>,
 ) -> Result<()> {
-    if !matches!(codec, CodecArg::Auto | CodecArg::Store | CodecArg::Lzma2) {
-        return Err(Error::Unsupported(
-            ".7z creation supports only auto, store or lzma2 codecs".into(),
-        ));
+    let compression = match codec {
+        CodecArg::Auto | CodecArg::Lzma2 => Compression::Lzma2,
+        CodecArg::Lzma => Compression::Lzma,
+        CodecArg::Ppmd => Compression::Ppmd,
+        CodecArg::Bzip2 => Compression::Bzip2,
+        CodecArg::Deflate => Compression::Deflate,
+        CodecArg::Store => Compression::Store,
+        CodecArg::Zstd => {
+            return Err(Error::Unsupported(
+                ".7z with Zstandard is not written: 7-Zip cannot read it; use lzma2, lzma, ppmd, bzip2, deflate or store".into(),
+            ))
+        }
+    };
+    if !compression.available() {
+        return Err(Error::Unsupported(format!(
+            "{} in .7z needs a build with the codecs-native feature",
+            compression.name()
+        )));
     }
     if password == Some("") || hide_names && password.is_none() {
         return Err(Error::Format(
@@ -33,7 +47,7 @@ pub(super) fn create(
         },
         password,
         hide_names,
-        ..Default::default()
+        compression,
     };
     let own = arca_core::extraction::OwnOutput::new(out);
     let mut sources = Vec::new();
@@ -60,11 +74,7 @@ pub(super) fn create(
         human(bytes),
         human(written),
         t0.elapsed().as_secs_f64(),
-        if options.level == Level::STORE {
-            1
-        } else {
-            arca_7z::workers(options.level)
-        },
+        compression.threads(options.level),
         parts_note(written, volume)
     );
     Ok(())
