@@ -492,6 +492,33 @@ pub fn write_staged(
     result
 }
 
+/// Writes `target` with `fill`, the way [`write_staged`] does when something
+/// is already there, and straight into a new file when nothing is: a new
+/// file is created only if the name is free at that moment, and taken away
+/// again if `fill` fails, so a failure never leaves a short file under the
+/// real name and never touches one that was there.
+pub fn write_new_or_staged(
+    target: &Path,
+    fill: impl FnOnce(&mut std::fs::File) -> Result<u64>,
+) -> Result<u64> {
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+    {
+        Ok(mut file) => {
+            let result = fill(&mut file);
+            drop(file);
+            if result.is_err() {
+                let _ = std::fs::remove_file(target);
+            }
+            result
+        }
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => write_staged(target, fill),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Gives an extracted file the modification time its archive recorded.
 ///
 /// Best effort: a file system that refuses the time still has every byte, and
@@ -736,6 +763,42 @@ mod tests {
         });
         assert_eq!(written.unwrap(), 3);
         assert_eq!(fs::read(&target).unwrap(), b"new");
+        let left: Vec<_> = fs::read_dir(room.path()).unwrap().collect();
+        assert_eq!(left.len(), 1, "no temporary may be left behind");
+    }
+
+    #[test]
+    fn a_new_file_is_written_in_place_and_an_old_one_only_through_staging() {
+        let room = room();
+        let fresh = room.path().join("fresh.txt");
+        let failed = write_new_or_staged(&fresh, |f| {
+            f.write_all(b"half")?;
+            Err(Error::Format("corrupt entry".into()))
+        });
+        assert!(failed.is_err());
+        assert!(!fresh.exists(), "a failed new file must not stay behind");
+        assert_eq!(
+            write_new_or_staged(&fresh, |f| {
+                f.write_all(b"new")?;
+                Ok(3)
+            })
+            .unwrap(),
+            3
+        );
+        assert_eq!(fs::read(&fresh).unwrap(), b"new");
+
+        let failed = write_new_or_staged(&fresh, |f| {
+            f.write_all(b"half")?;
+            Err(Error::Format("wrong password".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(fs::read(&fresh).unwrap(), b"new");
+        write_new_or_staged(&fresh, |f| {
+            f.write_all(b"newer")?;
+            Ok(5)
+        })
+        .unwrap();
+        assert_eq!(fs::read(&fresh).unwrap(), b"newer");
         let left: Vec<_> = fs::read_dir(room.path()).unwrap().collect();
         assert_eq!(left.len(), 1, "no temporary may be left behind");
     }

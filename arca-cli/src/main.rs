@@ -1281,11 +1281,7 @@ fn extract(
                                     arca_core::extraction::set_mtime(f, e.mtime);
                                     Ok(0)
                                 };
-                                if path.exists() {
-                                    arca_core::extraction::write_staged(path, put)?;
-                                } else {
-                                    put(&mut File::create(path)?)?;
-                                }
+                                arca_core::extraction::write_new_or_staged(path, put)?;
                             } else {
                                 total += arca_core::extraction::write_staged(path, |f| {
                                     let mut w = BufWriter::with_capacity(BUF, &mut *f);
