@@ -8,6 +8,7 @@ use std::io::Write;
 /// chained by a hash of their first 4 bytes.
 type Rar50MatchFinder<B = Allowance> = match_finder::MatchFinder<4, B>;
 
+// Arca: per-region filter detection for the streaming writer.
 mod detect;
 pub(crate) use detect::detect_filters;
 
@@ -767,6 +768,7 @@ pub(crate) fn encode_lz_streaming_blocks(
     .map(|outputs| outputs.into_iter().map(Buffer::into_vec).collect())
 }
 
+// Arca: test-only now; the writer calls the filtered variant below.
 #[cfg(test)]
 pub(crate) fn streaming_blocks_with_allowance<B: Budget>(
     data: &[u8],

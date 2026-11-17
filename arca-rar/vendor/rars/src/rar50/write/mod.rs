@@ -366,6 +366,7 @@ fn write_limited_volumes(
     let shape = PlanShape::new()
         .compressed(true)
         .volumes(true)
+        // Arca: `Detect` filters on the streaming path, so it is not a filtered plan.
         .filtered(extras.filter_policy.filters_whole_members());
     // One option at a time, so a refusal names the one that was asked for.
     // This used to be a single check over all three, which reported a string
@@ -549,6 +550,7 @@ pub(crate) fn write_streaming_archive_reporting(
         options,
         PlanShape::new()
             .compressed(true)
+            // Arca: `Detect` filters on the streaming path, so it is not a filtered plan.
             .filtered(extras.filter_policy.filters_whole_members()),
     )?;
     if let Some(percent) = recovery_percent {

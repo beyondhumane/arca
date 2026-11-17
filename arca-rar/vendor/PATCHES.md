@@ -15,9 +15,10 @@ an empty `[workspace]` so its own tests run with
 a lockfile of its own and still builds the crates.io copy: the reader it
 exercises is unchanged here.
 
-Every change is in the RAR 5 writer and is marked `Arca:` in the source. The
-reader, the format and the integrity checks are as published, and no RARLAB
-source was consulted for any of it.
+Every change is in the writers and is marked `Arca:` in the source: the RAR 5
+writer, and four match arms of the RAR 1.5 to 4.0 writer that treat
+`FilterPolicy::Detect` as `None`. The reader, the format and the integrity
+checks are as published, and no RARLAB source was consulted for any of it.
 
 - **Tree search for a whole member.** The optimal parse searched the first
   block of a member with the binary-tree finder and then switched to hash

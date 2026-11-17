@@ -1172,6 +1172,7 @@ fn encode_block_job<B: Budget, C: Budget>(
     allowance: &C,
 ) -> Result<PackedBlocks<C>> {
     let mut block_done = |bytes: usize| progress.advance(bytes as u64);
+    // Arca: each block carries the filter records detection made for it.
     let packed = filtered_streaming_blocks_with_allowance(
         &job.data,
         &job.history,

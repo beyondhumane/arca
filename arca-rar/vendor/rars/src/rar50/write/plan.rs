@@ -49,6 +49,7 @@ impl ExecutionPlan {
         if settings.method == 0 {
             return Ok(Self::Stored);
         }
+        // Arca: `Detect` keeps members on the streaming block path.
         let whole_members = !settings.solid
             && (settings.filter_policy.filters_whole_members() || settings.candidates.len() > 1);
         if !whole_members {

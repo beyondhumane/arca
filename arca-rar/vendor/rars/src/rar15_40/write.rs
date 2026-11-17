@@ -725,6 +725,7 @@ fn encode_rar29_policy_filtered_payload(
         })
     };
     match (method, policy) {
+        // Arca: `Detect` is a RAR 5 streaming policy; this writer does not filter for it.
         (Rar29Method::Ppmd, FilterPolicy::None | FilterPolicy::Detect { .. }) => ppmd(data),
         (Rar29Method::Ppmd, FilterPolicy::Explicit(filter)) => Ok(EncodedPayload {
             data: with_codec_progress(progress, |report| {
@@ -741,6 +742,7 @@ fn encode_rar29_policy_filtered_payload(
         // Filtered writes are rejected before encoding; plain compressed writes
         // use FilterPolicy::None when PPMd is forced.
         (Rar29Method::Ppmd, FilterPolicy::Auto) => unreachable!(),
+        // Arca: as above.
         (Rar29Method::Lz, FilterPolicy::None | FilterPolicy::Detect { .. }) => {
             encode_rar29_lz_member(data, options, lz_method, progress)
         }
@@ -814,6 +816,7 @@ fn validate_rar29_filter_policy(policy: &FilterPolicy, method: Rar29Method) -> R
     }
     let filter = match policy {
         FilterPolicy::Explicit(filter) => filter,
+        // Arca: `Detect` names no filter to validate.
         FilterPolicy::None | FilterPolicy::Auto | FilterPolicy::Detect { .. } => return Ok(()),
     };
     match filter.kind {
@@ -2058,6 +2061,7 @@ fn encode_filtered_payload(
         // the member. `--no-filter` used to answer that question too, and answer
         // it LZ, so asking a solid archive not to filter its binaries also took
         // PPMd away from its text.
+        // Arca: `Detect` codes the chain as `None` does.
         FilterPolicy::Explicit(_) | FilterPolicy::None | FilterPolicy::Detect { .. } => {
             encode_rar29_chain_member(data, options, encoder, false, &mut advance)?
         }
