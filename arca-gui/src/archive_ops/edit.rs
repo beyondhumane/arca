@@ -156,7 +156,8 @@ fn rewrite(
         };
         return arca_7z::rewrite_7z(archive, out, password, &change, &mut |p| {
             notify(p.entries_done, p.entries_total, p.name)
-        });
+        })
+        .map(|_| ());
     }
     let taken: HashSet<&str> = extra.iter().map(|a| a.name.trim_end_matches('/')).collect();
     let name = |e: &Entry| name(e).filter(|n| !taken.contains(n.trim_end_matches('/')));

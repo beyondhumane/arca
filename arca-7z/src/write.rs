@@ -325,6 +325,7 @@ pub(crate) enum Filter {
     Ppc,
     Sparc,
     Ia64,
+    Riscv,
     Delta(u16),
 }
 
@@ -337,6 +338,7 @@ pub(crate) enum Stage {
     Ppmd,
     Bzip2,
     Deflate,
+    Zstd,
     Filter(Filter),
 }
 
@@ -349,6 +351,7 @@ impl Stage {
             Stage::Ppmd => "PPMd",
             Stage::Bzip2 => "BZip2",
             Stage::Deflate => "Deflate",
+            Stage::Zstd => "Zstandard",
             Stage::Filter(Filter::X86) => "BCJ",
             Stage::Filter(Filter::Arm) => "ARM",
             Stage::Filter(Filter::ArmThumb) => "ARMT",
@@ -356,8 +359,35 @@ impl Stage {
             Stage::Filter(Filter::Ppc) => "PPC",
             Stage::Filter(Filter::Sparc) => "SPARC",
             Stage::Filter(Filter::Ia64) => "IA64",
+            Stage::Filter(Filter::Riscv) => "RISCV",
             Stage::Filter(Filter::Delta(_)) => "Delta",
         }
+    }
+
+    /// The stage of a coder an archive names, if this build can encode it.
+    pub(crate) fn of(id: &[u8], properties: &[u8]) -> Option<Stage> {
+        use EncoderMethod as M;
+        Some(match id {
+            M::ID_COPY => Stage::Copy,
+            M::ID_LZMA => Stage::Lzma,
+            M::ID_LZMA2 => Stage::Lzma2,
+            M::ID_PPMD => Stage::Ppmd,
+            M::ID_BZIP2 if cfg!(feature = "codecs-native") => Stage::Bzip2,
+            M::ID_DEFLATE => Stage::Deflate,
+            M::ID_ZSTD if cfg!(feature = "codecs-native") => Stage::Zstd,
+            M::ID_BCJ_X86 => Stage::Filter(Filter::X86),
+            M::ID_BCJ_ARM => Stage::Filter(Filter::Arm),
+            M::ID_BCJ_ARM_THUMB => Stage::Filter(Filter::ArmThumb),
+            M::ID_BCJ_ARM64 if properties.is_empty() => Stage::Filter(Filter::Arm64),
+            M::ID_BCJ_PPC => Stage::Filter(Filter::Ppc),
+            M::ID_BCJ_SPARC => Stage::Filter(Filter::Sparc),
+            M::ID_BCJ_IA64 => Stage::Filter(Filter::Ia64),
+            M::ID_BCJ_RISCV if properties.is_empty() => Stage::Filter(Filter::Riscv),
+            M::ID_DELTA => Stage::Filter(Filter::Delta(
+                properties.first().map_or(1, |&b| u16::from(b) + 1),
+            )),
+            _ => return None,
+        })
     }
 }
 
@@ -662,8 +692,13 @@ pub(crate) fn methods(
             Stage::Deflate => DeflateOptions::from_level(level.to_flate2()).into(),
             #[cfg(feature = "codecs-native")]
             Stage::Bzip2 => sevenz_rust2::encoder_options::Bzip2Options::from_level(preset).into(),
+            #[cfg(feature = "codecs-native")]
+            Stage::Zstd => {
+                sevenz_rust2::encoder_options::ZstandardOptions::from_level(level.to_zstd() as u32)
+                    .into()
+            }
             #[cfg(not(feature = "codecs-native"))]
-            Stage::Bzip2 => {
+            Stage::Bzip2 | Stage::Zstd => {
                 return Err(Error::Unsupported(format!(
                     "{} in 7z needs a build with codecs-native",
                     stage.name()
@@ -677,6 +712,7 @@ pub(crate) fn methods(
                 Filter::Ppc => EncoderMethod::BCJ_PPC_FILTER.into(),
                 Filter::Sparc => EncoderMethod::BCJ_SPARC_FILTER.into(),
                 Filter::Ia64 => EncoderMethod::BCJ_IA64_FILTER.into(),
+                Filter::Riscv => EncoderMethod::BCJ_RISCV_FILTER.into(),
                 Filter::Delta(distance) => DeltaOptions::from_distance(u32::from(distance)).into(),
             },
         });

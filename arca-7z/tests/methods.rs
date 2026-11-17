@@ -127,3 +127,20 @@ fn truncated_and_corrupt_ppmd_streams_never_panic_or_overrun() {
     let shorter = decode(single_block(&coder, 10, &packed)).unwrap();
     assert_eq!(shorter, &TEXT[..10]);
 }
+
+// Read as one stream to its end, the way a rewrite drains a block, a PPMd
+// block gives its declared size and not a byte more.
+#[test]
+fn a_ppmd_block_read_to_its_end_stops_at_its_size() {
+    let packed = ppmd_packed(TEXT);
+    let data = single_block(&ppmd_coder(6, 16 << 20), 10, &packed);
+    let mut source = Cursor::new(data);
+    let archive = sevenz_rust2::Archive::read(&mut source, &Password::empty()).unwrap();
+    let password = Password::empty();
+    let mut reader = sevenz_rust2::BlockDecoder::new(1, 0, &archive, &password, &mut source)
+        .into_reader()
+        .unwrap();
+    let mut out = Vec::new();
+    std::io::Read::read_to_end(&mut reader, &mut out).unwrap();
+    assert_eq!(out, &TEXT[..10]);
+}

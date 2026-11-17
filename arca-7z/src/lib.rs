@@ -4,7 +4,7 @@ mod edit;
 mod read;
 mod write;
 
-pub use edit::{rewrite_7z, Addition, Change};
+pub use edit::{rewrite_7z, Addition, Change, Recoded};
 pub use read::{Phase, Progress, SevenZArchive};
 pub use write::{
     create_7z, create_7z_into, ppmd_parameters, workers, Compression, CreateOptions, Source,
