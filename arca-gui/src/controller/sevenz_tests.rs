@@ -298,15 +298,15 @@ fn selected_extraction_resumes_with_the_selection_after_password_entry() {
 }
 
 #[test]
-fn sevenz_mutations_are_rejected_before_workers_start() {
+fn sevenz_password_changes_are_rejected_before_workers_start() {
     let mut app = AppController::new(Settings::default());
     app.state.archive = Some(PathBuf::from("readonly.7z"));
     app.begin_password_change();
     assert!(app.state.waiting_on_password.is_none());
-    app.run_job(Job::Delete {
+    app.run_job(Job::Password {
         archive: PathBuf::from("readonly.7z"),
-        names: vec!["a".into()],
-        password: None,
+        current: None,
+        new: Some("x".into()),
     });
     assert!(!app.state.busy);
     assert_eq!(app.state.notice, app.s().only_zip_can_change);

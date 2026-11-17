@@ -33,6 +33,10 @@ Local changes:
 - Cap the threads of a multithreaded LZMA2 decoder so that one dictionary per
   thread stays within four times the single-thread memory limit, since the
   dictionary size comes from the archive.
+- Add `BlockDecoder::into_reader`, the decoded block as one pull stream built
+  by the existing decode stack, so that rewriting an archive can feed a block
+  straight into the encoder without buffering it. It adds no decoding; the
+  caller checks each entry's CRC.
 
 No new compression or cryptography is implemented. Upstream's existing bounded
 AES work factor (max power 24) and single-entry KDF cache are unchanged. Arca

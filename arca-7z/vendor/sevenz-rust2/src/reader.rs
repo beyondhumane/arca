@@ -1904,6 +1904,20 @@ impl<'a, R: Read + Seek> BlockDecoder<'a, R> {
         self.archive.blocks[self.block_index].num_unpack_sub_streams
     }
 
+    /// The whole decoded block as one stream, for a caller that reads it in order and splits it
+    /// into entries by their sizes itself. The block's own CRC, when it has one, is checked when
+    /// the stream is read to its end; the entries' CRCs are left to the caller.
+    pub fn into_reader(self) -> Result<Box<dyn Read + 'a>, Error> {
+        let (reader, _) = ArchiveReader::build_decode_stack(
+            self.source,
+            self.archive,
+            self.block_index,
+            self.password,
+            self.thread_count,
+        )?;
+        Ok(reader)
+    }
+
     /// Takes a closure to decode each files in this block.
     ///
     /// When decoding files in a block, the data to be decompressed depends on the data in front of

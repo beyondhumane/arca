@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{self, Read, Write},
+    io::{self, Read, Seek, Write},
     path::{Path, PathBuf},
 };
 
@@ -98,22 +98,7 @@ pub fn create_7z(
     let mut writer = ArchiveWriter::new(io::BufWriter::new(temporary.as_file_mut()))
         .map_err(|e| upstream(e, false))?;
     writer.set_encrypt_header(options.hide_names);
-    let entry_of = |index: usize| {
-        let (source, meta) = (&sources[index], &metadata[index]);
-        let mut entry = if meta.is_dir() {
-            ArchiveEntry::new_directory(&source.name)
-        } else {
-            ArchiveEntry::new_file(&source.name)
-        };
-        if let Ok(time) = meta.modified().and_then(|t| {
-            sevenz_rust2::NtTime::try_from(t)
-                .map_err(|_| io::Error::other("timestamp outside 7z range"))
-        }) {
-            entry.has_last_modified_date = true;
-            entry.last_modified_date = time;
-        }
-        entry
-    };
+    let entry_of = |index: usize| new_entry(&sources[index].name, &metadata[index]);
     // Folders and empty files have no data and go in first, outside any block.
     let (empty, full): (Vec<usize>, Vec<usize>) =
         (0..sources.len()).partition(|&i| metadata[i].is_dir() || metadata[i].len() == 0);
@@ -141,10 +126,60 @@ pub fn create_7z(
         cancelled: false,
         changed: false,
     });
+    push_files(&mut writer, sources, &metadata, &full, options, &tracker)?;
+    let Tracker { notify, bytes, .. } = tracker.into_inner();
+    // A header must never reuse the last file's AES salt and IV.
+    writer.set_content_methods(methods(options, false, 1)?);
+    writer.finish()?.flush()?;
+    if !notify(Progress {
+        phase: Phase::Create,
+        entries_done: sources.len(),
+        entries_total: sources.len(),
+        bytes_done: bytes,
+        name: "",
+    }) {
+        return Err(Error::Cancelled);
+    }
+    temporary.as_file().sync_all()?;
+    temporary.persist(output).map_err(|e| Error::Io(e.error))?;
+    Ok(())
+}
+
+/// The entry for a file or folder going in under `name`, with its time.
+pub(crate) fn new_entry(name: &str, meta: &fs::Metadata) -> ArchiveEntry {
+    let mut entry = if meta.is_dir() {
+        ArchiveEntry::new_directory(name)
+    } else {
+        ArchiveEntry::new_file(name)
+    };
+    if let Ok(time) = meta.modified().and_then(|t| {
+        sevenz_rust2::NtTime::try_from(t)
+            .map_err(|_| io::Error::other("timestamp outside 7z range"))
+    }) {
+        entry.has_last_modified_date = true;
+        entry.last_modified_date = time;
+    }
+    entry
+}
+
+/// The files of `sources` picked by `full`, which all have data, in solid
+/// blocks read from the disk as they are compressed.
+pub(crate) fn push_files<W: Write + Seek>(
+    writer: &mut ArchiveWriter<W>,
+    sources: &[Source],
+    metadata: &[fs::Metadata],
+    full: &[usize],
+    options: &CreateOptions<'_>,
+    tracker: &std::cell::RefCell<Tracker<'_>>,
+) -> Result<()> {
     let workers = workers(options.level);
-    for block in solid_blocks(sources, &metadata, &full) {
+    for block in solid_blocks(sources, metadata, full) {
         writer.set_content_methods(methods(options, block.executables, workers)?);
-        let entries = block.files.iter().map(|&i| entry_of(i)).collect();
+        let entries = block
+            .files
+            .iter()
+            .map(|&i| new_entry(&sources[i].name, &metadata[i]))
+            .collect();
         let readers = block
             .files
             .iter()
@@ -155,7 +190,7 @@ pub fn create_7z(
                     expected: metadata[i].len(),
                     file: None,
                     read: 0,
-                    tracker: &tracker,
+                    tracker,
                 })
             })
             .collect();
@@ -172,21 +207,6 @@ pub fn create_7z(
         drop(state);
         result.map_err(|e| upstream(e, false))?;
     }
-    let Tracker { notify, bytes, .. } = tracker.into_inner();
-    // A header must never reuse the last file's AES salt and IV.
-    writer.set_content_methods(methods(options, false, 1)?);
-    writer.finish()?.flush()?;
-    if !notify(Progress {
-        phase: Phase::Create,
-        entries_done: sources.len(),
-        entries_total: sources.len(),
-        bytes_done: bytes,
-        name: "",
-    }) {
-        return Err(Error::Cancelled);
-    }
-    temporary.as_file().sync_all()?;
-    temporary.persist(output).map_err(|e| Error::Io(e.error))?;
     Ok(())
 }
 
@@ -252,7 +272,7 @@ pub fn workers(level: Level) -> usize {
     arca_xz::workers(level, 0)
 }
 
-fn methods(
+pub(crate) fn methods(
     options: &CreateOptions<'_>,
     executables: bool,
     workers: usize,
@@ -294,13 +314,13 @@ fn methods(
 
 /// What every file of a solid block shares while the block is written: the
 /// caller's progress, and whether reading stopped and why.
-struct Tracker<'n> {
-    notify: &'n mut dyn FnMut(Progress<'_>) -> bool,
-    total: usize,
-    done: usize,
-    bytes: u64,
-    cancelled: bool,
-    changed: bool,
+pub(crate) struct Tracker<'n> {
+    pub(crate) notify: &'n mut dyn FnMut(Progress<'_>) -> bool,
+    pub(crate) total: usize,
+    pub(crate) done: usize,
+    pub(crate) bytes: u64,
+    pub(crate) cancelled: bool,
+    pub(crate) changed: bool,
 }
 
 /// A file of a solid block, opened when the block first reads from it so that

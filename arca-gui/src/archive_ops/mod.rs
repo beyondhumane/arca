@@ -1,5 +1,8 @@
 //! Blocking archive jobs and their command-line entry points.
 
+mod edit;
+#[cfg(test)]
+mod edit_tests;
 mod io;
 #[cfg(all(test, feature = "rar"))]
 mod rar_tests;
@@ -9,6 +12,7 @@ mod sevenz_tests;
 mod streams_tests;
 #[cfg(test)]
 mod xz_tests;
+pub(crate) use edit::{can_edit, editable};
 pub(crate) use io::*;
 
 use crate::i18n::Strings;
@@ -476,12 +480,12 @@ pub(crate) fn run_job_blocking(
             names,
             password,
         } => {
-            if detect(&archive) != Some(Format::Zip) {
-                return Err(s.only_zip_can_change.to_string());
+            if !detect(&archive).is_some_and(editable) {
+                return Err(s.only_archives_change.to_string());
             }
             let doomed: HashSet<String> = names.into_iter().collect();
             rewrite_zip(&archive, |temp| {
-                arca_zip::remove_entries(
+                edit::remove_entries(
                     &archive,
                     temp,
                     password.as_deref(),
@@ -551,15 +555,15 @@ pub(crate) fn run_job_blocking(
             folder,
             password,
         } => {
-            if detect(&archive) != Some(Format::Zip) {
-                return Err(s.only_zip_can_change.to_string());
+            if !detect(&archive).is_some_and(editable) {
+                return Err(s.only_archives_change.to_string());
             }
             // A folder answers to two spellings: some tools file an entry for
             // the folder itself with a slash on the end, others only file what
             // is inside it. Both have to move, and neither can be assumed.
             let rename = |name: &str| rename_entry_name(name, &from, &to, folder);
             rewrite_zip(&archive, |temp| {
-                arca_zip::rename_entries(
+                edit::rename_entries(
                     &archive,
                     temp,
                     password.as_deref(),
@@ -627,8 +631,8 @@ pub(crate) fn run_job_blocking(
             level,
             password,
         } => {
-            if detect(&archive) != Some(Format::Zip) {
-                return Err(s.only_zip_can_change.to_string());
+            if !detect(&archive).is_some_and(editable) {
+                return Err(s.only_archives_change.to_string());
             }
             if inputs.is_empty() {
                 return Err(s.nothing_to_do.to_string());
@@ -648,7 +652,7 @@ pub(crate) fn run_job_blocking(
             }
             let n = extra.len();
             rewrite_zip(&archive, |temp| {
-                arca_zip::add_entries(&archive, temp, password.as_deref(), &extra, notify)
+                edit::add_entries(&archive, temp, password.as_deref(), &extra, notify)
             })?;
             Ok(fill(s.added, &[("n", &n.to_string())]))
         }
@@ -661,14 +665,14 @@ pub(crate) fn run_job_blocking(
             moves,
             password,
         } => {
-            if detect(&archive) != Some(Format::Zip) {
-                return Err(s.only_zip_can_change.to_string());
+            if !detect(&archive).is_some_and(editable) {
+                return Err(s.only_archives_change.to_string());
             }
             // All of them in one pass. Moving is renaming with a different
             // folder in front, and renaming is a rewrite of the whole archive:
             // five files moved one at a time would be five rewrites.
             rewrite_zip(&archive, |temp| {
-                arca_zip::rename_entries(
+                edit::rename_entries(
                     &archive,
                     temp,
                     password.as_deref(),
@@ -684,8 +688,8 @@ pub(crate) fn run_job_blocking(
             name,
             password,
         } => {
-            if detect(&archive) != Some(Format::Zip) {
-                return Err(s.only_zip_can_change.to_string());
+            if !detect(&archive).is_some_and(editable) {
+                return Err(s.only_archives_change.to_string());
             }
             let extra = [arca_zip::Addition {
                 // No file behind it: a folder in a zip is a name and nothing
@@ -696,7 +700,7 @@ pub(crate) fn run_job_blocking(
                 level: Level::STORE,
             }];
             rewrite_zip(&archive, |temp| {
-                arca_zip::add_entries(&archive, temp, password.as_deref(), &extra, notify)
+                edit::add_entries(&archive, temp, password.as_deref(), &extra, notify)
             })?;
             // Nothing to say: the folder is in the list, which is where the eye
             // already is.

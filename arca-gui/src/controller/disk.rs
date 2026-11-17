@@ -782,15 +782,15 @@ pub(crate) fn format_device(_device: &str, _fs: &str, _label: &str) -> Result<()
 
 impl AppController {
     pub(crate) fn writable(&self) -> bool {
-        self.state.archive.is_some() && self.state.format == Format::Zip
+        self.state.archive.is_some() && editable(self.state.format)
     }
 
     pub(crate) fn on_disk(&self) -> bool {
         self.state.archive.is_none() && self.state.disk.is_some()
     }
 
-    /// Whether what is shown can be renamed, removed or added to: a zip, or
-    /// a folder on the disk.
+    /// Whether what is shown can be renamed, removed or added to: an archive
+    /// that can be changed in place, or a folder on the disk.
     pub(crate) fn can_change(&self) -> bool {
         self.writable() || self.on_disk()
     }

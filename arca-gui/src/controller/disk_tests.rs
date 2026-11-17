@@ -156,10 +156,7 @@ fn an_archive_on_disk_opens_in_place_and_closes_back_onto_its_row() {
     assert!(app.can_close_archive());
     assert_eq!(app.state.format, Format::SevenZ);
     assert_eq!(names(&app), vec!["source"]);
-    assert!(
-        !app.writable(),
-        "7z stays read-only when opened from the disk"
-    );
+    assert!(app.writable(), "a 7z opened from the disk can be changed");
 
     app.go_up();
     assert!(app.on_disk());

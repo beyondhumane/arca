@@ -963,7 +963,7 @@ mod tests {
 
     #[test]
     fn readonly_mutations_are_rejected_before_starting_a_job_or_cancelling_preview() {
-        for name in ["readonly.rar", "readonly.tar", "readonly.tar.gz"] {
+        for name in ["readonly.rar", "readonly.txt.xz", "readonly.jar"] {
             let mut c = AppController::new(Settings::default());
             c.state.preview.status = PreviewStatus::Empty;
             let archive = PathBuf::from(name);

@@ -34,9 +34,9 @@ compressed with bzip2 are read.
 
 - **UDF:** ISO images are read through ISO 9660, so files stored only in UDF (such as `install.wim` on Windows media) are not listed yet.
 - **Symbolic links:** skipped for ZIP/TAR creation, rejected for 7z.
-- **7z password changes and mutation:** adding, deleting and renaming can require solid-block rewrites and are out of scope.
+- **7z password changes:** adding, deleting and renaming entries rewrite the archive with its own password; changing that password is not offered yet.
 - **Desktop integration on Linux and macOS:** the Explorer menu is Windows-only for now.
-- **Mutation outside ZIP:** ZIP desktop editing exists; 7z remains create/read only.
+- **Mutation outside ZIP, TAR and 7z:** RAR stays read-only once created, and ISO images and the ZIP containers are never modified.
 - **A native format:** at which point Zstandard becomes the default codec.
 
 > [!TIP]

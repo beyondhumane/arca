@@ -12,6 +12,9 @@ pub(crate) use jobs::{Task, TaskId, TaskStatus};
 mod container_tests;
 #[cfg(test)]
 mod disk_tests;
+mod editing;
+#[cfg(test)]
+mod editing_tests;
 mod hashes;
 #[cfg(test)]
 mod iso_tests;
@@ -1040,7 +1043,8 @@ impl AppController {
     fn cannot_change(&self, format: Option<Format>) -> String {
         match format {
             Some(f) if !f.can_write() => f.read_only().to_string(),
-            _ => self.s().only_zip_can_change.to_string(),
+            Some(f) if editable(f) => self.s().only_zip_can_change.to_string(),
+            _ => self.s().only_archives_change.to_string(),
         }
     }
 
@@ -1725,8 +1729,8 @@ impl AppController {
         let Some(archive) = self.state.archive.clone() else {
             return;
         };
-        // Only a zip can have entries taken out of it in place; anywhere else a
-        // cut could never finish, so it is a copy.
+        // Only some archives can have entries taken out of them in place; from
+        // any other a cut could never finish, so it is a copy.
         let cut = cut && self.writable();
         let roots = self.selected_roots();
         if roots.is_empty() {
@@ -1761,13 +1765,13 @@ impl AppController {
         };
         // Where each picked thing will land once extracted. Worked out here
         // rather than in the thread because it is also what a pending cut has
-        // to watch, and only a .zip can have entries taken out of it in place.
+        // to watch, and not every archive can have entries taken out of it.
         let landed: Vec<PathBuf> = roots
             .iter()
             .filter_map(|r| arca_core::safe_name(r).ok())
             .map(|r| dir.join(r))
             .collect();
-        let armed = (cut && detect(&archive) == Some(Format::Zip)).then(|| Cut {
+        let armed = (cut && detect(&archive).is_some_and(editable)).then(|| Cut {
             archive: archive.clone(),
             paths: landed.clone(),
             names,
@@ -2335,10 +2339,10 @@ impl AppController {
             return;
         };
         let all_archives = paths.iter().all(|p| detect(p).is_some());
-        // Only a .zip can be added to in place. With a .tar open there is
-        // nothing to weigh up: an archive opens, and anything else has to say
-        // why it cannot go in rather than quietly do nothing.
-        if detect(&archive) != Some(Format::Zip) {
+        // With an archive open that cannot be added to there is nothing to
+        // weigh up: an archive opens, and anything else has to say why it
+        // cannot go in rather than quietly do nothing.
+        if !detect(&archive).is_some_and(editable) {
             if all_archives {
                 open_first(self, paths);
             } else {
@@ -2468,7 +2472,7 @@ impl AppController {
         });
     }
 
-    pub(crate) fn run_job(&mut self, mut job: Job) {
+    pub(crate) fn run_job(&mut self, job: Job) {
         if self.blocked() {
             return;
         }
@@ -2481,11 +2485,14 @@ impl AppController {
             | Job::Add { archive, .. } => Some(archive),
             _ => None,
         };
-        if mutation.is_some_and(|archive| detect(archive) != Some(Format::Zip)) {
+        if !can_edit(&job) {
             self.state.error = true;
-            self.state.notice = self.s().only_zip_can_change.into();
+            self.state.notice = self.cannot_change(mutation.and_then(|archive| detect(archive)));
             return;
         }
+        let Some(mut job) = self.with_password(job) else {
+            return;
+        };
         if reread_target(&job, &self.state.active_pane().directory).is_some() {
             self.cancel_preview();
         }
@@ -2513,7 +2520,7 @@ impl AppController {
         | Job::Move { archive, .. }
         | Job::NewFolder { archive, .. } = &job
         {
-            if detect(archive) != Some(Format::Zip) {
+            if !can_edit(&job) {
                 self.state.notice = self.cannot_change(detect(archive));
                 self.state.error = true;
                 return;

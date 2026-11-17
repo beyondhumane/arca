@@ -102,5 +102,6 @@ The create dialog offers passwords for ZIP and 7z, plus **Hide file names** for
 validated in a background worker before extraction, testing, preview or opening
 a member. Retry resumes the original action; cancel does not write output.
 
-Changing an existing password, adding/deleting entries and renaming entries are
-**ZIP-only**. They are unavailable for 7z because solid blocks may need rewriting.
+Changing an existing password is **ZIP-only**. Adding, deleting and renaming
+entries also work in 7z: the archive is decoded and encoded again with the same
+password, and with its names hidden again if they were.

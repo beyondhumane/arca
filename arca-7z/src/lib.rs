@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
+mod edit;
 mod read;
 mod write;
 
+pub use edit::{rewrite_7z, Addition, Change};
 pub use read::{Phase, Progress, SevenZArchive};
 pub use write::{create_7z, workers, CreateOptions, Source};
 
