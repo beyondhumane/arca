@@ -65,7 +65,6 @@ impl Shell {
                     .color(hex(p.danger)),
             );
         }
-        let lines = found.lines();
         let mut close = false;
         ui.add_space(12.0);
         ui.allocate_ui_with_layout(
@@ -75,8 +74,8 @@ impl Shell {
                 if primary_button(ui, s.close_word, true).clicked() {
                     close = true;
                 }
-                if secondary_button(ui, s.copy_word, !lines.is_empty()).clicked() {
-                    ui.ctx().copy_text(lines);
+                if secondary_button(ui, s.copy_word, found.any_read()).clicked() {
+                    ui.ctx().copy_text(found.lines());
                 }
             },
         );

@@ -2583,23 +2583,12 @@ impl AppController {
         let comment_label = self.s().archive_comment_word;
         self.spawn(0, move |tx| {
             let notify = worker_notify(tx, &stop, &hold);
-            let result = (|| {
-                if password.is_some() {
-                    check_access(&path, password.as_deref(), &notify)?;
-                }
-                if !notify(0, 0, "") {
-                    return Err(arca_core::Error::Cancelled);
-                }
-                let (entries, mut notices) = list_entries(&path, password.as_deref(), &notify)?;
-                notices.extend(comment_notice(&path, comment_label));
-                let comments = read_comments(&path, password.as_deref());
-                if container_of(&path) == Some(Container::Rar) {
-                    let text = comments.as_ref().map_or("", |c| c.archive.as_str());
-                    notices.extend(notice_line(text, comment_label));
-                }
-                let _ = tx.send(Message::Comments(path.clone(), comments));
-                Ok((entries, notices))
-            })();
+            let result = listing(&path, password.as_deref(), &notify, comment_label).map(
+                |(entries, notices, comments)| {
+                    let _ = tx.send(Message::Comments(path.clone(), comments));
+                    (entries, notices)
+                },
+            );
             let _ = tx.send(Message::Listing(path, result, password));
         });
     }

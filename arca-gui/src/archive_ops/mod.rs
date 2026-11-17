@@ -908,25 +908,36 @@ mod tests {
         path
     }
 
+    fn notice(archive: &std::path::Path, label: &str) -> Option<String> {
+        let (_, notices, _) = super::listing(archive, None, &|_, _, _| true, label).ok()?;
+        notices.into_iter().next()
+    }
+
     #[test]
     fn a_zip_comment_becomes_one_clean_status_line() {
         let room = Room::new();
         let label = strings(Lang::Es).archive_comment_word;
         let commented = zip_with_comment(&room, "c.zip", b"line one\r\n\x1b[31mline two\t ");
         assert_eq!(
-            super::comment_notice(&commented, label).as_deref(),
+            notice(&commented, label).as_deref(),
             Some("Comentario del archivo: line one [31mline two")
         );
+        let (entries, _, comments) =
+            super::listing(&commented, None, &|_, _, _| true, label).unwrap();
+        assert_eq!(entries.len(), 1);
+        let comments = comments.unwrap();
+        assert!(comments.archive.starts_with("line one"));
+        assert!(comments.archive.ends_with("line two\t "));
 
         let long = zip_with_comment(&room, "long.zip", &[b'x'; 500]);
-        let notice = super::comment_notice(&long, "C").unwrap();
-        assert_eq!(notice.chars().count(), "C: ".len() + 160 + 1);
-        assert!(notice.ends_with('…'));
+        let cut = notice(&long, "C").unwrap();
+        assert_eq!(cut.chars().count(), "C: ".len() + 160 + 1);
+        assert!(cut.ends_with('…'));
 
         let plain = zip_with_comment(&room, "plain.zip", b"");
-        assert_eq!(super::comment_notice(&plain, label), None);
+        assert_eq!(notice(&plain, label), None);
         let tar = room.path("not.tar");
         fs::write(&tar, b"").unwrap();
-        assert_eq!(super::comment_notice(&tar, label), None);
+        assert_eq!(notice(&tar, label), None);
     }
 }

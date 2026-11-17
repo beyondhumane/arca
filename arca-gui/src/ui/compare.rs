@@ -110,7 +110,7 @@ impl Shell {
                 .max_height(320.0)
                 .auto_shrink([false, true])
                 .show_rows(ui, row_height, shown.len(), |ui, range| {
-                    for row in &shown[range] {
+                    for row in shown[range].iter().map(|&i| &found.rows[i]) {
                         let color = match row.change {
                             Change::Added => p.success,
                             Change::Removed => p.danger,
@@ -135,7 +135,6 @@ impl Shell {
                 .size(text_size(ui.style(), -1.0))
                 .color(hex(p.muted)),
         );
-        let lines = found.lines();
         let mut close = false;
         ui.add_space(12.0);
         ui.allocate_ui_with_layout(
@@ -145,8 +144,8 @@ impl Shell {
                 if primary_button(ui, s.close_word, true).clicked() {
                     close = true;
                 }
-                if secondary_button(ui, s.copy_word, !lines.is_empty()).clicked() {
-                    ui.ctx().copy_text(lines);
+                if secondary_button(ui, s.copy_word, !shown.is_empty()).clicked() {
+                    ui.ctx().copy_text(found.lines());
                 }
             },
         );

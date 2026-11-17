@@ -21,6 +21,13 @@ impl CompareFilter {
         CompareFilter::Changed,
     ];
 
+    fn slot(self) -> usize {
+        CompareFilter::ALL
+            .iter()
+            .position(|filter| *filter == self)
+            .unwrap_or(0)
+    }
+
     pub(crate) fn keeps(self, change: Change) -> bool {
         match self {
             CompareFilter::All => true,
@@ -38,27 +45,40 @@ pub(crate) struct Comparison {
     pub(crate) second: String,
     pub(crate) rows: Vec<Difference>,
     pub(crate) filter: CompareFilter,
+    by_filter: [Vec<usize>; 4],
 }
 
 impl Comparison {
-    pub(crate) fn shown(&self) -> Vec<&Difference> {
-        self.rows
-            .iter()
-            .filter(|row| self.filter.keeps(row.change))
-            .collect()
+    pub(crate) fn new(first: String, second: String, rows: Vec<Difference>) -> Self {
+        let by_filter = CompareFilter::ALL.map(|filter| {
+            rows.iter()
+                .enumerate()
+                .filter(|(_, row)| filter.keeps(row.change))
+                .map(|(i, _)| i)
+                .collect()
+        });
+        Comparison {
+            first,
+            second,
+            rows,
+            filter: CompareFilter::All,
+            by_filter,
+        }
+    }
+
+    /// The rows the filter keeps, as their place in `rows`.
+    pub(crate) fn shown(&self) -> &[usize] {
+        &self.by_filter[self.filter.slot()]
     }
 
     pub(crate) fn count(&self, filter: CompareFilter) -> usize {
-        self.rows
-            .iter()
-            .filter(|row| filter.keeps(row.change))
-            .count()
+        self.by_filter[filter.slot()].len()
     }
 
     pub(crate) fn lines(&self) -> String {
         self.shown()
             .iter()
-            .map(|row| format!("{}\n", row.line()))
+            .map(|&i| format!("{}\n", self.rows[i].line()))
             .collect()
     }
 }
@@ -114,12 +134,7 @@ impl AppController {
                         } else {
                             fill(s.compare_done, &[("n", &rows.len().to_string())])
                         };
-                        let _ = report.send(Comparison {
-                            first: names,
-                            second: other,
-                            rows,
-                            filter: CompareFilter::All,
-                        });
+                        let _ = report.send(Comparison::new(names, other, rows));
                         Message::Done(done)
                     }
                     Err(e) => Message::Failed(e.to_string()),
@@ -226,6 +241,10 @@ mod tests {
         assert_eq!(found.count(CompareFilter::OnlyFirst), 1);
         assert_eq!(found.count(CompareFilter::OnlySecond), 1);
         assert_eq!(found.count(CompareFilter::Changed), 1);
+        for filter in CompareFilter::ALL {
+            let kept = found.rows.iter().filter(|row| filter.keeps(row.change));
+            assert_eq!(found.count(filter), kept.count());
+        }
         app.comparison_mut().unwrap().filter = CompareFilter::OnlySecond;
         assert_eq!(app.comparison().unwrap().lines(), "+ new.txt\n");
         app.close_comparison();

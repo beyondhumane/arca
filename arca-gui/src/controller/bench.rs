@@ -30,7 +30,8 @@ pub(crate) struct BenchState {
 }
 
 pub(crate) fn cores() -> usize {
-    std::thread::available_parallelism().map_or(1, |n| n.get())
+    static CORES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CORES.get_or_init(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
 }
 
 impl BenchState {

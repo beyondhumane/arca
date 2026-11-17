@@ -244,14 +244,51 @@ pub(crate) fn list_entries(
     }
 }
 
-// The status line holds one short line, and the comment is whatever the
-// archive's author typed: control characters go, and a long one is cut.
-pub(crate) fn comment_notice(archive: &Path, label: &str) -> Option<String> {
-    if detect(archive).map(|f| f.container()) != Some(Container::Zip) {
-        return None;
+/// What the window reads to open an archive: its entries, the notices for
+/// the status line, among them the archive comment, and every comment it
+/// keeps. With a password it is checked first. A ZIP's central directory is
+/// read once for all of it.
+pub(crate) fn listing(
+    archive: &Path,
+    password: Option<&str>,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+    comment_label: &str,
+) -> arca_core::Result<(Vec<Entry>, Vec<String>, Option<super::Comments>)> {
+    if detect(archive).map(|f| f.container()) == Some(Container::Zip) {
+        let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
+        if password.is_some() {
+            zip_access(archive, a.entries(), password)?;
+        }
+        if !notify(0, 0, "") {
+            return Err(arca_core::Error::Cancelled);
+        }
+        let comments = super::comments::zip_comments(&a);
+        let notices = super::notice_line(&comments.archive, comment_label)
+            .into_iter()
+            .collect();
+        return Ok((a.entries().to_vec(), notices, Some(comments)));
     }
-    let comment = arca_zip::read_comment(arca_core::volumes::open(archive).ok()?).ok()?;
-    super::notice_line(&comment, label)
+    if password.is_some() {
+        check_access(archive, password, notify)?;
+    }
+    if !notify(0, 0, "") {
+        return Err(arca_core::Error::Cancelled);
+    }
+    let (entries, mut notices) = list_entries(archive, password, notify)?;
+    let comments = super::read_comments(archive, password);
+    if container_of(archive) == Some(Container::Rar) {
+        let text = comments.as_ref().map_or("", |c| c.archive.as_str());
+        notices.extend(super::notice_line(text, comment_label));
+    }
+    Ok((entries, notices, comments))
+}
+
+fn zip_access(archive: &Path, entries: &[Entry], password: Option<&str>) -> arca_core::Result<()> {
+    if !entries.iter().any(|e| e.encrypted) {
+        return Ok(());
+    }
+    let password = password.ok_or(arca_core::Error::PasswordRequired)?;
+    arca_zip::check_password(&mut arca_core::volumes::open(archive)?, entries, password)
 }
 
 pub(crate) fn check_access(
@@ -278,17 +315,7 @@ pub(crate) fn check_access(
         }
         Some(Container::Zip) => {
             let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
-            if a.has_encrypted() {
-                let password = password.ok_or(arca_core::Error::PasswordRequired)?;
-                let entries = a.entries().to_vec();
-                arca_zip::check_password(
-                    &mut arca_core::volumes::open(archive)?,
-                    &entries,
-                    password,
-                )
-            } else {
-                Ok(())
-            }
+            zip_access(archive, a.entries(), password)
         }
         Some(_) => Ok(()),
         None => Err(arca_core::Error::Unsupported("unknown format".into())),

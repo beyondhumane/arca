@@ -12,6 +12,20 @@ pub(crate) struct Comments {
     pub(crate) entries: HashMap<u64, String>,
 }
 
+/// The comments of a ZIP already open.
+pub(crate) fn zip_comments<R: std::io::Read + std::io::Seek>(a: &ZipArchive<R>) -> Comments {
+    let entries = a
+        .entries()
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| Some((e.offset, a.entry_comment(i)?)))
+        .collect();
+    Comments {
+        archive: a.comment(),
+        entries,
+    }
+}
+
 /// The comments of a ZIP, or the archive comment of a RAR. Nothing for the
 /// formats that keep none, or when they cannot be read: a comment is never a
 /// reason for an archive not to open.
@@ -19,16 +33,7 @@ pub(crate) fn read_comments(archive: &Path, password: Option<&str>) -> Option<Co
     match container_of(archive)? {
         Container::Zip => {
             let a = ZipArchive::open(arca_core::volumes::open(archive).ok()?).ok()?;
-            let entries = a
-                .entries()
-                .iter()
-                .enumerate()
-                .filter_map(|(i, e)| Some((e.offset, a.entry_comment(i)?)))
-                .collect();
-            Some(Comments {
-                archive: a.comment(),
-                entries,
-            })
+            Some(zip_comments(&a))
         }
         Container::Rar => {
             let a = arca_rar::RarArchive::open(archive, password).ok()?;
