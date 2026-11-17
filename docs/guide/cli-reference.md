@@ -32,7 +32,7 @@ Options:
   -V, --version  Print version
 ```
 
-`list`, `extract` and `test` also read the [ZIP containers](zip-containers.md) (.apk, .jar, .epub, .cbz and the rest), [ISO 9660 images](iso.md) and, in builds with [RAR](rar.md), .rar and .cbr. Those are read-only: `password` refuses them and `create` refuses every one of them except new `.rar` archives.
+`list`, `extract` and `test` also read the [ZIP containers](zip-containers.md) (.apk, .jar, .epub, .cbz and the rest), [ISO 9660 images](iso.md) and, in builds with [RAR](rar.md), .rar and .cbr. Those are read-only: `password` refuses them and `create` refuses every one of them except new `.rar` archives. Any part of a [split set](creating-archives.md#split-volumes), such as `backup.zip.002`, opens the whole set; split sets are read-only too.
 
 ## create · c
 
@@ -47,6 +47,9 @@ Create an archive. The format is taken from the extension of the output file.
 | `-j, --threads <N>` | 0 | ZIP and XZ threads; 0 means every core. XZ uses as many as fit in 2 GiB, Zstandard as many as asked and bzip2 one; 7z and RAR use every core their memory budget allows, whatever this says. |
 | `-p, --password <PASSWORD>` | none | Encrypt with AES-256 (.zip, .7z). Other tools will ask for it to open the archive. Refused for .rar. |
 | `--hide-names` | off | 7z only: encrypt headers; requires a nonempty password. |
+| `-v, --volume <SIZE>` | none | Split into parts of SIZE bytes, or with k, m or g for KiB, MiB, GiB: `out.zip.001`, `out.zip.002`… as 7-Zip does. Refuses to replace an existing `.001`. Not for .rar. See [split volumes](creating-archives.md#split-volumes). |
+| `--sfx` | off | Write a self-extracting Windows program (any name, usually `.exe`) from the `arca-sfx.exe` found next to arca. Not with `-p`, `--hide-names` or `-v`. See [self-extracting programs](creating-archives.md#self-extracting-programs). |
+| `--console` | off | With `--sfx`: the program asks for the folder and reports in the console instead of in windows. |
 
 ## list · l
 

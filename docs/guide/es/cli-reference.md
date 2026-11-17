@@ -32,7 +32,7 @@ Options:
   -V, --version  Print version
 ```
 
-`list`, `extract` y `test` también leen los [contenedores ZIP](zip-containers.md) (.apk, .jar, .epub, .cbz y el resto), las [imágenes ISO 9660](iso.md) y, en compilaciones con [RAR](rar.md), .rar y .cbr. Son de solo lectura: `password` los rechaza y `create` los rechaza todos salvo los archivos `.rar` nuevos.
+`list`, `extract` y `test` también leen los [contenedores ZIP](zip-containers.md) (.apk, .jar, .epub, .cbz y el resto), las [imágenes ISO 9660](iso.md) y, en compilaciones con [RAR](rar.md), .rar y .cbr. Son de solo lectura: `password` los rechaza y `create` los rechaza todos salvo los archivos `.rar` nuevos. Cualquier parte de un [conjunto dividido](creating-archives.md#dividir-en-partes), como `copia.zip.002`, abre el conjunto entero; los conjuntos divididos también son de solo lectura.
 
 ## create · c
 
@@ -47,6 +47,9 @@ Crea un archivo. El formato se toma de la extensión del archivo de salida.
 | `-j, --threads <N>` | 0 | Hilos ZIP y XZ; 0 usa todos los núcleos. XZ usa tantos como quepan en 2 GiB, Zstandard tantos como se pidan y bzip2 uno; 7z y RAR usan todos los núcleos que permite su presupuesto de memoria, diga lo que diga esta opción. |
 | `-p, --password <PASSWORD>` | ninguna | Cifra con AES-256 (.zip, .7z). Otras herramientas la pedirán para abrir el archivo. Se rechaza en .rar. |
 | `--hide-names` | desactivado | Solo 7z: cifra cabeceras; exige una contraseña no vacía. |
+| `-v, --volume <SIZE>` | ninguno | Divide en partes de SIZE bytes, o con k, m o g para KiB, MiB, GiB: `salida.zip.001`, `salida.zip.002`… como hace 7-Zip. Se niega a sustituir un `.001` existente. No en .rar. Véase [dividir en partes](creating-archives.md#dividir-en-partes). |
+| `--sfx` | desactivado | Escribe un programa de Windows que se extrae solo (cualquier nombre, normalmente `.exe`) a partir del `arca-sfx.exe` que hay junto a arca. No con `-p`, `--hide-names` ni `-v`. Véase [programas que se extraen solos](creating-archives.md#programas-que-se-extraen-solos). |
+| `--console` | desactivado | Con `--sfx`: el programa pide la carpeta e informa en la consola en lugar de en ventanas. |
 
 ## list · l
 
