@@ -70,6 +70,18 @@ enum Cmd {
             help = "Split the archive into parts of SIZE bytes, or k, m or g (KiB, MiB, GiB): out.zip.001, out.zip.002, ... as 7-Zip does. Not for .rar"
         )]
         volume: Option<u64>,
+        #[arg(
+            long,
+            conflicts_with_all = ["volume", "password", "hide_names"],
+            help = "Make a self-extracting program (out.exe) instead: the arca-sfx program found next to arca, followed by a ZIP. Run it to choose a folder and extract there"
+        )]
+        sfx: bool,
+        #[arg(
+            long,
+            requires = "sfx",
+            help = "Make the self-extracting program ask and report in the console instead of in windows"
+        )]
+        console: bool,
     },
     #[command(
         visible_alias = "l",
@@ -299,6 +311,8 @@ fn run(cli: Cli) -> Result<()> {
             password,
             hide_names,
             volume,
+            sfx,
+            console,
         } => create(
             &out,
             &inputs,
@@ -306,7 +320,11 @@ fn run(cli: Cli) -> Result<()> {
             codec,
             threads,
             (password.as_deref(), hide_names),
-            volume,
+            match (volume, sfx) {
+                (_, true) => Shape::Sfx { console },
+                (Some(size), false) => Shape::Split(size),
+                (None, false) => Shape::Plain,
+            },
         ),
         Cmd::List {
             archive,
@@ -424,6 +442,48 @@ fn resolve_codec(c: CodecArg, format_kind: Format) -> Result<Codec> {
     })
 }
 
+/// What `arca create` writes: one archive, a set of parts, or a program
+/// that extracts itself.
+#[derive(Clone, Copy)]
+enum Shape {
+    Plain,
+    Split(u64),
+    Sfx { console: bool },
+}
+
+/// The self-extractor program and the flags for its trailer. It is the
+/// arca-sfx built alongside arca and installed next to it; ARCA_SFX_STUB
+/// names another one. With `console` a Windows program is made a console
+/// one, so it can talk through the console it was started from.
+fn sfx_stub(console: bool) -> Result<(Vec<u8>, u32)> {
+    let path = match std::env::var_os("ARCA_SFX_STUB") {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_exe()?
+            .with_file_name(format!("arca-sfx{}", std::env::consts::EXE_SUFFIX)),
+    };
+    let mut program = fs::read(&path).map_err(|e| {
+        Error::Unsupported(format!(
+            "self-extracting programs need arca-sfx, which was not found at '{}' ({e}); \
+             it comes with Arca on Windows, and `cargo build -p arca-sfx` builds it",
+            path.display()
+        ))
+    })?;
+    if arca_core::sfx::Trailer::read(&mut io::Cursor::new(&program)).is_ok() {
+        return Err(Error::Unsupported(format!(
+            "'{}' already carries an archive; point ARCA_SFX_STUB at the plain arca-sfx",
+            path.display()
+        )));
+    }
+    let mut flags = 0;
+    if console {
+        if program.starts_with(b"MZ") {
+            arca_core::sfx::console_subsystem(&mut program)?;
+        }
+        flags |= arca_core::sfx::CONSOLE;
+    }
+    Ok((program, flags))
+}
+
 fn create(
     out: &Path,
     inputs: &[PathBuf],
@@ -431,11 +491,33 @@ fn create(
     codec_arg: CodecArg,
     requested_threads: usize,
     (password, hide_names): (Option<&str>, bool),
-    volume: Option<u64>,
+    shape: Shape,
 ) -> Result<()> {
+    let volume = match shape {
+        Shape::Split(size) => Some(size),
+        _ => None,
+    };
     let whole = volume.map(|_| arca_core::volumes::whole_name(out));
     let out = whole.as_deref().unwrap_or(out);
-    let format_kind = detect(out)?;
+    let stub = match shape {
+        Shape::Sfx { console } => Some(sfx_stub(console)?),
+        _ => None,
+    };
+    if stub.is_some()
+        && !matches!(
+            codec_arg,
+            CodecArg::Auto | CodecArg::Deflate | CodecArg::Store
+        )
+    {
+        return Err(Error::Unsupported(
+            "a self-extracting program carries a ZIP compressed with deflate or stored; use -c auto, deflate or store".into(),
+        ));
+    }
+    let format_kind = if stub.is_some() {
+        Format::Zip
+    } else {
+        detect(out)?
+    };
     if !format_kind.can_create() {
         return Err(format_kind.read_only());
     }
@@ -538,8 +620,14 @@ fn create(
         Container::Rar | Container::Iso => return Err(format_kind.read_only()),
         Container::Zip => {
             staged(out, volume, |w| {
-                arca_zip::create_zip_into(w, &files, threads, password, &|_, _, _| true)?
-                    .flush()?;
+                let go = &|_: usize, _: usize, _: &str| true;
+                match &stub {
+                    Some((program, flags)) => arca_core::sfx::build(w, program, *flags, |w| {
+                        arca_zip::create_zip_into(w, &files, threads, None, go)
+                    })?
+                    .flush()?,
+                    None => arca_zip::create_zip_into(w, &files, threads, password, go)?.flush()?,
+                }
                 Ok(())
             })?
             .1
@@ -608,8 +696,17 @@ fn create(
     };
 
     let dt = t0.elapsed();
+    let program = stub
+        .as_ref()
+        .map_or(0, |(p, _)| p.len() as u64 + arca_core::sfx::TRAILER_LEN);
+    let packed = final_size.saturating_sub(program);
+    let note = if program > 0 {
+        format!(" · plus the {} self-extracting program", human(program))
+    } else {
+        parts_note(final_size, volume)
+    };
     let ratio = if total > 0 {
-        100.0 * (1.0 - final_size as f64 / total as f64)
+        100.0 * (1.0 - packed as f64 / total as f64)
     } else {
         0.0
     };
@@ -623,12 +720,12 @@ fn create(
         arca_core::volumes::first_output(out, volume).display(),
         files.len(),
         human(total),
-        human(final_size),
+        human(packed),
         ratio,
         dt.as_secs_f64(),
         mbs,
         threads,
-        parts_note(final_size, volume)
+        note
     );
     Ok(())
 }
