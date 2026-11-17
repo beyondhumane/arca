@@ -1949,7 +1949,9 @@ impl AppController {
                             .unwrap_or_default(),
                         read_only_suffix(detect(&path))
                     );
-                    if !notices.is_empty() {
+                    // Opening clears the status line; one still standing here is
+                    // the result of the job whose rewrite this listing reloads.
+                    if !notices.is_empty() && self.state.notice.is_empty() {
                         self.state.notice = notices.join(" ");
                         self.state.error = false;
                     }
