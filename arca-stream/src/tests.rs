@@ -520,3 +520,30 @@ fn a_broken_split_stream_fails_without_panicking() {
     assert!(entry(&first, Format::Xz).is_err());
     assert_eq!(identify(&first), Some(Format::Xz));
 }
+
+#[test]
+fn a_damaged_end_still_gives_what_decodes_before_it() {
+    let room = Room::new("salvage");
+    let data = sample(300_000);
+    for format in single_formats() {
+        let whole = compress(format, &data, 1, Some(data.len() as u64));
+        let path = room.put(
+            &format!("cut.{}", format.extension()),
+            &whole[..whole.len() - 8],
+        );
+        let mut out = Vec::new();
+        let result = open_salvage(&path, format).unwrap().read_to_end(&mut out);
+        assert!(result.is_err(), "{}", format.label());
+        assert!(data.starts_with(&out), "{}", format.label());
+        if format == Format::Xz {
+            assert!(open(&path, format).is_err());
+        }
+        for cut in (0..whole.len()).step_by(997) {
+            let path = room.put(&format!("c.{}", format.extension()), &whole[..cut]);
+            if let Ok(mut r) = open_salvage(&path, format) {
+                let _ = r.read_to_end(&mut Vec::new());
+            }
+        }
+    }
+    assert!(open_salvage(&room.put("x.zip", b"PK"), Format::Zip).is_err());
+}
