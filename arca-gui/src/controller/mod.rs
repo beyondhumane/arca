@@ -1,7 +1,11 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
+mod comments;
+#[cfg(test)]
+mod comments_tests;
 mod compare;
+pub(crate) use comments::CommentState;
 pub(crate) use compare::CompareFilter;
 pub(crate) mod disk;
 #[cfg(test)]
@@ -911,6 +915,7 @@ impl AppController {
                 show_shortcuts: false,
                 show_update: false,
                 quiet: false,
+                comments: CommentState::default(),
                 browser: BrowserState::default(),
                 preview: PreviewState::default(),
             },
@@ -2056,6 +2061,9 @@ impl AppController {
                     self.state.total_count = total;
                     self.state.current_file = name;
                 }
+                Message::Comments(path, comments) => {
+                    self.state.comments.listed = comments.map(|c| (path, c));
+                }
                 // The rest is what a task says, and tasks have channels of
                 // their own.
                 Message::Created(..)
@@ -2501,6 +2509,12 @@ impl AppController {
                 }
                 let (entries, mut notices) = list_entries(&path, password.as_deref(), &notify)?;
                 notices.extend(comment_notice(&path, comment_label));
+                let comments = read_comments(&path, password.as_deref());
+                if container_of(&path) == Some(Container::Rar) {
+                    let text = comments.as_ref().map_or("", |c| c.archive.as_str());
+                    notices.extend(notice_line(text, comment_label));
+                }
+                let _ = tx.send(Message::Comments(path.clone(), comments));
                 Ok((entries, notices))
             })();
             let _ = tx.send(Message::Listing(path, result, password));
@@ -2517,7 +2531,8 @@ impl AppController {
             | Job::Rename { archive, .. }
             | Job::Move { archive, .. }
             | Job::NewFolder { archive, .. }
-            | Job::Add { archive, .. } => Some(archive),
+            | Job::Add { archive, .. }
+            | Job::Comment { archive, .. } => Some(archive),
             _ => None,
         };
         if mutation.is_some_and(|archive| arca_core::volumes::is_part(archive)) {
@@ -2558,7 +2573,8 @@ impl AppController {
         | Job::Rename { archive, .. }
         | Job::Add { archive, .. }
         | Job::Move { archive, .. }
-        | Job::NewFolder { archive, .. } = &job
+        | Job::NewFolder { archive, .. }
+        | Job::Comment { archive, .. } = &job
         {
             if !can_edit(&job) {
                 self.state.notice = self.cannot_change(detect(archive));
@@ -2579,6 +2595,7 @@ impl AppController {
             Job::Move { .. } => s.moving_word.to_string(),
             Job::Compress { .. } => s.compressing.to_string(),
             Job::Add { .. } => s.adding.to_string(),
+            Job::Comment { .. } => s.commenting.to_string(),
             // The only verb with a hole in it: which version is coming down is
             // known to the job, not to the list of words.
             Job::Update { tag, .. } => fill(s.update_downloading, &[("version", tag)]),
@@ -2604,6 +2621,7 @@ impl AppController {
                     | Job::NewFolder { .. }
                     | Job::Move { .. }
                     | Job::Add { .. }
+                    | Job::Comment { .. }
             );
         // The file on disk is about to change, so the listing has to be redone.
         //
@@ -2627,6 +2645,7 @@ impl AppController {
             Job::Password { archive, .. } => Some((archive.clone(), words.password_word)),
             Job::NewFolder { archive, .. } => Some((archive.clone(), words.new_folder)),
             Job::Move { archive, .. } => Some((archive.clone(), words.moving_word)),
+            Job::Comment { archive, .. } => Some((archive.clone(), words.comment_word)),
             _ => None,
         };
         let (reads, writes, outputs) = touched_by(&job);
@@ -2751,7 +2770,8 @@ fn touched_by(job: &Job) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
         | Job::Rename { archive, .. }
         | Job::Move { archive, .. }
         | Job::NewFolder { archive, .. }
-        | Job::Add { archive, .. } => (Vec::new(), vec![archive.clone()], Vec::new()),
+        | Job::Add { archive, .. }
+        | Job::Comment { archive, .. } => (Vec::new(), vec![archive.clone()], Vec::new()),
         Job::CopyTo { archive, dest } => (vec![archive.clone()], vec![dest.clone()], Vec::new()),
         Job::Compress {
             out,
@@ -2786,6 +2806,9 @@ fn reread_target(job: &Job, current_dir: &str) -> Option<(PathBuf, Option<String
             archive, password, ..
         }
         | Job::NewFolder {
+            archive, password, ..
+        }
+        | Job::Comment {
             archive, password, ..
         } => Some((archive.clone(), password.clone(), current_dir.to_string())),
         Job::Rename {
@@ -2895,6 +2918,12 @@ mod reread_tests {
                 from: "a".into(),
                 to: "b".into(),
                 folder: false,
+                password: None,
+            },
+            Job::Comment {
+                archive: archive(),
+                entry: None,
+                text: "note".into(),
                 password: None,
             },
         ];

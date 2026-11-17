@@ -504,6 +504,14 @@ pub struct Strings {
     pub compare_changed: &'static str,
     pub compare_none_shown: &'static str,
     pub compare_legend: &'static str,
+    pub comment_action: &'static str,
+    pub comment_word: &'static str,
+    pub entry_comment_title: &'static str,
+    pub comment_hint: &'static str,
+    pub save_comment: &'static str,
+    pub commenting: &'static str,
+    pub comment_saved: &'static str,
+    pub comment_only_zip: &'static str,
 }
 
 const EN: Strings = Strings {
@@ -962,6 +970,14 @@ const EN: Strings = Strings {
     compare_changed: "Changed",
     compare_none_shown: "No differences of this kind",
     compare_legend: "+ only in the second   - only in the first   M contents differ   T file, folder or link   m only the date",
+    comment_action: "Comment...",
+    comment_word: "Comment",
+    entry_comment_title: "Comment on {name}",
+    comment_hint: "Leave it empty to remove the comment.",
+    save_comment: "Save",
+    commenting: "Saving the comment",
+    comment_saved: "Comment saved",
+    comment_only_zip: "Only ZIP comments can be changed",
 };
 
 const ES: Strings = Strings {
@@ -1420,6 +1436,14 @@ const ES: Strings = Strings {
     compare_changed: "Cambiadas",
     compare_none_shown: "Ninguna diferencia de este tipo",
     compare_legend: "+ solo en el segundo   - solo en el primero   M contenido distinto   T archivo, carpeta o enlace   m solo la fecha",
+    comment_action: "Comentario...",
+    comment_word: "Comentario",
+    entry_comment_title: "Comentario de {name}",
+    comment_hint: "Déjalo vacío para quitar el comentario.",
+    save_comment: "Guardar",
+    commenting: "Guardando el comentario",
+    comment_saved: "Comentario guardado",
+    comment_only_zip: "Solo se pueden cambiar los comentarios de un ZIP",
 };
 
 const UK: Strings = Strings {
@@ -1878,6 +1902,14 @@ const UK: Strings = Strings {
     compare_changed: "Змінені",
     compare_none_shown: "Відмінностей такого типу немає",
     compare_legend: "+ лише в другому   - лише в першому   M інший вміст   T файл, папка чи посилання   m лише дата",
+    comment_action: "Коментар...",
+    comment_word: "Коментар",
+    entry_comment_title: "Коментар до {name}",
+    comment_hint: "Залиште порожнім, щоб прибрати коментар.",
+    save_comment: "Зберегти",
+    commenting: "Збереження коментаря",
+    comment_saved: "Коментар збережено",
+    comment_only_zip: "Змінювати можна лише коментарі ZIP",
 };
 pub fn strings(l: Lang) -> &'static Strings {
     match l {

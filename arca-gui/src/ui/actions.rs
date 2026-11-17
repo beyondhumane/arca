@@ -33,10 +33,11 @@ pub(crate) enum RowAction {
     TestArchive,
     Compare,
     CompareFolder,
+    Comment,
 }
 
 impl RowAction {
-    pub(crate) const ALL: [RowAction; 29] = [
+    pub(crate) const ALL: [RowAction; 30] = [
         RowAction::NewFolderWith,
         RowAction::Open,
         RowAction::OpenInPane,
@@ -66,6 +67,7 @@ impl RowAction {
         RowAction::TestArchive,
         RowAction::Compare,
         RowAction::CompareFolder,
+        RowAction::Comment,
     ];
 
     /// What the menu offers where there is no row under the pointer: the
@@ -163,6 +165,7 @@ impl RowAction {
             RowAction::TestArchive => (s.test_word, "ctrl-t"),
             RowAction::Compare => (s.compare_with, ""),
             RowAction::CompareFolder => (s.compare_with_folder, ""),
+            RowAction::Comment => (s.comment_action, ""),
         }
     }
 
@@ -197,6 +200,7 @@ impl RowAction {
             RowAction::Pin => icon::PUSH_PIN,
             RowAction::Compare => icon::GIT_DIFF,
             RowAction::CompareFolder => icon::FOLDERS,
+            RowAction::Comment => icon::CHAT_TEXT,
         }
     }
 
@@ -234,6 +238,7 @@ impl RowAction {
                 | Self::Duplicate
                 | Self::MoveTo
                 | Self::Trash
+                | Self::Comment
         )
     }
 
@@ -258,6 +263,7 @@ impl RowAction {
                     | Self::TestSelection
                     | Self::ExtractAll
                     | Self::TestArchive
+                    | Self::Comment
             ) && (!matches!(self, Self::OpenWith) || cfg!(any(target_os = "linux", windows)))
         } else {
             !matches!(
@@ -343,6 +349,7 @@ pub(crate) enum ModalKind {
     Compare,
     Label,
     Format,
+    Comment,
 }
 
 pub(crate) fn column_text(
@@ -440,6 +447,7 @@ pub(crate) enum OverflowAction {
     NewFolder,
     Undo,
     SaveCopy,
+    Comment,
 }
 
 /// A selection being drawn by pulling across the list.

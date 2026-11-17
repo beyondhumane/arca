@@ -1161,6 +1161,7 @@ impl Shell {
             self.controller.set_pane_cursor(active, Some(index));
         }
         if !row.up {
+            self.comment_tooltip(response, row);
             response.context_menu(|ui| self.row_menu(ui, Some(row), index));
         }
         if response.drag_started_by(egui::PointerButton::Primary) && idle && !row.up {
@@ -1217,6 +1218,7 @@ impl Shell {
                     (row.is_dir && matches!(action, RowAction::View | RowAction::OpenWith))
                         || (!row.is_dir && action == RowAction::Pin)
                 })
+                || !self.row_action_applies(action, row)
             {
                 continue;
             }

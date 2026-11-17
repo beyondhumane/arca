@@ -31,7 +31,9 @@ pub(crate) fn editable(format: Format) -> bool {
 /// password only in a ZIP, entries in any format [`editable`] takes.
 pub(crate) fn can_edit(job: &Job) -> bool {
     match job {
-        Job::Password { archive, .. } => detect(archive) == Some(Format::Zip),
+        Job::Password { archive, .. } | Job::Comment { archive, .. } => {
+            detect(archive) == Some(Format::Zip)
+        }
         Job::Delete { archive, .. }
         | Job::Rename { archive, .. }
         | Job::Move { archive, .. }

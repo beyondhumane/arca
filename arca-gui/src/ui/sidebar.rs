@@ -395,6 +395,7 @@ fn tree(
                                 | RowAction::OpenWith
                                 | RowAction::ExtractAll
                                 | RowAction::TestArchive
+                                | RowAction::Comment
                         )
                         || (action.writable_only() && !context.writable)
                     {

@@ -459,7 +459,7 @@ impl AppController {
                         self.state.tasks[i].result = self.state.notice.clone();
                         settled = true;
                     }
-                    Message::Listing(..) | Message::AccessChecked(..) => {}
+                    Message::Listing(..) | Message::AccessChecked(..) | Message::Comments(..) => {}
                 }
             }
             let task = &mut self.state.tasks[i];

@@ -33,6 +33,8 @@ pub(crate) enum Message {
     Progress(usize, usize, String),
     Done(String),
     Failed(String),
+    // The comments of the archive being listed, sent before its listing.
+    Comments(PathBuf, Option<crate::Comments>),
     // A cut reached the clipboard in one piece. Sent before Done, and only
     // then, so a cut that failed halfway never leaves the window waiting to
     // take entries out of an archive on the strength of it.
@@ -338,7 +340,8 @@ pub(crate) fn subject_of(job: &Job) -> String {
         | Job::Move { archive, .. }
         | Job::NewFolder { archive, .. }
         | Job::Rename { archive, .. }
-        | Job::Add { archive, .. } => named(archive),
+        | Job::Add { archive, .. }
+        | Job::Comment { archive, .. } => named(archive),
         // Here the file is the installer, and its name already has the version.
         Job::Update { installer, .. } => {
             installer.rsplit('/').next().unwrap_or_default().to_string()
