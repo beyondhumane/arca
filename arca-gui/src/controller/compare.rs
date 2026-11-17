@@ -124,9 +124,20 @@ impl AppController {
             subject,
             Box::new(move |tx, _, stop, hold| {
                 let notify = worker_notify(&tx, &stop, &hold);
-                let found = Side::open(&first, password.as_deref(), &notify)
-                    .and_then(|a| Ok((a, Side::open(&second, password.as_deref(), &notify)?)))
-                    .and_then(|(a, b)| compare(&a, &b, Options::default(), &notify));
+                let open = |path: &Path, password: Option<&str>, name: &str| {
+                    Side::open(path, password, &notify).map_err(|e| {
+                        if super::password_error(&e) {
+                            fill(s.compare_locked, &[("name", name)])
+                        } else {
+                            e.to_string()
+                        }
+                    })
+                };
+                let found = open(&first, password.as_deref(), &names)
+                    .and_then(|a| Ok((a, open(&second, None, &other)?)))
+                    .and_then(|(a, b)| {
+                        compare(&a, &b, Options::default(), &notify).map_err(|e| e.to_string())
+                    });
                 let _ = tx.send(match found {
                     Ok(rows) => {
                         let done = if rows.is_empty() {
@@ -137,7 +148,7 @@ impl AppController {
                         let _ = report.send(Comparison::new(names, other, rows));
                         Message::Done(done)
                     }
-                    Err(e) => Message::Failed(e.to_string()),
+                    Err(error) => Message::Failed(error),
                 });
             }),
         )
@@ -307,5 +318,29 @@ mod tests {
         settle(&mut app);
         assert!(app.comparison().is_none());
         assert_eq!(app.task(id).unwrap().status, TaskStatus::Stopped);
+    }
+
+    #[test]
+    fn the_password_of_the_open_archive_is_not_sent_to_the_other_one() {
+        let (one, two) = (
+            crate::test_support::Room::new(),
+            crate::test_support::Room::new(),
+        );
+        let first = one.archive(Some("secret"), true);
+        let second = two.archive(Some("secret"), true);
+        let mut app = AppController::new(Settings::default());
+        app.load_listing(first, Some("secret".into()));
+        settle(&mut app);
+        assert_eq!(app.state.archive_password.as_deref(), Some("secret"));
+        app.dispatch(AppAction::Compare {
+            first: None,
+            second: second.clone(),
+        });
+        settle(&mut app);
+        assert!(app.comparison().is_none());
+        let task = app.state.tasks.last().expect("a task");
+        assert_eq!(task.status, TaskStatus::Failed);
+        let expected = fill(app.s().compare_locked, &[("name", &label(&second))]);
+        assert_eq!(task.result, expected);
     }
 }
