@@ -466,7 +466,10 @@ impl AppController {
                             text,
                         });
                     }
-                    Message::Listing(..) | Message::AccessChecked(..) | Message::Comments(..) => {}
+                    Message::Listing(..)
+                    | Message::AccessChecked(..)
+                    | Message::Weak(..)
+                    | Message::Comments(..) => {}
                 }
             }
             let task = &mut self.state.tasks[i];

@@ -10,12 +10,23 @@ pub(crate) struct PasswordState {
     pub(crate) save_typed: bool,
     trying: Option<Attempts>,
     typed: Option<Zeroizing<String>>,
+    weak: Option<(Vec<PathBuf>, bool)>,
 }
 
 impl PasswordState {
     #[cfg(test)]
     pub(super) fn trying(&self) -> bool {
         self.trying.is_some()
+    }
+
+    /// Whether the password about to be sent is one typed to be saved, which
+    /// has to be proved beyond ZipCrypto's one check byte before it is kept.
+    pub(super) fn proving(&self) -> bool {
+        self.typed.is_some()
+    }
+
+    pub(super) fn note_weak(&mut self, archives: Vec<PathBuf>, weak: bool) {
+        self.weak = Some((archives, weak));
     }
 }
 
@@ -101,13 +112,21 @@ impl AppController {
     // A ZipCrypto check is one byte, so one wrong password in 256 passes it,
     // and the same one passes every time. Such an archive gets its saved
     // passwords offered, never tried, or a false match would stop the box
-    // from ever asking.
+    // from ever asking. The open archive says so through its entries; any
+    // other, through the worker that found it needs a password.
     fn weak_check(&self, archives: &[PathBuf]) -> bool {
-        self.state
+        let open = self
+            .state
             .archive
             .as_ref()
             .is_some_and(|open| archives.contains(open))
-            && self.state.entries.iter().any(|entry| entry.zipcrypto)
+            && self.state.entries.iter().any(|entry| entry.zipcrypto);
+        open || self
+            .state
+            .saved
+            .weak
+            .as_ref()
+            .is_some_and(|(asked, weak)| *weak && asked == archives)
     }
 
     /// Whether the password that just failed was the saved one sent for it,
@@ -126,6 +145,7 @@ impl AppController {
         let archive = self.asked_for(pending).into_iter().next();
         let saved = &mut self.state.saved;
         saved.trying = None;
+        saved.weak = None;
         saved.save_typed = false;
         saved.keyring.touch();
         let Some(typed) = saved.typed.take() else {
@@ -168,6 +188,7 @@ impl AppController {
     pub(super) fn forget_attempts(&mut self) {
         let saved = &mut self.state.saved;
         saved.trying = None;
+        saved.weak = None;
         saved.typed = None;
         saved.save_typed = false;
     }

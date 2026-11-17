@@ -244,14 +244,23 @@ impl AppController {
             self.state.archive.is_some(),
         );
         let (stop, hold) = self.fresh_flags();
+        let prove = self.state.saved.proving();
         self.spawn(0, move |tx| {
             let notify = worker_notify(tx, &stop, &hold);
             let result = paths.iter().try_for_each(|path| {
                 if !notify(0, 0, "") {
                     return Err(arca_core::Error::Cancelled);
                 }
-                check_access(path, password.as_deref(), &notify)
+                check_access(path, password.as_deref(), &notify)?;
+                match password.as_deref() {
+                    Some(password) if prove => prove_password(path, password),
+                    _ => Ok(()),
+                }
             });
+            if result.as_ref().is_err_and(password_error) {
+                let weak = paths.iter().any(|path| weak_password_check(path));
+                let _ = tx.send(Message::Weak(paths, weak));
+            }
             let _ = tx.send(Message::AccessChecked(pending, password, result));
         });
     }
@@ -2140,6 +2149,7 @@ impl AppController {
                     self.state.total_count = total;
                     self.state.current_file = name;
                 }
+                Message::Weak(archives, weak) => self.state.saved.note_weak(archives, weak),
                 Message::Comments(path, comments) => {
                     self.state.comments.listed = comments.map(|c| (path, c));
                 }
@@ -2581,14 +2591,18 @@ impl AppController {
         self.show_job(self.s().opening, archive_stem(&path), true);
         let (stop, hold) = self.fresh_flags();
         let comment_label = self.s().archive_comment_word;
+        let prove = self.state.saved.proving();
         self.spawn(0, move |tx| {
             let notify = worker_notify(tx, &stop, &hold);
-            let result = listing(&path, password.as_deref(), &notify, comment_label).map(
-                |(entries, notices, comments)| {
+            let result = listing(&path, password.as_deref(), &notify, comment_label)
+                .and_then(|listed| match password.as_deref() {
+                    Some(password) if prove => prove_password(&path, password).map(|()| listed),
+                    _ => Ok(listed),
+                })
+                .map(|(entries, notices, comments)| {
                     let _ = tx.send(Message::Comments(path.clone(), comments));
                     (entries, notices)
-                },
-            );
+                });
             let _ = tx.send(Message::Listing(path, result, password));
         });
     }

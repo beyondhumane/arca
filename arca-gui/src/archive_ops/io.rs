@@ -291,6 +291,40 @@ fn zip_access(archive: &Path, entries: &[Entry], password: Option<&str>) -> arca
     arca_zip::check_password(&mut arca_core::volumes::open(archive)?, entries, password)
 }
 
+/// Whether a password for `archive` is only checked against ZipCrypto's one
+/// byte, which one wrong password in 256 gets past, and always the same one.
+pub(crate) fn weak_password_check(archive: &Path) -> bool {
+    container_of(archive) == Some(Container::Zip)
+        && arca_core::volumes::open(archive)
+            .ok()
+            .and_then(|source| ZipArchive::open(source).ok())
+            .is_some_and(|a| a.entries().iter().any(|e| e.encrypted && e.zipcrypto))
+}
+
+/// Proves a password that passed ZipCrypto's one-byte check by decrypting
+/// the smallest ZipCrypto entry that has contents and checking its CRC. An
+/// empty entry proves nothing: the CRC of nothing is zero for any password.
+pub(crate) fn prove_password(archive: &Path, password: &str) -> arca_core::Result<()> {
+    if container_of(archive) != Some(Container::Zip) {
+        return Ok(());
+    }
+    let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
+    let Some(entry) = a
+        .entries()
+        .iter()
+        .filter(|e| e.encrypted && e.zipcrypto && !e.is_dir && e.size > 0)
+        .min_by_key(|e| e.compressed_size)
+    else {
+        return Ok(());
+    };
+    let mut source = arca_core::volumes::open(archive)?;
+    match arca_zip::extract_entry_with(&mut source, entry, std::io::sink(), Some(password)) {
+        Ok(_) => Ok(()),
+        Err(error @ (arca_core::Error::Io(_) | arca_core::Error::Cancelled)) => Err(error),
+        Err(_) => Err(arca_core::Error::PasswordOrCorrupt),
+    }
+}
+
 pub(crate) fn check_access(
     archive: &Path,
     password: Option<&str>,
