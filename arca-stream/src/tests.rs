@@ -547,3 +547,33 @@ fn a_damaged_end_still_gives_what_decodes_before_it() {
     }
     assert!(open_salvage(&room.put("x.zip", b"PK"), Format::Zip).is_err());
 }
+
+#[test]
+fn a_zstd_frame_of_many_blocks_is_walked_in_few_reads() {
+    struct Counted(std::io::Cursor<Vec<u8>>, usize);
+    impl Read for Counted {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.1 += 1;
+            self.0.read(buf)
+        }
+    }
+    impl std::io::Seek for Counted {
+        fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+            self.1 += 1;
+            self.0.seek(to)
+        }
+    }
+    let blocks = 100_000;
+    let mut frame = 0xFD2F_B528u32.to_le_bytes().to_vec();
+    frame.extend_from_slice(&[0x00, 0x00]);
+    for _ in 1..blocks {
+        frame.extend_from_slice(&[0, 0, 0]);
+    }
+    frame.extend_from_slice(&[1, 0, 0]);
+    let len = frame.len();
+    let mut source = Counted(std::io::Cursor::new(frame), 0);
+    assert_eq!(zst::declared_size(&mut source).unwrap(), None);
+    assert!(source.1 < len / 1000, "{} reads and seeks", source.1);
+    let cut = source.0.into_inner()[..len - 1].to_vec();
+    assert!(zst::declared_size(&mut std::io::Cursor::new(cut)).is_err());
+}

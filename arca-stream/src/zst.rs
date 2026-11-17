@@ -1,5 +1,5 @@
 use arca_core::{Error, Result};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
 
 const MAGIC: u32 = 0xFD2F_B528;
 const SKIPPABLE: u32 = 0x184D_2A50;
@@ -16,12 +16,32 @@ pub(crate) fn is_magic(bytes: &[u8]) -> bool {
     }
 }
 
-fn read_at<R: Read + Seek>(source: &mut R, at: u64, buf: &mut [u8]) -> Result<()> {
-    source.seek(SeekFrom::Start(at))?;
-    source.read_exact(buf).map_err(|e| match e.kind() {
-        io::ErrorKind::UnexpectedEof => corrupt("the stream is truncated"),
-        _ => Error::Io(e),
-    })
+/// The source read front to back through a buffer, so that a frame of many
+/// small blocks costs one read per buffer rather than a seek and a read per
+/// block.
+struct Walk<R: Read + Seek> {
+    source: BufReader<R>,
+    pos: u64,
+}
+
+impl<R: Read + Seek> Walk<R> {
+    fn read_at(&mut self, at: u64, buf: &mut [u8]) -> Result<()> {
+        if at != self.pos {
+            let by = if at > self.pos {
+                i64::try_from(at - self.pos)
+            } else {
+                i64::try_from(self.pos - at).map(|by| -by)
+            };
+            self.source
+                .seek_relative(by.map_err(|_| corrupt("the stream is truncated"))?)?;
+        }
+        self.source.read_exact(buf).map_err(|e| match e.kind() {
+            io::ErrorKind::UnexpectedEof => corrupt("the stream is truncated"),
+            _ => Error::Io(e),
+        })?;
+        self.pos = at + buf.len() as u64;
+        Ok(())
+    }
 }
 
 fn le(bytes: &[u8]) -> u64 {
@@ -38,6 +58,11 @@ fn le(bytes: &[u8]) -> u64 {
 /// a file with no frame at all is an error.
 pub(crate) fn declared_size<R: Read + Seek>(source: &mut R) -> Result<Option<u64>> {
     let end = source.seek(SeekFrom::End(0))?;
+    source.seek(SeekFrom::Start(0))?;
+    let mut walk = Walk {
+        source: BufReader::with_capacity(64 << 10, source),
+        pos: 0,
+    };
     let mut pos = 0u64;
     let mut total = Some(0u64);
     let mut frames = 0u64;
@@ -48,10 +73,10 @@ pub(crate) fn declared_size<R: Read + Seek>(source: &mut R) -> Result<Option<u64
     };
     while pos < end {
         let mut word = [0u8; 4];
-        read_at(source, pos, &mut word)?;
+        walk.read_at(pos, &mut word)?;
         let magic = u32::from_le_bytes(word);
         if magic & 0xFFFF_FFF0 == SKIPPABLE {
-            read_at(source, pos + 4, &mut word)?;
+            walk.read_at(pos + 4, &mut word)?;
             pos = past(pos, 8 + u64::from(u32::from_le_bytes(word)))?;
             continue;
         }
@@ -64,7 +89,7 @@ pub(crate) fn declared_size<R: Read + Seek>(source: &mut R) -> Result<Option<u64
         }
         frames += 1;
         let mut descriptor = [0u8; 1];
-        read_at(source, pos + 4, &mut descriptor)?;
+        walk.read_at(pos + 4, &mut descriptor)?;
         let d = descriptor[0];
         if d & 0x08 != 0 {
             return Err(corrupt("a frame header sets a reserved bit"));
@@ -80,7 +105,7 @@ pub(crate) fn declared_size<R: Read + Seek>(source: &mut R) -> Result<Option<u64
         };
         let mut header = [0u8; 14];
         let header = &mut header[..1 + window + dict + fcs];
-        read_at(source, pos + 4, header)?;
+        walk.read_at(pos + 4, header)?;
         total = match fcs {
             0 => None,
             _ => {
@@ -98,7 +123,7 @@ pub(crate) fn declared_size<R: Read + Seek>(source: &mut R) -> Result<Option<u64
         pos = past(pos, 4 + header.len() as u64)?;
         loop {
             let mut block = [0u8; 3];
-            read_at(source, pos, &mut block)?;
+            walk.read_at(pos, &mut block)?;
             let block = le(&block);
             let size = block >> 3;
             let body = match (block >> 1) & 3 {
