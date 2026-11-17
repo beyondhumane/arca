@@ -1,3 +1,8 @@
+// Running a program with bytes appended is what a self-extractor is, and on
+// macOS that is not known to survive the linker's signature; self-extractors
+// are made for Windows, and Linux runs these the same way.
+#![cfg(not(target_os = "macos"))]
+
 use arca_core::sfx::{self, CONSOLE};
 use arca_core::{Codec, Level};
 use arca_zip::ZipWriter;
@@ -154,4 +159,33 @@ fn the_stub_alone_says_it_carries_nothing() {
             .code(),
         Some(2)
     );
+}
+
+#[test]
+fn an_output_folder_never_waits_for_a_click() {
+    let temp = tempfile::tempdir().unwrap();
+    let exe = program(temp.path(), "quiet", &zip(&[("a.txt", b"a")]), 0);
+    let dest = temp.path().join("out");
+    let broken = program(temp.path(), "broken", b"not a zip", 0);
+    for (exe, works) in [(&exe, true), (&broken, false)] {
+        let mut child = Command::new(exe)
+            .args(["-o", dest.to_str().unwrap()])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("{} is waiting for something", exe.display());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        assert_eq!(status.success(), works, "{}", exe.display());
+    }
+    assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"a");
 }

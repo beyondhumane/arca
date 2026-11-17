@@ -42,7 +42,9 @@ fn main() {
         println!("{}", words.usage);
         std::process::exit(2);
     };
-    let mut console = args.console || !cfg!(windows);
+    // Extracting to a folder given on the command line is for scripts, and
+    // nothing a script starts may sit waiting for a click on a message box.
+    let mut console = args.console || args.dest.is_some() || !cfg!(windows);
     let outcome = run(&args, words, &mut console);
     match outcome {
         Ok(Some(done)) => tell(console, words, &done, false),
