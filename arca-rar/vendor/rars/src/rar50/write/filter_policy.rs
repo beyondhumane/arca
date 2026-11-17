@@ -249,12 +249,14 @@ pub(super) fn encode_options_for_level(
         // Arca: levels 2 and 3 stop looking at 64 bytes and price each block
         // once or twice rather than three times. On Arca's 144 MiB mixed corpus
         // that took level 3 from about 130 s to about 25 s for 3% more output;
-        // levels 4 and 5 keep the full parse for the smallest archive.
+        // levels 4 and 5 kept the full parse for the smallest archive.
         //
-        // Arca: with the tree searching runs that carry history too, the full
-        // parse (out to 512 bytes, three passes) cost levels 4 and 5 about
-        // twice the time of a parse that stops at 128 and 256 bytes, level 4
-        // pricing twice, for a few hundredths of a percent.
+        // Arca: with the tree searching runs that carry history too, levels 4
+        // and 5 stop at 128 and 256 bytes and level 4 prices twice. On the repo
+        // kind of Arca's benchmark corpus (`arca-rar/tests/rar-bench.ps1`),
+        // `arca create -l 7` took 7.7 s of CPU rather than 13.7 s for 0.02%
+        // more output and `-l 9` 10.8 s rather than 13.0 s for 0.07% less; the
+        // corpus's log came out 1.5% larger at `-l 7`.
         .with_nice_length(match level {
             2 | 3 => 64,
             4 => 128,

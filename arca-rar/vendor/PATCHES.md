@@ -33,7 +33,8 @@ source was consulted for any of it.
   `nice_length` and `parse_passes`, which default to the crate's constants.
   Levels 2 and 3 stop at 64 bytes and price each block once and twice;
   level 3 also searches 32 candidates rather than 128
-  (`rar50/write/filter_policy.rs`). Levels 0, 1, 4 and 5 are unchanged.
+  (`rar50/write/filter_policy.rs`). Levels 0 and 1 are unchanged; levels 4
+  and 5 are lightened below.
 - **Hash tables sized to the window.** The chain finder the RAR 5 encoder
   builds (`MatchFinder::with_window_hash`) and the tree finder give their
   head table one entry per two bytes of window, from 2^17 up to 2^22 entries,
@@ -74,5 +75,7 @@ source was consulted for any of it.
 Measured with `arca create out.rar <dir> -l <level>` on 144 MiB of source and
 executables (1,382 files), Windows 11, 16 threads, together with the
 `parallel` feature and the 4 GiB writer budget set in `arca-rar`; every
-archive passes `UnRAR t`. See the commit that brought this copy in for the
-numbers.
+archive passes `UnRAR t`. See the commit that brought this copy in for those
+numbers. The later patches were measured against WinRAR on the corpus
+`arca-rar/examples/rar-corpus.rs` generates, with `arca-rar/tests/rar-bench.ps1`;
+the method and the figures are in `docs/guide/benchmarks.md`.
