@@ -198,7 +198,7 @@ fn adding_files_and_a_folder_replaces_what_had_the_name() {
     assert_eq!(find("src/c.txt").3, b"third file");
     assert_eq!(find("src/b.txt").3, b"replaced");
     assert_eq!(find("src/a.txt").3, b"first file ".repeat(300));
-    assert!(find("fresh").1);
+    assert!(find("fresh/").1);
     assert!(!find("zero").1 && find("zero").3.is_empty());
     assert!(find("src/hollow").1);
     assert_eq!(got.iter().filter(|e| e.0 == "src/b.txt").count(), 1);

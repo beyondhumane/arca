@@ -31,8 +31,8 @@ pub struct Addition {
 
 /// What a rewrite changes.
 pub struct Change<'a> {
-    /// The name each entry keeps, or `None` to leave it out. A slash on the
-    /// end is dropped: a 7z marks its folders by an attribute.
+    /// The name each entry keeps, or `None` to leave it out. Whether it ends
+    /// in a slash stays as it was: 7-Zip writes folders without one, Arca with.
     pub name: &'a dyn Fn(&Entry) -> Option<String>,
     /// New entries. One whose name is already in the archive replaces the
     /// entry that had it.
@@ -124,7 +124,7 @@ pub fn rewrite_7z(
     let mut sources = Vec::new();
     let mut metadata = Vec::new();
     for (addition, meta) in change.add.iter().zip(added) {
-        let name = addition.name.trim_end_matches('/');
+        let name = addition.name.as_str();
         match meta {
             Some(meta) if meta.is_file() && meta.len() > 0 => {
                 sources.push(Source {
@@ -189,7 +189,12 @@ fn plan<R: Read + io::Seek>(
     for entry in &source.entries {
         let name = match (change.name)(entry) {
             Some(name) => {
-                let name = name.trim_end_matches('/').to_string();
+                let bare = name.trim_end_matches('/');
+                let name = if entry.name.ends_with('/') {
+                    format!("{bare}/")
+                } else {
+                    bare.to_string()
+                };
                 let path = entry_path(&name)?;
                 if added.contains(&path) {
                     None
