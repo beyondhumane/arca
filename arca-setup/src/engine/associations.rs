@@ -105,15 +105,25 @@ mod tests {
         let mut open_with = BTreeSet::new();
         let mut supported = BTreeSet::new();
         let mut capabilities = BTreeSet::new();
-        let mut on_request = BTreeSet::new();
+        let asked_for: Vec<FileType> = file_types()
+            .into_iter()
+            .filter(|kind| kind.on_request)
+            .collect();
         for line in script.lines().filter(|line| line.starts_with("Root: HKCU")) {
             let parts = quoted(line);
             let (Some(key), Some(name)) = (parts.first(), parts.get(1)) else {
                 continue;
             };
-            if line.contains(r"Tasks: fileassoc\iso") {
-                on_request.insert(key.clone());
-            }
+            let about_asked_for = asked_for.iter().any(|kind| {
+                line.contains(&kind.progid)
+                    || line.contains(&format!("\"{}\"", kind.extension))
+                    || line.contains(&format!(r"\{}\", kind.extension))
+            });
+            assert_eq!(
+                line.contains(r"Tasks: fileassoc\iso"),
+                about_asked_for,
+                "{line}"
+            );
             if let Some(ext) = key
                 .strip_prefix(r"Software\Classes\")
                 .and_then(|rest| rest.strip_suffix(r"\OpenWithProgids"))
@@ -136,13 +146,7 @@ mod tests {
         assert_eq!(open_with, expected);
         assert_eq!(capabilities, expected);
         assert_eq!(supported, all);
-        for kind in file_types().iter().filter(|kind| kind.on_request) {
-            assert!(on_request.contains(&format!(r"Software\Classes\{}", kind.progid)));
-            assert!(on_request.contains(&format!(
-                r"Software\Classes\{}\OpenWithProgids",
-                kind.extension
-            )));
-        }
+        assert!(!asked_for.is_empty());
         let forget = script
             .lines()
             .filter_map(|line| line.trim().strip_prefix("Exts["))
