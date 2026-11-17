@@ -32,6 +32,19 @@ Local changes:
   check runs it over every byte in both directions. Eight tables fold eight
   bytes with independent lookups. Same values; a test checks them against the
   bit-at-a-time definition for every length and split up to 300 bytes.
+- **A bounded multithreaded LZMA2 reader** (`src/lzma2_reader_mt.rs`,
+  rewritten). The published one gathered a whole run of chunks between
+  dictionary resets into memory however long it was (a stream without resets
+  is one run), decoded it into a buffer that grew with the output, kept
+  reading ahead while an early run was still decoding, and reported a
+  worker's error before the runs ahead of it. This one gathers a run of at
+  most `run_max` bytes, compressed or decoded (`new` uses four dictionaries,
+  at least 1 MiB; `new_bounded` takes it), keeps at most one run queued
+  beyond its threads, returns runs and errors in order, stops its workers on
+  drop, and from the first run longer than `run_max` decodes the rest of the
+  stream on the calling thread with `Lzma2Reader`, streaming. Unit tests
+  cover runs decoded on threads and in place, truncation and corruption at
+  many offsets, and errors after the runs before them.
 
 Feature audit:
 

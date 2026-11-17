@@ -34,9 +34,13 @@ Local changes:
   encrypted headers without a verifiable nonempty stream.
 - Populate the format's default substream mapping when its optional section is
   absent; reject unused pack streams and inconsistent file/substream counts.
-- Cap the threads of a multithreaded LZMA2 decoder so that one dictionary per
-  thread stays within four times the single-thread memory limit, since the
-  dictionary size comes from the archive.
+- Arca: cap the threads of a multithreaded LZMA2 decoder (`decoder.rs`) so
+  that, per thread plus one queued run and one being read, a run of up to
+  four dictionaries (at least 1 MiB, at most the coder's unpack size) with
+  its output and window fits in 2 GiB, the budget Arca's encoders keep to;
+  a block of no more than one run is decoded on one thread. The reader it
+  uses is the bounded `Lzma2ReaderMt::new_bounded` of the vendored
+  lzma-rust2.
 - Add `BlockDecoder::into_reader`, the decoded block as one pull stream built
   by the existing decode stack, so that rewriting an archive can feed a block
   straight into the encoder without buffering it. It adds no decoding; the

@@ -72,6 +72,10 @@ impl<R: Read> Read for Decoder<R> {
     }
 }
 
+/// Arca: what a multithreaded LZMA2 decode may hold at once, the budget Arca's
+/// encoders keep to.
+const LZMA2_MT_BUDGET_KB: usize = 2 << 20;
+
 pub fn add_decoder<I: Read>(
     input: I,
     uncompressed_len: usize,
@@ -120,14 +124,27 @@ pub fn add_decoder<I: Read>(
                 });
             }
 
-            // Each thread holds a dictionary of its own: an archive that names a
-            // large one gets fewer threads, so all of them together stay within
-            // four times the single-thread limit.
-            let threads = threads.min((4 * max_mem_limit_kb / mem_size.max(1)) as u32);
-            let lz = if threads < 2 {
+            // Arca: the multithreaded reader holds, per run of chunks between
+            // dictionary resets, its compressed bytes, its output and a window
+            // that never outgrows the output, for every thread plus one queued
+            // and one being read. Runs of up to four dictionaries go to the
+            // threads, which covers the runs of Arca's and 7-Zip's multithreaded
+            // encoders; a longer one is decoded in place. A block that holds no
+            // more than one run, or an archive whose dictionary leaves room for
+            // fewer than two threads, is decoded on one.
+            let run_max = (dic_size as usize)
+                .saturating_mul(4)
+                .max(1 << 20)
+                .min(uncompressed_len.max(1));
+            let cost_kb = (3 * run_max / 1024).saturating_add(mem_size).max(1);
+            let fit = (LZMA2_MT_BUDGET_KB / cost_kb).saturating_sub(2);
+            let threads = threads.min(u32::try_from(fit).unwrap_or(u32::MAX));
+            let lz = if threads < 2 || uncompressed_len <= run_max {
                 Decoder::Lzma2(Box::new(Lzma2Reader::new(input, dic_size, None)))
             } else {
-                Decoder::Lzma2Mt(Box::new(Lzma2ReaderMt::new(input, dic_size, None, threads)))
+                Decoder::Lzma2Mt(Box::new(Lzma2ReaderMt::new_bounded(
+                    input, dic_size, None, threads, run_max,
+                )))
             };
 
             Ok(lz)
