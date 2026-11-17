@@ -807,3 +807,50 @@ fn a_source_that_changes_size_in_a_solid_block_fails() {
     assert!(result.is_err());
     assert!(!temp.path().join("out.7z").exists());
 }
+
+// Several LZMA2 runs, so reading decodes them on several threads: the data
+// comes back whole, and damage anywhere in the packed runs, a run boundary
+// included, is an error rather than a panic or wrong bytes.
+#[test]
+fn multithreaded_lzma2_runs_read_back_and_damage_is_an_error() {
+    let temp = tempfile::tempdir().unwrap();
+    let data = prose(10 << 20);
+    let input = temp.path().join("big.txt");
+    fs::write(&input, &data).unwrap();
+    let path = temp.path().join("runs.7z");
+    create_7z(
+        &path,
+        &[Source {
+            path: input,
+            name: "big.txt".into(),
+        }],
+        &CreateOptions {
+            level: Level::FAST,
+            ..Default::default()
+        },
+        &mut |_| true,
+    )
+    .unwrap();
+    let packed = fs::read(&path).unwrap();
+    let mut archive = SevenZArchive::open(Cursor::new(&packed), None).unwrap();
+    archive.test(&mut |_| true).unwrap();
+    assert!(archive.read_entry(0, 16 << 20, &mut |_| true).unwrap() == data);
+    let body = packed.len() - 200;
+    let offsets = (1..12).map(|k| 32 + body * k / 12).chain([32, 33, 40]);
+    for at in offsets {
+        for flip in [0x01u8, 0x80, 0xFF] {
+            let mut bad = packed.clone();
+            bad[at] ^= flip;
+            let outcome = SevenZArchive::open(Cursor::new(&bad), None).and_then(|mut a| {
+                a.test(&mut |_| true)?;
+                a.read_entry(0, 16 << 20, &mut |_| true)
+            });
+            if let Ok(read) = outcome {
+                assert!(
+                    read == data,
+                    "byte {at} ^ {flip:#x} changed the data silently"
+                );
+            }
+        }
+    }
+}

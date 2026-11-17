@@ -39,7 +39,7 @@ arca extract <ARCHIVE> [-o DIR] [--on-conflict POLICY] [-j THREADS] [-p PASSWORD
 | --- | --- | --- |
 | `-o, --dest` | `.` | Directorio de destino. Se crea si no existe. |
 | `--on-conflict` | overwrite | Qué hacer cuando un archivo ya existe: overwrite, skip o rename. |
-| `-j, --threads` | 0 | Hilos a usar. 0 significa todos los núcleos. Solo .zip puede ir en paralelo. |
+| `-j, --threads` | 0 | Hilos a usar. 0 significa todos los núcleos. Solo .zip lo sigue; un .xz o .tar.xz de varios bloques y los bloques LZMA2 de un .7z se descomprimen siempre en todos los núcleos que caben en su presupuesto de 2 GiB de memoria. |
 | `-p, --password` | ninguna | Contraseña de un archivo cifrado (AES-256 o ZipCrypto). |
 
 ### Conflictos
@@ -54,7 +54,7 @@ Los destinos ZIP se deciden de antemano en un hilo. 7z resuelve los conflictos s
 
 ## Extracción en paralelo
 
-Un `.zip` es de acceso aleatorio: el directorio central dice dónde empieza cada entrada, así que un hilo por núcleo puede abrir el archivo cada uno y descomprimir una entrada distinta. Un `.tar` es un único flujo, y un `.tar.gz`, `.tar.xz`, `.tar.bz2` o `.tar.zst` un único flujo comprimido encima de este, así que no hay nada que dividir y la extracción sigue siendo secuencial. Las entradas TAR y un `.xz`, `.bz2` o `.zst` suelto se escriben con un nombre temporal y solo se renombran cuando sus datos se han leído y comprobado, así que un archivo truncado o dañado no deja un fichero a medias con el nombre real. Las entradas que terminaron antes del daño se quedan.
+Un `.zip` es de acceso aleatorio: el directorio central dice dónde empieza cada entrada, así que un hilo por núcleo puede abrir el archivo cada uno y descomprimir una entrada distinta. Un `.tar` es un único flujo, y un `.tar.gz`, `.tar.bz2` o `.tar.zst` un único flujo comprimido encima de este, así que no hay nada que dividir y la extracción sigue siendo secuencial. Un `.xz` o `.tar.xz` escrito en varios hilos, por Arca o por `xz -T0`, es distinto: es una serie de bloques independientes cuyos tamaños da su índice de antemano, así que Arca descomprime un bloque por núcleo y los entrega en orden. Los datos LZMA2 de un `.7z` escrito en varios hilos se reparten igual, allí donde el flujo reinicia su diccionario. Ambos se quedan dentro de 2 GiB de memoria; un archivo de un solo bloque, o cuyos bloques son demasiado grandes para caber, se descomprime en un hilo. Las entradas TAR y un `.xz`, `.bz2` o `.zst` suelto se escriben con un nombre temporal y solo se renombran cuando sus datos se han leído y comprobado, así que un archivo truncado o dañado no deja un fichero a medias con el nombre real. Las entradas que terminaron antes del daño se quedan.
 
 | 287 MB en 16 archivos de texto · Windows 11 | Tiempo |
 | --- | --- |

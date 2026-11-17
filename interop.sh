@@ -433,6 +433,23 @@ for method in -m0=LZMA -m0=PPMd -m0=BZip2 -m0=Deflate -m0=Copy -mf=BCJ -mf=ARM -
     ko "Arca cannot read 7-Zip's 7z with $method"
   fi
 done
+# 7-Zip's multithreaded LZMA2 resets the dictionary every block, which Arca
+# decodes on several threads; with 1 MiB dictionaries the 8 MB corpus has
+# several. Arca's own -l fast 7z has 3 MiB runs.
+rm -rf y7 out/seven-lzma2-mt.7z
+if 7z a -t7z -m0=LZMA2:d=1m -mmt=4 out/seven-lzma2-mt.7z src </dev/null >/dev/null 2>&1 &&
+   "$ARCA" extract out/seven-lzma2-mt.7z -o y7 >/dev/null 2>&1 && compare_trees src y7/src; then
+  ok "Arca extracts 7-Zip's multithreaded LZMA2 7z"
+else
+  ko "Arca cannot extract 7-Zip's multithreaded LZMA2 7z"
+fi
+rm -rf y7
+if "$ARCA" create out/arca-fast.7z src -l fast >/dev/null 2>&1 &&
+   "$ARCA" extract out/arca-fast.7z -o y7 >/dev/null 2>&1 && compare_trees src y7/src; then
+  ok "Arca extracts its own multithreaded LZMA2 7z"
+else
+  ko "Arca cannot extract its own multithreaded LZMA2 7z"
+fi
 echo
 echo "I) XZ and TAR.XZ, both directions"
 for niv in store fast normal best; do
@@ -458,6 +475,18 @@ for f in t.tar.xz t.txz; do
   H=$(cd y/src && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
   [ "$H" = "$REF" ] && ok "Arca extracts tar's $f without losing a byte" || ko "Arca mis-extracts $f"
 done
+# Several blocks in one stream: Arca decodes them on several threads.
+xz -kc -T4 --block-size=1MiB src/binary.bin > out/blocks.xz
+rm -rf y; mkdir y
+$ARCA extract out/blocks.xz -o y >/dev/null 2>&1 && cmp -s y/blocks src/binary.bin && ok "Arca reads xz's multi-block .xz" || ko "Arca fails on xz's multi-block .xz"
+rm -rf y; mkdir y
+$ARCA extract out/a-fast-4.tar.xz -o y >/dev/null 2>&1 && compare_trees src y/src && ok "Arca reads its own multi-block .tar.xz" || ko "Arca fails on its own multi-block .tar.xz"
+cp out/blocks.xz out/blocks-bad.xz
+printf '\xDE\xAD\xBE\xEF' | dd of=out/blocks-bad.xz bs=1 seek=$(($(wc -c < out/blocks.xz) / 2)) conv=notrunc 2>/dev/null
+rm -rf y; mkdir y
+$ARCA test out/blocks-bad.xz >/dev/null 2>&1 && ko "a damaged block of a multi-block .xz passed the test" || ok "a damaged block of a multi-block .xz fails the test"
+$ARCA extract out/blocks-bad.xz -o y >/dev/null 2>&1 && ko "a damaged multi-block .xz extracted" || ok "a damaged multi-block .xz fails to extract"
+[ -z "$(ls -A y)" ] && ok "a damaged multi-block .xz publishes nothing" || ko "a damaged multi-block .xz left a partial file"
 for check in none crc32 crc64 sha256; do
   xz -kc -T2 --check=$check src/text.txt > out/text-$check.txt.xz
   rm -rf y; mkdir y

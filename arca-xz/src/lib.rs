@@ -14,6 +14,10 @@ pub const MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0];
 pub const MEMORY_LIMIT_MIB: u32 = 1024;
 /// What the compression threads may use between them.
 pub const ENCODER_BUDGET_MIB: u64 = 2048;
+/// What the blocks a parallel decode holds at once may use between them:
+/// each one's compressed bytes, its decoded bytes and the decoder's window,
+/// which grows by doubling and so reaches at most twice the decoded bytes.
+pub const DECODER_BUDGET_MIB: u64 = 2048;
 const MAX_INDEX: u64 = 64 << 20;
 const HEADER: u64 = 12;
 const BUF: usize = 256 * 1024;
@@ -52,8 +56,9 @@ fn varint(bytes: &[u8], pos: &mut usize) -> Result<u64> {
     Err(corrupt("the index has an integer that is too long"))
 }
 
-/// Returns the bytes the blocks take on disk and the bytes they decode to.
-fn parse_index(index: &[u8]) -> Result<(u64, u64)> {
+/// Returns the bytes the blocks take on disk and the bytes they decode to,
+/// handing `record` each block's unpadded and decoded size on the way.
+fn parse_index(index: &[u8], mut record: impl FnMut(u64, u64)) -> Result<(u64, u64)> {
     if index.len() < 8 || !index.len().is_multiple_of(4) || index[0] != 0 {
         return Err(corrupt("the index is missing or damaged"));
     }
@@ -81,6 +86,7 @@ fn parse_index(index: &[u8]) -> Result<(u64, u64)> {
         unpacked = unpacked
             .checked_add(size)
             .ok_or_else(|| corrupt("the index sizes overflow"))?;
+        record(unpadded, size);
     }
     if body.len() - pos >= 4 || body[pos..].iter().any(|&b| b != 0) {
         return Err(corrupt("the index padding is damaged"));
@@ -93,6 +99,17 @@ fn parse_index(index: &[u8]) -> Result<(u64, u64)> {
 /// Only headers, footers and indexes are read, so this is cheap even for a
 /// large file. The decoder checks the same figure against the real data.
 pub fn uncompressed_size<R: Read + Seek>(source: &mut R) -> Result<u64> {
+    Ok(layout(source, 0)?.total)
+}
+
+struct Layout {
+    total: u64,
+    /// The blocks of a file that is one stream of at most the blocks asked
+    /// for, starting at the first byte.
+    single: Option<Vec<parallel::Block>>,
+}
+
+fn layout<R: Read + Seek>(source: &mut R, max_blocks: usize) -> Result<Layout> {
     let mut end = source.seek(SeekFrom::End(0))?;
     if !end.is_multiple_of(4) {
         return Err(corrupt(
@@ -101,6 +118,8 @@ pub fn uncompressed_size<R: Read + Seek>(source: &mut R) -> Result<u64> {
     }
     let mut total = 0u64;
     let mut streams = 0u32;
+    let mut blocks = Vec::new();
+    let mut too_many = false;
     loop {
         let mut word = [0u8; 4];
         while end >= 4 {
@@ -111,7 +130,10 @@ pub fn uncompressed_size<R: Read + Seek>(source: &mut R) -> Result<u64> {
             end -= 4;
         }
         if streams > 0 && end == 0 {
-            return Ok(total);
+            return Ok(Layout {
+                total,
+                single: None,
+            });
         }
         if end < 2 * HEADER {
             return Err(corrupt("the stream is truncated"));
@@ -138,7 +160,15 @@ pub fn uncompressed_size<R: Read + Seek>(source: &mut R) -> Result<u64> {
             .ok_or_else(|| corrupt("the index points before the start of the file"))?;
         let mut index = vec![0u8; backward as usize];
         read_at(source, index_start, &mut index)?;
-        let (packed, unpacked) = parse_index(&index)?;
+        let (packed, unpacked) = parse_index(&index, |unpadded, size| {
+            if streams == 0 && !too_many {
+                if blocks.len() < max_blocks {
+                    blocks.push(parallel::Block { unpadded, size });
+                } else {
+                    too_many = true;
+                }
+            }
+        })?;
         let start = index_start
             .checked_sub(packed)
             .and_then(|v| v.checked_sub(HEADER))
@@ -160,7 +190,8 @@ pub fn uncompressed_size<R: Read + Seek>(source: &mut R) -> Result<u64> {
         streams += 1;
         end = start;
         if end == 0 {
-            return Ok(total);
+            let single = (streams == 1 && !too_many).then_some(blocks);
+            return Ok(Layout { total, single });
         }
     }
 }
@@ -183,10 +214,15 @@ fn describe(e: io::Error) -> io::Error {
     }
 }
 
+enum Inner<R: Read> {
+    Single(Box<XzReader<R>>),
+    Parallel(Box<parallel::Parallel<R>>),
+}
+
 /// Decompresses every concatenated stream, checking each block's CRC32,
 /// CRC64 or SHA-256 and, when the size is known, the index against the data.
 pub struct Decoder<R: Read> {
-    inner: XzReader<R>,
+    inner: Inner<R>,
     expected: Option<u64>,
     produced: u64,
 }
@@ -194,7 +230,11 @@ pub struct Decoder<R: Read> {
 impl<R: Read> Decoder<R> {
     pub fn new(source: R) -> Self {
         Self {
-            inner: XzReader::new_mem_limit(source, true, MEMORY_LIMIT_MIB * 1024),
+            inner: Inner::Single(Box::new(XzReader::new_mem_limit(
+                source,
+                true,
+                MEMORY_LIMIT_MIB * 1024,
+            ))),
             expected: None,
             produced: 0,
         }
@@ -203,7 +243,10 @@ impl<R: Read> Decoder<R> {
 
 impl<R: Read> Read for Decoder<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.inner.read(buf).map_err(describe)?;
+        let n = match &mut self.inner {
+            Inner::Single(r) => r.read(buf).map_err(describe)?,
+            Inner::Parallel(r) => r.read(buf)?,
+        };
         self.produced += n as u64;
         if let Some(expected) = self.expected {
             if self.produced > expected || (n == 0 && !buf.is_empty() && self.produced != expected)
@@ -223,14 +266,39 @@ impl<R: Read> Read for Decoder<R> {
 }
 
 /// Opens a file, or a set of split parts, for decoding, after reading its
-/// indexes.
+/// indexes. A file of one stream in several blocks is decoded on as many
+/// cores as fit in [`DECODER_BUDGET_MIB`], a block per core.
 pub fn open(path: &Path) -> Result<Decoder<BufReader<arca_core::volumes::Source>>> {
-    let mut file = arca_core::volumes::open(path)?;
-    let size = uncompressed_size(&mut file)?;
+    let available = std::thread::available_parallelism().map_or(1, |n| n.get());
+    seekable(arca_core::volumes::open(path)?, available)
+}
+
+fn seekable<S: Read + Seek>(mut file: S, available: usize) -> Result<Decoder<BufReader<S>>> {
+    let layout = layout(&mut file, parallel::MAX_BLOCKS)?;
+    let threads = layout
+        .single
+        .as_ref()
+        .map_or(1, |blocks| parallel::threads(blocks, available));
+    let mut header = [0u8; 12];
+    read_at(&mut file, 0, &mut header)?;
     file.seek(SeekFrom::Start(0))?;
-    let mut decoder = Decoder::new(BufReader::with_capacity(BUF, file));
-    decoder.expected = Some(size);
-    Ok(decoder)
+    let inner = match layout.single {
+        Some(blocks) if threads > 1 => {
+            file.seek(SeekFrom::Start(HEADER))?;
+            Inner::Parallel(Box::new(parallel::Parallel::new(
+                BufReader::with_capacity(BUF, file),
+                header,
+                blocks,
+                threads,
+            )?))
+        }
+        _ => Decoder::new(BufReader::with_capacity(BUF, file)).inner,
+    };
+    Ok(Decoder {
+        inner,
+        expected: Some(layout.total),
+        produced: 0,
+    })
 }
 
 /// The xz preset for an Arca level. Store is preset 0: XZ has no stored mode.
@@ -354,6 +422,8 @@ impl<W: Write> Write for Encoder<W> {
 pub fn drain<R: Read>(source: &mut R) -> Result<u64> {
     Ok(io::copy(source, &mut io::sink())?)
 }
+
+mod parallel;
 
 #[cfg(test)]
 mod tests;

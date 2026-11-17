@@ -244,16 +244,16 @@ fn an_unknown_check_type_is_an_error() {
 
 #[test]
 fn index_parsing_rejects_hostile_values() {
-    assert!(parse_index(&[]).is_err());
-    assert!(parse_index(&[1, 0, 0, 0, 0, 0, 0, 0]).is_err());
+    assert!(parse_index(&[], |_, _| ()).is_err());
+    assert!(parse_index(&[1, 0, 0, 0, 0, 0, 0, 0], |_, _| ()).is_err());
     let mut lying = vec![0u8, 0xFF, 0xFF, 0xFF, 0x0F, 0, 0, 0];
     let crc = crc32fast::hash(&lying[..4]);
     lying[4..].copy_from_slice(&crc.to_le_bytes());
-    assert!(parse_index(&lying).is_err());
+    assert!(parse_index(&lying, |_, _| ()).is_err());
     let mut padded = vec![0u8, 0x80, 0x00, 0x00];
     let crc = crc32fast::hash(&padded);
     padded.extend_from_slice(&crc.to_le_bytes());
-    assert!(parse_index(&padded).is_err());
+    assert!(parse_index(&padded, |_, _| ()).is_err());
     for junk in [&b""[..], &[0; 8], &[0; 24], b"YZYZYZYZYZYZYZYZYZYZYZYZ"] {
         assert!(uncompressed_size(&mut Cursor::new(junk)).is_err());
     }
@@ -283,4 +283,162 @@ fn open_reads_a_file_and_checks_it_against_its_index() {
     std::fs::write(&path, b"not xz at all").unwrap();
     assert!(open(&path).is_err());
     let _ = std::fs::remove_dir_all(dir);
+}
+
+fn small_blocks(data: &[u8], block: u64) -> Vec<u8> {
+    let mut options = XzOptions::with_preset(1);
+    options.lzma_options.dict_size = 4096;
+    options.set_block_size(NonZeroU64::new(block));
+    let mut w = XzWriterMt::new(Vec::new(), options, 3).unwrap();
+    w.write_all(data).unwrap();
+    w.finish().unwrap()
+}
+
+fn parallel_decoder(bytes: &[u8], threads: usize) -> Result<Decoder<BufReader<Cursor<Vec<u8>>>>> {
+    seekable(Cursor::new(bytes.to_vec()), threads)
+}
+
+fn decode_parallel(bytes: &[u8], threads: usize) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    parallel_decoder(bytes, threads)?.read_to_end(&mut out)?;
+    Ok(out)
+}
+
+// The (unpadded, size) records of a one-stream file, and where its index starts.
+fn records(packed: &[u8]) -> (Vec<(u64, u64)>, usize) {
+    let len = packed.len();
+    let backward = (u64::from(le32(&packed[len - 8..])) + 1) * 4;
+    let start = len - 12 - backward as usize;
+    let mut list = Vec::new();
+    parse_index(&packed[start..len - 12], |u, s| list.push((u, s))).unwrap();
+    (list, start)
+}
+
+// The same blocks behind an index rebuilt from `list`.
+fn with_index(packed: &[u8], list: &[(u64, u64)]) -> Vec<u8> {
+    let (_, start) = records(packed);
+    let mut index = vec![0u8];
+    let put = |mut v: u64, out: &mut Vec<u8>| {
+        while v >= 0x80 {
+            out.push(v as u8 | 0x80);
+            v >>= 7;
+        }
+        out.push(v as u8);
+    };
+    put(list.len() as u64, &mut index);
+    for &(u, s) in list {
+        put(u, &mut index);
+        put(s, &mut index);
+    }
+    while index.len() % 4 != 0 {
+        index.push(0);
+    }
+    let crc = crc32fast::hash(&index);
+    index.extend_from_slice(&crc.to_le_bytes());
+    let mut out = packed[..start].to_vec();
+    out.extend_from_slice(&index);
+    let mut footer = packed[packed.len() - 12..].to_vec();
+    footer[4..8].copy_from_slice(&(index.len() as u32 / 4 - 1).to_le_bytes());
+    let crc = crc32fast::hash(&footer[4..10]);
+    footer[..4].copy_from_slice(&crc.to_le_bytes());
+    out.extend_from_slice(&footer);
+    out
+}
+
+#[test]
+fn several_blocks_decode_in_parallel_and_in_order() {
+    let data = sample(200_000);
+    let packed = small_blocks(&data, 16 << 10);
+    assert!(records(&packed).0.len() > 10);
+    let decoder = parallel_decoder(&packed, 4).unwrap();
+    assert!(matches!(decoder.inner, Inner::Parallel(_)));
+    assert_eq!(decode_parallel(&packed, 4).unwrap(), data);
+    assert_eq!(decode_parallel(&packed, 1).unwrap(), data);
+    let one = compress(&data, Level::FAST, 1);
+    let decoder = parallel_decoder(&one, 4).unwrap();
+    assert!(matches!(decoder.inner, Inner::Single(_)));
+    let mut two = one.clone();
+    two.extend_from_slice(&packed);
+    assert!(matches!(
+        parallel_decoder(&two, 4).unwrap().inner,
+        Inner::Single(_)
+    ));
+    let mut both = data.clone();
+    both.extend_from_slice(&data);
+    assert_eq!(decode_parallel(&two, 4).unwrap(), both);
+}
+
+#[test]
+fn parallel_threads_stay_within_the_budget() {
+    let block = |size| parallel::Block {
+        unpadded: size / 2,
+        size,
+    };
+    assert_eq!(parallel::threads(&[], 16), 1);
+    assert_eq!(parallel::threads(&[block(1 << 20)], 16), 1);
+    assert_eq!(parallel::threads(&[block(1 << 20); 3], 16), 3);
+    assert_eq!(parallel::threads(&[block(1 << 30); 8], 16), 1);
+    let blocks = [block(24 << 20); 64];
+    let threads = parallel::threads(&blocks, 64) as u64;
+    assert!(threads > 1);
+    assert!((threads + 2) * (12 + 72 + 1) <= DECODER_BUDGET_MIB);
+}
+
+#[test]
+fn parallel_truncation_and_bit_flips_fail_without_panicking() {
+    let data = sample(20_000);
+    let packed = small_blocks(&data, 4096);
+    assert!(records(&packed).0.len() >= 4);
+    for cut in (0..packed.len()).step_by(11).chain([packed.len() - 1]) {
+        assert!(decode_parallel(&packed[..cut], 4).is_err(), "cut at {cut}");
+    }
+    for at in (0..packed.len()).step_by(3) {
+        let mut bad = packed.clone();
+        bad[at] ^= 0x10;
+        if let Ok(out) = decode_parallel(&bad, 4) {
+            assert_eq!(out, data, "byte {at} changed the output silently");
+        }
+    }
+}
+
+#[test]
+fn parallel_index_that_moves_bytes_between_blocks_is_caught() {
+    let data = sample(60_000);
+    let packed = small_blocks(&data, 8192);
+    let (mut list, _) = records(&packed);
+    assert_eq!(
+        decode_parallel(&with_index(&packed, &list), 4).unwrap(),
+        data
+    );
+    list[1].1 += 1;
+    list[2].1 -= 1;
+    assert!(decode_parallel(&with_index(&packed, &list), 4).is_err());
+    let (mut list, _) = records(&packed);
+    list[0].0 += 4;
+    list[1].0 -= 4;
+    assert!(decode_parallel(&with_index(&packed, &list), 4).is_err());
+}
+
+#[test]
+fn a_damaged_block_stops_the_parallel_stream_after_the_blocks_before_it() {
+    let data = sample(60_000);
+    let packed = small_blocks(&data, 8192);
+    let (list, _) = records(&packed);
+    let third = 12 + ((list[0].0 + 3) & !3) + ((list[1].0 + 3) & !3);
+    let mut bad = packed.clone();
+    bad[third as usize + 30] ^= 0x55;
+    let mut decoder = parallel_decoder(&bad, 4).unwrap();
+    let mut out = Vec::new();
+    let mut buf = [0u8; 1000];
+    let error = loop {
+        match decoder.read(&mut buf) {
+            Ok(0) => panic!("the damaged block decoded"),
+            Ok(n) => out.extend_from_slice(&buf[..n]),
+            Err(e) => break e,
+        }
+    };
+    assert!(out.len() as u64 >= list[0].1 + list[1].1);
+    assert_eq!(out[..], data[..out.len()]);
+    let _ = error;
+    assert!(decoder.read(&mut buf).is_err());
 }

@@ -129,6 +129,80 @@ arca extract big.zip -o out
 7z x -o"out" big7z.zip
 ```
 
+## LZMA and LZMA2: .xz, .tar.xz and .7z
+
+Windows 11, Ryzen 7 3700X (8 cores, 16 threads), against xz 5.8.1 from Git for Windows; 7-Zip was not installed. Other builds shared the machine while these ran, so every row is the median of interleaved runs with its range in brackets, and both the wall time and the process’s own CPU time are given. “Before” is Arca at commit `4b1d67b`, “after” the same source with the LZMA work on `roadmap/lzma-speed`; both say `arca 0.10.0`.
+
+The corpus is 80 MiB that every machine regenerates byte for byte: 24 MiB each of prose, Rust-like source and x86-like machine code, and 8 MiB of random bytes.
+
+```sh
+cargo build --release
+cargo run --release -p arca-bench --example lzma_corpus -- corpus
+tar -cf corpus.tar corpus
+xz -1 -T0 -kc corpus.tar > t1.tar.xz   # 27 blocks
+xz -6 -T0 -kc corpus.tar > t6.tar.xz   # 4 blocks
+xz -6 -T1 -kc corpus.tar > s6.tar.xz   # 1 block
+```
+
+### Extracting a .tar.xz
+
+Wall time with its range, then CPU time, median of 5. Arca also reads the TAR and writes the four files; xz writes the one `.tar`.
+
+| File | Arca before | Arca after | xz -T1 | xz -T0 |
+| --- | --- | --- | --- | --- |
+| `t1.tar.xz`, 27 blocks | 1.70 s [1.44–14.11] · 1.56 s | 0.27 s [0.18–0.89] · 1.64 s | 1.08 s [0.88–1.12] · 1.06 s | **0.20 s** [0.17–0.22] · 1.11 s |
+| `t6.tar.xz`, 4 blocks | 1.38 s [1.28–2.96] · 1.34 s | 0.59 s [0.57–0.64] · 1.23 s | 0.87 s [0.81–0.99] · 0.88 s | **0.42 s** [0.40–0.47] · 0.89 s |
+| `s6.tar.xz`, 1 block | 1.32 s [1.29–1.53] · 1.28 s | 1.13 s [1.11–1.20] · 1.13 s | **0.86 s** [0.83–0.90] · 0.81 s | 0.86 s [0.85–1.00] · 0.86 s |
+
+```sh
+arca extract t1.tar.xz -o out
+xz -dkf -T1 t1.tar.xz
+xz -dkf -T0 t1.tar.xz
+```
+
+A `.xz` written on several threads is a series of independent blocks, and Arca now decodes one block per core, as `xz -T0` does. A file of one block still decodes on one thread; there the faster XZ checksums cut Arca’s time by 14%, but it still takes 1.13 s of CPU against xz’s 0.81 s, part of it reading the TAR and writing the files: its decoder, in safe Rust, is slower than liblzma’s. With many small blocks Arca comes closest to `xz -T0`; with four, the largest block sets the pace for both tools.
+
+### Creating a .tar.xz
+
+Median of 3. Arca at `-l 1` and `-l 6` against `xz -1` and `xz -6` on the same files; the sizes are within 0.03% of each other at every level.
+
+| Command | Wall | CPU | Size |
+| --- | --- | --- | --- |
+| Arca before, `-l 1`, 16 threads | 1.63 s [1.51–1.80] | 11.09 s | 36,000,336 |
+| Arca after, `-l 1`, 16 threads | 1.59 s [1.49–1.62] | 10.98 s | 36,000,336 |
+| `xz -1 -T0` | **1.44 s** [1.43–1.55] | 12.13 s | 36,001,028 |
+| Arca before, `-l 6`, 14 threads | 32.46 s [29.64–36.25] | 86.91 s | 30,456,380 |
+| Arca after, `-l 6`, 14 threads | 38.66 s [26.36–48.31] | 88.78 s | 30,456,380 |
+| `xz -6 -T0` | **32.60 s** [24.94–44.92] | 69.53 s | 30,463,552 |
+| Arca after, `-l 6 -j 1` | 91.68 s [86.20–91.96] | 76.22 s | 30,341,456 |
+| `xz -6 -T1` | **69.56 s** [65.70–149.00] | 65.05 s | 30,347,164 |
+
+```sh
+arca create out.tar.xz corpus -l 6
+arca create out.tar.xz corpus -l 6 -j 1
+xz -6 -T0 -kf corpus.tar
+xz -6 -T1 -kf corpus.tar
+```
+
+The encoder did not change: the two Arca rows at each level differ by no more than their ranges, and on one thread Arca takes 17% more CPU than xz at level 6. At that level most of the time goes into the binary-tree match finder walking memory the cache does not hold, the same work xz does. Both cut the input into blocks of three dictionaries, 24 MiB at level 6, so 80 MiB gives only four blocks to run side by side, and the block of prose, the slowest, sets the wall time.
+
+### 7z, level by level
+
+Median of 3 for creation, 5 for extraction, of archives made by Arca from the same `corpus` directory. The sizes did not change by a byte.
+
+| Level | Create before | Create after | Extract before | Extract after | Size |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 1.44 s [1.38–1.48] | 1.57 s [1.56–1.62] | 1.52 s [1.29–7.80] | **0.29 s** [0.23–0.58] | 35,998,493 |
+| 6 | 32.30 s [31.21–32.97] | 33.83 s [30.69–35.30] | 2.49 s [1.59–15.27] | **0.76 s** [0.59–1.24] | 30,457,591 |
+| 9 | 127.48 s [114.34–169.06] | 128.72 s [117.23–173.85] | 1.72 s [1.38–2.06] | 1.59 s [1.24–8.76] | 30,231,863 |
+
+```sh
+arca create out.7z corpus -l 6
+arca extract out.7z -o out
+```
+
+Extraction now decodes the LZMA2 data on several threads wherever the stream resets its dictionary, as multithreaded writers do every few dictionaries; a block of one run, as level 9 writes, still decodes on one thread. CPU time for extraction stayed between 1.2 and 1.6 s before and after. Creation at level 1 lost 9% of wall time, a gap wider than the ranges, probably because the multithreaded LZMA2 writer of lzma-rust2 0.22.0, which .7z now shares with .xz, keeps at most one chunk queued beyond its threads, where 0.21.0 read ahead without a bound.
+
 ## Against NanaZip, on an archive big enough to hurt
 
 A 3.13 GB `.zip` holding 1,513 files that unpack to 6.28 GB, all Deflate, with 13 entries over 100 MB. Windows 11, 16 cores, NanaZip 7.0.1832, and a DRAM-less SATA SSD (Kingston A400).
