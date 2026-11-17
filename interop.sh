@@ -320,6 +320,120 @@ else
 fi
 
 echo
+echo "H2) 7z methods and filters, both directions"
+# Programs for every machine Arca filters, made up but with real headers, and
+# PCM audio for Delta. ARM64 goes in a tree of its own: p7zip 16.02 has no
+# ARM64 filter, which 7-Zip only gained in 23.01.
+python3 - <<'PY'
+import math, struct
+from pathlib import Path
+def code(n):
+    out = bytearray()
+    while len(out) < n:
+        out += b'\xe8' + ((0x1000 + 16 * len(out)) & 0xffffffff).to_bytes(4, 'little') + b'\x48\x89\xc7\x90\x94\x00\x00\x00'
+    return out[:n]
+def head(fields, n=60000):
+    out = code(n)
+    out[:4096] = bytes(4096)
+    for at, data in fields:
+        out[at:at + len(data)] = data
+    return bytes(out)
+def pe(machine):
+    return head([(0, b'MZ'), (0x3C, struct.pack('<I', 0x80)), (0x80, b'PE\0\0'),
+                 (0x84, struct.pack('<H', machine)), (0x94, struct.pack('<H', 0xF0)),
+                 (0x98, struct.pack('<H', 0x20B))])
+def elf(machine, be):
+    return head([(0, b'\x7fELF'), (4, bytes([2, 2 if be else 1, 1])),
+                 (0x12, struct.pack('>H' if be else '<H', machine))])
+def macho(cpu, be):
+    magic = b'\xfe\xed\xfa\xcf' if be else b'\xcf\xfa\xed\xfe'
+    return head([(0, magic), (4, struct.pack('>I' if be else '<I', cpu)),
+                 (16, struct.pack('>I' if be else '<I', 4))])
+def wav():
+    frames = b''.join(struct.pack('<hh', int(math.sin(i / 9) * 12000), int(math.cos(i / 7) * 9000))
+                      for i in range(30000))
+    fmt = struct.pack('<4sIHHIIHH', b'fmt ', 16, 1, 2, 44100, 44100 * 4, 4, 16)
+    return b'RIFF' + struct.pack('<I', 4 + len(fmt) + 8 + len(frames)) + b'WAVE' + fmt + \
+        b'data' + struct.pack('<I', len(frames)) + frames
+files = {
+    'text/notes.txt': ''.join(f'line {i * 7919 % 977} of the notes\n' for i in range(40000)).encode(),
+    'win/x64.dll': pe(0x8664), 'win/armnt.dll': pe(0x01C4), 'win/wince.dll': pe(0x01C2),
+    'win/ia64.dll': pe(0x0200), 'linux/arm': elf(40, False), 'linux/ppc': elf(20, True),
+    'linux/sparc': elf(43, True), 'mac/ppc': macho(18, True), 'audio/tone.wav': wav(),
+}
+for name, data in files.items():
+    path = Path('src7m') / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+for name, data in {'win/arm64.dll': pe(0xAA64), 'linux/aarch64': elf(183, False),
+                   'mac/arm64': macho(0x0100000C, False)}.items():
+    path = Path('src7a') / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+PY
+methods_of() {
+  # Every coder token 7-Zip lists for the archive, one per line.
+  "$1" l -slt "$2" </dev/null 2>/dev/null | sed -n 's/^Method = //p' | tr ' ' '\n' | sort -u
+}
+for codec in lzma2 lzma ppmd bzip2 deflate store; do
+  archive="out/arca-m-$codec.7z"
+  if ! "$ARCA" create "$archive" src7m -c "$codec" >/dev/null 2>&1; then
+    ko "Arca creates 7z with -c $codec"; continue
+  fi
+  7z t "$archive" </dev/null >/dev/null 2>&1 && ok "7-Zip verifies Arca 7z (-c $codec)" || ko "7-Zip rejects Arca 7z (-c $codec)"
+  rm -rf x7
+  if 7z x -y -ox7 "$archive" </dev/null >/dev/null 2>&1 && compare_trees src7m x7/src7m; then
+    ok "7-Zip extracts identical bytes (-c $codec)"
+  else
+    ko "7-Zip extraction differs (-c $codec)"
+  fi
+  case $codec in
+    lzma2) want=LZMA2 ;; lzma) want=LZMA: ;; ppmd) want=PPMD ;;
+    bzip2) want=BZip2 ;; deflate) want=Deflate ;; store) want=Copy ;;
+  esac
+  methods_of 7z "$archive" | grep -q "^$want" && ok "7-Zip lists $want for -c $codec" || ko "7-Zip does not list $want for -c $codec"
+done
+listed=$(methods_of 7z out/arca-m-lzma2.7z)
+for filter in BCJ ARM ARMT PPC SPARC IA64 Delta:4; do
+  printf '%s\n' "$listed" | grep -qx "$filter" && ok "Arca picked the $filter filter and 7-Zip undid it" || ko "no $filter filter in Arca's 7z"
+done
+# The ARM64 filter needs 7-Zip 23.01 or later: SEVENZIP when CI provides it.
+SZ=${SEVENZIP:-7z}
+if "$SZ" i 2>/dev/null | grep -qw ARM64; then
+  if "$ARCA" create out/arca-arm64.7z src7a >/dev/null 2>&1; then
+    rm -rf x7
+    "$SZ" x -y -ox7 out/arca-arm64.7z </dev/null >/dev/null 2>&1 && compare_trees src7a x7/src7a &&
+      ok "7-Zip extracts Arca's ARM64-filtered 7z" || ko "7-Zip cannot extract Arca's ARM64 7z"
+    methods_of "$SZ" out/arca-arm64.7z | grep -qx ARM64 && ok "Arca picked the ARM64 filter" || ko "no ARM64 filter in Arca's 7z"
+    rm -rf out/s-arm64.7z y7
+    if "$SZ" a -t7z -mf=ARM64 out/s-arm64.7z src7a </dev/null >/dev/null 2>&1 &&
+       "$ARCA" extract out/s-arm64.7z -o y7 >/dev/null 2>&1 && compare_trees src7a y7/src7a; then
+      ok "Arca extracts 7-Zip's ARM64-filtered 7z"
+    else
+      ko "Arca cannot extract 7-Zip's ARM64 7z"
+    fi
+  else
+    ko "Arca creates the ARM64 7z"
+  fi
+else
+  echo "  skipped: $SZ has no ARM64 filter (7-Zip 23.01 or later, set SEVENZIP)"
+fi
+for method in -m0=LZMA -m0=PPMd -m0=BZip2 -m0=Deflate -m0=Copy -mf=BCJ -mf=ARM -mf=ARMT -mf=PPC -mf=SPARC -mf=IA64 -mf=Delta:4; do
+  archive="out/seven-m${method#-m?=}.7z"
+  archive=${archive/:/-}
+  rm -f "$archive"
+  if ! 7z a -t7z "$method" "$archive" src7m </dev/null >/dev/null 2>&1; then
+    ko "7-Zip creates 7z with $method"; continue
+  fi
+  rm -rf y7
+  if "$ARCA" test "$archive" >/dev/null 2>&1 && "$ARCA" extract "$archive" -o y7 >/dev/null 2>&1 &&
+     compare_trees src7m y7/src7m; then
+    ok "Arca reads 7-Zip's 7z with $method"
+  else
+    ko "Arca cannot read 7-Zip's 7z with $method"
+  fi
+done
+echo
 echo "I) XZ and TAR.XZ, both directions"
 for niv in store fast normal best; do
   for j in 1 4; do

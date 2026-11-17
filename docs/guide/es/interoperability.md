@@ -20,6 +20,7 @@ y limpieza. El resumen final da el número según la compilación y las herramie
 - Un byte ZIP alterado lo detecta el CRC o el HMAC de AE-2 si está cifrado.
 - 7z Copy/LZMA2 en todos los niveles, contraseñas y cabeceras ocultas en ambas direcciones.
 - Entradas externas sólidas LZMA/LZMA2, nombres Unicode, entradas vacías y conflictos.
+- 7-Zip verifica y extrae cada método 7z que escribe Arca (LZMA2, LZMA, PPMd, BZip2, Deflate, Copy) y cada filtro que elige (BCJ, ARM, ARMT, PPC, SPARC, IA64, Delta), y Arca lee los archivos de 7-Zip con cada uno de ellos. ARM64 se comprueba con 7-Zip 24.09 (`SEVENZIP`), porque p7zip no tiene filtro ARM64.
 - Extraer 7z con contraseña incorrecta deja el destino ausente o intacto.
 - Una entrada con `../../` se rechaza en lugar de escribir fuera del destino.
 - Los fixtures del lector RAR/CBR, también con UnRAR oficial cuando `UNRAR` apunta a él (`ARCA_TEST_RAR=0` los omite).

@@ -1,6 +1,6 @@
 use std::{fs, path::Path, process::Command};
 
-use arca_7z::{create_7z, CreateOptions, SevenZArchive, Source};
+use arca_7z::{create_7z, rewrite_7z, Change, Compression, CreateOptions, SevenZArchive, Source};
 use arca_core::Level;
 
 fn seven_zip(cwd: &Path, args: &[&str]) {
@@ -110,4 +110,71 @@ fn seven_zip_reads_arca_and_arca_reads_seven_zip() {
         assert_eq!(nonempty, 2);
         fs::remove_file(path).unwrap();
     }
+}
+
+fn seven_zip_lists(cwd: &Path, archive: &str) -> String {
+    let result = Command::new("7z")
+        .current_dir(cwd)
+        .args(["l", "-slt", archive])
+        .output()
+        .expect("install 7z to run interoperability tests");
+    String::from_utf8_lossy(&result.stdout).into_owned()
+}
+
+#[test]
+#[ignore = "requires the external 7z binary"]
+fn seven_zip_reads_every_method_and_arca_keeps_seven_zips_on_edit() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::create_dir(root.join("src")).unwrap();
+    let text = "a line of plain text for the models\n".repeat(4000);
+    fs::write(root.join("src/a.txt"), &text).unwrap();
+    fs::write(root.join("src/b.txt"), text.to_uppercase()).unwrap();
+    let sources = ["a.txt", "b.txt"].map(|name| Source {
+        path: root.join("src").join(name),
+        name: name.into(),
+    });
+    for (compression, listed) in [
+        (Compression::Lzma, "LZMA:"),
+        (Compression::Ppmd, "PPMD"),
+        (Compression::Bzip2, "BZip2"),
+        (Compression::Deflate, "Deflate"),
+    ] {
+        if !compression.available() {
+            continue;
+        }
+        create_7z(
+            &root.join("arca.7z"),
+            &sources,
+            &CreateOptions {
+                compression,
+                password: Some("secret"),
+                ..Default::default()
+            },
+            &mut |_| true,
+        )
+        .unwrap();
+        seven_zip(root, &["t", "-psecret", "arca.7z"]);
+        assert!(
+            seven_zip_lists(root, "arca.7z").contains(listed),
+            "{compression:?}"
+        );
+    }
+    seven_zip(root, &["a", "-t7z", "-m0=PPMd", "external.7z", "src"]);
+    let change = Change {
+        name: &|e: &arca_core::Entry| (e.name != "src/b.txt").then(|| e.name.clone()),
+        add: &[],
+        level: Level::NORMAL,
+    };
+    let recoded = rewrite_7z(
+        &root.join("external.7z"),
+        &root.join("edited.7z"),
+        None,
+        &change,
+        &mut |_| true,
+    )
+    .unwrap();
+    assert!(recoded.is_empty());
+    seven_zip(root, &["t", "edited.7z"]);
+    assert!(seven_zip_lists(root, "edited.7z").contains("PPMD"));
 }

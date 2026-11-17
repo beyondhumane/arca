@@ -20,6 +20,7 @@ Its final summary reports the count for the selected build and available tools.
 - An altered ZIP byte is caught by the CRC, or by the AE-2 HMAC when encrypted.
 - 7z Copy/LZMA2 at all levels, passwords and hidden headers in both directions.
 - External solid LZMA/LZMA2 inputs, Unicode names, empty entries and conflict handling.
+- Every 7z method Arca writes (LZMA2, LZMA, PPMd, BZip2, Deflate, Copy) and every filter it picks (BCJ, ARM, ARMT, PPC, SPARC, IA64, Delta) is verified and extracted by 7-Zip, and Arca reads 7-Zip's archives with each of them. ARM64 runs against 7-Zip 24.09 (`SEVENZIP`), since p7zip has no ARM64 filter.
 - Wrong-password 7z extraction leaves the destination absent or unchanged.
 - An entry with `../../` is rejected instead of writing outside the destination.
 - The RAR/CBR reader fixtures, also through official UnRAR when `UNRAR` points at it (`ARCA_TEST_RAR=0` skips them).
