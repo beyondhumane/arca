@@ -308,8 +308,8 @@ pub fn check_password<R: Read + Seek>(
     };
     let (mut bounded, crypt) = open_data(source, e)?;
     match crypt {
-        Crypt::Aes => {
-            unlock(&mut bounded, e, Some(password))?;
+        Crypt::Aes { strength } => {
+            unlock(&mut bounded, e, strength, Some(password))?;
         }
         Crypt::Zip { check } => {
             zipcrypto::open(&mut bounded, password, check, &e.name)?;
@@ -330,16 +330,16 @@ pub fn copy_compressed<R: Read + Seek, W: Write + ?Sized>(
     password: Option<&str>,
 ) -> Result<u64> {
     let (mut bounded, crypt) = open_data(source, e)?;
-    let crypt = match crypt {
+    let strength = match crypt {
         Crypt::None => return Ok(io::copy(&mut bounded, dest)?),
-        other => other,
+        Crypt::Zip { check } => {
+            let pw = need_password(e, password)?;
+            let mut reader = zipcrypto::open(&mut bounded, pw, check, &e.name)?;
+            return Ok(io::copy(&mut reader, dest)?);
+        }
+        Crypt::Aes { strength } => strength,
     };
-    if let Crypt::Zip { check } = crypt {
-        let pw = need_password(e, password)?;
-        let mut reader = zipcrypto::open(&mut bounded, pw, check, &e.name)?;
-        return Ok(io::copy(&mut reader, dest)?);
-    }
-    let (keys, cipher_len) = unlock(&mut bounded, e, password)?;
+    let (keys, cipher_len) = unlock(&mut bounded, e, strength, password)?;
     let mut reader = aes::AesReader::new(&mut bounded, &keys, cipher_len)?;
     let n = io::copy(&mut reader, dest)?;
     let computed = reader.finish()?;
@@ -400,10 +400,12 @@ fn open_data<'a, R: Read + Seek>(
 
     // A streamed entry has no CRC yet when its header is written, so the byte
     // that checks the password is taken from the modification time instead.
-    let crypt = if flags & 1 == 0 {
+    let mut crypt = if flags & 1 == 0 {
         Crypt::None
     } else if method_code == aes::METHOD_AE {
-        Crypt::Aes
+        Crypt::Aes {
+            strength: aes::STRENGTH_256,
+        }
     } else {
         Crypt::Zip {
             check: if flags & 8 != 0 {
@@ -420,6 +422,17 @@ fn open_data<'a, R: Read + Seek>(
         )));
     }
 
+    // The key size decides how long the salt is, so it is read from the 0x9901
+    // field in this header, the one that travels with the data.
+    if let Crypt::Aes { strength } = &mut crypt {
+        source.seek(SeekFrom::Current(n_len as i64))?;
+        let mut extra = vec![0u8; x_len as usize];
+        source.read_exact(&mut extra)?;
+        if let Some(info) = aes::parse_extra(&extra) {
+            *strength = info.strength;
+        }
+    }
+
     let data_start = e.offset + LFH_FIXED as u64 + n_len + x_len;
     source.seek(SeekFrom::Start(data_start))?;
     Ok((source.take(e.compressed_size), crypt))
@@ -430,7 +443,7 @@ fn open_data<'a, R: Read + Seek>(
 // encryption flag set is the old PKWARE cipher.
 enum Crypt {
     None,
-    Aes,
+    Aes { strength: u8 },
     Zip { check: u8 },
 }
 
@@ -443,11 +456,18 @@ fn need_password<'a>(e: &Entry, password: Option<&'a str>) -> Result<&'a str> {
 // Eats the salt and the verifier off the front of the entry and returns the
 // keys, plus how many bytes of ciphertext follow before the authentication
 // code. A wrong password stops here, before anything is decrypted.
-fn unlock<R: Read>(bounded: &mut R, e: &Entry, password: Option<&str>) -> Result<(aes::Keys, u64)> {
+fn unlock<R: Read>(
+    bounded: &mut R,
+    e: &Entry,
+    strength: u8,
+    password: Option<&str>,
+) -> Result<(aes::Keys, u64)> {
     let pw = need_password(e, password)?;
+    let (salt_len, _) = aes::sizes(strength)
+        .ok_or_else(|| Error::Unsupported(format!("'{}': AES strength {strength}", e.name)))?;
     let cipher_len = e
         .compressed_size
-        .checked_sub(aes::OVERHEAD as u64)
+        .checked_sub((salt_len + aes::VERIFIER + aes::AUTH_CODE) as u64)
         .ok_or_else(|| {
             Error::Format(format!(
                 "'{}': {} bytes, shorter than its own AES header",
@@ -455,11 +475,12 @@ fn unlock<R: Read>(bounded: &mut R, e: &Entry, password: Option<&str>) -> Result
             ))
         })?;
     let mut salt = [0u8; aes::SALT_256];
-    bounded.read_exact(&mut salt)?;
+    let salt = &mut salt[..salt_len];
+    bounded.read_exact(salt)?;
     let mut given = [0u8; aes::VERIFIER];
     bounded.read_exact(&mut given)?;
 
-    let keys = aes::derive(pw, &salt);
+    let keys = aes::derive_with(pw, salt, strength)?;
     if !aes::verifier_matches(&keys, &given) {
         return Err(Error::Format(format!("'{}': wrong password", e.name)));
     }
@@ -479,8 +500,8 @@ fn extract_inner<R: Read + Seek, W: Write>(
         let pw = need_password(e, password)?;
         let reader = zipcrypto::open(&mut bounded, pw, check, &e.name)?;
         decompress_into(reader, e.method, &mut cw, e.size)?;
-    } else if matches!(crypt, Crypt::Aes) {
-        let (keys, cipher_len) = unlock(&mut bounded, e, password)?;
+    } else if let Crypt::Aes { strength } = crypt {
+        let (keys, cipher_len) = unlock(&mut bounded, e, strength, password)?;
         let reader = aes::AesReader::new(&mut bounded, &keys, cipher_len)?;
         let reader = decompress_into(reader, e.method, &mut cw, e.size)?;
         let computed = reader.finish()?;
@@ -809,14 +830,10 @@ fn read_central(c: &mut Cursor<'_>) -> Result<(Entry, Kept)> {
         let info = aes::parse_extra(extra).ok_or_else(|| {
             Error::Format("entry says AES but carries no 0x9901 extra field".into())
         })?;
-        if info.strength != aes::STRENGTH_256 {
+        if aes::sizes(info.strength).is_none() {
             return Err(Error::Unsupported(format!(
-                "AES-{} (only AES-256 is supported)",
-                match info.strength {
-                    1 => "128",
-                    2 => "192",
-                    _ => "?",
-                }
+                "AES strength {} (AES-128, AES-192 and AES-256 are supported)",
+                info.strength
             )));
         }
         info.real_method
@@ -3813,5 +3830,182 @@ mod tests {
                 }
             }
         }
+    }
+
+    // Arca writes AES-256 only, so AES-128 and AES-192 entries are laid out by
+    // hand: method 99, the 0x9901 field in both headers, and salt, verifier,
+    // ciphertext and authentication code as the data. `crc` is zero for AE-2
+    // and the real checksum for AE-1.
+    fn aes_archive(strength: u8, plain: &[u8], password: &str, deflate: bool, crc: u32) -> Vec<u8> {
+        let name = b"cifrado.txt";
+        let known = aes::sizes(strength).is_some();
+        let (salt_len, _) = aes::sizes(strength).unwrap_or((8, 16));
+        let mut body = if deflate {
+            deflate_block(plain, Level::NORMAL).unwrap()
+        } else {
+            plain.to_vec()
+        };
+        let salt: Vec<u8> = (0..salt_len as u8)
+            .map(|i| i.wrapping_mul(29) ^ 0x5A)
+            .collect();
+        let sealed_as = if known { strength } else { aes::STRENGTH_128 };
+        let (verifier, auth) = aes::seal(password, &salt, sealed_as, &mut body).unwrap();
+        let mut data = salt;
+        data.extend_from_slice(&verifier);
+        data.extend_from_slice(&body);
+        data.extend_from_slice(&auth);
+
+        let mut extra = Vec::new();
+        extra.extend_from_slice(&aes::EXTRA_AE.to_le_bytes());
+        extra.extend_from_slice(&7u16.to_le_bytes());
+        extra.extend_from_slice(&(if crc == 0 { 2u16 } else { 1u16 }).to_le_bytes());
+        extra.extend_from_slice(&aes::VENDOR_AE.to_le_bytes());
+        extra.push(strength);
+        extra.extend_from_slice(&(if deflate { 8u16 } else { 0u16 }).to_le_bytes());
+
+        let fixed = |out: &mut Vec<u8>| {
+            out.extend_from_slice(&0x0001u16.to_le_bytes());
+            out.extend_from_slice(&aes::METHOD_AE.to_le_bytes());
+            out.extend_from_slice(&0u32.to_le_bytes());
+            out.extend_from_slice(&crc.to_le_bytes());
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(plain.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            out.extend_from_slice(&(extra.len() as u16).to_le_bytes());
+        };
+        let mut out = Vec::new();
+        out.extend_from_slice(&SIG_LFH.to_le_bytes());
+        out.extend_from_slice(&51u16.to_le_bytes());
+        fixed(&mut out);
+        out.extend_from_slice(name);
+        out.extend_from_slice(&extra);
+        out.extend_from_slice(&data);
+
+        let cd_at = out.len();
+        out.extend_from_slice(&SIG_CD.to_le_bytes());
+        out.extend_from_slice(&51u16.to_le_bytes());
+        out.extend_from_slice(&51u16.to_le_bytes());
+        fixed(&mut out);
+        out.extend_from_slice(&[0u8; 14]);
+        out.extend_from_slice(name);
+        out.extend_from_slice(&extra);
+        let cd_size = out.len() - cd_at;
+
+        out.extend_from_slice(&SIG_EOCD.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&(cd_size as u32).to_le_bytes());
+        out.extend_from_slice(&(cd_at as u32).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+
+    fn aes_ciphertext_at(strength: u8) -> usize {
+        let (salt_len, _) = aes::sizes(strength).unwrap();
+        LFH_FIXED + "cifrado.txt".len() + 11 + salt_len + aes::VERIFIER
+    }
+
+    #[test]
+    fn aes_128_and_192_entries_come_back_whole() {
+        let plain = b"Una clave mas corta sigue siendo una clave. ".repeat(40);
+        for strength in [aes::STRENGTH_128, aes::STRENGTH_192, aes::STRENGTH_256] {
+            for deflate in [false, true] {
+                for crc in [0, crc32fast::hash(&plain)] {
+                    let buf = aes_archive(strength, &plain, "secreto", deflate, crc);
+                    let mut a = ZipArchive::open(IoCursor::new(buf.clone())).unwrap();
+                    assert!(a.has_encrypted());
+                    let mut got = Vec::new();
+                    a.extract_to_with(0, &mut got, Some("secreto")).unwrap();
+                    assert_eq!(got, plain, "strength {strength}, deflate {deflate}");
+
+                    assert!(a.extract_to_with(0, io::sink(), Some("otra")).is_err());
+                    assert!(a.extract_to_with(0, io::sink(), None).is_err());
+                    let entries = a.entries().to_vec();
+                    let mut src = IoCursor::new(buf);
+                    assert!(check_password(&mut src, &entries, "secreto").is_ok());
+                    assert!(check_password(&mut src, &entries, "otra").is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_flipped_bit_in_an_aes_128_or_192_entry_is_caught() {
+        let plain = b"0123456789abcdefghij";
+        for strength in [aes::STRENGTH_128, aes::STRENGTH_192] {
+            let buf = aes_archive(strength, plain, "k", false, 0);
+            let first = aes_ciphertext_at(strength);
+            for i in 0..plain.len() {
+                let mut bad = buf.clone();
+                bad[first + i] ^= 0x01;
+                let mut a = ZipArchive::open(IoCursor::new(bad)).unwrap();
+                let r = a.extract_to_with(0, &mut Vec::new(), Some("k"));
+                assert!(
+                    matches!(r, Err(Error::Tampered { .. })),
+                    "strength {strength}, byte {i} went through unnoticed: {r:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_aes_strength_nobody_writes_is_refused() {
+        for strength in [0u8, 4, 0xFF] {
+            let buf = aes_archive(strength, b"datos", "k", false, 0);
+            let r = ZipArchive::open(IoCursor::new(buf));
+            assert!(
+                matches!(r, Err(Error::Format(ref m)) if m.contains("AES strength")),
+                "strength {strength}: {:?}",
+                r.err()
+            );
+        }
+    }
+
+    #[test]
+    fn truncated_or_garbled_aes_128_and_192_entries_do_not_panic() {
+        for strength in [aes::STRENGTH_128, aes::STRENGTH_192] {
+            let buf = aes_archive(strength, &b"contenido".repeat(20), "k", true, 0);
+            for cut_at in 0..buf.len() {
+                if let Ok(mut a) = ZipArchive::open(IoCursor::new(buf[..cut_at].to_vec())) {
+                    let _ = a.extract_to_with(0, io::sink(), Some("k"));
+                }
+            }
+            for at in 0..buf.len() {
+                let mut bad = buf.clone();
+                bad[at] = bad[at].wrapping_add(0x41);
+                if let Ok(mut a) = ZipArchive::open(IoCursor::new(bad)) {
+                    let _ = a.extract_to_with(0, io::sink(), Some("k"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rewriting_an_aes_128_archive_keeps_it_or_moves_it_to_256() {
+        let plain = b"lo que habia dentro".repeat(30);
+        let buf = aes_archive(aes::STRENGTH_128, &plain, "k", true, 0);
+        let strength_of = |buf: &[u8]| {
+            let a = ZipArchive::open(IoCursor::new(buf.to_vec())).unwrap();
+            aes::parse_extra(&a.kept[0].extra).map(|i| i.strength)
+        };
+
+        let renamed = through_files("aes128-rename", &buf, |from, to| {
+            rename_entries(from, to, Some("k"), &|_| "otro.txt".into(), &|_, _, _| true)
+        });
+        assert_eq!(strength_of(&renamed), Some(aes::STRENGTH_128));
+        let mut a = ZipArchive::open(IoCursor::new(renamed)).unwrap();
+        let mut got = Vec::new();
+        a.extract_to_with(0, &mut got, Some("k")).unwrap();
+        assert_eq!(got, plain);
+
+        let moved = through_files("aes128-password", &buf, |from, to| {
+            rewrite_password(from, to, Some("k"), Some("nueva"), &|_, _, _| true)
+        });
+        assert_eq!(strength_of(&moved), Some(aes::STRENGTH_256));
+        let mut a = ZipArchive::open(IoCursor::new(moved)).unwrap();
+        let mut got = Vec::new();
+        a.extract_to_with(0, &mut got, Some("nueva")).unwrap();
+        assert_eq!(got, plain);
     }
 }

@@ -8,6 +8,8 @@ pub const METHOD_AE: u16 = 99;
 pub const EXTRA_AE: u16 = 0x9901;
 pub const VENDOR_AE: u16 = 0x4541;
 pub const AE2: u16 = 2;
+pub const STRENGTH_128: u8 = 1;
+pub const STRENGTH_192: u8 = 2;
 pub const STRENGTH_256: u8 = 3;
 pub const SALT_256: usize = 16;
 pub const KEY_256: usize = 32;
@@ -17,39 +19,104 @@ pub const OVERHEAD: usize = SALT_256 + VERIFIER + AUTH_CODE;
 
 const ITERATIONS: u32 = 1000;
 
-type Ctr = ctr::Ctr128LE<aes::Aes256>;
 type HmacSha1 = Hmac<Sha1>;
 
+/// The salt and key lengths WinZip AES uses for a strength byte of the 0x9901
+/// field: 1, 2 and 3 are AES-128, AES-192 and AES-256. Anything else is not a
+/// strength any tool writes.
+pub fn sizes(strength: u8) -> Option<(usize, usize)> {
+    match strength {
+        STRENGTH_128 => Some((8, 16)),
+        STRENGTH_192 => Some((12, 24)),
+        STRENGTH_256 => Some((SALT_256, KEY_256)),
+        _ => None,
+    }
+}
+
+/// What an entry of this strength adds around its ciphertext: salt, password
+/// verifier and authentication code.
+pub fn overhead(strength: u8) -> Option<usize> {
+    sizes(strength).map(|(salt, _)| salt + VERIFIER + AUTH_CODE)
+}
+
 pub struct Keys {
+    key_len: usize,
     cipher: [u8; KEY_256],
     mac: [u8; KEY_256],
     verifier: [u8; VERIFIER],
+}
+
+impl Keys {
+    fn mac(&self) -> Result<HmacSha1> {
+        <HmacSha1 as KeyInit>::new_from_slice(&self.mac[..self.key_len])
+            .map_err(|_| Error::Format("bad HMAC key length".into()))
+    }
 }
 
 // PBKDF2-HMAC-SHA1 with 1000 iterations, exactly what WinZip AES specifies.
 // The derived block is the encryption key, then the authentication key, then
 // two bytes that only serve to tell a wrong password apart quickly.
 pub fn derive(password: &str, salt: &[u8]) -> Keys {
+    derive_sized(password, salt, KEY_256)
+}
+
+/// [`derive`] for an entry of any strength `sizes` knows. The salt has to be
+/// the length that strength calls for.
+pub fn derive_with(password: &str, salt: &[u8], strength: u8) -> Result<Keys> {
+    match sizes(strength) {
+        Some((salt_len, key_len)) if salt.len() == salt_len => {
+            Ok(derive_sized(password, salt, key_len))
+        }
+        _ => Err(Error::Unsupported(format!("AES strength {strength}"))),
+    }
+}
+
+fn derive_sized(password: &str, salt: &[u8], key_len: usize) -> Keys {
+    let key_len = key_len.min(KEY_256);
     let mut out = [0u8; KEY_256 * 2 + VERIFIER];
-    pbkdf2::pbkdf2_hmac::<Sha1>(password.as_bytes(), salt, ITERATIONS, &mut out);
+    let out = &mut out[..key_len * 2 + VERIFIER];
+    pbkdf2::pbkdf2_hmac::<Sha1>(password.as_bytes(), salt, ITERATIONS, out);
     let mut k = Keys {
+        key_len,
         cipher: [0u8; KEY_256],
         mac: [0u8; KEY_256],
         verifier: [0u8; VERIFIER],
     };
-    k.cipher.copy_from_slice(&out[..KEY_256]);
-    k.mac.copy_from_slice(&out[KEY_256..KEY_256 * 2]);
-    k.verifier.copy_from_slice(&out[KEY_256 * 2..]);
+    k.cipher[..key_len].copy_from_slice(&out[..key_len]);
+    k.mac[..key_len].copy_from_slice(&out[key_len..key_len * 2]);
+    k.verifier.copy_from_slice(&out[key_len * 2..]);
     k
+}
+
+enum Ctr {
+    Aes128(ctr::Ctr128LE<aes::Aes128>),
+    Aes192(ctr::Ctr128LE<aes::Aes192>),
+    Aes256(ctr::Ctr128LE<aes::Aes256>),
+}
+
+impl Ctr {
+    fn apply_keystream(&mut self, buf: &mut [u8]) {
+        match self {
+            Ctr::Aes128(c) => c.apply_keystream(buf),
+            Ctr::Aes192(c) => c.apply_keystream(buf),
+            Ctr::Aes256(c) => c.apply_keystream(buf),
+        }
+    }
 }
 
 // WinZip AES counts the CTR block as a little endian integer starting at one,
 // which is not what the usual big endian CTR does. Getting this backwards
 // produces archives that look fine here and that no other tool can read.
-fn stream(key: &[u8; KEY_256]) -> Ctr {
+fn stream(keys: &Keys) -> Result<Ctr> {
     let mut iv = [0u8; 16];
     iv[0] = 1;
-    Ctr::new(key.into(), &iv.into())
+    let key = &keys.cipher[..keys.key_len];
+    let bad = |_| Error::Format("bad AES key length".into());
+    Ok(match keys.key_len {
+        16 => Ctr::Aes128(KeyIvInit::new_from_slices(key, &iv).map_err(bad)?),
+        24 => Ctr::Aes192(KeyIvInit::new_from_slices(key, &iv).map_err(bad)?),
+        _ => Ctr::Aes256(KeyIvInit::new_from_slices(key, &iv).map_err(bad)?),
+    })
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -77,38 +144,53 @@ pub fn encrypt(
     data: &mut [u8],
 ) -> Result<([u8; SALT_256], [u8; VERIFIER], [u8; AUTH_CODE])> {
     let salt = random_salt()?;
-    let keys = derive(password, &salt);
-    stream(&keys.cipher).apply_keystream(data);
-    let mut mac = <HmacSha1 as KeyInit>::new_from_slice(&keys.mac)
-        .map_err(|_| Error::Format("bad HMAC key length".into()))?;
+    let (verifier, auth) = seal(password, &salt, STRENGTH_256, data)?;
+    Ok((salt, verifier, auth))
+}
+
+pub(crate) fn seal(
+    password: &str,
+    salt: &[u8],
+    strength: u8,
+    data: &mut [u8],
+) -> Result<([u8; VERIFIER], [u8; AUTH_CODE])> {
+    let keys = derive_with(password, salt, strength)?;
+    stream(&keys)?.apply_keystream(data);
+    let mut mac = keys.mac()?;
     mac.update(data);
     let tag = mac.finalize().into_bytes();
     let mut auth = [0u8; AUTH_CODE];
     auth.copy_from_slice(&tag[..AUTH_CODE]);
-    Ok((salt, keys.verifier, auth))
+    Ok((keys.verifier, auth))
 }
 
 // The authentication code is checked before returning a single byte: a wrong
 // or tampered archive must not reach the caller as plausible looking data.
 pub fn decrypt(password: &str, body: &[u8]) -> Result<Vec<u8>> {
-    if body.len() < OVERHEAD {
+    decrypt_with(password, STRENGTH_256, body)
+}
+
+pub fn decrypt_with(password: &str, strength: u8, body: &[u8]) -> Result<Vec<u8>> {
+    let (salt_len, _) =
+        sizes(strength).ok_or_else(|| Error::Unsupported(format!("AES strength {strength}")))?;
+    let overhead = salt_len + VERIFIER + AUTH_CODE;
+    if body.len() < overhead {
         return Err(Error::Format(format!(
-            "encrypted entry of {} bytes, shorter than the {OVERHEAD} bytes of its own header",
+            "encrypted entry of {} bytes, shorter than the {overhead} bytes of its own header",
             body.len()
         )));
     }
-    let salt = &body[..SALT_256];
-    let verifier = &body[SALT_256..SALT_256 + VERIFIER];
+    let salt = &body[..salt_len];
+    let verifier = &body[salt_len..salt_len + VERIFIER];
     let auth = &body[body.len() - AUTH_CODE..];
-    let cipher_text = &body[SALT_256 + VERIFIER..body.len() - AUTH_CODE];
+    let cipher_text = &body[salt_len + VERIFIER..body.len() - AUTH_CODE];
 
-    let keys = derive(password, salt);
+    let keys = derive_with(password, salt, strength)?;
     if !constant_time_eq(verifier, &keys.verifier) {
         return Err(Error::Format("wrong password".into()));
     }
 
-    let mut mac = <HmacSha1 as KeyInit>::new_from_slice(&keys.mac)
-        .map_err(|_| Error::Format("bad HMAC key length".into()))?;
+    let mut mac = keys.mac()?;
     mac.update(cipher_text);
     let tag = mac.finalize().into_bytes();
     if !constant_time_eq(auth, &tag[..AUTH_CODE]) {
@@ -118,7 +200,7 @@ pub fn decrypt(password: &str, body: &[u8]) -> Result<Vec<u8>> {
     }
 
     let mut plain = cipher_text.to_vec();
-    stream(&keys.cipher).apply_keystream(&mut plain);
+    stream(&keys)?.apply_keystream(&mut plain);
     Ok(plain)
 }
 
@@ -174,9 +256,8 @@ impl<W: std::io::Write> AesWriter<W> {
     pub fn new(inner: W, keys: &Keys) -> Result<Self> {
         Ok(AesWriter {
             inner,
-            stream: stream(&keys.cipher),
-            mac: <HmacSha1 as KeyInit>::new_from_slice(&keys.mac)
-                .map_err(|_| Error::Format("bad HMAC key length".into()))?,
+            stream: stream(keys)?,
+            mac: keys.mac()?,
             written: 0,
             scratch: Vec::new(),
         })
@@ -234,9 +315,8 @@ impl<R: std::io::Read> AesReader<R> {
     pub fn new(inner: R, keys: &Keys, cipher_len: u64) -> Result<Self> {
         Ok(AesReader {
             inner,
-            stream: stream(&keys.cipher),
-            mac: <HmacSha1 as KeyInit>::new_from_slice(&keys.mac)
-                .map_err(|_| Error::Format("bad HMAC key length".into()))?,
+            stream: stream(keys)?,
+            mac: keys.mac()?,
             remaining: cipher_len,
         })
     }
@@ -338,7 +418,9 @@ mod tests {
     fn garbage_does_not_panic() {
         for n in 0..64usize {
             let body: Vec<u8> = (0..n).map(|i| (i * 37) as u8).collect();
-            let _ = decrypt("whatever", &body);
+            for strength in 0..=4u8 {
+                let _ = decrypt_with("whatever", strength, &body);
+            }
         }
         for n in 0..40usize {
             let extra: Vec<u8> = (0..n).map(|i| (i * 91) as u8).collect();
@@ -352,5 +434,31 @@ mod tests {
         let info = parse_extra(&f).expect("must parse back");
         assert_eq!(info.strength, STRENGTH_256);
         assert_eq!(info.real_method, 8);
+    }
+
+    #[test]
+    fn every_strength_round_trips_and_keeps_its_own_key_size() {
+        let original = b"three key sizes, one format".repeat(20);
+        let mut sealed = Vec::new();
+        for strength in [STRENGTH_128, STRENGTH_192, STRENGTH_256] {
+            let (salt_len, key_len) = sizes(strength).unwrap();
+            let salt = vec![7u8; salt_len];
+            let mut data = original.clone();
+            let (verifier, auth) = seal("k", &salt, strength, &mut data).unwrap();
+            let mut body = salt.clone();
+            body.extend_from_slice(&verifier);
+            body.extend_from_slice(&data);
+            body.extend_from_slice(&auth);
+            assert_eq!(decrypt_with("k", strength, &body).unwrap(), original);
+            assert!(decrypt_with("j", strength, &body).is_err());
+            assert_eq!(derive_with("k", &salt, strength).unwrap().key_len, key_len);
+            assert!(
+                derive_with("k", &salt[1..], strength).is_err(),
+                "a salt of the wrong length must not pass for this strength"
+            );
+            sealed.push(data);
+        }
+        assert_ne!(sealed[0], sealed[1]);
+        assert_ne!(sealed[1], sealed[2]);
     }
 }

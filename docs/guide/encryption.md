@@ -18,6 +18,10 @@ Arca encrypts `.zip` archives with AES-256 using the WinZip AE-2 scheme, the sam
 | Authentication | HMAC-SHA1 over the ciphertext |
 | Salt | Random 16 bytes, fresh for every entry |
 
+### AES-128 and AES-192
+
+WinZip AES also comes in 128- and 192-bit strengths, with an 8- or 12-byte salt and a 16- or 24-byte key. Arca reads both, with the same password check and the same HMAC verdict as AES-256, so a wrong password or a tampered byte fails the same way. It never writes them: `arca password` with a new password moves such an archive to AES-256, while adding, removing or renaming entries copies them across with the strength they had.
+
 ## Design decisions
 
 - **A salt per entry.** Reusing a salt would reuse the keystream, and two identical files would look identical inside the archive.
