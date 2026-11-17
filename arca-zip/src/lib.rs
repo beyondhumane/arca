@@ -2500,10 +2500,7 @@ fn write_in_parallel<W: Write + Seek>(
     let threads = resolve_threads(threads);
     let cap = IN_FLIGHT_PER_THREAD * threads as u64;
     w.stream_threads = threads;
-    let weights: Vec<u64> = files
-        .iter()
-        .map(|s| if s.size > cap { 0 } else { s.size })
-        .collect();
+    let weights: Vec<u64> = files.iter().map(|s| s.size.min(cap)).collect();
     let mut bytes = 0u64;
 
     let compress = |i: usize| -> Result<Ready> {
@@ -3548,6 +3545,51 @@ mod tests {
         assert_eq!(taken, 11);
         assert!(started.load(Ordering::SeqCst) <= 15);
         in_order(&[], 4, 4, |_| (), |_, _| Ok(())).unwrap();
+    }
+
+    // A file too big for the budget is streamed by the writer on the threads
+    // it was given, so nothing else may be compressing while it is written.
+    #[test]
+    fn a_streamed_entry_has_the_budget_to_itself() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let files: Vec<Source> = [5u64, 50, 5, 5]
+            .iter()
+            .enumerate()
+            .map(|(i, &size)| Source {
+                path: std::path::PathBuf::from(format!("{i}")),
+                name: format!("{i}"),
+                size,
+                mtime: 0,
+                codec: Codec::Store,
+                level: Level::STORE,
+            })
+            .collect();
+        let cap = 10;
+        let weights: Vec<u64> = files.iter().map(|s| s.size.min(cap)).collect();
+        let streaming = AtomicBool::new(false);
+        let overlapped = AtomicBool::new(false);
+        in_order(
+            &weights,
+            cap,
+            4,
+            |i| {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                if streaming.load(Ordering::SeqCst) {
+                    overlapped.store(true, Ordering::SeqCst);
+                }
+                i
+            },
+            |i, _| {
+                if files[i].size > cap {
+                    streaming.store(true, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    streaming.store(false, Ordering::SeqCst);
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(!overlapped.load(Ordering::SeqCst));
     }
 
     // One call builds the archive both the window and the command line ask for,
