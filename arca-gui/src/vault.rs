@@ -573,18 +573,36 @@ impl Keyring {
     /// The entries that fit any of `archives`, best fit first. Entries that
     /// hold a password already listed are left out.
     pub(crate) fn matching(&self, archives: &[PathBuf], auto: bool) -> Vec<usize> {
+        self.ranked(auto, |mask| {
+            archives
+                .iter()
+                .filter_map(|archive| rank(mask, archive))
+                .max()
+        })
+    }
+
+    /// The entries that fit every one of `archives`, ranked by the one they
+    /// fit worst. One password goes with all the archives of a job, so only
+    /// these can be tried on it without being sent to an archive their mask
+    /// leaves out.
+    pub(crate) fn matching_all(&self, archives: &[PathBuf], auto: bool) -> Vec<usize> {
+        self.ranked(auto, |mask| {
+            archives
+                .iter()
+                .map(|archive| rank(mask, archive))
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .min()
+        })
+    }
+
+    fn ranked(&self, auto: bool, fit: impl Fn(&str) -> Option<(u8, usize)>) -> Vec<usize> {
         let mut ranked: Vec<((u8, usize), usize)> = self
             .entries
             .iter()
             .enumerate()
             .filter(|(_, entry)| entry.auto == auto)
-            .filter_map(|(i, entry)| {
-                archives
-                    .iter()
-                    .filter_map(|archive| rank(&entry.mask, archive))
-                    .max()
-                    .map(|r| (r, i))
-            })
+            .filter_map(|(i, entry)| fit(&entry.mask).map(|r| (r, i)))
             .collect();
         ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
         let mut out: Vec<usize> = Vec::new();

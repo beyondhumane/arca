@@ -279,3 +279,40 @@ fn locking_forgets_the_passwords_waiting_to_be_tried() {
     assert!(!app.state.saved.trying());
     assert!(app.state.saved.keyring.entries.is_empty());
 }
+
+#[test]
+fn a_job_on_several_archives_tries_only_passwords_that_fit_them_all() {
+    let (one, two) = (Room::new(), Room::new());
+    let first = one.archive(Some("secret"), true);
+    let second = two.archive(Some("secret"), true);
+    let name = first.file_name().unwrap().to_string_lossy().to_string();
+    let mut app = with(vec![saved(&name, "secret", true)]);
+    let job = || Job::Extract {
+        archives: vec![first.clone(), second.clone()],
+        dest: Destination::Subfolder,
+        password: None,
+    };
+    app.run_job(job());
+    settle(&mut app);
+    assert!(app.state.waiting_on_password.is_some());
+    assert!(app.state.tasks.is_empty());
+    let offered = app.offered_passwords();
+    assert_eq!(offered.len(), 1);
+    assert_eq!(offered[0].1, name);
+
+    app.cancel_password();
+    app.state
+        .saved
+        .keyring
+        .add(saved("*.7z", "secret", true))
+        .unwrap();
+    app.run_job(job());
+    settle(&mut app);
+    assert!(app.state.waiting_on_password.is_none());
+    assert!(!app.state.tasks.is_empty());
+    assert!(app
+        .state
+        .tasks
+        .iter()
+        .all(|task| task.status == TaskStatus::Done));
+}

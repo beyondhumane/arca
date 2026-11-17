@@ -74,7 +74,7 @@ impl AppController {
                 Vec::new()
             } else {
                 keyring
-                    .matching(&archives, true)
+                    .matching_all(&archives, true)
                     .into_iter()
                     .map(|i| keyring.entries[i].password.clone())
                     .collect()
@@ -197,16 +197,16 @@ impl AppController {
             return Vec::new();
         }
         let keyring = &self.state.saved.keyring;
-        let mut picks = keyring.matching(&archives, false);
-        if self.weak_check(&archives) {
-            picks = keyring
-                .matching(&archives, true)
-                .into_iter()
-                .chain(picks)
-                .collect();
-        }
-        picks
+        let tried = if self.weak_check(&archives) {
+            Vec::new()
+        } else {
+            keyring.matching_all(&archives, true)
+        };
+        keyring
+            .matching(&archives, true)
             .into_iter()
+            .filter(|i| !tried.contains(i))
+            .chain(keyring.matching(&archives, false))
             .map(|i| {
                 let entry = &keyring.entries[i];
                 let label = if entry.label.is_empty() {
