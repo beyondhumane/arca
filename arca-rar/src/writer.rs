@@ -21,6 +21,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const HEADER_ALLOWANCE: u64 = 128;
 const DOS_ARCHIVE_ATTR: u64 = 0x20;
 const RAR50_HOST_UNIX: u64 = 1;
+/// Compressed payloads kept in memory rather than in one temporary file per
+/// member, charged to `WRITER_MEMORY_BYTES`. A payload past 1 MiB, or one that
+/// no longer fits, goes to a file beside the output as before.
+pub(super) const RESIDENT_SPOOL_BYTES: u64 = 128 * 1024 * 1024;
 
 /// What one source looked like when it was scanned. The opener compares the
 /// file against this every time the writer reopens it.
@@ -85,6 +89,7 @@ pub(super) fn create(
     let resources = WriterResources::new(limits::WRITER_MEMORY_BYTES)
         .with_max_memory_bytes(limits::WRITER_MEMORY_BYTES)
         .with_max_spool_bytes(limits::MAX_SPOOL_BYTES)
+        .with_max_spool_memory_bytes(RESIDENT_SPOOL_BYTES)
         .with_max_prepared_header_bytes(limits::MAX_HEADER_BYTES)
         .with_max_preparation_bytes(limits::MAX_HEADER_BYTES)
         .with_temp_dir(&parent)
@@ -167,14 +172,17 @@ fn write(
     reporter: &Reporter<'_>,
 ) -> rars::Result<()> {
     let (writer_options, extras) = settings(options);
+    let mut out = io::BufWriter::new(&mut *file);
     write_streaming_archive_with_progress(
         entries,
         writer_options,
         extras,
         resources,
         Some(reporter),
-        file,
+        &mut out,
     )?;
+    out.flush()?;
+    drop(out);
     file.sync_all()?;
     Ok(())
 }
@@ -445,11 +453,11 @@ fn plan(
                 source.path.display()
             )));
         }
-        let is_parent = match parent_identity {
+        let is_parent = || match parent_identity {
             Some(parent) => identity(&meta) == Some(parent),
             None => parent_real.is_some() && fs::canonicalize(&source.path).ok() == parent_real,
         };
-        if meta.is_dir() && is_parent {
+        if meta.is_dir() && is_parent() {
             return Err(Error::Format(format!(
                 "RAR source '{}' is the output directory",
                 source.path.display()

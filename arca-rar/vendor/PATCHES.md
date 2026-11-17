@@ -107,3 +107,31 @@ Container fixes, which do not touch the encoder:
   `recovery_service_header`; the bytes are the same. The payload-limited
   `write_streaming_volumes_with_progress` behaves as before
   (`rar50/write/engine.rs`).
+
+Spool plumbing, which does not touch the encoder or the archive bytes:
+
+- **Member payloads in memory.** Every member's packed payload had a
+  `.rars-spool-*` file of its own beside the output: created when the member
+  was set up, reopened by path for each wave that appended to it and again to
+  copy it out, then deleted. A stored member, whose payload is never written,
+  got one too. On Windows each of those file operations costs milliseconds,
+  so 3,000 small files took 15 to 45 s of wall time for under 10 s of CPU.
+  `Spool::for_member` (`streaming.rs`) now keeps the payload in memory
+  (`streaming/resident_spool.rs`) when the resources have
+  `with_max_spool_memory_bytes`. Its capacity, old and replacement buffers
+  together while it grows, is charged to that cap and to the
+  `with_max_memory_bytes` ledger before it is allocated. The spool moves to
+  a file, at the same cursor, once it would pass 1 MiB
+  (`RESIDENT_SPOOL_LIMIT`) or either ledger or the allocator refuses it, so
+  a refusal never fails a write; a move that fails leaves the bytes in memory
+  and reports the I/O error. Without the setting member spools are parked
+  files, as before. It serves the streaming and whole-member payloads, the
+  empty placeholders of stored members, the quick-open payload and a volume
+  set's encrypted members (`rar50/write/compress.rs`, `engine.rs`). The
+  recovery mirror and scratch, volume bodies and archive rewrites keep files
+  from the start. `Spool` now holds a `Store`: a file, a resident buffer, or
+  the bare-WASM memory spool. `into_source` returns a `Result`, since it
+  moves a resident spool to its file first (`rewrite_staging.rs`). A
+  whole-member payload, which the automatic filter search produces, is
+  charged to its worker's fixed reservation and so moves to disk whenever
+  the estimate leaves no room.
