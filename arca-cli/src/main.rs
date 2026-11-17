@@ -267,16 +267,28 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
-fn collect_files(inputs: &[PathBuf]) -> Result<Vec<(PathBuf, String)>> {
+/// A symbolic link to store as one: its name, what it holds, its time.
+type Link = (String, String, i64);
+type Collected = (Vec<(PathBuf, String)>, Vec<Link>);
+
+/// The regular files under `inputs`, and the symbolic links among them,
+/// which are never followed. Only a TAR keeps the links.
+fn collect_files(inputs: &[PathBuf]) -> Result<Collected> {
     let mut v = Vec::new();
+    let mut links = Vec::new();
     for e in inputs {
         let base = e.parent().unwrap_or(Path::new(""));
-        walk(e, base, &mut v)?;
+        walk(e, base, &mut v, &mut links)?;
     }
-    Ok(v)
+    Ok((v, links))
 }
 
-fn walk(p: &Path, base: &Path, out: &mut Vec<(PathBuf, String)>) -> Result<()> {
+fn walk(
+    p: &Path,
+    base: &Path,
+    out: &mut Vec<(PathBuf, String)>,
+    links: &mut Vec<Link>,
+) -> Result<()> {
     let meta = fs::symlink_metadata(p)?;
     let rel = p.strip_prefix(base).unwrap_or(p);
     let name = rel.to_string_lossy().replace('\\', "/");
@@ -284,10 +296,20 @@ fn walk(p: &Path, base: &Path, out: &mut Vec<(PathBuf, String)>) -> Result<()> {
         let mut children: Vec<_> = fs::read_dir(p)?.collect::<io::Result<Vec<_>>>()?;
         children.sort_by_key(|d| d.file_name());
         for h in children {
-            walk(&h.path(), base, out)?;
+            walk(&h.path(), base, out, links)?;
         }
     } else if meta.is_file() {
         out.push((p.to_path_buf(), name));
+    } else if let Some(target) = arca_tar::link_target(p, &meta) {
+        links.push((name, target, mtime_of(&meta)));
+    }
+    Ok(())
+}
+
+/// The symbolic links of a new TAR, after its files.
+fn add_links<W: Write>(w: &mut TarWriter<W>, links: &[Link]) -> Result<()> {
+    for (name, target, mtime) in links {
+        w.add_link(name, target, *mtime, b'2')?;
     }
     Ok(())
 }
@@ -383,9 +405,15 @@ fn create(
     let codec = resolve_codec(if xz { CodecArg::Auto } else { codec_arg }, format_kind)?;
     let mut threads = resolve_threads(requested_threads);
     let own = arca_core::extraction::OwnOutput::new(out);
-    let mut raw_list = collect_files(inputs)?;
+    let (mut raw_list, mut links) = collect_files(inputs)?;
     raw_list.retain(|(path, _)| !own.is_own(path));
-    if raw_list.is_empty() {
+    if !matches!(
+        format_kind.container(),
+        Container::Tar | Container::TarGz | Container::TarXz
+    ) {
+        links.clear();
+    }
+    if raw_list.is_empty() && links.is_empty() {
         return Err(Error::Format("there is nothing to add".into()));
     }
 
@@ -434,6 +462,7 @@ fn create(
                 let entrada = BufReader::with_capacity(BUF, file);
                 w.add(&s.name, s.size, s.mtime, mode, entrada)?;
             }
+            add_links(&mut w, &links)?;
             w.finish()?.flush()?;
             Ok(())
         })?,
@@ -448,6 +477,7 @@ fn create(
                     let entrada = BufReader::with_capacity(BUF, file);
                     w.add(&s.name, s.size, s.mtime, mode, entrada)?;
                 }
+                add_links(&mut w, &links)?;
                 w.finish()?.finish()?.flush()?;
                 Ok(used)
             })?;
@@ -576,9 +606,14 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
         Container::Tar | Container::TarGz | Container::TarXz => {
             let mut r = TarReader::new(tar_source(archive, format_kind)?);
             while let Some(e) = r.next_entry()? {
+                let link = match (e.symlink(), e.hard_link()) {
+                    (Some(target), _) => format!(" -> {target}"),
+                    (_, Some(target)) => format!(" link to {target}"),
+                    _ => String::new(),
+                };
                 writeln!(
                     out,
-                    "{:>12}  {:>7}  {:>5}   {}",
+                    "{:>12}  {:>7}  {:>5}   {}{link}",
                     e.entry.size, "store", "", e.entry.name
                 )?;
                 n += 1;
@@ -841,8 +876,20 @@ fn extract(
             let mut r = TarReader::new(tar_source(archive, format_kind)?);
             let mut destination = Destination::new(dest);
             while let Some(e) = r.next_entry()? {
-                // Links and devices have no data to write, and a file in their
-                // place would be an empty one where a link belongs.
+                if let Some(target) = e.symlink() {
+                    destination.write_symlink(&e.entry.name, target)?;
+                } else if let Some(target) = e.hard_link() {
+                    let made = destination.write_hard_link(
+                        &e.entry.name,
+                        target,
+                        e.entry.mtime,
+                        Some(e.mode),
+                        &mut |_| conflict(policy),
+                    )?;
+                    n += u64::from(made);
+                }
+                // Devices have no data to write, and a file in their place
+                // would be an empty one where a device belongs.
                 if !e.is_plain() {
                     r.skip_data(&e)?;
                     continue;
@@ -863,6 +910,10 @@ fn extract(
                 }
             }
             arca_xz::drain(&mut r.into_inner())?;
+            n += destination.make_links(&mut |_| conflict(policy))? as u64;
+            for refused in destination.refused() {
+                eprintln!("arca: {refused}");
+            }
         }
     }
 
