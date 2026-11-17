@@ -21,3 +21,4 @@ Documentación de usuario. El sitio web renderiza estos archivos bajo `/es/docs/
 17. [RAR](rar.md)
 18. [Contenedores ZIP](zip-containers.md)
 19. [Imágenes ISO](iso.md)
+20. [CPIO, AR, DEB, RPM, CAB y LZH](more-formats.md)
