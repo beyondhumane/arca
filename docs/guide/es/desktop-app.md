@@ -64,7 +64,7 @@ cuanto ha abierto el archivo. Sin contraseña maestra, las guardadas duran hasta
 que se cierra Arca; con ella, se escriben cifradas junto a los ajustes y el
 almacén se bloquea tras 10 minutos sin uso. Si está bloqueado, la ventana de
 contraseña puede desbloquearlo ahí mismo. Los detalles están en
-[contraseñas guardadas](encryption.md#contraseñas-guardadas).
+[contraseñas guardadas](encryption.md).
 
 ## RAR
 
