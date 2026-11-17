@@ -3,9 +3,11 @@
 pub mod aes;
 pub mod pages;
 mod reader;
+mod repair;
 pub mod zipcrypto;
 
 pub use reader::ExtractionReader;
+pub use repair::{repair, Recovered, Repaired, Skipped};
 
 use arca_core::{limits, Codec, Cursor, Entry, Error, Level, Method, Result};
 use flate2::write::DeflateEncoder;
@@ -61,6 +63,54 @@ pub struct ZipArchive<R: Read + Seek> {
     source: R,
     entries_list: Vec<Entry>,
     kept: Vec<Kept>,
+    comment: Vec<u8>,
+}
+
+fn read_tail<R: Read + Seek>(source: &mut R) -> Result<(Vec<u8>, usize, u64)> {
+    let total = source.seek(SeekFrom::End(0))?;
+    if total < EOCD_MIN as u64 {
+        return Err(Error::Format("too short to be a ZIP".into()));
+    }
+
+    let tail_len = (EOCD_MIN + MAX_COMMENT).min(total as usize);
+    let tail_start = total - tail_len as u64;
+    source.seek(SeekFrom::Start(tail_start))?;
+    let mut tail = vec![0u8; tail_len];
+    source.read_exact(&mut tail)?;
+
+    let pos_eocd = find_backwards(&tail, SIG_EOCD).ok_or_else(|| {
+        Error::Format("end of central directory not found (is this a ZIP?)".into())
+    })?;
+    Ok((tail, pos_eocd, total))
+}
+
+// A comment whose length runs past the end of the file keeps what is there:
+// the archive opened before anything looked at that field, and a cut-off
+// comment is no reason for it to stop opening now.
+fn eocd_comment(tail: &[u8], pos_eocd: usize) -> &[u8] {
+    let start = pos_eocd + EOCD_MIN;
+    let Some(len) = tail.get(start - 2..start) else {
+        return &[];
+    };
+    let len = u16::from_le_bytes([len[0], len[1]]) as usize;
+    let end = start.saturating_add(len).min(tail.len());
+    tail.get(start..end).unwrap_or(&[])
+}
+
+pub fn read_comment<R: Read + Seek>(mut source: R) -> Result<String> {
+    let (tail, pos_eocd, _) = read_tail(&mut source)?;
+    Ok(decode_comment(eocd_comment(&tail, pos_eocd), false))
+}
+
+// Comments carry no code page of their own beyond the entry's UTF-8 flag, and
+// plenty of tools write UTF-8 without setting it, so text that is valid UTF-8
+// is taken as such and anything else as code page 437, like names.
+fn decode_comment(bytes: &[u8], utf8: bool) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_owned(),
+        Err(_) if utf8 => String::from_utf8_lossy(bytes).into_owned(),
+        Err(_) => from_cp437(bytes),
+    }
 }
 
 /// What the central directory says about an entry beyond what `Entry` holds,
@@ -111,20 +161,8 @@ fn has_extra(extra: &[u8], id: u16) -> bool {
 
 impl<R: Read + Seek> ZipArchive<R> {
     pub fn open(mut source: R) -> Result<Self> {
-        let total = source.seek(SeekFrom::End(0))?;
-        if total < EOCD_MIN as u64 {
-            return Err(Error::Format("too short to be a ZIP".into()));
-        }
-
-        let tail_len = (EOCD_MIN + MAX_COMMENT).min(total as usize);
-        let tail_start = total - tail_len as u64;
-        source.seek(SeekFrom::Start(tail_start))?;
-        let mut tail = vec![0u8; tail_len];
-        source.read_exact(&mut tail)?;
-
-        let pos_eocd = find_backwards(&tail, SIG_EOCD).ok_or_else(|| {
-            Error::Format("end of central directory not found (is this a ZIP?)".into())
-        })?;
+        let (tail, pos_eocd, total) = read_tail(&mut source)?;
+        let comment = eocd_comment(&tail, pos_eocd).to_vec();
 
         let mut c = Cursor::at(&tail, pos_eocd)?;
         c.skip(4, "EOCD signature")?;
@@ -209,11 +247,21 @@ impl<R: Read + Seek> ZipArchive<R> {
             source,
             entries_list,
             kept,
+            comment,
         })
     }
 
     pub fn entries(&self) -> &[Entry] {
         &self.entries_list
+    }
+
+    pub fn comment(&self) -> String {
+        decode_comment(&self.comment, false)
+    }
+
+    pub fn entry_comment(&self, idx: usize) -> Option<String> {
+        let k = self.kept.get(idx).filter(|k| !k.comment.is_empty())?;
+        Some(decode_comment(&k.comment, k.flags & 0x800 != 0))
     }
 
     pub fn len(&self) -> usize {
@@ -308,8 +356,8 @@ pub fn check_password<R: Read + Seek>(
     };
     let (mut bounded, crypt) = open_data(source, e)?;
     match crypt {
-        Crypt::Aes => {
-            unlock(&mut bounded, e, Some(password))?;
+        Crypt::Aes { strength } => {
+            unlock(&mut bounded, e, strength, Some(password))?;
         }
         Crypt::Zip { check } => {
             zipcrypto::open(&mut bounded, password, check, &e.name)?;
@@ -330,16 +378,16 @@ pub fn copy_compressed<R: Read + Seek, W: Write + ?Sized>(
     password: Option<&str>,
 ) -> Result<u64> {
     let (mut bounded, crypt) = open_data(source, e)?;
-    let crypt = match crypt {
+    let strength = match crypt {
         Crypt::None => return Ok(io::copy(&mut bounded, dest)?),
-        other => other,
+        Crypt::Zip { check } => {
+            let pw = need_password(e, password)?;
+            let mut reader = zipcrypto::open(&mut bounded, pw, check, &e.name)?;
+            return Ok(io::copy(&mut reader, dest)?);
+        }
+        Crypt::Aes { strength } => strength,
     };
-    if let Crypt::Zip { check } = crypt {
-        let pw = need_password(e, password)?;
-        let mut reader = zipcrypto::open(&mut bounded, pw, check, &e.name)?;
-        return Ok(io::copy(&mut reader, dest)?);
-    }
-    let (keys, cipher_len) = unlock(&mut bounded, e, password)?;
+    let (keys, cipher_len) = unlock(&mut bounded, e, strength, password)?;
     let mut reader = aes::AesReader::new(&mut bounded, &keys, cipher_len)?;
     let n = io::copy(&mut reader, dest)?;
     let computed = reader.finish()?;
@@ -400,10 +448,12 @@ fn open_data<'a, R: Read + Seek>(
 
     // A streamed entry has no CRC yet when its header is written, so the byte
     // that checks the password is taken from the modification time instead.
-    let crypt = if flags & 1 == 0 {
+    let mut crypt = if flags & 1 == 0 {
         Crypt::None
     } else if method_code == aes::METHOD_AE {
-        Crypt::Aes
+        Crypt::Aes {
+            strength: aes::STRENGTH_256,
+        }
     } else {
         Crypt::Zip {
             check: if flags & 8 != 0 {
@@ -420,6 +470,17 @@ fn open_data<'a, R: Read + Seek>(
         )));
     }
 
+    // The key size decides how long the salt is, so it is read from the 0x9901
+    // field in this header, the one that travels with the data.
+    if let Crypt::Aes { strength } = &mut crypt {
+        source.seek(SeekFrom::Current(n_len as i64))?;
+        let mut extra = vec![0u8; x_len as usize];
+        source.read_exact(&mut extra)?;
+        if let Some(info) = aes::parse_extra(&extra) {
+            *strength = info.strength;
+        }
+    }
+
     let data_start = e.offset + LFH_FIXED as u64 + n_len + x_len;
     source.seek(SeekFrom::Start(data_start))?;
     Ok((source.take(e.compressed_size), crypt))
@@ -430,7 +491,7 @@ fn open_data<'a, R: Read + Seek>(
 // encryption flag set is the old PKWARE cipher.
 enum Crypt {
     None,
-    Aes,
+    Aes { strength: u8 },
     Zip { check: u8 },
 }
 
@@ -443,11 +504,18 @@ fn need_password<'a>(e: &Entry, password: Option<&'a str>) -> Result<&'a str> {
 // Eats the salt and the verifier off the front of the entry and returns the
 // keys, plus how many bytes of ciphertext follow before the authentication
 // code. A wrong password stops here, before anything is decrypted.
-fn unlock<R: Read>(bounded: &mut R, e: &Entry, password: Option<&str>) -> Result<(aes::Keys, u64)> {
+fn unlock<R: Read>(
+    bounded: &mut R,
+    e: &Entry,
+    strength: u8,
+    password: Option<&str>,
+) -> Result<(aes::Keys, u64)> {
     let pw = need_password(e, password)?;
+    let (salt_len, _) = aes::sizes(strength)
+        .ok_or_else(|| Error::Unsupported(format!("'{}': AES strength {strength}", e.name)))?;
     let cipher_len = e
         .compressed_size
-        .checked_sub(aes::OVERHEAD as u64)
+        .checked_sub((salt_len + aes::VERIFIER + aes::AUTH_CODE) as u64)
         .ok_or_else(|| {
             Error::Format(format!(
                 "'{}': {} bytes, shorter than its own AES header",
@@ -455,11 +523,12 @@ fn unlock<R: Read>(bounded: &mut R, e: &Entry, password: Option<&str>) -> Result
             ))
         })?;
     let mut salt = [0u8; aes::SALT_256];
-    bounded.read_exact(&mut salt)?;
+    let salt = &mut salt[..salt_len];
+    bounded.read_exact(salt)?;
     let mut given = [0u8; aes::VERIFIER];
     bounded.read_exact(&mut given)?;
 
-    let keys = aes::derive(pw, &salt);
+    let keys = aes::derive_with(pw, salt, strength)?;
     if !aes::verifier_matches(&keys, &given) {
         return Err(Error::Format(format!("'{}': wrong password", e.name)));
     }
@@ -479,8 +548,8 @@ fn extract_inner<R: Read + Seek, W: Write>(
         let pw = need_password(e, password)?;
         let reader = zipcrypto::open(&mut bounded, pw, check, &e.name)?;
         decompress_into(reader, e.method, &mut cw, e.size)?;
-    } else if matches!(crypt, Crypt::Aes) {
-        let (keys, cipher_len) = unlock(&mut bounded, e, password)?;
+    } else if let Crypt::Aes { strength } = crypt {
+        let (keys, cipher_len) = unlock(&mut bounded, e, strength, password)?;
         let reader = aes::AesReader::new(&mut bounded, &keys, cipher_len)?;
         let reader = decompress_into(reader, e.method, &mut cw, e.size)?;
         let computed = reader.finish()?;
@@ -809,14 +878,10 @@ fn read_central(c: &mut Cursor<'_>) -> Result<(Entry, Kept)> {
         let info = aes::parse_extra(extra).ok_or_else(|| {
             Error::Format("entry says AES but carries no 0x9901 extra field".into())
         })?;
-        if info.strength != aes::STRENGTH_256 {
+        if aes::sizes(info.strength).is_none() {
             return Err(Error::Unsupported(format!(
-                "AES-{} (only AES-256 is supported)",
-                match info.strength {
-                    1 => "128",
-                    2 => "192",
-                    _ => "?",
-                }
+                "AES strength {} (AES-128, AES-192 and AES-256 are supported)",
+                info.strength
             )));
         }
         info.real_method
@@ -903,6 +968,7 @@ pub struct ZipWriter<W: Write + Seek> {
     registros: Vec<Record>,
     pos: u64,
     stream_threads: usize,
+    comment: Vec<u8>,
 }
 
 impl<W: Write + Seek> ZipWriter<W> {
@@ -912,7 +978,26 @@ impl<W: Write + Seek> ZipWriter<W> {
             registros: Vec::new(),
             pos: 0,
             stream_threads: 0,
+            comment: Vec::new(),
         }
+    }
+
+    // The end record is found by searching backwards for its signature, so a
+    // comment that holds one would make the archive end somewhere else.
+    pub fn set_comment(&mut self, comment: &[u8]) -> Result<()> {
+        if comment.len() > MAX_COMMENT {
+            return Err(Error::Limit(format!(
+                "archive comment of {} bytes",
+                comment.len()
+            )));
+        }
+        if find_backwards(comment, SIG_EOCD).is_some() {
+            return Err(Error::Format(
+                "the archive comment holds an end of central directory signature".into(),
+            ));
+        }
+        self.comment = comment.to_vec();
+        Ok(())
     }
 
     pub fn add<R: Read>(
@@ -1498,7 +1583,8 @@ impl<W: Write + Seek> ZipWriter<W> {
         e.extend_from_slice(&(n.min(0xFFFF) as u16).to_le_bytes());
         e.extend_from_slice(&(cd_size.min(0xFFFF_FFFF) as u32).to_le_bytes());
         e.extend_from_slice(&(cd_offset.min(0xFFFF_FFFF) as u32).to_le_bytes());
-        e.extend_from_slice(&0u16.to_le_bytes());
+        e.extend_from_slice(&(self.comment.len() as u16).to_le_bytes());
+        e.extend_from_slice(&self.comment);
         self.out.write_all(&e)?;
         self.out.flush()?;
         Ok(self.out)
@@ -1830,6 +1916,7 @@ fn rewrite(
         .collect();
     let total = entries.len() + extra.len();
     let mut w = ZipWriter::new(BufWriter::with_capacity(STREAM_BUF, File::create(out)?));
+    w.set_comment(&source.comment)?;
     let mut bytes = 0u64;
     let mut src = BufReader::with_capacity(STREAM_BUF, File::open(archive)?);
 
@@ -3812,6 +3899,289 @@ mod tests {
                     let _ = read_central_header(&mut Cursor::new(&b[..cut_at]));
                 }
             }
+        }
+    }
+
+    // Arca writes AES-256 only, so AES-128 and AES-192 entries are laid out by
+    // hand: method 99, the 0x9901 field in both headers, and salt, verifier,
+    // ciphertext and authentication code as the data. `crc` is zero for AE-2
+    // and the real checksum for AE-1.
+    fn aes_archive(strength: u8, plain: &[u8], password: &str, deflate: bool, crc: u32) -> Vec<u8> {
+        let name = b"cifrado.txt";
+        let known = aes::sizes(strength).is_some();
+        let (salt_len, _) = aes::sizes(strength).unwrap_or((8, 16));
+        let mut body = if deflate {
+            deflate_block(plain, Level::NORMAL).unwrap()
+        } else {
+            plain.to_vec()
+        };
+        let salt: Vec<u8> = (0..salt_len as u8)
+            .map(|i| i.wrapping_mul(29) ^ 0x5A)
+            .collect();
+        let sealed_as = if known { strength } else { aes::STRENGTH_128 };
+        let (verifier, auth) = aes::seal(password, &salt, sealed_as, &mut body).unwrap();
+        let mut data = salt;
+        data.extend_from_slice(&verifier);
+        data.extend_from_slice(&body);
+        data.extend_from_slice(&auth);
+
+        let mut extra = Vec::new();
+        extra.extend_from_slice(&aes::EXTRA_AE.to_le_bytes());
+        extra.extend_from_slice(&7u16.to_le_bytes());
+        extra.extend_from_slice(&(if crc == 0 { 2u16 } else { 1u16 }).to_le_bytes());
+        extra.extend_from_slice(&aes::VENDOR_AE.to_le_bytes());
+        extra.push(strength);
+        extra.extend_from_slice(&(if deflate { 8u16 } else { 0u16 }).to_le_bytes());
+
+        let fixed = |out: &mut Vec<u8>| {
+            out.extend_from_slice(&0x0001u16.to_le_bytes());
+            out.extend_from_slice(&aes::METHOD_AE.to_le_bytes());
+            out.extend_from_slice(&0u32.to_le_bytes());
+            out.extend_from_slice(&crc.to_le_bytes());
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(plain.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            out.extend_from_slice(&(extra.len() as u16).to_le_bytes());
+        };
+        let mut out = Vec::new();
+        out.extend_from_slice(&SIG_LFH.to_le_bytes());
+        out.extend_from_slice(&51u16.to_le_bytes());
+        fixed(&mut out);
+        out.extend_from_slice(name);
+        out.extend_from_slice(&extra);
+        out.extend_from_slice(&data);
+
+        let cd_at = out.len();
+        out.extend_from_slice(&SIG_CD.to_le_bytes());
+        out.extend_from_slice(&51u16.to_le_bytes());
+        out.extend_from_slice(&51u16.to_le_bytes());
+        fixed(&mut out);
+        out.extend_from_slice(&[0u8; 14]);
+        out.extend_from_slice(name);
+        out.extend_from_slice(&extra);
+        let cd_size = out.len() - cd_at;
+
+        out.extend_from_slice(&SIG_EOCD.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&(cd_size as u32).to_le_bytes());
+        out.extend_from_slice(&(cd_at as u32).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+
+    fn aes_ciphertext_at(strength: u8) -> usize {
+        let (salt_len, _) = aes::sizes(strength).unwrap();
+        LFH_FIXED + "cifrado.txt".len() + 11 + salt_len + aes::VERIFIER
+    }
+
+    #[test]
+    fn aes_128_and_192_entries_come_back_whole() {
+        let plain = b"Una clave mas corta sigue siendo una clave. ".repeat(40);
+        for strength in [aes::STRENGTH_128, aes::STRENGTH_192, aes::STRENGTH_256] {
+            for deflate in [false, true] {
+                for crc in [0, crc32fast::hash(&plain)] {
+                    let buf = aes_archive(strength, &plain, "secreto", deflate, crc);
+                    let mut a = ZipArchive::open(IoCursor::new(buf.clone())).unwrap();
+                    assert!(a.has_encrypted());
+                    let mut got = Vec::new();
+                    a.extract_to_with(0, &mut got, Some("secreto")).unwrap();
+                    assert_eq!(got, plain, "strength {strength}, deflate {deflate}");
+
+                    assert!(a.extract_to_with(0, io::sink(), Some("otra")).is_err());
+                    assert!(a.extract_to_with(0, io::sink(), None).is_err());
+                    let entries = a.entries().to_vec();
+                    let mut src = IoCursor::new(buf);
+                    assert!(check_password(&mut src, &entries, "secreto").is_ok());
+                    assert!(check_password(&mut src, &entries, "otra").is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_flipped_bit_in_an_aes_128_or_192_entry_is_caught() {
+        let plain = b"0123456789abcdefghij";
+        for strength in [aes::STRENGTH_128, aes::STRENGTH_192] {
+            let buf = aes_archive(strength, plain, "k", false, 0);
+            let first = aes_ciphertext_at(strength);
+            for i in 0..plain.len() {
+                let mut bad = buf.clone();
+                bad[first + i] ^= 0x01;
+                let mut a = ZipArchive::open(IoCursor::new(bad)).unwrap();
+                let r = a.extract_to_with(0, &mut Vec::new(), Some("k"));
+                assert!(
+                    matches!(r, Err(Error::Tampered { .. })),
+                    "strength {strength}, byte {i} went through unnoticed: {r:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_aes_strength_nobody_writes_is_refused() {
+        for strength in [0u8, 4, 0xFF] {
+            let buf = aes_archive(strength, b"datos", "k", false, 0);
+            let r = ZipArchive::open(IoCursor::new(buf));
+            assert!(
+                matches!(r, Err(Error::Format(ref m)) if m.contains("AES strength")),
+                "strength {strength}: {:?}",
+                r.err()
+            );
+        }
+    }
+
+    #[test]
+    fn truncated_or_garbled_aes_128_and_192_entries_do_not_panic() {
+        for strength in [aes::STRENGTH_128, aes::STRENGTH_192] {
+            let buf = aes_archive(strength, &b"contenido".repeat(20), "k", true, 0);
+            for cut_at in 0..buf.len() {
+                if let Ok(mut a) = ZipArchive::open(IoCursor::new(buf[..cut_at].to_vec())) {
+                    let _ = a.extract_to_with(0, io::sink(), Some("k"));
+                }
+            }
+            for at in 0..buf.len() {
+                let mut bad = buf.clone();
+                bad[at] = bad[at].wrapping_add(0x41);
+                if let Ok(mut a) = ZipArchive::open(IoCursor::new(bad)) {
+                    let _ = a.extract_to_with(0, io::sink(), Some("k"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rewriting_an_aes_128_archive_keeps_it_or_moves_it_to_256() {
+        let plain = b"lo que habia dentro".repeat(30);
+        let buf = aes_archive(aes::STRENGTH_128, &plain, "k", true, 0);
+        let strength_of = |buf: &[u8]| {
+            let a = ZipArchive::open(IoCursor::new(buf.to_vec())).unwrap();
+            aes::parse_extra(&a.kept[0].extra).map(|i| i.strength)
+        };
+
+        let renamed = through_files("aes128-rename", &buf, |from, to| {
+            rename_entries(from, to, Some("k"), &|_| "otro.txt".into(), &|_, _, _| true)
+        });
+        assert_eq!(strength_of(&renamed), Some(aes::STRENGTH_128));
+        let mut a = ZipArchive::open(IoCursor::new(renamed)).unwrap();
+        let mut got = Vec::new();
+        a.extract_to_with(0, &mut got, Some("k")).unwrap();
+        assert_eq!(got, plain);
+
+        let moved = through_files("aes128-password", &buf, |from, to| {
+            rewrite_password(from, to, Some("k"), Some("nueva"), &|_, _, _| true)
+        });
+        assert_eq!(strength_of(&moved), Some(aes::STRENGTH_256));
+        let mut a = ZipArchive::open(IoCursor::new(moved)).unwrap();
+        let mut got = Vec::new();
+        a.extract_to_with(0, &mut got, Some("nueva")).unwrap();
+        assert_eq!(got, plain);
+    }
+
+    fn commented_archive(comment: &[u8]) -> Vec<u8> {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        w.add("a.txt", &b"uno"[..], Codec::Store, Level::STORE, None)
+            .unwrap();
+        w.add("b.txt", &b"dos"[..], Codec::Store, Level::STORE, None)
+            .unwrap();
+        w.registros[0].kept = Some(Kept {
+            made_by: 0x031E,
+            needed: 20,
+            flags: 0x0800,
+            method: 0,
+            time: w.registros[0].time_val,
+            date: w.registros[0].date_val,
+            comment: "nota de la entrada".as_bytes().to_vec(),
+            ..Kept::default()
+        });
+        w.set_comment(comment).unwrap();
+        w.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn comments_are_read_and_survive_every_rewrite() {
+        let text = "Archivo de prueba\ncon dos l\u{ed}neas";
+        let buf = commented_archive(text.as_bytes());
+        let a = ZipArchive::open(IoCursor::new(buf.clone())).unwrap();
+        assert_eq!(a.comment(), text);
+        assert_eq!(read_comment(IoCursor::new(buf.clone())).unwrap(), text);
+        assert_eq!(a.entry_comment(0).as_deref(), Some("nota de la entrada"));
+        assert_eq!(a.entry_comment(1), None);
+        assert_eq!(a.entry_comment(99), None);
+
+        let room = std::env::temp_dir().join(format!("arca-comment-source-{}", std::process::id()));
+        std::fs::create_dir_all(&room).unwrap();
+        let file = room.join("c.txt");
+        std::fs::write(&file, b"tres").unwrap();
+        let addition = [Addition {
+            source: Some(file.clone()),
+            name: "c.txt".into(),
+            codec: Codec::Deflate,
+            level: Level::NORMAL,
+        }];
+        let outputs = [
+            through_files("comment-remove", &buf, |f, t| {
+                remove_entries(f, t, None, &|e| e.name != "b.txt", &|_, _, _| true)
+            }),
+            through_files("comment-rename", &buf, |f, t| {
+                rename_entries(f, t, None, &|e| format!("x/{}", e.name), &|_, _, _| true)
+            }),
+            through_files("comment-add", &buf, |f, t| {
+                add_entries(f, t, None, &addition, &|_, _, _| true)
+            }),
+            through_files("comment-password", &buf, |f, t| {
+                rewrite_password(f, t, None, Some("k"), &|_, _, _| true)
+            }),
+        ];
+        std::fs::remove_dir_all(&room).unwrap();
+        for out in outputs {
+            let a = ZipArchive::open(IoCursor::new(out)).unwrap();
+            assert_eq!(a.comment(), text);
+            assert_eq!(a.entry_comment(0).as_deref(), Some("nota de la entrada"));
+        }
+    }
+
+    #[test]
+    fn a_comment_that_is_not_utf8_reads_as_code_page_437() {
+        let buf = commented_archive(b"caf\x82");
+        let a = ZipArchive::open(IoCursor::new(buf)).unwrap();
+        assert_eq!(a.comment(), "caf\u{e9}");
+    }
+
+    #[test]
+    fn comments_the_writer_cannot_keep_are_refused() {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        assert!(w.set_comment(&vec![b'a'; MAX_COMMENT]).is_ok());
+        assert!(matches!(
+            w.set_comment(&vec![b'a'; MAX_COMMENT + 1]),
+            Err(Error::Limit(_))
+        ));
+        let mut fake = b"before ".to_vec();
+        fake.extend_from_slice(&SIG_EOCD.to_le_bytes());
+        assert!(w.set_comment(&fake).is_err());
+    }
+
+    #[test]
+    fn a_comment_cut_short_or_overlong_does_not_panic_or_stop_the_archive() {
+        let buf = commented_archive(b"a comment that will be cut");
+        let eocd = buf.len() - EOCD_MIN - 26;
+        for cut in 0..=26 {
+            let short = buf[..buf.len() - cut].to_vec();
+            let a = ZipArchive::open(IoCursor::new(short)).unwrap();
+            assert_eq!(a.comment().len(), 26 - cut);
+            assert_eq!(a.len(), 2);
+        }
+        for len in [0u16, 1, 27, 1000, u16::MAX] {
+            let mut bad = buf.clone();
+            bad[eocd + 20..eocd + 22].copy_from_slice(&len.to_le_bytes());
+            let a = ZipArchive::open(IoCursor::new(bad.clone())).unwrap();
+            assert_eq!(a.comment().len(), (len as usize).min(26));
+            let _ = read_comment(IoCursor::new(bad));
+        }
+        for cut in 0..buf.len() {
+            let _ = read_comment(IoCursor::new(buf[..cut].to_vec()));
+            let _ = ZipArchive::open(IoCursor::new(buf[..cut].to_vec()));
         }
     }
 }

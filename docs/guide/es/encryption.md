@@ -18,6 +18,10 @@ Arca cifra archivos `.zip` con AES-256 usando el esquema WinZip AE-2, el mismo q
 | Autenticación | HMAC-SHA1 sobre el texto cifrado |
 | Sal | 16 bytes aleatorios, nuevos en cada entrada |
 
+### AES-128 y AES-192
+
+WinZip AES también existe en 128 y 192 bits, con una sal de 8 o 12 bytes y una clave de 16 o 24 bytes. Arca lee ambas variantes con la misma comprobación de contraseña y el mismo veredicto HMAC que AES-256, así que una contraseña incorrecta o un byte alterado fallan igual. Nunca las escribe: `arca password` con una contraseña nueva pasa ese archivo a AES-256, mientras que añadir, quitar o renombrar entradas las copia con la fuerza que tenían.
+
 ## Decisiones de diseño
 
 - **Una sal por entrada.** Reutilizar una sal reutilizaría el flujo de clave, y dos archivos idénticos se verían idénticos dentro del archivo comprimido.

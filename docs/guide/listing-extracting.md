@@ -27,6 +27,8 @@ arca list arca.zip --time
 
 With `--time`, the summary goes to standard error, so piping the listing into other tools stays clean.
 
+ZIP comments, both the archive’s and any entry’s, also go to standard error after the list. The desktop window shows an archive comment in the status line when the archive opens.
+
 ## Extracting
 
 ```text

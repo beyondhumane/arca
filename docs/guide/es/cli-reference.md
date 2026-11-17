@@ -24,6 +24,7 @@ Commands:
   test      Check integrity without writing to disk                    [aliases: t]
   hash      Print or check checksums of files, in the sha256sum format
   password  Add, change or remove the password of an existing archive
+  repair    Rebuild a damaged ZIP from the entries that can still be read
   bench     Measure the R1 and R2 performance requirements
 
 Options:
@@ -56,6 +57,8 @@ Lista el contenido sin extraerlo.
 | `<ARCHIVE>` | obligatorio | Archivo a leer. |
 | `-t, --time` | desactivado | Informa cuánto tardó (por la salida de error estándar). |
 | `-p, --password <PASSWORD>` | ninguna | Contraseña para cabeceras 7z cifradas; no hace falta si los nombres son visibles. |
+
+En un `.zip`, el comentario del archivo y los de cada entrada salen por la salida de error estándar después de la lista, así que la salida estándar sigue siendo una línea por entrada. Los caracteres de control se muestran como `�` para que un comentario no pueda manejar la terminal.
 
 ## extract · x
 
@@ -108,6 +111,24 @@ No se admite cambiar contraseñas ni modificar archivos 7z existentes. Consulta 
 | `-p, --password <PASSWORD>` | ninguna | Contraseña actual, si el archivo tiene una. |
 | `--new <NEW>` | ninguna | Contraseña nueva. Omítela para quitar el cifrado. |
 | `-o, --out <PATH>` | en el mismo sitio | Escribe aquí en vez de reemplazar el archivo en el mismo sitio. |
+
+## repair
+
+Reconstruye un ZIP cuyo directorio central falta o está dañado. Arca recorre el archivo en busca de cabeceras locales, toma los tamaños de cada entrada de su cabecera o, en las entradas escritas a chorro, del descriptor de datos que sigue a los datos, la descomprime y compara su CRC, y copia byte a byte las entradas que pasan la comprobación a un archivo nuevo. Las entradas descartadas se listan por la salida de error estándar con su desplazamiento y el motivo.
+
+```sh
+arca repair roto.zip -o reparado.zip
+```
+
+| Argumento / opción | Por defecto | Descripción |
+| --- | --- | --- |
+| `<ARCHIVE>` | obligatorio | Archivo dañado. Solo se lee; nunca se modifica. |
+| `-o, --out <PATH>` | obligatorio | Dónde escribir el archivo reconstruido (.zip). No puede ser el propio archivo dañado. |
+
+- Las entradas cifradas no se pueden comprobar sin la contraseña: se copian tras una comprobación solo estructural y se nombran por la salida de error estándar.
+- Se pierde lo que solo guardaba el directorio central: los comentarios del archivo y de las entradas, los permisos Unix y otros atributos externos.
+- Un ZIP guardado dentro de una entrada se queda dentro de ella. Pero si esa entrada exterior está dañada, las entradas interiores pueden aparecer como entradas propias.
+- El archivo reconstruido se escribe con un nombre temporal, se vuelve a leer y solo entonces se renombra. Si no se puede recuperar nada, no se escribe nada y la orden falla.
 
 ## bench
 

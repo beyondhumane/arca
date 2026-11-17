@@ -28,7 +28,7 @@ A file explorer and archiver in one window, written in Rust. Browse your disk, s
 | **Read-only** | [ZIP containers](docs/guide/zip-containers.md): `.apk` `.aar` `.jar` `.war` `.ear` `.epub` `.cbz` `.xpi` `.whl` `.nupkg` `.ipa`; [ISO 9660 images](docs/guide/iso.md) with Rock Ridge and Joliet names |
 | **Speed** | Multi-threaded compression, parallel `.zip` extraction, sub-millisecond start |
 | **Safety** | `#![forbid(unsafe_code)]` parsers, bounded header reads, Zip Slip defence |
-| **Encryption** | ZIP AES-256 (WinZip AE-2); 7z AES-256 with optional hidden names. [Limits](docs/guide/encryption.md) |
+| **Encryption** | ZIP AES-256 (WinZip AE-2), reading AES-128 and AES-192 too; 7z AES-256 with optional hidden names. [Limits](docs/guide/encryption.md) |
 | **Desktop** | `arca-gui`: a file explorer that opens archives in place. Panes or details view, per-pane filters, preview with syntax highlighting, hex and images, folder peeking, pointer focus, devices with mount/format/label, Strata-style context menus, in-app updates |
 | **Interfaces** | `arca` command line, `arca-gui` desktop window, Windows 11 Explorer menu |
 | **Platforms** | Windows, macOS (Apple silicon and Intel), Linux |

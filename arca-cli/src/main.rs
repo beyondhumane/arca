@@ -140,6 +140,16 @@ enum Cmd {
         )]
         out: Option<PathBuf>,
     },
+    #[command(
+        about = "Rebuild a damaged ZIP from the entries that can still be read",
+        long_about = "Scans the archive for local headers, checks every entry it finds and copies the\nsound ones unchanged into a new archive. The damaged archive is only read.\n\nEncrypted entries get a structural check only: without the password their\ncontents cannot be checked."
+    )]
+    Repair {
+        #[arg(help = "Damaged archive")]
+        archive: PathBuf,
+        #[arg(short = 'o', long, help = "Where to write the rebuilt archive (.zip)")]
+        out: PathBuf,
+    },
     #[command(about = "Measure the R1 and R2 performance requirements")]
     Bench {
         #[arg(help = "Archive to measure against")]
@@ -297,6 +307,7 @@ fn run(cli: Cli) -> Result<()> {
             password.as_deref(),
             new.as_deref(),
         ),
+        Cmd::Repair { archive, out } => repair_zip(&archive, &out),
         Cmd::Bench { archive } => bench(&archive),
     }
 }
@@ -562,6 +573,7 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
     let mut n = 0u64;
     let mut bytes = 0u64;
 
+    let mut notes: Vec<String> = Vec::new();
     let mut out = BufWriter::new(io::stdout().lock());
     match format_kind.container() {
         Container::SevenZ => {
@@ -611,7 +623,7 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
         }
         Container::Zip => {
             let a = ZipArchive::open(File::open(archive)?)?;
-            for e in a.entries() {
+            for (i, e) in a.entries().iter().enumerate() {
                 writeln!(
                     out,
                     "{:>12}  {:>7}  {:>5.1}%  {}",
@@ -622,6 +634,18 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
                 )?;
                 n += 1;
                 bytes += e.size;
+                if let Some(c) = a.entry_comment(i) {
+                    notes.push(format!(
+                        "comment on {}: {}",
+                        printable(&e.name).replace('\n', " "),
+                        printable(&c).replace('\n', " ")
+                    ));
+                }
+            }
+            let comment = a.comment();
+            if !comment.is_empty() {
+                notes.push("archive comment:".into());
+                notes.extend(printable(&comment).lines().map(|l| format!("  {l}")));
             }
         }
         Container::Xz => {
@@ -657,6 +681,10 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
         }
     }
     out.flush()?;
+    drop(out);
+    for note in notes {
+        eprintln!("{note}");
+    }
 
     if time {
         eprintln!(
@@ -1040,6 +1068,23 @@ fn change_password(
     Ok(())
 }
 
+// Comments come from whoever made the archive, and a terminal acts on escape
+// sequences: everything but line breaks and tabs that could steer it is shown
+// as a replacement character instead.
+fn printable(text: &str) -> String {
+    text.chars()
+        .filter(|&c| c != '\r')
+        .map(|c| {
+            let bidi = matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
+            if bidi || (c.is_control() && c != '\n' && c != '\t') {
+                '\u{FFFD}'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 // What the listing leaves out goes to stderr so `arca l` output stays a
 // clean list for scripts.
 fn open_iso(archive: &Path) -> Result<arca_iso::IsoArchive> {
@@ -1048,6 +1093,78 @@ fn open_iso(archive: &Path) -> Result<arca_iso::IsoArchive> {
         eprintln!("note: {notice}");
     }
     Ok(a)
+}
+
+// The rebuilt archive is read back before it takes its final name, and it can
+// never take the damaged archive's name: that file may be the only copy of
+// entries this scan could not recover.
+fn repair_zip(archive: &Path, out: &Path) -> Result<()> {
+    if detect(out)? != Format::Zip {
+        return Err(Error::Unsupported(
+            "a repair writes a ZIP, so --out needs a .zip name".into(),
+        ));
+    }
+    if out.exists() && fs::canonicalize(archive)? == fs::canonicalize(out)? {
+        return Err(Error::Format(
+            "--out names the damaged archive; write the repaired one somewhere else".into(),
+        ));
+    }
+    let t0 = Instant::now();
+    let temp = staged_path(out);
+    let result = (|| {
+        let source = BufReader::with_capacity(BUF, File::open(archive)?);
+        let sink = BufWriter::with_capacity(BUF, File::create(&temp)?);
+        let (mut sink, report) = arca_zip::repair(source, sink)?;
+        sink.flush()?;
+        drop(sink);
+        if ZipArchive::open(File::open(&temp)?)?.len() != report.recovered.len() {
+            return Err(Error::Format(
+                "the rebuilt archive does not read back as written".into(),
+            ));
+        }
+        Ok(report)
+    })();
+    let report = match result {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = fs::remove_file(&temp);
+            return Err(e);
+        }
+    };
+
+    for s in &report.skipped {
+        eprintln!(
+            "  skipped at offset {}: {}: {}",
+            s.offset,
+            printable(s.name.as_deref().unwrap_or("?")),
+            printable(&s.reason)
+        );
+    }
+    if report.unreported > 0 {
+        eprintln!("  and {} more skipped", report.unreported);
+    }
+    for r in report.recovered.iter().filter(|r| !r.verified) {
+        eprintln!(
+            "  encrypted, copied without checking its contents: {}",
+            printable(&r.name)
+        );
+    }
+    if report.recovered.is_empty() {
+        let _ = fs::remove_file(&temp);
+        return Err(Error::Format(format!(
+            "no entry of '{}' could be recovered",
+            archive.display()
+        )));
+    }
+    fs::rename(&temp, out)?;
+    println!(
+        "{}: {} entries recovered, {} skipped in {:.3} s",
+        out.display(),
+        report.recovered.len(),
+        report.skipped.len() as u64 + report.unreported,
+        t0.elapsed().as_secs_f64()
+    );
+    Ok(())
 }
 
 fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
