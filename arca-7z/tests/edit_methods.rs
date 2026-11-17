@@ -193,3 +193,35 @@ fn a_filter_the_encoder_cannot_repeat_is_reported() {
     let mut archive = SevenZArchive::open(fs::File::open(&output).unwrap(), None).unwrap();
     assert_eq!(archive.read_entry(0, 1 << 10, &mut |_| true).unwrap(), data);
 }
+
+// 7-Zip writes BCJ2 as one coder with four inputs fed by three LZMA coders
+// and a stored stream. The reader refuses any coder that is not one input to
+// one output, so a block like that never reaches the rewrite, which follows
+// coders as a single chain.
+#[test]
+fn a_block_with_a_multi_stream_coder_is_refused() {
+    let mut header = vec![1, 4, 6, 0, 4, 9, 1, 1, 1, 1, 0, 7, 11, 1, 0];
+    header.extend([4, 0x14, 0x03, 0x03, 0x01, 0x1B, 4, 1]);
+    header.extend([0x23, 0x03, 0x01, 0x01, 5, 0x5D, 0, 0, 1, 0]);
+    header.extend([0x23, 0x03, 0x01, 0x01, 5, 0x5D, 0, 0, 1, 0]);
+    header.extend([0x23, 0x03, 0x01, 0x01, 5, 0x5D, 0, 0, 1, 0]);
+    header.extend([5, 1, 6, 2, 7, 3, 0, 1, 2, 3]);
+    header.extend([12, 1, 1, 1, 1, 1, 0, 0, 5, 1, 17, 5, 0, b'x', 0, 0, 0, 0, 0]);
+    let room = tempfile::tempdir().unwrap();
+    let input = room.path().join("bcj2.7z");
+    fs::write(&input, with_header(&header, &[0; 4])).unwrap();
+    let opened = SevenZArchive::open(fs::File::open(&input).unwrap(), None);
+    assert!(
+        matches!(&opened, Err(arca_core::Error::Unsupported(s)) if s.contains("multi")),
+        "{:?}",
+        opened.err()
+    );
+    let change = Change {
+        name: &|e: &Entry| Some(e.name.clone()),
+        add: &[],
+        level: Level::NORMAL,
+    };
+    let output = room.path().join("out.7z");
+    assert!(rewrite_7z(&input, &output, None, &change, &mut |_| true).is_err());
+    assert!(!output.exists());
+}
