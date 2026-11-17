@@ -498,6 +498,7 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
     let mut n = 0u64;
     let mut bytes = 0u64;
 
+    let mut notes: Vec<String> = Vec::new();
     let mut out = BufWriter::new(io::stdout().lock());
     match format_kind.container() {
         Container::SevenZ => {
@@ -547,7 +548,7 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
         }
         Container::Zip => {
             let a = ZipArchive::open(File::open(archive)?)?;
-            for e in a.entries() {
+            for (i, e) in a.entries().iter().enumerate() {
                 writeln!(
                     out,
                     "{:>12}  {:>7}  {:>5.1}%  {}",
@@ -558,6 +559,18 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
                 )?;
                 n += 1;
                 bytes += e.size;
+                if let Some(c) = a.entry_comment(i) {
+                    notes.push(format!(
+                        "comment on {}: {}",
+                        printable(&e.name).replace('\n', " "),
+                        printable(&c).replace('\n', " ")
+                    ));
+                }
+            }
+            let comment = a.comment();
+            if !comment.is_empty() {
+                notes.push("archive comment:".into());
+                notes.extend(printable(&comment).lines().map(|l| format!("  {l}")));
             }
         }
         Container::Xz => {
@@ -588,6 +601,10 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
         }
     }
     out.flush()?;
+    drop(out);
+    for note in notes {
+        eprintln!("{note}");
+    }
 
     if time {
         eprintln!(
@@ -953,6 +970,23 @@ fn change_password(
         t0.elapsed().as_secs_f64()
     );
     Ok(())
+}
+
+// Comments come from whoever made the archive, and a terminal acts on escape
+// sequences: everything but line breaks and tabs that could steer it is shown
+// as a replacement character instead.
+fn printable(text: &str) -> String {
+    text.chars()
+        .filter(|&c| c != '\r')
+        .map(|c| {
+            let bidi = matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
+            if bidi || (c.is_control() && c != '\n' && c != '\t') {
+                '\u{FFFD}'
+            } else {
+                c
+            }
+        })
+        .collect()
 }
 
 // What the listing leaves out goes to stderr so `arca l` output stays a

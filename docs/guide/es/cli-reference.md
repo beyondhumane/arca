@@ -56,6 +56,8 @@ Lista el contenido sin extraerlo.
 | `-t, --time` | desactivado | Informa cuánto tardó (por la salida de error estándar). |
 | `-p, --password <PASSWORD>` | ninguna | Contraseña para cabeceras 7z cifradas; no hace falta si los nombres son visibles. |
 
+En un `.zip`, el comentario del archivo y los de cada entrada salen por la salida de error estándar después de la lista, así que la salida estándar sigue siendo una línea por entrada. Los caracteres de control se muestran como `�` para que un comentario no pueda manejar la terminal.
+
 ## extract · x
 
 Extrae el contenido.

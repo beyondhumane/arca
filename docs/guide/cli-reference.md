@@ -56,6 +56,8 @@ List the contents without extracting them.
 | `-t, --time` | off | Report how long it took (on standard error). |
 | `-p, --password <PASSWORD>` | none | Password for encrypted 7z headers; not needed for visible names. |
 
+For a `.zip`, the archive comment and any entry comments go to standard error after the list, so standard output stays one line per entry. Control characters in them are shown as `�` so a comment can’t drive the terminal.
+
 ## extract · x
 
 Extract the contents.
