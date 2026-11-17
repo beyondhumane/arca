@@ -686,6 +686,59 @@ fn winrar_tests_extracts_and_repairs_what_arca_writes() {
         ));
         assert_contents(&fixed, options.password, &tree.expected);
     }
+
+    for (label, password_option) in [("plain-set", None), ("hidden-set", Some(PASSWORD))] {
+        let dir = tree.root.path().join(label);
+        fs::create_dir(&dir).unwrap();
+        let published = create(
+            &dir.join("set.rar"),
+            &tree,
+            &CreateOptions {
+                recovery: Some(5),
+                level: Level::STORE,
+                volume: Some(100 * 1024),
+                password: password_option,
+                hide_names: password_option.is_some(),
+                ..CreateOptions::default()
+            },
+        );
+        let second = published[1]
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let mut bad = fs::read(&published[1]).unwrap();
+        let middle = bad.len() / 2;
+        for byte in &mut bad[middle..middle + 100] {
+            *byte ^= 0xa5;
+        }
+        fs::write(&published[1], &bad).unwrap();
+        assert!(
+            !rar(&program, &dir, &["t", &password, "set.part1.rar"]),
+            "{label}: damage unseen"
+        );
+        assert!(
+            rar(&program, &dir, &["r", &password, &second]),
+            "{label}: rar r"
+        );
+        fs::rename(dir.join(format!("fixed.{second}")), &published[1]).unwrap();
+        assert!(
+            rar(&program, &dir, &["t", &password, "set.part1.rar"]),
+            "{label}: repaired set"
+        );
+        fs::create_dir(dir.join("x")).unwrap();
+        assert!(rar(
+            &program,
+            &dir,
+            &["x", &password, "set.part1.rar", "x\\"]
+        ));
+        assert_extracted(&dir.join("x"), &tree.expected);
+        if password_option.is_some() {
+            assert_eq!(fs::read(&published[1]).unwrap().len(), bad.len());
+            assert_contents(&published[0], password_option, &tree.expected);
+        }
+    }
 }
 
 #[test]
