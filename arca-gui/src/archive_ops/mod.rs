@@ -97,6 +97,8 @@ pub(crate) enum Job {
         inputs: Vec<PathBuf>,
         format: Format,
         codec: Codec,
+        // What a 7z is compressed with; the other formats ignore it.
+        sevenz: arca_7z::Compression,
         level: Level,
         password: Option<String>,
         hide_names: bool,
@@ -195,6 +197,7 @@ pub(crate) fn parse_args() -> Startup {
             inputs: rest,
             format: Format::Zip,
             codec: Codec::Deflate,
+            sevenz: arca_7z::Compression::Lzma2,
             level: Level::NORMAL,
             password: None,
             hide_names: false,
@@ -592,6 +595,7 @@ pub(crate) fn run_job_blocking(
             inputs,
             format,
             codec,
+            sevenz,
             level,
             password,
             hide_names,
@@ -608,12 +612,12 @@ pub(crate) fn run_job_blocking(
                     ));
                 }
             }
-            let (from, to) = compress_split(
+            let (from, to) = compress_with(
                 &out,
                 volume,
                 &inputs,
                 format,
-                codec,
+                (codec, sevenz),
                 level,
                 notify,
                 (password.as_deref(), hide_names),

@@ -757,6 +757,9 @@ impl Shell {
                     Compressor::Fixed(name) => {
                         ui.label(name);
                     }
+                    Compressor::SevenZ(compression) => {
+                        ui.label(self.controller.sevenz_name(compression));
+                    }
                     Compressor::Codec { codec, editable } => {
                         let chosen = ui
                             .add_enabled_ui(editable, |ui| {
@@ -905,6 +908,7 @@ impl Shell {
         }
         let format = self.controller.state.format;
         let mut pick = None;
+        let mut sevenz_pick = None;
         card(ui, s.col_method, None, true, |ui| {
             match self.controller.compressor() {
                 Compressor::Fixed(name) => {
@@ -919,10 +923,16 @@ impl Shell {
                 Compressor::Codec { codec, .. } => {
                     ui.label(RichText::new(self.controller.codec_name(codec)).color(hex(p.muted)));
                 }
+                Compressor::SevenZ(compression) => {
+                    sevenz_pick = sevenz_combo(ui, &self.controller, compression);
+                }
             }
         });
         if let Some(codec) = pick {
             self.controller.set_codec(codec);
+        }
+        if let Some(compression) = sevenz_pick {
+            self.controller.set_sevenz(compression);
         }
         let level = self.controller.state.level;
         let mut at = u32::from(level.get());
@@ -2461,6 +2471,27 @@ fn codec_combo(
         }
     });
     (chosen != codec).then_some(chosen)
+}
+
+/// The 7z method picker of the create dialog. Returns the method picked this
+/// frame, if it differs from `compression`.
+fn sevenz_combo(
+    ui: &mut egui::Ui,
+    controller: &AppController,
+    compression: arca_7z::Compression,
+) -> Option<arca_7z::Compression> {
+    let mut chosen = compression;
+    egui::ComboBox::from_id_salt("compress-sevenz")
+        .selected_text(controller.sevenz_name(compression))
+        .width(200.0)
+        .show_ui(ui, |ui| {
+            for candidate in AppController::sevenz_methods() {
+                ui.selectable_value(&mut chosen, candidate, controller.sevenz_name(candidate));
+            }
+        })
+        .response
+        .on_hover_text(controller.s().sevenz_method_tip);
+    (chosen != compression).then_some(chosen)
 }
 
 #[cfg(test)]
