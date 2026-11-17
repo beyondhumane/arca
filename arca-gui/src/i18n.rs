@@ -1479,7 +1479,7 @@ const ES: Strings = Strings {
     bench_compressing: "comprimiendo",
     bench_decompressing: "descomprimiendo",
     bench_stopped: "Detenida antes del final: lo que falta no se midió.",
-    bench_command: "Desde la línea de órdenes: {command}",
+    bench_command: "Desde la línea de comandos: {command}",
 };
 
 const UK: Strings = Strings {
