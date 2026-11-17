@@ -48,6 +48,21 @@ pub enum Container {
     Iso,
 }
 
+/// Whether a desktop install offers to open a format with Arca. It never makes
+/// Arca the default on its own: the user picks it in the installer, and the
+/// system's default stays where it was.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Association {
+    /// Offered with the rest of the archive types.
+    Offered,
+    /// Offered only when the user asks for it: disc images usually belong to
+    /// the system's own mounter.
+    OnRequest,
+    /// Never claimed. ZIP-based documents and packages and CBR comics belong
+    /// to the applications made for them, and Arca only reads them.
+    Never,
+}
+
 impl Format {
     /// Formats whose existing archives Arca can rewrite: add, remove, rename
     /// and password changes. RAR is not one of them.
@@ -133,6 +148,81 @@ impl Format {
             Self::Zst => Some(Self::TarZst),
             _ => None,
         }
+    }
+
+    pub fn association(self) -> Association {
+        match self {
+            Self::Zip
+            | Self::SevenZ
+            | Self::Tar
+            | Self::TarGz
+            | Self::TarXz
+            | Self::Xz
+            | Self::TarBz2
+            | Self::Bz2
+            | Self::TarZst
+            | Self::Zst
+            | Self::Rar => Association::Offered,
+            Self::Iso => Association::OnRequest,
+            Self::Cbr
+            | Self::Apk
+            | Self::Aar
+            | Self::Jar
+            | Self::War
+            | Self::Ear
+            | Self::Epub
+            | Self::Cbz
+            | Self::Xpi
+            | Self::Whl
+            | Self::Nupkg
+            | Self::Ipa => Association::Never,
+        }
+    }
+
+    /// The freedesktop shared-mime-info types for a format Arca offers to
+    /// open, empty for the rest. Several names where shared-mime-info renamed
+    /// the type between versions, so that old and new systems both match.
+    pub fn mime_types(self) -> &'static [&'static str] {
+        match self {
+            Self::Zip => &["application/zip"],
+            Self::SevenZ => &["application/x-7z-compressed"],
+            Self::Tar => &["application/x-tar"],
+            Self::TarGz => &["application/x-compressed-tar"],
+            Self::TarXz => &["application/x-xz-compressed-tar"],
+            Self::Xz => &["application/x-xz"],
+            Self::TarBz2 => &[
+                "application/x-bzip2-compressed-tar",
+                "application/x-bzip-compressed-tar",
+                "application/x-bzip1-compressed-tar",
+            ],
+            Self::Bz2 => &["application/x-bzip2", "application/x-bzip"],
+            Self::TarZst => &["application/x-zstd-compressed-tar"],
+            Self::Zst => &["application/zstd"],
+            Self::Rar => &["application/vnd.rar", "application/x-rar"],
+            Self::Iso => &["application/x-cd-image", "application/vnd.efi.iso"],
+            _ => &[],
+        }
+    }
+
+    /// The final extension of every suffix of a format a desktop install
+    /// offers, each once, with the format it names. Windows and Finder match
+    /// on the final extension alone, so `.tar.gz` is `.gz` to them; an
+    /// extension that is also a whole suffix names that format, so `.xz` is
+    /// XZ rather than TAR.XZ.
+    pub fn desktop_extensions() -> Vec<(&'static str, Self)> {
+        let mut found: Vec<(&'static str, Self)> = Vec::new();
+        for (suffix, format) in Self::SUFFIXES {
+            if format.association() == Association::Never {
+                continue;
+            }
+            let last = suffix.rsplit('.').next().unwrap_or(suffix);
+            match found.iter_mut().find(|(ext, _)| *ext == last) {
+                Some(entry) if suffix == last => entry.1 = format,
+                Some(_) => {}
+                None => found.push((last, format)),
+            }
+        }
+        found
     }
 
     pub fn container(self) -> Container {
@@ -410,6 +500,36 @@ mod tests {
         assert_eq!(Format::TarZst.container(), Container::TarZst);
         assert_eq!(Format::TarGz.stream_tar(), None);
         assert_eq!(Format::split_name("archive.bz"), None);
+    }
+
+    #[test]
+    fn desktops_are_offered_archives_and_never_zip_containers() {
+        let offered: Vec<&str> = Format::desktop_extensions()
+            .iter()
+            .map(|(ext, _)| *ext)
+            .collect();
+        assert_eq!(
+            offered,
+            [
+                "zip", "7z", "gz", "tgz", "xz", "txz", "bz2", "tbz2", "tbz", "zst", "tzst", "tar",
+                "rar", "iso"
+            ]
+        );
+        let named: Vec<(&str, Format)> = Format::desktop_extensions();
+        assert!(named.contains(&("gz", Format::TarGz)));
+        assert!(named.contains(&("xz", Format::Xz)));
+        assert!(named.contains(&("bz2", Format::Bz2)));
+        assert!(named.contains(&("zst", Format::Zst)));
+        for (suffix, format) in Format::SUFFIXES {
+            let claimed = format.association() != Association::Never;
+            assert_eq!(claimed, !format.mime_types().is_empty(), "{suffix}");
+            if format.container() == Container::Zip && format != Format::Zip {
+                assert!(!claimed, "{suffix} belongs to its own application");
+            }
+        }
+        assert_eq!(Format::Cbr.association(), Association::Never);
+        assert_eq!(Format::Iso.association(), Association::OnRequest);
+        assert_eq!(Format::Rar.association(), Association::Offered);
     }
 
     #[test]

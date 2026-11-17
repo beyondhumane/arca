@@ -2,7 +2,7 @@ use std::fmt;
 use std::io;
 
 mod format;
-pub use format::{Container, Format};
+pub use format::{Association, Container, Format};
 pub mod extraction;
 pub mod hash;
 
