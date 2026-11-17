@@ -817,9 +817,10 @@ fn create(
                 let mut w = TarWriter::new(dest);
                 for s in &files {
                     let file = File::open(&s.path)?;
-                    let mode = arca_tar::mode_of(&file.metadata()?);
+                    let meta = file.metadata()?;
+                    let mode = arca_tar::mode_of(&meta);
                     let entrada = BufReader::with_capacity(BUF, file);
-                    w.add(&s.name, s.size, s.mtime, mode, entrada)?;
+                    w.add(&s.name, meta.len(), s.mtime, mode, entrada)?;
                 }
                 add_links(&mut w, &links)?;
                 w.finish()?.flush()?;
@@ -834,9 +835,10 @@ fn create(
                 let mut w = TarWriter::new(e);
                 for s in &files {
                     let file = File::open(&s.path)?;
-                    let mode = arca_tar::mode_of(&file.metadata()?);
+                    let meta = file.metadata()?;
+                    let mode = arca_tar::mode_of(&meta);
                     let entrada = BufReader::with_capacity(BUF, file);
-                    w.add(&s.name, s.size, s.mtime, mode, entrada)?;
+                    w.add(&s.name, meta.len(), s.mtime, mode, entrada)?;
                 }
                 add_links(&mut w, &links)?;
                 w.finish()?.finish()?.flush()?;
