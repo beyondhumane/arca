@@ -418,7 +418,7 @@ mod native {
                 let spool = Rc::try_unwrap(spool)
                     .map_err(|_| Error::InvalidHeader("rewrite sink still active"))?
                     .into_inner();
-                Ok(spool.into_source())
+                spool.into_source()
             })
             .collect()
     }
@@ -436,7 +436,7 @@ mod native {
             let spool = Rc::try_unwrap(spool)
                 .map_err(|_| Error::WriterFailure("rewrite sink still active"))?
                 .into_inner();
-            delivery.publish(index, spool.into_source())?;
+            delivery.publish(index, spool.into_source()?)?;
         }
         Ok(())
     }

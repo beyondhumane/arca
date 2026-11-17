@@ -279,7 +279,7 @@ impl<B: Budget> MemberStream<B> {
             source: source.clone(),
             reader: None,
             remaining: size,
-            packed: Spool::create_parked(resources)?,
+            packed: Spool::for_member(resources)?,
             pushback: Buffer::new(allowance),
             crc: Crc32::new(),
             hash: blake2sp::Hasher::new(),
@@ -346,7 +346,7 @@ pub(super) fn compress_members_with_context(
                 advance.finished(index, *input_size);
             }
             Records::collect(
-                integrity.iter().map(|_| Spool::create_parked(resources)),
+                integrity.iter().map(|_| Spool::for_member(resources)),
                 resources,
             )?
         }
@@ -647,7 +647,7 @@ fn compress_whole_member<B: Budget>(
     let mut crc = Crc32::new();
     let mut hasher = blake2sp::Hasher::new();
 
-    let mut packed_spool = Spool::create(resources)?;
+    let mut packed_spool = Spool::for_member(resources)?;
     let mut stored = input_size == 0;
     if !stored {
         advance.started(index, input_size);

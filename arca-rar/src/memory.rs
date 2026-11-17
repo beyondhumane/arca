@@ -12,8 +12,9 @@ use rars::{ArchiveReader, ArchiveVersion, EntrySource, FeatureSet, WriterResourc
 
 /// Packs `members` into a new non-solid RAR5 archive held in memory, named
 /// `0`, `1`, ... in order, with the compressor [`super::create_rar`] uses.
-/// Nothing touches the disk. Members are compressed side by side on the
-/// threads of the current rayon pool.
+/// Payloads stay in memory up to 1 MiB each and 128 MiB together; past that
+/// they spool to the current directory. Members are compressed side by side
+/// on the threads of the current rayon pool.
 pub fn pack_in_memory(members: &[Arc<[u8]>], level: Level) -> Result<Vec<u8>> {
     #[cfg(feature = "rar")]
     {
@@ -33,7 +34,8 @@ pub fn pack_in_memory(members: &[Arc<[u8]>], level: Level) -> Result<Vec<u8>> {
             .with_compression_level(writer::rar_level(level));
         let extras = ArchiveExtras::default().with_filter_policy(FilterPolicy::None);
         let resources = WriterResources::new(limits::WRITER_MEMORY_BYTES)
-            .with_max_memory_bytes(limits::WRITER_MEMORY_BYTES);
+            .with_max_memory_bytes(limits::WRITER_MEMORY_BYTES)
+            .with_max_spool_memory_bytes(writer::RESIDENT_SPOOL_BYTES);
         let mut out = Vec::new();
         write_streaming_archive_with_progress(
             &entries, options, extras, &resources, None, &mut out,

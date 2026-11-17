@@ -299,6 +299,59 @@ fn many_small_members_with_every_option_still_fit_each_volume() {
     archive.test(Some(PASSWORD), &|_, _, _| true).unwrap();
 }
 
+/// Small payloads stay in memory and one past 1 MiB moves to a temporary
+/// file beside the output. Both come back, and no temporary file is left.
+#[test]
+fn a_payload_too_large_for_memory_moves_to_disk_and_is_cleaned_up() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("in");
+    fs::create_dir(&input).unwrap();
+    let mut files = vec![("large.bin".to_string(), noise(7, 1536 * 1024))];
+    for i in 0..40 {
+        let line = format!("línea {i} de un archivo pequeño\n");
+        files.push((
+            format!("small-{i:02}.txt"),
+            line.repeat(20 + i).into_bytes(),
+        ));
+    }
+    let mut sources = Vec::new();
+    let mut expected = Vec::new();
+    for (name, data) in files {
+        let path = input.join(&name);
+        fs::write(&path, &data).unwrap();
+        sources.push(Source {
+            path,
+            name: name.clone(),
+        });
+        expected.push((name, Some(data)));
+    }
+    for (label, options) in [
+        ("plain", CreateOptions::default()),
+        (
+            "everything",
+            CreateOptions {
+                solid: true,
+                password: Some(PASSWORD),
+                hide_names: true,
+                recovery: Some(5),
+                volume: Some(512 * 1024),
+                ..CreateOptions::default()
+            },
+        ),
+    ] {
+        let dir = root.path().join(label);
+        fs::create_dir(&dir).unwrap();
+        let published =
+            create_rar(&dir.join("set.rar"), &sources, &options, &|_, _, _| true).unwrap();
+        let published_names: BTreeSet<_> = published
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names(&dir), published_names, "{label}");
+        assert_contents(&published[0], options.password, &expected);
+    }
+}
+
 #[test]
 fn a_set_of_one_volume_keeps_the_name_and_ten_volumes_pad_the_number() {
     let tree = tree();

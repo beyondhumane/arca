@@ -307,7 +307,7 @@ pub(super) fn write_archive(
     // quick-open block itself. Both move together when the prefix grows, so
     // the distances only need positions within the body.
     let quick_open_payload = if plan.quick_open {
-        let mut payload = Spool::create(resources)?;
+        let mut payload = Spool::for_member(resources)?;
         let mut checksum = crate::crc32::Crc32::new();
         let mut offset = 0u64;
         for block in &blocks {
@@ -1430,7 +1430,7 @@ fn prepare_volume_member<'a>(
             // A volume boundary can fall anywhere, and the cipher runs as one
             // chain over the member, so encrypt it up front into scratch
             // storage and slice the ciphertext.
-            let mut encrypted = Spool::create(resources)?;
+            let mut encrypted = Spool::for_member(resources)?;
             const ENCRYPT_CHUNK: usize = 64 * 1024;
             let _permit = resources.acquire_cancellable(ENCRYPT_CHUNK as u64, 0, &|| {
                 progress.is_some_and(ProgressReporter::is_cancelled)
