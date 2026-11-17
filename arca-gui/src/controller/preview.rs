@@ -1051,6 +1051,27 @@ mod tests {
     }
 
     #[test]
+    fn a_cabinet_entry_previews_through_the_bounded_reader() {
+        let archive =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../arca-extra/tests/fixtures/lzx.cab");
+        let entries = crate::archive_ops::list_entries(&archive, None, &|_, _, _| true)
+            .unwrap()
+            .0;
+        let mut request = PreviewRequest {
+            on_disk: false,
+            archive,
+            index: 0,
+            entry: entries[0].clone(),
+            password: None,
+            generation: 0,
+            clock: Arc::new(AtomicU64::new(0)),
+        };
+        assert_eq!(read_bounded(&request).unwrap(), b"hello from a cabinet\n");
+        request.entry = entries[1].clone();
+        assert!(read_bounded(&request).is_err());
+    }
+
+    #[test]
     fn archive_actions_cannot_replace_a_running_mutation_channel() {
         let fixture = Fixture::zip(None);
         let mut c = fixture.controller();

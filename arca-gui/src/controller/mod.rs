@@ -15,6 +15,8 @@ mod disk_tests;
 mod editing;
 #[cfg(test)]
 mod editing_tests;
+#[cfg(test)]
+mod extra_tests;
 mod hashes;
 #[cfg(test)]
 mod iso_tests;
