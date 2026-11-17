@@ -22,6 +22,7 @@ Commands:
   list      List the contents without extracting them                  [aliases: l]
   extract   Extract the contents                                       [aliases: x]
   test      Check integrity without writing to disk                    [aliases: t]
+  hash      Print or check checksums of files, in the sha256sum format
   password  Add, change or remove the password of an existing archive
   bench     Measure the R1 and R2 performance requirements
 
@@ -77,6 +78,24 @@ Comprueba la integridad sin escribir en disco.
 | `<ARCHIVE>` | obligatorio | Archivo a comprobar. |
 | `-p, --password <PASSWORD>` | ninguna | Contraseña de un archivo cifrado (AES-256 o ZipCrypto). |
 
+## hash
+
+Imprime una suma de comprobación por fichero, una línea cada una en el formato que escribe `sha256sum` (`<hex>  <ruta>`), o verifica un fichero con esas líneas. Las carpetas se recorren enteras, por orden de nombre. Los ficheros se leen por partes, nunca enteros en memoria, y se calculan varios a la vez repartidos entre los núcleos; aun así, las líneas salen en orden.
+
+| Argumento / opción | Por defecto | Descripción |
+| --- | --- | --- |
+| `<PATHS>...` | obligatorio salvo con `--check` | Ficheros o carpetas de los que calcular la suma. |
+| `-a, --algorithm <ALGORITHM>` | sha256 | crc32 · sha1 · sha256. Con `--check`, el algoritmo de cada línea se deduce de la longitud de su suma, salvo que se indique este. |
+| `-c, --check <SUMS>` | ninguno | Verifica los ficheros listados en `SUMS` e imprime `<ruta>: OK` o `<ruta>: FAILED` para cada uno. |
+
+```sh
+arca hash fotos > SHA256SUMS
+arca hash --check SHA256SUMS     # o: sha256sum -c SHA256SUMS
+arca hash -a crc32 setup.exe
+```
+
+Las rutas se imprimen tal como se dieron, con `/` entre carpetas en todos los sistemas. Un fichero de sumas puede llevar `*` delante del nombre (modo binario), finales de línea de Windows, una marca de orden de bytes y los nombres escapados que escribe `sha256sum` para nombres con una barra invertida o un salto de línea. Las líneas que no son sumas se avisan y se saltan. Un fichero que no se puede leer, una suma que no coincide o un fichero de sumas sin ninguna línea válida dan el estado de salida 1. BLAKE3 no se ofrece: su crate de Rust necesita por defecto un compilador de C.
+
 ## password
 
 Reescribe un `.zip` con otra contraseña, o sin ninguna. Las entradas no se vuelven a comprimir, porque el cifrado WinZip AES cifra los bytes ya comprimidos.
@@ -103,6 +122,6 @@ Mide los requisitos de rendimiento R1 y R2 contra un archivo.
 | Estado | Significado |
 | --- | --- |
 | `0` | Éxito. |
-| `1` | Error de archivo/E/S, incluida contraseña incorrecta o datos cifrados corruptos. Se imprime como `arca: <message>` en la salida de error. |
+| `1` | Error de archivo/E/S, incluida contraseña incorrecta o datos cifrados corruptos. Se imprime como `arca: <message>` en la salida de error. También un `hash` que no pudo leer un fichero o encontró una suma que no coincide. |
 | `2` | Sintaxis u opciones CLI inválidas, indicadas por el analizador de argumentos. |
 </content>

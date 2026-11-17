@@ -14,6 +14,7 @@ pub(crate) fn dialog_width(kind: ModalKind, window: f32) -> f32 {
         ModalKind::Add => 640.0,
         ModalKind::Conflict => 560.0,
         ModalKind::Update => 560.0,
+        ModalKind::Checksums => 720.0,
         _ => 448.0,
     };
     wanted.min(window - 32.0).max(240.0)
@@ -231,6 +232,7 @@ impl Shell {
                     }
                     ModalKind::Format => self.format_dialog(ui),
                     ModalKind::Properties => self.properties_dialog(ui),
+                    ModalKind::Checksums => self.checksums_dialog(ui),
                     ModalKind::Update => self.update_dialog(ui),
                 });
             ui.ctx()

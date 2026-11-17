@@ -542,3 +542,51 @@ fn directories_cannot_be_previewed() {
     assert!(a.read_entry(docs).is_err());
     assert!(a.read_entry(10_000).is_err());
 }
+
+#[test]
+fn an_entry_streams_whole_and_a_truncated_image_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("image.iso");
+    fs::copy(fixture("rockridge.iso"), &path).unwrap();
+    let a = IsoArchive::open(&path).unwrap();
+    let (index, entry) = a
+        .entries()
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| !e.is_dir)
+        .max_by_key(|(_, e)| e.size)
+        .unwrap();
+    let mut out = Vec::new();
+    let n = a.read_entry_to(index, &mut out, &|_, _, _| true).unwrap();
+    assert_eq!(n, entry.size);
+    assert_eq!(out, a.read_entry(index).unwrap());
+    assert!(matches!(
+        a.read_entry_to(index, &mut Vec::new(), &|_, _, _| false),
+        Err(Error::Cancelled)
+    ));
+    let docs = a.entries().iter().position(|e| e.name == "docs").unwrap();
+    assert!(a
+        .read_entry_to(docs, &mut Vec::new(), &|_, _, _| true)
+        .is_err());
+    assert!(a
+        .read_entry_to(10_000, &mut Vec::new(), &|_, _, _| true)
+        .is_err());
+
+    let data = fs::read(&path).unwrap();
+    fs::write(&path, &data[..data.len() - 2048]).unwrap();
+    let files = a
+        .entries()
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| !e.is_dir && e.size > 0)
+        .map(|(i, _)| i)
+        .collect::<Vec<_>>();
+    let failed = files
+        .iter()
+        .filter(|&&i| {
+            a.read_entry_to(i, &mut std::io::sink(), &|_, _, _| true)
+                .is_err()
+        })
+        .count();
+    assert!(failed > 0);
+}

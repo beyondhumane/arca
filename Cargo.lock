@@ -303,6 +303,8 @@ dependencies = [
  "cap-std",
  "crc32fast",
  "jiff",
+ "sha1",
+ "sha2",
  "tempfile",
 ]
 

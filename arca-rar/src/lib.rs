@@ -124,6 +124,27 @@ impl RarArchive {
         }
     }
 
+    /// Decodes the archive once and streams each file into the writer `open`
+    /// gives for its index in [`entries`], or skips it on `None`. Nothing is
+    /// written to disk. Solid predecessors are decoded whatever is asked for,
+    /// and a damaged member stops the whole pass.
+    ///
+    /// [`entries`]: Self::entries
+    pub fn read_entries_to(
+        &self,
+        password: Option<&str>,
+        progress: &Progress<'_>,
+        open: &mut dyn FnMut(usize) -> Option<Box<dyn std::io::Write>>,
+    ) -> Result<()> {
+        #[cfg(feature = "rar")]
+        return reader::read_entries_to(self, password, progress, open);
+        #[cfg(not(feature = "rar"))]
+        {
+            let _ = (password, progress, open);
+            Err(disabled())
+        }
+    }
+
     /// Verifies the entire stream in private staging before touching destinations.
     /// Publication errors can leave earlier verified files in place; it is not a
     /// transaction over the destination directory. Solid predecessors are decoded
