@@ -14,6 +14,7 @@ mod comment;
 mod diff;
 mod hash;
 mod rar;
+mod repair;
 mod sevenz;
 
 const BUF: usize = 256 * 1024;
@@ -166,13 +167,7 @@ enum Cmd {
     },
     #[command(
         about = "Show or change the comment of an archive or of one entry",
-        long_about = "With no --set, --file or --clear, prints the comment: a ZIP or RAR archive's own,
-or with --entry the one on that entry of a ZIP or a TAR (pax). A TAR has no
-comment of its own, so it lists the entries that carry one.
-
-Only ZIP comments can be changed. The archive is written again beside itself,
-every entry copied unchanged, read back, and then put in place of the old one;
-no password is needed, even for encrypted entries."
+        long_about = "With no --set, --file or --clear, prints the comment: a ZIP or RAR archive's own,\nor with --entry the one on that entry of a ZIP or a TAR (pax). A TAR has no\ncomment of its own, so it lists the entries that carry one.\n\nOnly ZIP comments can be changed. The archive is written again beside itself,\nevery entry copied unchanged, read back, and then put in place of the old one;\nno password is needed, even for encrypted entries."
     )]
     Comment {
         #[arg(help = "Archive (.zip to change; .zip, .rar or .tar to read)")]
@@ -208,14 +203,20 @@ no password is needed, even for encrypted entries."
         password: Option<String>,
     },
     #[command(
-        about = "Rebuild a damaged ZIP from the entries that can still be read",
-        long_about = "Scans the archive for local headers, checks every entry it finds and copies the\nsound ones unchanged into a new archive. The damaged archive is only read.\n\nEncrypted entries get a structural check only: without the password their\ncontents cannot be checked."
+        about = "Rebuild a damaged archive from what can still be read",
+        long_about = "Writes a new archive of the same format; the damaged one is only read.\n\nZIP: scans for local headers, checks every entry it finds and copies the sound\nones unchanged. Encrypted entries get a structural check only: without the\npassword their contents cannot be checked.\n\nTAR (.tar, .tar.gz, .tar.xz, .tar.bz2, .tar.zst): keeps every entry whose header\nchecks out and whose data is all there, and after a damaged header carries on\nat the next valid one. TAR has no checksum over data. Damage inside the\ncompressed stream ends the repair there, with what came before it.\n\n7z: decodes each block on its own and keeps the entries that check out, up to\nthe first fault in their block. A damaged header cannot be repaired.\n\nRAR: rebuilds the archive from its recovery record, which it must have been\nmade with. Single volumes only; damaged headers cannot be repaired."
     )]
     Repair {
         #[arg(help = "Damaged archive")]
         archive: PathBuf,
-        #[arg(short = 'o', long, help = "Where to write the rebuilt archive (.zip)")]
+        #[arg(
+            short = 'o',
+            long,
+            help = "Where to write the rebuilt archive, in the same format"
+        )]
         out: PathBuf,
+        #[arg(short = 'p', long, help = "Password, for an encrypted 7z or RAR")]
+        password: Option<String>,
     },
     #[command(
         about = "Compare two archives, or an archive and a folder",
@@ -447,7 +448,11 @@ fn run(cli: Cli) -> Result<()> {
             out,
             password,
         }),
-        Cmd::Repair { archive, out } => repair_zip(&archive, &out),
+        Cmd::Repair {
+            archive,
+            out,
+            password,
+        } => repair::run(&archive, &out, password.as_deref()),
         Cmd::Diff {
             a,
             b,
@@ -1382,78 +1387,6 @@ fn open_iso(archive: &Path) -> Result<arca_iso::IsoArchive> {
         eprintln!("note: {notice}");
     }
     Ok(a)
-}
-
-// The rebuilt archive is read back before it takes its final name, and it can
-// never take the damaged archive's name: that file may be the only copy of
-// entries this scan could not recover.
-fn repair_zip(archive: &Path, out: &Path) -> Result<()> {
-    if detect(out)? != Format::Zip {
-        return Err(Error::Unsupported(
-            "a repair writes a ZIP, so --out needs a .zip name".into(),
-        ));
-    }
-    if out.exists() && fs::canonicalize(archive)? == fs::canonicalize(out)? {
-        return Err(Error::Format(
-            "--out names the damaged archive; write the repaired one somewhere else".into(),
-        ));
-    }
-    let t0 = Instant::now();
-    let temp = staged_path(out);
-    let result = (|| {
-        let source = BufReader::with_capacity(BUF, arca_core::volumes::open(archive)?);
-        let sink = BufWriter::with_capacity(BUF, File::create(&temp)?);
-        let (mut sink, report) = arca_zip::repair(source, sink)?;
-        sink.flush()?;
-        drop(sink);
-        if ZipArchive::open(File::open(&temp)?)?.len() != report.recovered.len() {
-            return Err(Error::Format(
-                "the rebuilt archive does not read back as written".into(),
-            ));
-        }
-        Ok(report)
-    })();
-    let report = match result {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = fs::remove_file(&temp);
-            return Err(e);
-        }
-    };
-
-    for s in &report.skipped {
-        eprintln!(
-            "  skipped at offset {}: {}: {}",
-            s.offset,
-            printable(s.name.as_deref().unwrap_or("?")),
-            printable(&s.reason)
-        );
-    }
-    if report.unreported > 0 {
-        eprintln!("  and {} more skipped", report.unreported);
-    }
-    for r in report.recovered.iter().filter(|r| !r.verified) {
-        eprintln!(
-            "  encrypted, copied without checking its contents: {}",
-            printable(&r.name)
-        );
-    }
-    if report.recovered.is_empty() {
-        let _ = fs::remove_file(&temp);
-        return Err(Error::Format(format!(
-            "no entry of '{}' could be recovered",
-            archive.display()
-        )));
-    }
-    fs::rename(&temp, out)?;
-    println!(
-        "{}: {} entries recovered, {} skipped in {:.3} s",
-        out.display(),
-        report.recovered.len(),
-        report.skipped.len() as u64 + report.unreported,
-        t0.elapsed().as_secs_f64()
-    );
-    Ok(())
 }
 
 fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
