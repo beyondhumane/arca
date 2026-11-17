@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+mod copy;
+
+pub use copy::copy_entries;
+
 use arca_core::{limits, Entry, Error, Method, Result};
 use std::io::{self, Read, Write};
 
@@ -80,37 +84,47 @@ impl Longer {
         self.name.is_none() && self.link.is_none() && self.size.is_none() && self.mtime.is_none()
     }
 
-    /// Reads pax records, each `<length> <key>=<value>\n` where the length
-    /// counts the whole record, itself included.
-    fn apply_pax(&mut self, mut data: &[u8]) -> Result<()> {
-        let bad = || Error::Format("a malformed pax record".into());
-        while !data.is_empty() {
-            let space = data.iter().position(|&b| b == b' ').ok_or_else(bad)?;
-            let length: usize = std::str::from_utf8(&data[..space])
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .ok_or_else(bad)?;
-            if length <= space + 1 || length > data.len() || data[length - 1] != b'\n' {
-                return Err(bad());
-            }
-            let record = &data[space + 1..length - 1];
-            let equals = record.iter().position(|&b| b == b'=').ok_or_else(bad)?;
-            let (key, value) = (&record[..equals], &record[equals + 1..]);
-            let value = std::str::from_utf8(value).map_err(|_| bad())?;
+    fn apply_pax(&mut self, data: &[u8]) -> Result<()> {
+        each_pax(data, |key, value, _| {
+            let value = std::str::from_utf8(value).map_err(|_| bad_pax())?;
             match key {
                 b"path" => self.name = Some(value.to_string()),
                 b"linkpath" => self.link = Some(value.to_string()),
-                b"size" => self.size = Some(value.parse().map_err(|_| bad())?),
+                b"size" => self.size = Some(value.parse().map_err(|_| bad_pax())?),
                 b"mtime" => {
                     let whole = value.split('.').next().unwrap_or(value);
-                    self.mtime = Some(whole.parse().map_err(|_| bad())?);
+                    self.mtime = Some(whole.parse().map_err(|_| bad_pax())?);
                 }
                 _ => {}
             }
-            data = &data[length..];
-        }
-        Ok(())
+            Ok(())
+        })
     }
+}
+
+fn bad_pax() -> Error {
+    Error::Format("a malformed pax record".into())
+}
+
+/// Walks pax records, each `<length> <key>=<value>\n` where the length counts
+/// the whole record, itself included. `f` is given the key, the value and the
+/// whole record.
+fn each_pax(mut data: &[u8], mut f: impl FnMut(&[u8], &[u8], &[u8]) -> Result<()>) -> Result<()> {
+    while !data.is_empty() {
+        let space = data.iter().position(|&b| b == b' ').ok_or_else(bad_pax)?;
+        let length: usize = std::str::from_utf8(&data[..space])
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(bad_pax)?;
+        if length <= space + 1 || length > data.len() || data[length - 1] != b'\n' {
+            return Err(bad_pax());
+        }
+        let record = &data[space + 1..length - 1];
+        let equals = record.iter().position(|&b| b == b'=').ok_or_else(bad_pax)?;
+        f(&record[..equals], &record[equals + 1..], &data[..length])?;
+        data = &data[length..];
+    }
+    Ok(())
 }
 
 /// A name without the `./` in front of it, however many times it is there.
@@ -219,6 +233,7 @@ pub struct TarEntry {
     /// What a link points to: for a symbolic link the path it holds, for a
     /// hard link the name of an earlier entry. `None` for anything else.
     pub link: Option<String>,
+    headers: Option<Vec<u8>>,
 }
 
 impl TarEntry {
@@ -248,7 +263,14 @@ pub struct TarReader<R: Read> {
     source: R,
     pos: u64,
     finished: bool,
+    keep: bool,
+    raw: Vec<u8>,
 }
+
+/// The most header bytes kept for one entry: a whole pax header, a long name
+/// and a long link, with room to spare. An entry with more than that in front
+/// of it is copied from what its headers were read to say instead.
+const RAW_LIMIT: usize = 4 * PAX_LIMIT as usize;
 
 impl<R: Read> TarReader<R> {
     pub fn new(source: R) -> Self {
@@ -256,6 +278,20 @@ impl<R: Read> TarReader<R> {
             source,
             pos: 0,
             finished: false,
+            keep: false,
+            raw: Vec::new(),
+        }
+    }
+
+    /// Keeps the header blocks of every entry read from here on, so that
+    /// [`copy_entries`] can write them out again as they were.
+    pub fn keep_headers(&mut self) {
+        self.keep = true;
+    }
+
+    fn record(&mut self, bytes: &[u8]) {
+        if self.keep && self.raw.len() <= RAW_LIMIT {
+            self.raw.extend_from_slice(bytes);
         }
     }
 
@@ -272,6 +308,7 @@ impl<R: Read> TarReader<R> {
             return Ok(None);
         }
         let (header, longer, name) = loop {
+            self.raw.clear();
             let mut longer = Longer::default();
             let header = loop {
                 let mut header = [0u8; BLOCK];
@@ -287,6 +324,7 @@ impl<R: Read> TarReader<R> {
                     };
                 }
                 self.pos += BLOCK as u64;
+                self.record(&header);
 
                 if header.iter().all(|&b| b == 0) {
                     self.finished = true;
@@ -409,12 +447,15 @@ impl<R: Read> TarReader<R> {
             encrypted: false,
             zipcrypto: false,
         };
+        let headers =
+            (self.keep && self.raw.len() <= RAW_LIMIT).then(|| std::mem::take(&mut self.raw));
         Ok(Some(TarEntry {
             entry,
             data: if is_dir { 0 } else { size },
             mode: octal(&header[100..108], "mode").map_or(0, |m| (m & 0o7777) as u32),
             kind,
             link,
+            headers,
         }))
     }
 
@@ -435,6 +476,7 @@ impl<R: Read> TarReader<R> {
             }
         })?;
         self.pos += padded;
+        self.record(&data);
         data.truncate(size as usize);
         Ok(data)
     }
@@ -701,11 +743,17 @@ fn ustar_header(
     header[257..262].copy_from_slice(b"ustar");
     header[263..265].copy_from_slice(b"00");
     header[345..345 + prefix.len()].copy_from_slice(prefix.as_bytes());
-    let sum = checksum(&header);
+    seal(&mut header);
+    header
+}
+
+/// Writes a header's checksum into it, the way GNU tar does: six octal
+/// digits, a NUL and a space.
+fn seal(header: &mut [u8; BLOCK]) {
+    let sum = checksum(header);
     header[148..154].copy_from_slice(format!("{sum:06o}").as_bytes());
     header[154] = 0;
     header[155] = b' ';
-    header
 }
 
 /// A name cut to at most `max` bytes without splitting a character.
