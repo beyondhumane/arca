@@ -58,8 +58,8 @@ desinstalar Arca.
 
 Las imágenes de disco vienen desactivadas, porque el Explorador ya las monta.
 Marca la casilla de las imágenes de disco (.iso) en el instalador de Inno Setup,
-ejecuta `arca-setup.exe --iso` o, en la instalación de desarrollo,
-`windows\install.ps1 -Iso`.
+abre con `--iso` el instalador nuevo que genera `windows/build-setup.ps1` o,
+en la instalación de desarrollo, ejecuta `windows\install.ps1 -Iso`.
 
 Los paquetes y documentos basados en ZIP (`.jar`, `.apk`, `.epub`, `.cbz` y el
 resto de [contenedores ZIP](zip-containers.md)) y los cómics `.cbr` nunca se

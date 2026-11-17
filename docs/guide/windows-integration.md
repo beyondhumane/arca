@@ -55,8 +55,9 @@ account so that **New > Arca ZIP archive** appears in Explorer, and hands it
 back to whatever had it before when Arca is uninstalled.
 
 Disc images are off by default, because Explorer mounts them itself. Tick
-**Disc images (.iso) too** in the Inno Setup installer, run `arca-setup.exe
---iso`, or `windows\install.ps1 -Iso` for the development install.
+**Disc images (.iso) too** in the Inno Setup installer, start the new
+installer built by `windows/build-setup.ps1` with `--iso`, or run
+`windows\install.ps1 -Iso` for the development install.
 
 ZIP-based packages and documents (`.jar`, `.apk`, `.epub`, `.cbz` and the rest
 of [ZIP containers](zip-containers.md)) and `.cbr` comics are never
