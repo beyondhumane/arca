@@ -2,12 +2,50 @@
 description: Cada medición, la máquina detrás y los casos donde Arca pierde.
 group: Referencia
 order: 14
-keywords: rendimiento velocidad benchmarks nanazip 7-zip zip números performance speed benchmarks nanazip 7-zip zip numbers
+keywords: rendimiento velocidad benchmarks nanazip 7-zip zip números puntuación códecs hilos performance speed benchmarks nanazip 7-zip zip numbers rating codecs threads
 ---
 
 # Benchmarks
 
 Estos números vienen de máquinas concretas y no deben leerse como una ventaja general. Cada uno trae su método, incluidos los casos donde Arca pierde.
+
+## Mide tu propia máquina
+
+`arca bench --codecs` mide cada códec con el que Arca escribe en la máquina donde se ejecuta, como el benchmark de 7-Zip (Tools → Benchmark). No necesita ficheros ni toca el disco: los datos se generan en memoria. La aplicación de escritorio ejecuta la misma prueba desde **Prueba de rendimiento…** en el menú **Más**; consulta [la aplicación de escritorio](desktop-app.md#prueba-de-rendimiento).
+
+```sh
+arca bench --codecs
+arca bench --codecs --threads 8 --seconds 3 --size 32
+arca bench --codecs --json
+```
+
+Esta página no publica cifras suyas. Su salida termina siempre con la orden que la reproduce; conserva esa línea junto a cualquier número que compartas.
+
+Cómo mide:
+
+- **Los datos.** `--size` MiB (16 por defecto, y al menos 1 MiB por hilo) generados a partir de una semilla fija, así que todas las máquinas y todas las ejecuciones reciben los mismos bytes. De cada cuatro tramos de 64 KiB, tres son texto parecido a prosa, hecho con un vocabulario fijo en el que las palabras comunes aparecen mucho más que las raras, y el cuarto son bytes aleatorios.
+- **Los códecs.** Todos trabajan al nivel 6 (normal), el predeterminado de `arca create`, con los mismos escritores y lectores que usa Arca: Store, Deflate y Zstandard como entradas de un ZIP, LZMA2 como un flujo `.xz` por trozo, bzip2 como un flujo `.bz2` por trozo y RAR5 como un archivo RAR guardado en memoria. Un códec que la compilación no tiene aparece como `not in this build`.
+- **Los hilos.** Los datos se cortan en trozos de 1 MiB y cada uno se comprime por su cuenta, como lo haría una entrada de un ZIP. Con un hilo se trabaja un trozo cada vez; con `--threads N` (todos los núcleos por defecto), N a la vez. Las dos columnas hacen exactamente el mismo trabajo, así que solo cambia el paralelismo. LZMA2 no usa más hilos de los que caben en los 2 GiB que `arca create` da a un `.tar.xz`, y la tabla lo indica cuando son menos. `arca create` escribe un `.bz2` en un solo hilo, así que la columna de bzip2 con N hilos muestra lo que hace el procesador con trozos independientes, no lo rápido que va `arca create x.bz2`.
+- **El tiempo.** Cada medición repite sus pasadas hasta que pasan `--seconds` segundos (1 por defecto; siempre se hace al menos una) y da la mediana. Las velocidades son MB/s de datos sin comprimir en los dos sentidos, con 1 MB = 10^6 bytes. La relación es el tamaño comprimido entre el original, cabeceras del archivo incluidas.
+- **La comprobación.** Cada trozo descomprimido se compara con el original, fuera de la parte cronometrada. Una diferencia detiene la prueba con un error.
+
+### La puntuación
+
+La puntuación es la media geométrica de seis velocidades: compresión y descompresión de Deflate, LZMA2 y bzip2. Es decir, con `c` para la compresión y `d` para la descompresión, en MB/s:
+
+```text
+puntuación = (c_Deflate × d_Deflate × c_LZMA2 × d_LZMA2 × c_bzip2 × d_bzip2) ^ (1/6)
+```
+
+Se calcula una vez para un hilo y otra para `--threads`. Se usan esos tres códecs porque todas las compilaciones los tienen: a las que no llevan los códecs nativos les falta Zstandard, a las que no llevan RAR les falta RAR5, y Store solo mide el ancho de banda de la memoria. Una media geométrica evita que un códec rápido tape a uno lento: duplicar cualquiera de las seis velocidades sube la puntuación el mismo 12 %, sea cual sea.
+
+Dos puntuaciones solo se comparan si vienen de la misma versión de Arca, el mismo tipo de compilación y las mismas opciones. La primera línea de la salida dice qué compilación es: `native codecs` usa libdeflate para Deflate, `pure Rust codecs` usa zlib-rs, y las dos no van a la misma velocidad. La puntuación con varios hilos depende además de `--threads`.
+
+### Memoria y parada
+
+La prueba guarda los datos, una copia comprimida de ellos y dos trozos por hilo: unas dos veces `--size` más 2 MiB por hilo. La salida imprime esa cifra. Encima va el estado de los códecs, y el mayor es el de los codificadores LZMA2: los 94 MiB que xz(1) documenta para el nivel 6, en como mucho tantos hilos como caben en 2 GiB, que la salida también imprime como cota superior.
+
+Ctrl+C detiene la prueba entre pasadas, así que la espera es como mucho una pasada, y la más larga es un trozo de LZMA2 en un hilo. Arca imprime entonces la tabla con lo que había medido, dice que se detuvo antes del final y sale con el estado 130. En una compilación sin RAR el manejador no se instala y Ctrl+C termina el proceso en el acto, sin perder nada porque la prueba no escribe nada.
 
 ## Requisitos
 

@@ -2,12 +2,50 @@
 description: Every measurement, the machine behind it, and the cases Arca loses.
 group: Reference
 order: 14
-keywords: performance speed benchmarks nanazip 7-zip zip numbers
+keywords: performance speed benchmarks nanazip 7-zip zip numbers rating codecs threads
 ---
 
 # Benchmarks
 
 These numbers come from specific machines and should not be read as a general advantage. Each one comes with its method, including the cases where Arca loses.
+
+## Measure your own machine
+
+`arca bench --codecs` measures every codec Arca writes on the machine it runs on, much as 7-Zip’s Tools → Benchmark does. It needs no files and touches no disk: the data is generated in memory. The desktop app runs the same benchmark from **Benchmark…** in the **More** menu; see [the desktop app](desktop-app.md#benchmark).
+
+```sh
+arca bench --codecs
+arca bench --codecs --threads 8 --seconds 3 --size 32
+arca bench --codecs --json
+```
+
+This page publishes no figures from it. Its output always ends with the command that reproduces it; keep that line next to any number you share.
+
+How it measures:
+
+- **The data.** `--size` MiB (16 by default, and at least 1 MiB per thread) generated from a fixed seed, so every machine and every run gets the same bytes. Of every four 64 KiB stretches, three are prose-like text, made from a fixed vocabulary with common words far more frequent than rare ones, and the fourth is random bytes.
+- **The codecs.** Every codec runs at level 6 (normal), the default of `arca create`, through the same writers and readers Arca uses: Store, Deflate and Zstandard as ZIP entries, LZMA2 as one `.xz` stream per chunk, bzip2 as one `.bz2` stream per chunk, and RAR5 as one RAR archive held in memory. A codec the build lacks is listed as not in this build.
+- **The threads.** The data is cut into 1 MiB chunks, each compressed on its own as a ZIP entry would be. One thread takes one chunk at a time; `--threads N` (every core by default) takes N at once. Both columns do exactly the same work, so only the parallelism differs. LZMA2 uses no more threads than fit in the 2 GiB that `arca create` gives a `.tar.xz`, and the table says so when that is fewer. `arca create` writes a `.bz2` on a single thread, so the bzip2 column for N threads shows what the processor does with independent chunks, not how fast `arca create x.bz2` is.
+- **The timing.** Each measurement repeats its runs until `--seconds` have passed (1 by default; at least one run is always made) and reports the median. Speeds are MB/s of uncompressed data in both directions, with 1 MB = 10^6 bytes. The ratio is the compressed size over the original size, archive headers included.
+- **The check.** Every decompressed chunk is compared with the original, outside the timed part. A difference stops the benchmark with an error.
+
+### The rating
+
+The rating is the geometric mean of six speeds: compression and decompression of Deflate, LZMA2 and bzip2. That is, with `c` for compression and `d` for decompression, in MB/s:
+
+```text
+rating = (c_Deflate × d_Deflate × c_LZMA2 × d_LZMA2 × c_bzip2 × d_bzip2) ^ (1/6)
+```
+
+It is worked out once for one thread and once for `--threads`. Those three codecs are used because every build has them: Zstandard is missing from builds without the native codecs, RAR5 from builds without RAR, and Store only measures memory bandwidth. A geometric mean keeps a fast codec from drowning out a slow one: doubling any one of the six speeds raises the rating by the same 12%, whichever it is.
+
+Two ratings compare only when they come from the same Arca version, the same kind of build and the same options. The first line of the output says which build it is: `native codecs` uses libdeflate for Deflate, `pure Rust codecs` uses zlib-rs, and the two do not run at the same speed. The multithreaded rating also depends on `--threads`.
+
+### Memory and stopping
+
+The benchmark holds the data, one compressed copy of it and two chunks per thread, about twice `--size` plus 2 MiB per thread. The output prints that figure. Codec state comes on top, and the largest is the LZMA2 encoders: the 94 MiB xz(1) documents for level 6, on at most as many threads as fit in 2 GiB, which the output also prints as an upper bound.
+
+Ctrl+C stops between runs, so the wait is at most one run, the longest being one chunk of LZMA2 on one thread. Arca then prints the table with what it had measured, says it stopped before the end, and exits with status 130. In a build without RAR the handler is not installed and Ctrl+C ends the process at once, which loses nothing because the benchmark writes nothing.
 
 ## Requirements
 

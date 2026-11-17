@@ -37,7 +37,7 @@ The sidebar button shows or hides the sidebar; when the window leaves too little
 - **Properties** shows size, dates, type, permissions and what a folder contains.
 - **Checksums** (row menu) works out CRC32, SHA-1 and SHA-256 of the picked files on the disk, folders included, or of the picked entries inside the open archive, all of them when nothing is picked; entries are read straight out of the archive and never written to disk. It runs in **Operations** with progress, pause and cancel, and the result opens in a dialog: pick the algorithm and **Copy** puts the lines on the clipboard in the `sha256sum` format, ready for `arca hash --check` or `sha256sum -c`. A file that can’t be read shows its error in its row, while a folder that can’t be listed stops the task; in TAR, 7z and RAR a damaged entry stops the whole pass, because each entry is decoded from the stream before it.
 - **Compare with archive…** and **Compare with folder…** (row menu) set the open archive against another archive or a folder you pick. On the disk they do the same for the one item picked, and with two items picked they compare those two with each other. The comparison runs in **Operations** with progress, pause and cancel, and reads entries straight out of the archives, as [`arca diff`](cli-reference.md#diff) does. The result opens in a dialog: filter it to **All**, **Only in the first**, **Only in the second** or **Changed**, and **Copy** puts the lines shown on the clipboard in the `arca diff` format. The open archive’s password is also tried on the other side; an archive that needs a different one fails the task with the password error.
-- **More** includes selection tools, password changes, verification, settings, the shortcut list and **Check for updates**; a new version opens a dialog with its release notes and installs itself from inside the app.
+- **More** includes selection tools, password changes, verification, settings, the shortcut list, the [benchmark](#benchmark) and **Check for updates**; a new version opens a dialog with its release notes and installs itself from inside the app.
 
 ## Integrated preview
 
@@ -114,6 +114,10 @@ Windows and Linux, so files move between Arca and the Explorer, Thunar, Dolphin
 or Nautilus. On Linux the other programs cannot tell a cut from a copy, so a
 cut pasted there arrives as a copy, and cutting out of an archive is offered on
 Windows only.
+
+## Benchmark
+
+**More > Benchmark…** opens the same benchmark as [`arca bench --codecs`](benchmarks.md#measure-your-own-machine): every codec Arca writes, on data generated in memory, on one thread and on the number of threads picked at the top (every core by default). **Start** runs it in the background and the table fills in as each codec is measured, with a bar for the progress; **Stop**, **Close**, Escape or quitting the app stop it between runs. When it ends the window shows the rating, and **Copy** puts on the clipboard the same text the command line prints, ending with the command that reproduces it. The run uses the defaults of the command, 16 MiB and 1 second per measurement.
 
 ## Jobs and keyboard access
 
