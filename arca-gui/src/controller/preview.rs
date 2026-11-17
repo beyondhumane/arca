@@ -526,6 +526,21 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
                 .read_entry_to(request.index, &mut out, &current)
                 .map(|_| ())
         }
+        Container::Disk => {
+            let current = |_: usize, _: usize, _: &str| {
+                request.clock.load(Ordering::Relaxed) == request.generation
+            };
+            let archive =
+                arca_disk::DiskArchive::open_with_progress(&request.archive, format, &current)?;
+            let entry = archive
+                .entries()
+                .get(request.index)
+                .ok_or_else(|| Error::Format("entry missing".into()))?;
+            verify_entry(entry, &request.entry)?;
+            archive
+                .read_entry_to(request.index, &mut out, &current)
+                .map(|_| ())
+        }
     };
     if out.exceeded {
         return Err(Error::Limit("preview byte limit exceeded".into()));

@@ -12,6 +12,7 @@ members = [
     "arca-rar",
     "arca-iso",
     "arca-extra",
+    "arca-disk",
     "arca-cli",
     "arca-gui",
     "arca-setup",
@@ -48,6 +49,7 @@ arca-7z   = { path = "arca-7z", default-features = false }
 arca-rar = { path = "arca-rar" }
 arca-iso = { path = "arca-iso" }
 arca-extra = { path = "arca-extra" }
+arca-disk = { path = "arca-disk" }
 arca-compare = { path = "arca-compare" }
 arca-bench = { path = "arca-bench" }
 arca-icons = { path = "arca-icons" }

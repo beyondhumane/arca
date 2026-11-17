@@ -444,6 +444,11 @@ fn single_streams_and_zip_containers_still_cannot_change() {
         Format::Rpm,
         Format::Cab,
         Format::Lzh,
+        Format::Vhd,
+        Format::Vhdx,
+        Format::Vmdk,
+        Format::Dmg,
+        Format::Img,
     ] {
         assert!(!editable(format), "{format:?}");
     }

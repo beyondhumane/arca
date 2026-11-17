@@ -128,6 +128,18 @@ impl Side {
                     .collect();
                 a.entries().to_vec()
             }
+            Container::Disk => {
+                let a = arca_disk::DiskArchive::open_with_progress(path, format, notify)?;
+                tar_kinds = (0..a.entries().len())
+                    .map(|i| match a.link(i) {
+                        Some(arca_disk::Link::Symbolic(target)) => {
+                            TarKind::Symlink(target.to_string())
+                        }
+                        None => TarKind::Plain,
+                    })
+                    .collect();
+                a.entries().to_vec()
+            }
             Container::Xz | Container::Bz2 | Container::Zst => {
                 vec![arca_stream::entry(path, format)?]
             }

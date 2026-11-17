@@ -334,7 +334,7 @@ fn unrecognized(p: &Path) -> Error {
         whole != p
             && matches!(
                 f.container(),
-                Container::Rar | Container::Iso | Container::Extra
+                Container::Rar | Container::Iso | Container::Extra | Container::Disk
             )
     }) {
         return Error::Unsupported(format!(
@@ -789,7 +789,9 @@ fn create(
         Container::SevenZ => unreachable!(),
         // Nothing to report while it runs -- the summary is printed at the end
         // -- so the answer to "carry on?" is always yes.
-        Container::Rar | Container::Iso | Container::Extra => return Err(format_kind.read_only()),
+        Container::Rar | Container::Iso | Container::Extra | Container::Disk => {
+            return Err(format_kind.read_only())
+        }
         Container::Zip => {
             staged(out, volume, |w| {
                 let go = &|_: usize, _: usize, _: &str| true;
@@ -987,6 +989,25 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
                 bytes += e.size;
             }
         }
+        Container::Disk => {
+            let a = open_disk(archive, format_kind)?;
+            for (i, e) in a.entries().iter().enumerate() {
+                let link = match a.link(i) {
+                    Some(arca_disk::Link::Symbolic(target)) => format!(" -> {target}"),
+                    None => String::new(),
+                };
+                writeln!(
+                    out,
+                    "{:>12}  {:>7}  {:>5.1}%  {}{link}",
+                    e.size,
+                    e.method.name(),
+                    e.ratio() * 100.0,
+                    e.name
+                )?;
+                n += 1;
+                bytes += e.size;
+            }
+        }
         Container::Zip => {
             let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             for (i, e) in a.entries().iter().enumerate() {
@@ -1151,7 +1172,7 @@ fn extract(
     }
     if !matches!(
         format_kind.container(),
-        Container::Rar | Container::Iso | Container::Extra
+        Container::Rar | Container::Iso | Container::Extra | Container::Disk
     ) {
         fs::create_dir_all(dest)?;
     }
@@ -1175,6 +1196,19 @@ fn extract(
                 t0.elapsed().as_secs_f64()
             );
             return Ok(());
+        }
+        Container::Disk => {
+            let a = open_disk(archive, format_kind)?;
+            let done = a.extract(dest, &[], &|_, _, _| true, &|_| match policy {
+                OnConflict::Overwrite => arca_disk::Conflict::Overwrite,
+                OnConflict::Skip => arca_disk::Conflict::Skip,
+                OnConflict::Rename => arca_disk::Conflict::Rename,
+            })?;
+            for refused in &done.refused {
+                eprintln!("arca: {refused}");
+            }
+            n = done.files as u64;
+            bytes = done.bytes;
         }
         Container::Extra => {
             let a = open_extra(archive, format_kind)?;
@@ -1501,6 +1535,14 @@ fn open_extra(archive: &Path, format_kind: Format) -> Result<arca_extra::ExtraAr
     Ok(a)
 }
 
+fn open_disk(archive: &Path, format_kind: Format) -> Result<arca_disk::DiskArchive> {
+    let a = arca_disk::DiskArchive::open(archive, format_kind)?;
+    for notice in a.notices() {
+        eprintln!("note: {notice}");
+    }
+    Ok(a)
+}
+
 fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
     let format_kind = detect_archive(archive)?;
     let t0 = Instant::now();
@@ -1520,6 +1562,9 @@ fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
         }
         Container::Extra => {
             n = open_extra(archive, format_kind)?.test(&[], &|_, _, _| true)? as u64;
+        }
+        Container::Disk => {
+            n = open_disk(archive, format_kind)?.test(&[], &|_, _, _| true)? as u64;
         }
         Container::Iso => {
             let a = open_iso(archive)?;

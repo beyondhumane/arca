@@ -1,0 +1,23 @@
+[package]
+name = "arca-disk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Read-only VHD, VHDX, VMDK, DMG and raw disk images for Arca: MBR and GPT partitions, FAT, exFAT, NTFS, HFS+ and ISO 9660 inside"
+
+[dependencies]
+arca-core.workspace = true
+arca-iso.workspace = true
+# DMG chunks: zlib, bzip2 and the xz streams of LZMA chunks. All pure Rust.
+arca-xz.workspace = true
+flate2.workspace = true
+bzip2.workspace = true
+crc32fast.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -218,6 +218,10 @@ pub(crate) fn list_entries(
             let a = arca_extra::ExtraArchive::open_with_progress(archive, format, notify)?;
             Ok((a.entries().to_vec(), a.notices().to_vec()))
         }
+        Container::Disk => {
+            let a = arca_disk::DiskArchive::open_with_progress(archive, format, notify)?;
+            Ok((a.entries().to_vec(), a.notices().to_vec()))
+        }
         Container::Zip => Ok((
             ZipArchive::open(arca_core::volumes::open(archive)?)?
                 .entries()
@@ -371,6 +375,9 @@ pub(crate) fn read_entry(
         Container::Extra => {
             *out = arca_extra::ExtraArchive::open(archive, format)?.read_entry(index)?;
         }
+        Container::Disk => {
+            *out = arca_disk::DiskArchive::open(archive, format)?.read_entry(index)?;
+        }
         Container::Zip => {
             let mut a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             a.extract_to_with(index, out, password)?;
@@ -479,6 +486,14 @@ pub(crate) fn extract_one_into(
                 }
             }
             a.extract(room, &wanted, notify, &|_| arca_extra::Conflict::Overwrite)?;
+            Ok(room.join(arca_core::safe_name(&entry.name)?))
+        }
+        Container::Disk => {
+            let a = arca_disk::DiskArchive::open(archive, format)?;
+            let index = listed_index(entry, a.entries(), format.label())?;
+            let mut wanted = vec![false; a.entries().len()];
+            wanted[index] = true;
+            a.extract(room, &wanted, notify, &|_| arca_disk::Conflict::Overwrite)?;
             Ok(room.join(arca_core::safe_name(&entry.name)?))
         }
         Container::SevenZ => {
@@ -847,6 +862,17 @@ pub(crate) fn extract_reporting(
         *links_left_out = done.refused.len();
         return Ok(done.bytes);
     }
+    if format.container() == Container::Disk {
+        let a = arca_disk::DiskArchive::open_with_progress(archive, format, notify)?;
+        let done = a.extract(dest, wanted, notify, &|path| match ask(path) {
+            Answer::Replace | Answer::ReplaceAll => arca_disk::Conflict::Overwrite,
+            Answer::Skip | Answer::SkipAll => arca_disk::Conflict::Skip,
+            Answer::Rename | Answer::RenameAll => arca_disk::Conflict::Rename,
+            Answer::Cancel => arca_disk::Conflict::Cancel,
+        })?;
+        *links_left_out = done.refused.len();
+        return Ok(done.bytes);
+    }
     if format != Format::SevenZ {
         fs::create_dir_all(dest)?;
     }
@@ -869,7 +895,9 @@ pub(crate) fn extract_reporting(
                 &mut |p| notify(p.entries_done, p.entries_total, p.name),
             )?;
         }
-        Container::Rar | Container::Iso | Container::Extra => return Err(format.read_only()),
+        Container::Rar | Container::Iso | Container::Extra | Container::Disk => {
+            return Err(format.read_only())
+        }
         Container::Zip => {
             let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             let mut jobs: Vec<(Entry, PathBuf)> = Vec::new();
@@ -1035,6 +1063,14 @@ pub(crate) fn test_archive(
         }
         Container::Extra => {
             let a = arca_extra::ExtraArchive::open_with_progress(archive, format, notify)?;
+            let wanted: Vec<bool> = match only {
+                Some(set) => a.entries().iter().map(|e| set.contains(&e.name)).collect(),
+                None => Vec::new(),
+            };
+            good = a.test(&wanted, notify)?;
+        }
+        Container::Disk => {
+            let a = arca_disk::DiskArchive::open_with_progress(archive, format, notify)?;
             let wanted: Vec<bool> = match only {
                 Some(set) => a.entries().iter().map(|e| set.contains(&e.name)).collect(),
                 None => Vec::new(),
@@ -1453,7 +1489,9 @@ pub(crate) fn compress_with(
             })?
             .1
         }
-        Container::Rar | Container::Iso | Container::Extra => return Err(format.read_only()),
+        Container::Rar | Container::Iso | Container::Extra | Container::Disk => {
+            return Err(format.read_only())
+        }
         Container::Zip => {
             let mut sources = Vec::with_capacity(files.len());
             for (path, name) in &files {

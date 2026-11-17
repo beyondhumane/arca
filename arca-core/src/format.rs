@@ -33,6 +33,11 @@ pub enum Format {
     Rpm,
     Cab,
     Lzh,
+    Vhd,
+    Vhdx,
+    Vmdk,
+    Dmg,
+    Img,
 }
 
 /// The reader that opens a format. ZIP-based containers such as APK or EPUB
@@ -54,6 +59,8 @@ pub enum Container {
     Iso,
     /// The read-only formats of arca-extra: CPIO, AR, DEB, RPM, CAB and LZH.
     Extra,
+    /// The disk images of arca-disk: VHD, VHDX, VMDK, DMG and raw images.
+    Disk,
 }
 
 /// Whether a desktop install offers to open a format with Arca. It never makes
@@ -68,7 +75,9 @@ pub enum Association {
     OnRequest,
     /// Never claimed. ZIP-based documents and packages, CBR comics, DEB and
     /// RPM packages and static libraries belong to the applications and
-    /// package managers made for them, and Arca only reads them.
+    /// package managers made for them, and Arca only reads them. Disk images
+    /// belong to the system that mounts them: Windows mounts VHD, VHDX and
+    /// IMG, macOS mounts DMG, and VMDK belongs to the hypervisors.
     Never,
 }
 
@@ -108,7 +117,7 @@ impl Format {
     ];
 
     /// Every recognized name suffix, longest first where one ends another.
-    pub const SUFFIXES: [(&'static str, Self); 38] = [
+    pub const SUFFIXES: [(&'static str, Self); 43] = [
         ("zip", Self::Zip),
         ("7z", Self::SevenZ),
         ("tar.gz", Self::TarGz),
@@ -147,6 +156,11 @@ impl Format {
         ("cab", Self::Cab),
         ("lzh", Self::Lzh),
         ("lha", Self::Lzh),
+        ("vhd", Self::Vhd),
+        ("vhdx", Self::Vhdx),
+        ("vmdk", Self::Vmdk),
+        ("dmg", Self::Dmg),
+        ("img", Self::Img),
     ];
 
     pub fn can_write(self) -> bool {
@@ -199,7 +213,12 @@ impl Format {
             | Self::Ipa
             | Self::Ar
             | Self::Deb
-            | Self::Rpm => Association::Never,
+            | Self::Rpm
+            | Self::Vhd
+            | Self::Vhdx
+            | Self::Vmdk
+            | Self::Dmg
+            | Self::Img => Association::Never,
         }
     }
 
@@ -268,6 +287,7 @@ impl Format {
             Self::Cpio | Self::Ar | Self::Deb | Self::Rpm | Self::Cab | Self::Lzh => {
                 Container::Extra
             }
+            Self::Vhd | Self::Vhdx | Self::Vmdk | Self::Dmg | Self::Img => Container::Disk,
             Self::Zip
             | Self::Apk
             | Self::Aar
@@ -322,6 +342,11 @@ impl Format {
             Self::Rpm => "RPM",
             Self::Cab => "CAB",
             Self::Lzh => "LZH",
+            Self::Vhd => "VHD",
+            Self::Vhdx => "VHDX",
+            Self::Vmdk => "VMDK",
+            Self::Dmg => "DMG",
+            Self::Img => "IMG",
         }
     }
 
@@ -340,7 +365,7 @@ impl Format {
                 Container::Rar | Container::Extra => {
                     format!("{label} is read-only; creating or modifying {label} archives is disabled")
                 }
-                Container::Iso => {
+                Container::Iso | Container::Disk => {
                     format!("{label} is read-only; creating or modifying {label} images is disabled")
                 }
                 _ => format!(
@@ -367,8 +392,11 @@ impl Format {
     }
 
     /// The read-only format a file starting with `magic` is in, for a file
-    /// whose name says nothing: CPIO, AR, DEB, RPM, CAB or LZH. 32 bytes are
-    /// enough to tell; a DEB is an AR whose first member is `debian-binary`.
+    /// whose name says nothing: CPIO, AR, DEB, RPM, CAB, LZH, or a disk image
+    /// that starts with its signature: a dynamic VHD, a VHDX or a VMDK. 32
+    /// bytes are enough to tell; a DEB is an AR whose first member is
+    /// `debian-binary`. A fixed VHD, a DMG and a raw image keep nothing
+    /// telling at the start, so only their names say what they are.
     pub fn sniff(magic: &[u8]) -> Option<Self> {
         let at = |from: usize, bytes: &[u8]| magic.get(from..from + bytes.len()) == Some(bytes);
         if at(0, b"!<arch>\n") {
@@ -389,6 +417,12 @@ impl Format {
             && matches!(&magic[3..5], b"lh" | b"lz" | b"pm")
         {
             Some(Self::Lzh)
+        } else if at(0, b"conectix") {
+            Some(Self::Vhd)
+        } else if at(0, b"vhdxfile") {
+            Some(Self::Vhdx)
+        } else if at(0, b"KDMV") || at(0, b"# Disk DescriptorFile") {
+            Some(Self::Vmdk)
         } else {
             None
         }
@@ -652,6 +686,37 @@ mod tests {
         assert_eq!(Format::sniff(b"\x1f\x20-xx5-"), None);
         assert_eq!(Format::sniff(b"PK\x03\x04"), None);
         assert_eq!(Format::sniff(b""), None);
+    }
+
+    #[test]
+    fn disk_images_are_read_only_never_claimed_and_sniffed_by_signature() {
+        for (name, format, label) in [
+            ("server.vhd", Format::Vhd, "VHD"),
+            ("Server.VHDX", Format::Vhdx, "VHDX"),
+            ("guest-disk1.vmdk", Format::Vmdk, "VMDK"),
+            ("App-1.0.dmg", Format::Dmg, "DMG"),
+            ("sdcard.img", Format::Img, "IMG"),
+        ] {
+            assert_eq!(Format::detect(Path::new(name)), Some(format), "{name}");
+            assert_eq!(format.container(), Container::Disk);
+            assert_eq!(format.label(), label);
+            assert_eq!(format.association(), Association::Never);
+            assert!(format.mime_types().is_empty());
+            assert!(!format.can_write() && !format.can_create());
+            assert!(format
+                .read_only()
+                .to_string()
+                .contains(&format!("{label} is read-only")));
+        }
+        assert_eq!(Format::split_name("a.vhdx"), Some(("a", Format::Vhdx)));
+        assert_eq!(Format::sniff(b"conectix\0\0\0\x02"), Some(Format::Vhd));
+        assert_eq!(Format::sniff(b"vhdxfile"), Some(Format::Vhdx));
+        assert_eq!(Format::sniff(b"KDMV\x01\0\0\0"), Some(Format::Vmdk));
+        assert_eq!(
+            Format::sniff(b"# Disk DescriptorFile\nversion=1"),
+            Some(Format::Vmdk)
+        );
+        assert_eq!(Format::sniff(b"koly"), None);
     }
 
     #[test]

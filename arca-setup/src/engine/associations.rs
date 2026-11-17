@@ -78,7 +78,8 @@ mod tests {
         assert_eq!(find(".lha").description, "LZH archive");
         assert_eq!(extensions(true), BTreeSet::from([".iso".to_string()]));
         for never in [
-            ".cbr", ".jar", ".apk", ".epub", ".cbz", ".docx", ".deb", ".rpm", ".a", ".ar",
+            ".cbr", ".jar", ".apk", ".epub", ".cbz", ".docx", ".deb", ".rpm", ".a", ".ar", ".vhd",
+            ".vhdx", ".vmdk", ".dmg", ".img",
         ] {
             assert!(kinds.iter().all(|kind| kind.extension != never), "{never}");
         }

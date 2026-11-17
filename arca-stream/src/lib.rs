@@ -241,14 +241,15 @@ pub fn identify(path: &Path) -> Option<Format> {
 }
 
 // A part of a split set is read as the archive it was cut from, named by
-// what comes before the part number. RAR has volumes of its own, and an ISO
-// and the formats of arca-extra are read by path, so none is joined this way.
+// what comes before the part number. RAR has volumes of its own, and an ISO,
+// the formats of arca-extra and the disk images are read by path, so none is
+// joined this way.
 fn split_format(path: &Path) -> Option<Format> {
     let (whole, _) = arca_core::volumes::split_part(path)?;
     Format::detect(&whole).filter(|format| {
         !matches!(
             format.container(),
-            Container::Rar | Container::Iso | Container::Extra
+            Container::Rar | Container::Iso | Container::Extra | Container::Disk
         )
     })
 }

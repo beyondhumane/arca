@@ -329,6 +329,7 @@ dependencies = [
  "arca-bench",
  "arca-compare",
  "arca-core",
+ "arca-disk",
  "arca-extra",
  "arca-iso",
  "arca-rar",
@@ -350,6 +351,7 @@ version = "0.10.0"
 dependencies = [
  "arca-7z",
  "arca-core",
+ "arca-disk",
  "arca-extra",
  "arca-iso",
  "arca-rar",
@@ -371,6 +373,19 @@ dependencies = [
  "jiff",
  "sha1",
  "sha2",
+ "tempfile",
+]
+
+[[package]]
+name = "arca-disk"
+version = "0.10.0"
+dependencies = [
+ "arca-core",
+ "arca-iso",
+ "arca-xz",
+ "bzip2",
+ "crc32fast",
+ "flate2",
  "tempfile",
 ]
 
@@ -406,6 +421,7 @@ dependencies = [
  "arca-brand",
  "arca-compare",
  "arca-core",
+ "arca-disk",
  "arca-drag",
  "arca-extra",
  "arca-icons",
