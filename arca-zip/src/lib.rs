@@ -10,7 +10,7 @@ pub mod zipcrypto;
 mod bzip2_tests;
 
 pub use reader::ExtractionReader;
-pub use repair::{repair, Recovered, Repaired, Skipped};
+pub use repair::{repair, repair_with, Recovered, Repaired, Skipped};
 
 use arca_core::{limits, Codec, Cursor, Entry, Error, Level, Method, Result};
 use flate2::write::DeflateEncoder;
