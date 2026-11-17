@@ -269,6 +269,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "arca-bench"
+version = "0.10.0"
+dependencies = [
+ "arca-core",
+ "arca-rar",
+ "arca-stream",
+ "arca-xz",
+ "arca-zip",
+ "bzip2",
+ "rayon",
+]
+
+[[package]]
 name = "arca-brand"
 version = "0.10.0"
 dependencies = [
