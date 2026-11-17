@@ -511,6 +511,21 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
             let bytes = archive.read_entry(request.index)?;
             out.write_all(&bytes).map_err(Error::from)
         }
+        Container::Extra => {
+            let current = |_: usize, _: usize, _: &str| {
+                request.clock.load(Ordering::Relaxed) == request.generation
+            };
+            let archive =
+                arca_extra::ExtraArchive::open_with_progress(&request.archive, format, &current)?;
+            let entry = archive
+                .entries()
+                .get(request.index)
+                .ok_or_else(|| Error::Format("entry missing".into()))?;
+            verify_entry(entry, &request.entry)?;
+            archive
+                .read_entry_to(request.index, &mut out, &current)
+                .map(|_| ())
+        }
     };
     if out.exceeded {
         return Err(Error::Limit("preview byte limit exceeded".into()));
@@ -1033,6 +1048,27 @@ mod tests {
         c.request_preview(1);
         settle(&mut c);
         assert_eq!(c.state.viewing.as_ref().unwrap().bytes.as_ref(), b"second");
+    }
+
+    #[test]
+    fn a_cabinet_entry_previews_through_the_bounded_reader() {
+        let archive =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../arca-extra/tests/fixtures/lzx.cab");
+        let entries = crate::archive_ops::list_entries(&archive, None, &|_, _, _| true)
+            .unwrap()
+            .0;
+        let mut request = PreviewRequest {
+            on_disk: false,
+            archive,
+            index: 0,
+            entry: entries[0].clone(),
+            password: None,
+            generation: 0,
+            clock: Arc::new(AtomicU64::new(0)),
+        };
+        assert_eq!(read_bounded(&request).unwrap(), b"hello from a cabinet\n");
+        request.entry = entries[1].clone();
+        assert!(read_bounded(&request).is_err());
     }
 
     #[test]

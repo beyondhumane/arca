@@ -16,6 +16,8 @@ mod disk_tests;
 mod editing;
 #[cfg(test)]
 mod editing_tests;
+#[cfg(test)]
+mod extra_tests;
 mod hashes;
 #[cfg(test)]
 mod iso_tests;
@@ -3138,7 +3140,7 @@ mod compress_tests {
 
     #[test]
     fn non_creatable_formats_fall_back_to_zip() {
-        let mut unsupported = vec![Format::Cbr, Format::Iso];
+        let mut unsupported = vec![Format::Cbr, Format::Iso, Format::Cab, Format::Deb];
         if !cfg!(feature = "rar") {
             unsupported.push(Format::Rar);
         }

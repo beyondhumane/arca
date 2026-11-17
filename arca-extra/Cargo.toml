@@ -1,0 +1,26 @@
+[package]
+name = "arca-extra"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Read-only CPIO, AR, DEB, RPM, CAB and LZH readers for Arca"
+
+[dependencies]
+arca-core.workspace = true
+arca-tar.workspace = true
+arca-stream.workspace = true
+flate2.workspace = true
+# LZX for cabinets. MIT or Apache-2.0, safe Rust.
+lzxd = "0.2.7"
+# LHA/LZH headers and the lh1, lh4-lh7, LArc and PMarc decoders. MIT or Apache-2.0. Without
+# no-unsafe-assertions its range checks turn into unchecked hints in release
+# builds, applied to bytes from the archive.
+delharc = { version = "0.8", default-features = false, features = ["std", "lh1", "lz", "pm", "no-unsafe-assertions"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -18,6 +18,7 @@ arca-stream.workspace = true
 arca-7z.workspace = true
 arca-rar.workspace = true
 arca-iso.workspace = true
+arca-extra.workspace = true
 flate2.workspace = true
 rayon.workspace = true
 

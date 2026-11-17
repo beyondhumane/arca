@@ -228,6 +228,23 @@ pub fn digest_entries(
                 rows.push(digest(i, &entry.name, sums)?);
             }
         }
+        Container::Extra => {
+            let a = arca_extra::ExtraArchive::open_with_progress(archive, format, notify)?;
+            let mut chosen = vec![false; a.entries().len()];
+            for &i in &picked {
+                if let Some(slot) = chosen.get_mut(i) {
+                    *slot = true;
+                }
+            }
+            a.walk(&chosen, notify, &mut |i, entry, reader| {
+                let at = (rows.len(), total, entry.name.as_str());
+                let sums = hash_with(algorithms, notify, at, |out| {
+                    Ok(std::io::copy(reader, out)?)
+                })?;
+                rows.push(digest(i, &entry.name, Ok(sums))?);
+                Ok(())
+            })?;
+        }
         Container::Xz | Container::Bz2 | Container::Zst => {
             if picked.contains(&0) {
                 let name = arca_stream::output_name(archive);

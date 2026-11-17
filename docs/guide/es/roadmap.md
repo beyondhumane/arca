@@ -31,13 +31,18 @@ sueltos y alrededor de un TAR; consulta
 [Crear archivos](creating-archives.md#bzip2-y-zstandard). Las entradas ZIP
 comprimidas con bzip2 se leen.
 
+CPIO, AR, DEB, RPM, CAB (MSZIP y LZX) y LZH se listan, se prueban, se extraen,
+se previsualizan, se les calculan sumas y se comparan, en solo lectura; consulta
+[CPIO, AR, DEB, RPM, CAB y LZH](more-formats.md).
+
 ## Todavía no
 
 - **UDF:** las imágenes ISO se leen por ISO 9660, así que los ficheros que solo están en UDF (como `install.wim` en los medios de Windows) todavía no aparecen.
+- **WIM, ARJ y los cabinets comprimidos con Quantum** todavía no se leen; WIM espera a que haya un lector en Rust puro que se mantenga.
 - **Enlaces simbólicos:** se omiten al crear ZIP/TAR y se rechazan en 7z.
 - **Cambiar contraseñas de 7z:** añadir, borrar y renombrar entradas reescribe el archivo con su propia contraseña; cambiar esa contraseña todavía no se ofrece.
 - **Integración de escritorio en Linux y macOS:** el menú del Explorador es solo para Windows por ahora.
-- **Modificar fuera de ZIP, TAR y 7z:** RAR sigue siendo de solo lectura una vez creado, y las imágenes ISO y los contenedores ZIP nunca se modifican.
+- **Modificar fuera de ZIP, TAR y 7z:** RAR sigue siendo de solo lectura una vez creado, y las imágenes ISO, los contenedores ZIP y los formatos de [CPIO, AR, DEB, RPM, CAB y LZH](more-formats.md) nunca se modifican.
 - **Un formato nativo:** momento en el que Zstandard pasa a ser el códec por defecto.
 
 > [!TIP]

@@ -28,8 +28,8 @@ $UninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\Arca"
 # Extensions Arca can open. Each needs its own ProgID: Windows maps the
 # extension to a ProgID, and the ProgID to a command. The list is
 # arca_core::Format::desktop_extensions(); arca-setup's tests fail when the two
-# differ. ZIP containers such as .jar or .epub are left to their own
-# applications on purpose.
+# differ. ZIP containers such as .jar or .epub, and .deb and .rpm packages, are
+# left to their own applications on purpose.
 $Formats = @{
     ".zip"    = @{ ProgId = "Arca.zip";    Text = "ZIP archive" }
     ".7z"     = @{ ProgId = "Arca.7z";     Text = "7z archive" }
@@ -44,6 +44,10 @@ $Formats = @{
     ".tzst"   = @{ ProgId = "Arca.tzst";   Text = "TAR.ZST archive" }
     ".tar"    = @{ ProgId = "Arca.tar";    Text = "TAR archive" }
     ".rar"    = @{ ProgId = "Arca.rar";    Text = "RAR archive" }
+    ".cpio"   = @{ ProgId = "Arca.cpio";   Text = "CPIO archive" }
+    ".cab"    = @{ ProgId = "Arca.cab";    Text = "CAB archive" }
+    ".lzh"    = @{ ProgId = "Arca.lzh";    Text = "LZH archive" }
+    ".lha"    = @{ ProgId = "Arca.lha";    Text = "LZH archive" }
 }
 
 # Only with -Iso: Explorer mounts disc images itself.

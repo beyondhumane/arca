@@ -97,6 +97,26 @@ pub fn open(path: &Path, format: Format) -> Result<Box<dyn Read + Send>> {
     }
 }
 
+/// The standalone stream whose magic number `magic` starts with: XZ, BZ2 or
+/// ZST, or `None` for anything else. Ten bytes are enough to tell.
+pub fn sniff(magic: &[u8]) -> Option<Format> {
+    Codec::sniff(magic).map(Codec::single)
+}
+
+/// Decodes one of these streams read from anywhere, such as a range inside
+/// another file, with the checks the decoders make while they read.
+pub fn decoder<R: Read + Send + 'static>(
+    format: Format,
+    source: R,
+) -> Result<Box<dyn Read + Send>> {
+    let source = BufReader::with_capacity(BUF, source);
+    Ok(match codec(format).ok_or_else(|| not_a_stream(format))? {
+        Codec::Xz => Box::new(arca_xz::Decoder::new(source)),
+        Codec::Bzip2 => Box::new(bz2::decoder(source)),
+        Codec::Zstd => zst::decoder(source)?,
+    })
+}
+
 /// What a standalone stream decompresses to. None of the three keeps a name,
 /// so it comes from the file: `notes.txt.bz2` gives `notes.txt`, `a.tzst`
 /// gives `a.tar`, and a name without a known suffix gets `.out` appended.
@@ -154,7 +174,9 @@ pub fn entry(path: &Path, format: Format) -> Result<Entry> {
 /// of these streams or says nothing. The magic number picks the codec, and a
 /// TAR header at the start of the decoded data makes it the TAR variant
 /// whatever the name; without one it is a standalone stream, even if named
-/// `.tar.bz2`. Any other name is trusted as it is.
+/// `.tar.bz2`. Any other name is trusted as it is, and a name that says
+/// nothing at all is also looked at for the read-only formats of
+/// [`Format::sniff`].
 pub fn identify(path: &Path) -> Option<Format> {
     let named = Format::detect(path).or_else(|| split_format(path));
     if named.is_some_and(|format| !handles(format)) {
@@ -163,7 +185,7 @@ pub fn identify(path: &Path) -> Option<Format> {
     let Ok(mut file) = arca_core::volumes::open(path) else {
         return named;
     };
-    let mut magic = [0u8; 10];
+    let mut magic = [0u8; 32];
     let mut got = 0;
     while got < magic.len() {
         match file.read(&mut magic[got..]) {
@@ -174,7 +196,7 @@ pub fn identify(path: &Path) -> Option<Format> {
         }
     }
     let Some(found) = Codec::sniff(&magic[..got]) else {
-        return named;
+        return named.or_else(|| Format::sniff(&magic[..got]));
     };
     let fallback = named
         .filter(|format| codec(*format) == Some(found))
@@ -209,12 +231,16 @@ pub fn identify(path: &Path) -> Option<Format> {
 }
 
 // A part of a split set is read as the archive it was cut from, named by
-// what comes before the part number. RAR has volumes of its own and an ISO
-// is read by path, so neither is joined this way.
+// what comes before the part number. RAR has volumes of its own, and an ISO
+// and the formats of arca-extra are read by path, so none is joined this way.
 fn split_format(path: &Path) -> Option<Format> {
     let (whole, _) = arca_core::volumes::split_part(path)?;
-    Format::detect(&whole)
-        .filter(|format| !matches!(format.container(), Container::Rar | Container::Iso))
+    Format::detect(&whole).filter(|format| {
+        !matches!(
+            format.container(),
+            Container::Rar | Container::Iso | Container::Extra
+        )
+    })
 }
 
 // An empty tar is only its end marker: at least two zero blocks, padded with

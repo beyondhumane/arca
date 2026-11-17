@@ -4,7 +4,7 @@
 # tests keep the two lists in step.
 Type=Service
 Icon=dev.beyondhumane.Arca
-MimeType=application/zip;application/x-7z-compressed;application/x-tar;application/x-compressed-tar;application/x-xz-compressed-tar;application/x-xz;application/x-bzip2-compressed-tar;application/x-bzip-compressed-tar;application/x-bzip1-compressed-tar;application/x-bzip2;application/x-bzip;application/x-zstd-compressed-tar;application/zstd;application/vnd.rar;application/x-rar;application/x-cd-image;application/vnd.efi.iso;
+MimeType=application/zip;application/x-7z-compressed;application/x-tar;application/x-compressed-tar;application/x-xz-compressed-tar;application/x-xz;application/x-bzip2-compressed-tar;application/x-bzip-compressed-tar;application/x-bzip1-compressed-tar;application/x-bzip2;application/x-bzip;application/x-zstd-compressed-tar;application/zstd;application/vnd.rar;application/x-rar;application/x-cd-image;application/vnd.efi.iso;application/x-cpio;application/vnd.ms-cab-compressed;application/x-lha;application/x-lzh-compressed;
 Actions=extractHere;extractToFolder;
 X-KDE-Submenu=Arca
 

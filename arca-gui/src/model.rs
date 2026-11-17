@@ -48,7 +48,8 @@ pub(crate) fn read_only_suffix(format: Option<Format>) -> String {
 
 /// Whether a format compresses the archive as one stream rather than entry by
 /// entry, so that no entry has a compressed size of its own and only the
-/// file's size says how much was saved.
+/// file's size says how much was saved. A DEB or an RPM is one compressed
+/// stream inside, and a cabinet compresses each folder as one.
 pub(crate) fn whole_stream(format: Format) -> bool {
     matches!(
         format.container(),
@@ -57,7 +58,7 @@ pub(crate) fn whole_stream(format: Format) -> bool {
             | arca_core::Container::TarXz
             | arca_core::Container::TarBz2
             | arca_core::Container::TarZst
-    )
+    ) || matches!(format, Format::Deb | Format::Rpm | Format::Cab)
 }
 
 pub(crate) fn saved_of(r: &Row) -> f64 {

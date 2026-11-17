@@ -115,6 +115,19 @@ impl Side {
             Container::Iso => arca_iso::IsoArchive::open_with_progress(path, notify)?
                 .entries()
                 .to_vec(),
+            Container::Extra => {
+                let a = arca_extra::ExtraArchive::open_with_progress(path, format, notify)?;
+                tar_kinds = (0..a.entries().len())
+                    .map(|i| match a.link(i) {
+                        Some(arca_extra::Link::Symbolic(target)) => {
+                            TarKind::Symlink(target.to_string())
+                        }
+                        Some(arca_extra::Link::Hard(target)) => TarKind::Hard(target.to_string()),
+                        None => TarKind::Plain,
+                    })
+                    .collect();
+                a.entries().to_vec()
+            }
             Container::Xz | Container::Bz2 | Container::Zst => {
                 vec![arca_stream::entry(path, format)?]
             }
@@ -146,7 +159,12 @@ impl Side {
             format.container(),
             Container::Xz | Container::Bz2 | Container::Zst
         );
-        for (i, e) in entries.iter().enumerate() {
+        // Hard links last: a CPIO stores the data under the last of a file's
+        // names, so the file a link shares it with may come after the link.
+        let mut order: Vec<usize> = (0..entries.len()).collect();
+        order.sort_by_key(|&i| matches!(tar_kinds.get(i), Some(TarKind::Hard(_))));
+        for i in order {
+            let e = &entries[i];
             let name = key(&e.name);
             if name.is_empty() {
                 continue;
