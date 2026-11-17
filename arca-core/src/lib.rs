@@ -95,6 +95,9 @@ pub enum Method {
     Bzip2,
     Other7z,
     Rar,
+    Lzx,
+    Quantum,
+    Lzh,
 }
 
 impl Method {
@@ -108,6 +111,9 @@ impl Method {
             Method::Bzip2 => "bzip2",
             Method::Other7z => "7z",
             Method::Rar => "rar",
+            Method::Lzx => "lzx",
+            Method::Quantum => "quantum",
+            Method::Lzh => "lzh",
         }
     }
 

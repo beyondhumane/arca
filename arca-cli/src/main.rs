@@ -238,9 +238,13 @@ fn detect_archive(p: &Path) -> Result<Format> {
 
 fn unrecognized(p: &Path) -> Error {
     let whole = arca_core::volumes::whole_name(p);
-    if let Some(format) = Format::detect(&whole)
-        .filter(|f| whole != p && matches!(f.container(), Container::Rar | Container::Iso))
-    {
+    if let Some(format) = Format::detect(&whole).filter(|f| {
+        whole != p
+            && matches!(
+                f.container(),
+                Container::Rar | Container::Iso | Container::Extra
+            )
+    }) {
         return Error::Unsupported(format!(
             "'{}' is part of a split {}; Arca joins split parts only for ZIP, 7z, TAR and the compressed streams",
             p.display(),
@@ -655,7 +659,7 @@ fn create(
         Container::SevenZ => unreachable!(),
         // Nothing to report while it runs -- the summary is printed at the end
         // -- so the answer to "carry on?" is always yes.
-        Container::Rar | Container::Iso => return Err(format_kind.read_only()),
+        Container::Rar | Container::Iso | Container::Extra => return Err(format_kind.read_only()),
         Container::Zip => {
             staged(out, volume, |w| {
                 let go = &|_: usize, _: usize, _: &str| true;
@@ -832,6 +836,26 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
                 bytes += e.size;
             }
         }
+        Container::Extra => {
+            let a = open_extra(archive, format_kind)?;
+            for (i, e) in a.entries().iter().enumerate() {
+                let link = match a.link(i) {
+                    Some(arca_extra::Link::Symbolic(target)) => format!(" -> {target}"),
+                    Some(arca_extra::Link::Hard(target)) => format!(" link to {target}"),
+                    None => String::new(),
+                };
+                writeln!(
+                    out,
+                    "{:>12}  {:>7}  {:>5.1}%  {}{link}",
+                    e.size,
+                    e.method.name(),
+                    e.ratio() * 100.0,
+                    e.name
+                )?;
+                n += 1;
+                bytes += e.size;
+            }
+        }
         Container::Zip => {
             let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             for (i, e) in a.entries().iter().enumerate() {
@@ -993,7 +1017,10 @@ fn extract(
     if format_kind == Format::SevenZ {
         return sevenz::extract(archive, dest, policy, password);
     }
-    if !matches!(format_kind.container(), Container::Rar | Container::Iso) {
+    if !matches!(
+        format_kind.container(),
+        Container::Rar | Container::Iso | Container::Extra
+    ) {
         fs::create_dir_all(dest)?;
     }
     let t0 = Instant::now();
@@ -1016,6 +1043,19 @@ fn extract(
                 t0.elapsed().as_secs_f64()
             );
             return Ok(());
+        }
+        Container::Extra => {
+            let a = open_extra(archive, format_kind)?;
+            let done = a.extract(dest, &[], &|_, _, _| true, &|_| match policy {
+                OnConflict::Overwrite => arca_extra::Conflict::Overwrite,
+                OnConflict::Skip => arca_extra::Conflict::Skip,
+                OnConflict::Rename => arca_extra::Conflict::Rename,
+            })?;
+            for refused in &done.refused {
+                eprintln!("arca: {refused}");
+            }
+            n = done.files as u64;
+            bytes = done.bytes;
         }
         Container::Iso => {
             let a = open_iso(archive)?;
@@ -1321,6 +1361,14 @@ fn open_iso(archive: &Path) -> Result<arca_iso::IsoArchive> {
     Ok(a)
 }
 
+fn open_extra(archive: &Path, format_kind: Format) -> Result<arca_extra::ExtraArchive> {
+    let a = arca_extra::ExtraArchive::open(archive, format_kind)?;
+    for notice in a.notices() {
+        eprintln!("note: {notice}");
+    }
+    Ok(a)
+}
+
 // The rebuilt archive is read back before it takes its final name, and it can
 // never take the damaged archive's name: that file may be the only copy of
 // entries this scan could not recover.
@@ -1409,6 +1457,9 @@ fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
             let a = arca_rar::RarArchive::open(archive, password)?;
             a.test(password, &|_, _, _| true)?;
             n = a.entries().iter().filter(|e| !e.is_dir).count() as u64;
+        }
+        Container::Extra => {
+            n = open_extra(archive, format_kind)?.test(&[], &|_, _, _| true)? as u64;
         }
         Container::Iso => {
             let a = open_iso(archive)?;

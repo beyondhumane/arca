@@ -174,7 +174,9 @@ pub fn entry(path: &Path, format: Format) -> Result<Entry> {
 /// of these streams or says nothing. The magic number picks the codec, and a
 /// TAR header at the start of the decoded data makes it the TAR variant
 /// whatever the name; without one it is a standalone stream, even if named
-/// `.tar.bz2`. Any other name is trusted as it is.
+/// `.tar.bz2`. Any other name is trusted as it is, and a name that says
+/// nothing at all is also looked at for the read-only formats of
+/// [`Format::sniff`].
 pub fn identify(path: &Path) -> Option<Format> {
     let named = Format::detect(path).or_else(|| split_format(path));
     if named.is_some_and(|format| !handles(format)) {
@@ -183,7 +185,7 @@ pub fn identify(path: &Path) -> Option<Format> {
     let Ok(mut file) = arca_core::volumes::open(path) else {
         return named;
     };
-    let mut magic = [0u8; 10];
+    let mut magic = [0u8; 32];
     let mut got = 0;
     while got < magic.len() {
         match file.read(&mut magic[got..]) {
@@ -194,7 +196,7 @@ pub fn identify(path: &Path) -> Option<Format> {
         }
     }
     let Some(found) = Codec::sniff(&magic[..got]) else {
-        return named;
+        return named.or_else(|| Format::sniff(&magic[..got]));
     };
     let fallback = named
         .filter(|format| codec(*format) == Some(found))
@@ -229,12 +231,16 @@ pub fn identify(path: &Path) -> Option<Format> {
 }
 
 // A part of a split set is read as the archive it was cut from, named by
-// what comes before the part number. RAR has volumes of its own and an ISO
-// is read by path, so neither is joined this way.
+// what comes before the part number. RAR has volumes of its own, and an ISO
+// and the formats of arca-extra are read by path, so none is joined this way.
 fn split_format(path: &Path) -> Option<Format> {
     let (whole, _) = arca_core::volumes::split_part(path)?;
-    Format::detect(&whole)
-        .filter(|format| !matches!(format.container(), Container::Rar | Container::Iso))
+    Format::detect(&whole).filter(|format| {
+        !matches!(
+            format.container(),
+            Container::Rar | Container::Iso | Container::Extra
+        )
+    })
 }
 
 // An empty tar is only its end marker: at least two zero blocks, padded with

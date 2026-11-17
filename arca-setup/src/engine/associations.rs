@@ -74,8 +74,12 @@ mod tests {
         assert_eq!(find(".xz").description, "XZ archive");
         assert_eq!(find(".rar").description, "RAR archive");
         assert_eq!(find(".iso").description, "ISO disc image");
+        assert_eq!(find(".cab").description, "CAB archive");
+        assert_eq!(find(".lha").description, "LZH archive");
         assert_eq!(extensions(true), BTreeSet::from([".iso".to_string()]));
-        for never in [".cbr", ".jar", ".apk", ".epub", ".cbz", ".docx"] {
+        for never in [
+            ".cbr", ".jar", ".apk", ".epub", ".cbz", ".docx", ".deb", ".rpm", ".a", ".ar",
+        ] {
             assert!(kinds.iter().all(|kind| kind.extension != never), "{never}");
         }
         let progids: BTreeSet<&str> = kinds.iter().map(|kind| kind.progid.as_str()).collect();

@@ -101,10 +101,11 @@ fn quick_output_name(paths: &[PathBuf]) -> String {
 // workspace and cannot depend on it. The installer's tests read this array and
 // fail when the two differ. Order matters, as there: tar.xz before xz, or the
 // label for backup.tar.xz would promise a folder called backup.tar.
-const SUFFIXES: [&str; 29] = [
+const SUFFIXES: [&str; 38] = [
     "zip", "7z", "tar.gz", "tgz", "tar.xz", "txz", "xz", "tar.bz2", "tbz2", "tbz", "bz2",
     "tar.zst", "tzst", "zst", "tar", "rar", "cbr", "apk", "aar", "jar", "war", "ear", "epub",
-    "cbz", "xpi", "whl", "nupkg", "ipa", "iso",
+    "cbz", "xpi", "whl", "nupkg", "ipa", "iso", "cpio", "ar", "a", "deb", "udeb", "rpm", "cab",
+    "lzh", "lha",
 ];
 
 // arca_core::Format::split_name, returning the stem.

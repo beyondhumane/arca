@@ -27,6 +27,12 @@ pub enum Format {
     Nupkg,
     Ipa,
     Iso,
+    Cpio,
+    Ar,
+    Deb,
+    Rpm,
+    Cab,
+    Lzh,
 }
 
 /// The reader that opens a format. ZIP-based containers such as APK or EPUB
@@ -46,6 +52,8 @@ pub enum Container {
     Zst,
     Rar,
     Iso,
+    /// The read-only formats of arca-extra: CPIO, AR, DEB, RPM, CAB and LZH.
+    Extra,
 }
 
 /// Whether a desktop install offers to open a format with Arca. It never makes
@@ -58,8 +66,9 @@ pub enum Association {
     /// Offered only when the user asks for it: disc images usually belong to
     /// the system's own mounter.
     OnRequest,
-    /// Never claimed. ZIP-based documents and packages and CBR comics belong
-    /// to the applications made for them, and Arca only reads them.
+    /// Never claimed. ZIP-based documents and packages, CBR comics, DEB and
+    /// RPM packages and static libraries belong to the applications and
+    /// package managers made for them, and Arca only reads them.
     Never,
 }
 
@@ -99,7 +108,7 @@ impl Format {
     ];
 
     /// Every recognized name suffix, longest first where one ends another.
-    pub const SUFFIXES: [(&'static str, Self); 29] = [
+    pub const SUFFIXES: [(&'static str, Self); 38] = [
         ("zip", Self::Zip),
         ("7z", Self::SevenZ),
         ("tar.gz", Self::TarGz),
@@ -129,6 +138,15 @@ impl Format {
         ("nupkg", Self::Nupkg),
         ("ipa", Self::Ipa),
         ("iso", Self::Iso),
+        ("cpio", Self::Cpio),
+        ("ar", Self::Ar),
+        ("a", Self::Ar),
+        ("deb", Self::Deb),
+        ("udeb", Self::Deb),
+        ("rpm", Self::Rpm),
+        ("cab", Self::Cab),
+        ("lzh", Self::Lzh),
+        ("lha", Self::Lzh),
     ];
 
     pub fn can_write(self) -> bool {
@@ -162,7 +180,10 @@ impl Format {
             | Self::Bz2
             | Self::TarZst
             | Self::Zst
-            | Self::Rar => Association::Offered,
+            | Self::Rar
+            | Self::Cpio
+            | Self::Cab
+            | Self::Lzh => Association::Offered,
             Self::Iso => Association::OnRequest,
             Self::Cbr
             | Self::Apk
@@ -175,7 +196,10 @@ impl Format {
             | Self::Xpi
             | Self::Whl
             | Self::Nupkg
-            | Self::Ipa => Association::Never,
+            | Self::Ipa
+            | Self::Ar
+            | Self::Deb
+            | Self::Rpm => Association::Never,
         }
     }
 
@@ -200,6 +224,9 @@ impl Format {
             Self::Zst => &["application/zstd"],
             Self::Rar => &["application/vnd.rar", "application/x-rar"],
             Self::Iso => &["application/x-cd-image", "application/vnd.efi.iso"],
+            Self::Cpio => &["application/x-cpio"],
+            Self::Cab => &["application/vnd.ms-cab-compressed"],
+            Self::Lzh => &["application/x-lha", "application/x-lzh-compressed"],
             _ => &[],
         }
     }
@@ -238,6 +265,9 @@ impl Format {
             Self::Zst => Container::Zst,
             Self::Rar | Self::Cbr => Container::Rar,
             Self::Iso => Container::Iso,
+            Self::Cpio | Self::Ar | Self::Deb | Self::Rpm | Self::Cab | Self::Lzh => {
+                Container::Extra
+            }
             Self::Zip
             | Self::Apk
             | Self::Aar
@@ -286,6 +316,12 @@ impl Format {
             Self::Nupkg => "NUPKG",
             Self::Ipa => "IPA",
             Self::Iso => "ISO",
+            Self::Cpio => "CPIO",
+            Self::Ar => "AR",
+            Self::Deb => "DEB",
+            Self::Rpm => "RPM",
+            Self::Cab => "CAB",
+            Self::Lzh => "LZH",
         }
     }
 
@@ -301,7 +337,7 @@ impl Format {
             )
         } else {
             match self.container() {
-                Container::Rar => {
+                Container::Rar | Container::Extra => {
                     format!("{label} is read-only; creating or modifying {label} archives is disabled")
                 }
                 Container::Iso => {
@@ -328,6 +364,34 @@ impl Format {
         Self::split_name(&path.to_string_lossy())
             .map(|(_, format)| format)
             .or_else(|| is_rar_volume(path).then_some(Self::Rar))
+    }
+
+    /// The read-only format a file starting with `magic` is in, for a file
+    /// whose name says nothing: CPIO, AR, DEB, RPM, CAB or LZH. 32 bytes are
+    /// enough to tell; a DEB is an AR whose first member is `debian-binary`.
+    pub fn sniff(magic: &[u8]) -> Option<Self> {
+        let at = |from: usize, bytes: &[u8]| magic.get(from..from + bytes.len()) == Some(bytes);
+        if at(0, b"!<arch>\n") {
+            Some(if at(8, b"debian-binary") {
+                Self::Deb
+            } else {
+                Self::Ar
+            })
+        } else if at(0, &[0xed, 0xab, 0xee, 0xdb]) {
+            Some(Self::Rpm)
+        } else if at(0, b"MSCF\0\0\0\0") {
+            Some(Self::Cab)
+        } else if at(0, b"070701") || at(0, b"070702") || at(0, b"070707") {
+            Some(Self::Cpio)
+        } else if magic.len() >= 7
+            && magic[2] == b'-'
+            && magic[6] == b'-'
+            && matches!(&magic[3..5], b"lh" | b"lz" | b"pm")
+        {
+            Some(Self::Lzh)
+        } else {
+            None
+        }
     }
 }
 
@@ -512,7 +576,7 @@ mod tests {
             offered,
             [
                 "zip", "7z", "gz", "tgz", "xz", "txz", "bz2", "tbz2", "tbz", "zst", "tzst", "tar",
-                "rar", "iso"
+                "rar", "iso", "cpio", "cab", "lzh", "lha"
             ]
         );
         let named: Vec<(&str, Format)> = Format::desktop_extensions();
@@ -530,6 +594,64 @@ mod tests {
         assert_eq!(Format::Cbr.association(), Association::Never);
         assert_eq!(Format::Iso.association(), Association::OnRequest);
         assert_eq!(Format::Rar.association(), Association::Offered);
+    }
+
+    #[test]
+    fn the_extra_formats_are_read_only_and_packages_are_never_claimed() {
+        for (name, format, label) in [
+            ("initrd.cpio", Format::Cpio, "CPIO"),
+            ("libz.a", Format::Ar, "AR"),
+            ("objects.ar", Format::Ar, "AR"),
+            ("hello_1.0_amd64.deb", Format::Deb, "DEB"),
+            ("installer.udeb", Format::Deb, "DEB"),
+            ("hello-1.0-1.x86_64.rpm", Format::Rpm, "RPM"),
+            ("driver.CAB", Format::Cab, "CAB"),
+            ("game.lzh", Format::Lzh, "LZH"),
+            ("game.LHA", Format::Lzh, "LZH"),
+        ] {
+            assert_eq!(Format::detect(Path::new(name)), Some(format), "{name}");
+            assert_eq!(format.container(), Container::Extra);
+            assert_eq!(format.label(), label);
+            assert!(!format.can_write() && !format.can_create());
+            assert!(format
+                .read_only()
+                .to_string()
+                .contains(&format!("{label} is read-only")));
+        }
+        for format in [Format::Ar, Format::Deb, Format::Rpm] {
+            assert_eq!(format.association(), Association::Never);
+        }
+        for format in [Format::Cpio, Format::Cab, Format::Lzh] {
+            assert_eq!(format.association(), Association::Offered);
+        }
+        assert_eq!(Format::split_name("x.rar"), Some(("x", Format::Rar)));
+        assert_eq!(Format::split_name("x.tar"), Some(("x", Format::Tar)));
+        assert_eq!(Format::split_name("data"), None);
+    }
+
+    #[test]
+    fn the_extra_formats_are_told_by_their_first_bytes() {
+        let mut deb = b"!<arch>\ndebian-binary   ".to_vec();
+        deb.resize(32, b' ');
+        assert_eq!(Format::sniff(&deb), Some(Format::Deb));
+        assert_eq!(
+            Format::sniff(b"!<arch>\n/               "),
+            Some(Format::Ar)
+        );
+        assert_eq!(
+            Format::sniff(&[0xed, 0xab, 0xee, 0xdb, 3, 0]),
+            Some(Format::Rpm)
+        );
+        assert_eq!(Format::sniff(b"MSCF\0\0\0\0\x10"), Some(Format::Cab));
+        assert_eq!(Format::sniff(b"MSCF\x01\0\0\0"), None);
+        for magic in [&b"070701"[..], b"070702", b"070707"] {
+            assert_eq!(Format::sniff(magic), Some(Format::Cpio));
+        }
+        assert_eq!(Format::sniff(b"\x1f\x20-lh5-"), Some(Format::Lzh));
+        assert_eq!(Format::sniff(b"\x1f\x20-pm2-"), Some(Format::Lzh));
+        assert_eq!(Format::sniff(b"\x1f\x20-xx5-"), None);
+        assert_eq!(Format::sniff(b"PK\x03\x04"), None);
+        assert_eq!(Format::sniff(b""), None);
     }
 
     #[test]

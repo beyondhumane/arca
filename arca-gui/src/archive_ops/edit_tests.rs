@@ -438,6 +438,12 @@ fn single_streams_and_zip_containers_still_cannot_change() {
         Format::Jar,
         Format::Rar,
         Format::Iso,
+        Format::Cpio,
+        Format::Ar,
+        Format::Deb,
+        Format::Rpm,
+        Format::Cab,
+        Format::Lzh,
     ] {
         assert!(!editable(format), "{format:?}");
     }
