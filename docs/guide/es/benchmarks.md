@@ -110,7 +110,95 @@ arca create c1.zip src
 7z a -tzip -mx5 c2.zip src
 ```
 
-Con archivos grandes, Arca comprimió 5.7× más rápido a costa de un 3.7% más de tamaño; con muchos archivos pequeños, 7-Zip fue algo mejor con el mismo tamaño. El ganador depende del corpus.
+Con archivos grandes, Arca comprimió 5.7× más rápido a costa de un 3.7% más de tamaño; con muchos archivos pequeños, 7-Zip fue algo mejor con el mismo tamaño. El ganador depende del corpus. Esas cifras son anteriores al trabajo con archivos pequeños de la sección siguiente.
+
+### Muchos archivos pequeños en Windows 11
+
+Ryzen 7 3700X (8 núcleos, 16 hilos), Windows 11, con la protección en tiempo real de Microsoft Defender activa, un SSD SATA sin DRAM (Kingston A400) y caché caliente. En la máquina se compilaban otras cosas a la vez, así que los tiempos de reloj se mueven: cada fila es la mediana de las pasadas en orden A B B A, con el rango entre corchetes, y también se da el tiempo de CPU del proceso (usuario más núcleo), que se mueve menos. «Antes» es Arca 0.10.0 en el commit `4b1d67b`.
+
+El corpus son 50,000 archivos de 0 a 16,384 bytes en 100 carpetas, 410,069,593 bytes en total, tres partes de texto parecido a prosa por una de bytes aleatorios, generados a partir de una semilla fija:
+
+```sh
+cargo run --release -p arca-bench --example small_files -- C:\b\small
+```
+
+| Crear, 16 hilos, 16 pasadas | Reloj | CPU | Memoria máxima | Archivo |
+| --- | --- | --- | --- | --- |
+| Antes | 5.003 s [4.420–7.743] | 19.75 s | 463 MiB | 252,139,697 |
+| **Después** | **1.246 s** [1.067–2.490] | **12.33 s** | **59 MiB** | **251,139,697** |
+
+| Crear, `-j 1`, 6 pasadas | Reloj | CPU | Memoria máxima |
+| --- | --- | --- | --- |
+| Antes | 14.284 s [12.426–24.841] | 14.02 s | 64 MiB |
+| **Después** | **11.504 s** [10.039–12.117] | **11.75 s** | **34 MiB** |
+
+```powershell
+powershell -File benchmarks\time.ps1 -Exes arca-0.10.0.exe,arca.exe `
+  -ArgLine "create C:\b\out.zip C:\b\small" -Runs 16 -Clean C:\b\out.zip
+powershell -File benchmarks\time.ps1 -Exes arca-0.10.0.exe,arca.exe `
+  -ArgLine "create C:\b\out.zip C:\b\small -j 1" -Runs 6 -Clean C:\b\out.zip
+```
+
+Dónde se iba el tiempo y qué cambió:
+
+- **El recorrido.** A cada archivo se le pedían los metadatos dos veces antes de leerlo, y en Windows cada petición abre y cierra el archivo, todo en un solo hilo. El tamaño y la fecha salen ahora del listado de la carpeta, que ya los tiene.
+- **El escritor.** La cabecera local de cada entrada se corregía después de sus datos, con dos saltos atrás y uno adelante, y cada salto vaciaba el búfer de salida. Una entrada comprimida en memoria recibe ahora su cabecera completa, sin el campo Zip64 de 20 bytes que nunca necesita; ese campo es lo que hace el archivo 1,000,000 de bytes más pequeño.
+- **El compresor.** Un compresor de libdeflate o de Zstandard nuevo para cada archivo costaba más que comprimir un archivo pequeño. Ahora cada hilo conserva el suyo.
+- **El orden.** Se comprimían todos los archivos antes de escribir el primero. Ahora cada archivo se escribe en cuanto le toca, mientras los siguientes aún se comprimen. Como antes, hay como mucho 32 MiB de datos de archivos por hilo en vuelo, y con archivos pequeños el escritor no se queda atrás, así que se retiene mucho menos.
+
+| Extraer, 16 hilos, 6 pasadas | Reloj | CPU |
+| --- | --- | --- |
+| Antes | 16.948 s [11.255–24.115] | 34.50 s (núcleo 31.89 s) |
+| Después | 12.310 s [10.614–19.535] | 33.09 s (núcleo 30.38 s) |
+
+```powershell
+arca create C:\b\small.zip C:\b\small
+powershell -File benchmarks\time.ps1 -Exes arca-0.10.0.exe,arca.exe `
+  -ArgLine "extract C:\b\small.zip -o C:\b\out" -Runs 6 -Clean C:\b\out
+```
+
+Extraer es tiempo del sistema de archivos, no de Arca: de 33 a 35 segundos de CPU, unos 30 se van en el núcleo creando 50,000 archivos, y los dos rangos se solapan. La línea de órdenes ya leía con un lector con búfer por hilo; ahora crea cada archivo nuevo en una sola llamada en vez de comprobar antes si existe, y una escritura que falla ya no deja un archivo a medias. Aquí no se afirma ninguna mejora de velocidad.
+
+La aplicación de escritorio volvía a abrir el archivo para cada entrada que extraía, detrás de un búfer nuevo de 256 KiB que el salto a la entrada desechaba. Contado en un hilo con el ejemplo que reproduce ese patrón, son 50,001 aperturas y 26,218,015,557 bytes leídos para este archivo de 251 MB, frente a 2 aperturas y 251,341,637 bytes ahora. La ventana en sí no se cronometró.
+
+```sh
+cargo run --release -p arca-zip --example read_amplification -- small.zip baseline
+cargo run --release -p arca-zip --example read_amplification -- small.zip both
+```
+
+### Tamaño en Deflate frente al ZIP de WinRAR
+
+Los tamaños no dependen de la máquina. 7-Zip no estaba instalado, así que WinRAR 7.23, que también escribe ZIP con Deflate, ocupa su lugar. Bytes del archivo, todo incluido:
+
+| Corpus | Arca -l 6 | Arca -l 8 | Arca -l 9 | WinRAR -m3 | WinRAR -m5 |
+| --- | --- | --- | --- | --- | --- |
+| Los 50,000 archivos pequeños, 410,069,593 bytes | 251,139,697 | 247,824,582 | **247,469,613** | 251,926,583 | 251,891,469 |
+| Este repositorio en `4b1d67b`, 973 archivos, 16,551,105 bytes | 7,939,633 | 7,826,524 | **7,820,343** | 8,145,493 | 8,133,072 |
+| 16 archivos de texto grandes, 326,882,067 bytes | 123,443,446 | 117,071,830 | **117,038,415** | 123,301,735 | 122,832,147 |
+
+```sh
+cargo run --release -p arca-bench --example small_files -- C:\b\small
+cargo run --release -p arca-bench --example small_files -- C:\b\text 16 33554432 text
+mkdir C:\b\src && git archive 4b1d67b | tar -x -C C:\b\src
+arca create out.zip C:\b\small -l 6
+"C:\Program Files\WinRAR\WinRAR.exe" a -afzip -m5 -ibck -y -r -ep1 out.zip C:\b\small\*
+```
+
+Lo que cuesta cada nivel, en la misma máquina y con la misma carga, 3 pasadas de cada uno, 16 hilos:
+
+| Nivel | Nivel de libdeflate | Texto grande: reloj, CPU | Archivos pequeños: reloj, CPU |
+| --- | --- | --- | --- |
+| 6 (por defecto) | 6 | 1.493 s, 8.13 s | 1.325 s, 12.09 s |
+| 8 | 10 | 4.964 s, 38.86 s | 3.307 s, 29.83 s |
+| 9 (máximo) | 12 | 7.648 s, 58.86 s | 4.494 s, 45.77 s |
+
+```powershell
+powershell -File benchmarks\time.ps1 -Exes arca.exe `
+  -ArgLine "create C:\b\out.zip C:\b\text -l 8" -Runs 3 -Clean C:\b\out.zip
+```
+
+El nivel por defecto es más pequeño que el mejor de WinRAR con archivos pequeños y con código fuente, y un 0.5% más grande con texto grande. El nivel 8 es el primero de los analizadores casi óptimos de libdeflate: un 4.7% más pequeño que el mejor de WinRAR con texto grande y un 1.6% con archivos pequeños, por entre dos veces y media y cinco veces la CPU del nivel por defecto. El nivel 9 apenas mejora al 8. La correspondencia entre los niveles de Arca y los de libdeflate no cambia. Con el corpus de 16 archivos de la tabla anterior, 7-Zip -mx5 quedó un 3.5% por debajo del nivel por defecto de Arca; el nivel 8 queda un 5.2% por debajo del nivel por defecto con el texto grande de aquí, así que debería cerrar esa diferencia, pero eso no se ha medido contra 7-Zip.
+
 
 ## Extracción en paralelo
 
