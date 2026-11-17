@@ -308,6 +308,7 @@ impl SettingsControl {
 pub(crate) enum SettingsSection {
     General,
     Archives,
+    Passwords,
     Appearance,
     Views,
     Keybindings,

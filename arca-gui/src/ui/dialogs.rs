@@ -141,6 +141,7 @@ pub(crate) fn section_words(section: SettingsSection, s: &'static Strings) -> Ve
     match section {
         SettingsSection::General => vec![s.language, s.name_encoding, s.show_hidden],
         SettingsSection::Archives => vec![s.defaults_title, s.into_subfolder],
+        SettingsSection::Passwords => vec![s.master_password, s.saved_title, s.try_without_asking],
         SettingsSection::Appearance => vec![
             s.theme,
             s.current_theme,
@@ -305,6 +306,7 @@ impl Shell {
             self.controller
                 .dispatch(AppAction::SetPasswordInput(value.clone()));
         }
+        let picked = opening.then(|| self.saved_password_rows(ui)).flatten();
         let mut submit = entered;
         let mut cancel = false;
         let mut remove = false;
@@ -322,7 +324,9 @@ impl Shell {
             }
             cancel = secondary_button(ui, s.cancel, true).clicked();
         });
-        if remove {
+        if let Some(index) = picked {
+            self.controller.use_offered(index);
+        } else if remove {
             self.controller
                 .dispatch(AppAction::SubmitPassword(String::new()));
         } else if submit {
@@ -1327,6 +1331,7 @@ impl Shell {
                 s.settings_archives,
                 icon::ARCHIVE,
             ),
+            (SettingsSection::Passwords, s.settings_passwords, icon::KEY),
             (
                 SettingsSection::Appearance,
                 s.settings_appearance,
@@ -1490,6 +1495,7 @@ impl Shell {
                     }
                 });
             }
+            SettingsSection::Passwords => self.settings_passwords(ui),
             SettingsSection::Appearance => self.settings_appearance(ui),
             SettingsSection::Views => self.settings_views(ui),
             SettingsSection::Keybindings => shortcuts_table(ui, s),

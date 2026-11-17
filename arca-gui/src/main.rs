@@ -11,6 +11,7 @@ mod settings;
 mod test_support;
 mod tree;
 mod ui;
+mod vault;
 
 // Keep the egui view focused on presentation while exposing the application
 // contract at the crate boundary. These are crate-private, not public API.

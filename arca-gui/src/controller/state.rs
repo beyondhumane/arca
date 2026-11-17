@@ -148,6 +148,7 @@ pub(crate) struct AppState {
     // the only such job: it is over before a bar has finished appearing, and a
     // bar that flashes past says less than nothing.
     pub(crate) quiet: bool,
+    pub(crate) saved: super::PasswordState,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

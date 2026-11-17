@@ -22,6 +22,10 @@ mod jobs;
 #[cfg(test)]
 mod jobs_tests;
 mod panes;
+mod passwords;
+#[cfg(test)]
+mod passwords_tests;
+pub(crate) use passwords::{vault_error, PasswordState};
 mod preview;
 #[cfg(all(test, feature = "rar"))]
 mod rar_tests;
@@ -240,6 +244,9 @@ impl AppController {
     }
 
     fn resume_access(&mut self, pending: Pending, password: Option<String>) {
+        if let Some(password) = password.as_deref() {
+            self.password_accepted(&pending, password);
+        }
         match pending {
             Pending::Extract(mut job) => {
                 match &mut *job {
@@ -261,14 +268,17 @@ impl AppController {
     fn access_failed(&mut self, pending: Pending, password: Option<&str>, error: arca_core::Error) {
         self.state.busy = false;
         self.state.overlay = false;
+        let saved = self.saved_attempt_failed();
         if password_error(&error) {
-            self.state.password_wrong = password.is_some();
+            self.state.password_wrong = password.is_some() && !saved;
             self.state.archive_password = None;
             self.state.waiting_on_password = Some(pending);
             // The error itself is written for a log ("malformed archive: ...: wrong
             // password"), in English whatever the window speaks.
             self.state.notice = if matches!(error, arca_core::Error::PasswordOrCorrupt) {
                 self.s().password_or_corrupt.to_string()
+            } else if saved {
+                self.s().saved_none_fit.to_string()
             } else if password.is_some() {
                 self.s().password_wrong.to_string()
             } else {
@@ -347,7 +357,7 @@ impl AppController {
             AppAction::AnswerConflict(answer, name) => self.answer_conflict(answer, name),
             AppAction::CancelPassword => self.cancel_password(),
             AppAction::SetPasswordInput(password) => self.state.password_input = password,
-            AppAction::SubmitPassword(password) => self.submit_password(password),
+            AppAction::SubmitPassword(password) => self.submit_typed(password),
             AppAction::BeginPasswordChange => self.begin_password_change(),
             AppAction::RequestDelete => self.request_delete(),
             AppAction::ConfirmDelete(confirmed) => self.confirm_delete(confirmed),
@@ -359,6 +369,7 @@ impl AppController {
             AppAction::DismissTask(id) => self.dismiss_task(id),
             AppAction::ClearFinishedTasks => self.clear_finished_tasks(),
         }
+        self.try_saved_passwords();
     }
 
     pub(crate) fn begin_password_change(&mut self) {
@@ -911,6 +922,7 @@ impl AppController {
                 show_shortcuts: false,
                 show_update: false,
                 quiet: false,
+                saved: PasswordState::default(),
                 browser: BrowserState::default(),
                 preview: PreviewState::default(),
             },
@@ -1120,6 +1132,7 @@ impl AppController {
         let was_job = matches!(self.state.waiting_on_password, Some(Pending::Extract(_)));
         let was_opening = matches!(self.state.waiting_on_password, Some(Pending::OpenArchive));
         self.state.waiting_on_password = None;
+        self.forget_attempts();
         if was_opening && self.state.origin.is_some() && self.state.archive_password.is_none() {
             self.close_archive();
         }
@@ -1989,6 +2002,9 @@ impl AppController {
                             continue;
                         }
                     };
+                    if let Some(password) = password.as_deref() {
+                        self.password_accepted(&Pending::OpenArchive, password);
+                    }
                     self.state.archive_password = password;
                     self.state.waiting_on_password = None;
                     self.state.password_wrong = false;
@@ -2080,6 +2096,7 @@ impl AppController {
         if let Some((pending, password)) = resume {
             self.resume_access(pending, password);
         }
+        self.try_saved_passwords();
         close_window
     }
     pub(crate) fn paste_from_clipboard(&mut self) {

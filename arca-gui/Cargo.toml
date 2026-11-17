@@ -56,6 +56,14 @@ egui-phosphor = { version = "0.14", default-features = false, features = ["regul
 # SHA-256 para comprobar lo que se baja antes de ejecutarlo. RustCrypto, safe
 # Rust puro, la misma familia que el sha1 del cifrado de arca-zip.
 sha2 = "0.11"
+# The saved passwords file: Argon2id stretches the master password into a key,
+# AES-256-GCM seals the list with it. Both RustCrypto and safe Rust, and
+# aes-gcm reuses the aes crate arca-zip already builds. Only this crate takes
+# them, so nothing under arca-core or arca-rar gains a dependency.
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+getrandom = "0.4"
+zeroize = "1"
 
 # CF_HDROP on the system clipboard, so Ctrl+C here pastes files in the
 # Explorer. A thin wrapper over the four clipboard calls Win32 has; taking the

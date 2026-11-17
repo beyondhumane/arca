@@ -7,6 +7,7 @@ mod header;
 mod highlight;
 mod jobs;
 mod layout;
+mod passwords;
 mod pathbar;
 mod preview;
 mod search;
@@ -305,11 +306,13 @@ pub(crate) struct Shell {
     focus_menu: bool,
     search: Option<search::Search>,
     decorated: bool,
+    passwords: passwords::PasswordsPage,
 }
 
 impl Shell {
     fn new(ctx: &egui::Context, startup: Startup) -> Self {
         let mut controller = AppController::new(Settings::load());
+        controller.state.saved.keyring = crate::vault::Keyring::at(crate::vault::vault_file());
         let view = controller.state.settings.browser_view;
         let columns = view != crate::settings::BrowserView::Details;
         let flat = controller.state.settings.flat;
@@ -391,6 +394,7 @@ impl Shell {
             focus_menu: false,
             search: None,
             decorated: system_title_bar(&settings_now),
+            passwords: Default::default(),
         }
     }
 
@@ -399,6 +403,9 @@ impl Shell {
         self.poll_dialog();
         self.poll_properties();
         self.controller.ask_about_updates();
+        if let Some(left) = self.controller.vault_tick() {
+            ctx.request_repaint_after(left);
+        }
         let conflict_was_open = self.controller.conflict().is_some();
         if self.controller.receive() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -2203,6 +2210,7 @@ impl eframe::App for Shell {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.controller.drop_undo();
+        self.controller.state.saved.keyring.close();
     }
 }
 
