@@ -27,7 +27,11 @@ code; without it the crate is `forbid(unsafe_code)`. No change here adds
 
 Local changes:
 
-- None to the source yet.
+- **CRC32 and CRC64 by slicing-by-8** (`src/crc.rs`). The byte-at-a-time
+  loop was a chain of dependent table lookups, one per byte, and the XZ block
+  check runs it over every byte in both directions. Eight tables fold eight
+  bytes with independent lookups. Same values; a test checks them against the
+  bit-at-a-time definition for every length and split up to 300 bytes.
 
 Feature audit:
 
