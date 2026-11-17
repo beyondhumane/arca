@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "rar")]
 mod reader;
 #[cfg(feature = "rar")]
+mod repair;
+#[cfg(feature = "rar")]
 mod volumes;
 #[cfg(feature = "rar")]
 mod writer;
@@ -177,6 +179,39 @@ impl RarArchive {
             let _ = (dest, wanted, password, progress, conflict);
             Err(disabled())
         }
+    }
+}
+
+/// What [`repair`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Repaired {
+    /// Whether anything was wrong. When nothing was, nothing is written.
+    pub changed: bool,
+    /// Whether damaged member data was rebuilt, rather than only the
+    /// recovery record or the end of the archive.
+    pub data_repaired: bool,
+}
+
+/// Rebuilds a damaged single-volume RAR at `output` from the recovery record
+/// it carries, which the archive must have been made with. `input` is only
+/// read and `output` may not be it. The result is staged beside `output`,
+/// opened and tested (unless its data is encrypted and no password is
+/// given), and only then given its name.
+///
+/// An archive whose headers are too damaged to be parsed cannot be repaired
+/// this way: the recovery record is found through them.
+pub fn repair(
+    input: &Path,
+    output: &Path,
+    password: Option<&str>,
+    progress: &Progress<'_>,
+) -> Result<Repaired> {
+    #[cfg(feature = "rar")]
+    return repair::repair(input, output, password, progress);
+    #[cfg(not(feature = "rar"))]
+    {
+        let _ = (input, output, password, progress);
+        Err(disabled())
     }
 }
 

@@ -56,7 +56,7 @@ pub(super) fn at_path(error: Error, path: &Path) -> Error {
     }
 }
 
-fn controlled<T>(
+pub(super) fn controlled<T>(
     progress: &Progress<'_>,
     work: impl FnOnce(&ReadCancellation) -> Result<T>,
 ) -> Result<T> {
