@@ -2,10 +2,12 @@
 
 mod edit;
 mod read;
+mod salvage;
 mod write;
 
 pub use edit::{rewrite_7z, Addition, Change};
 pub use read::{Phase, Progress, SevenZArchive};
+pub use salvage::{salvage_7z, Salvaged};
 pub use write::{create_7z, create_7z_into, workers, CreateOptions, Source};
 
 use arca_core::{Error, Result};
