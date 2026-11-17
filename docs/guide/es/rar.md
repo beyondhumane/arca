@@ -85,7 +85,7 @@ siempre los mismos bytes; con ella, las sales son aleatorias.
 | `--solid` | `-s` | Un solo flujo de compresión para todos los ficheros, en el orden dado. Más pequeño con muchos ficheros parecidos; un daño alcanza a todos los ficheros posteriores, y extraer uno descodifica los anteriores. |
 | `-p CONTRASEÑA` | `-p` | Cada fichero cifrado con AES-256 bajo una clave derivada con PBKDF2-HMAC-SHA256 (2^15 rondas), con un valor de comprobación de la contraseña y sumas de verificación ligadas a ella. Los nombres siguen siendo legibles. |
 | `--hide-names` | `-hp` | También las cabeceras cifradas: sin la contraseña ni siquiera se pueden listar los nombres. Exige `-p`. |
-| `-v TAMAÑO` | `-v` | Un conjunto de volúmenes `nombre.part1.rar`, `nombre.part2.rar`… (`part01`… a partir de diez), cada uno de como mucho TAMAÑO bytes con todo incluido, de al menos 64 KiB y no más de 256 volúmenes. Un fichero puede quedar cortado entre volúmenes. Un conjunto que cabe en un volumen conserva el nombre indicado. |
+| `-v TAMAÑO` | `-v` | Un conjunto de volúmenes `nombre.part1.rar`, `nombre.part2.rar`… (`part01`… a partir de diez), cada uno de como mucho TAMAÑO bytes con todo incluido, de al menos 64 KiB y no más de 256 volúmenes. Un fichero puede quedar cortado entre volúmenes. Un conjunto que cabe en un volumen conserva el nombre indicado, pero sigue siendo un conjunto de un volumen, que `arca repair` rechaza y WinRAR repara. |
 | `--recovery PORCENTAJE` | `-rr` | Un registro de recuperación Reed–Solomon de entre el 1 y el 100 %, en el archivo o en cada volumen, que usan `arca repair` y **Reparar** de WinRAR. No se escriben volúmenes de recuperación (`.rev`). |
 
 La creación rechaza, antes de leer ninguna entrada o escribir ningún fichero:
@@ -129,7 +129,10 @@ RAR4, creación de CBR, y añadir, borrar o renombrar dentro de un archivo
 existente. Un archivo dañado de un solo volumen que tenga registro de
 recuperación se reconstruye en un archivo nuevo con
 [`arca repair`](cli-reference.md#repair); un volumen dañado de un conjunto lo
-repara WinRAR con el registro de recuperación que lleva. El comentario del
+repara WinRAR (`Rar r` sobre ese volumen) con el registro de recuperación que
+lleva. Arca aún no abre un conjunto cuyo volumen haya reconstruido WinRAR sin
+cabeceras cifradas: el bloque final reconstruido ya no dice que sigue otro
+volumen, y el lector de Arca lo exige a un volumen que corta un fichero. El comentario del
 archivo lo muestran `arca list`, `arca comment` y la barra de estado de la
 ventana.
 

@@ -85,7 +85,7 @@ the salts are random.
 | `--solid` | `-s` | One compression stream across all files, in the order given. Smaller for many similar files; damage reaches every later file, and extracting one file decodes those before it. |
 | `-p PASSWORD` | `-p` | Every file encrypted with AES-256 under a key derived with PBKDF2-HMAC-SHA256 (2^15 rounds), with a password check value and checksums keyed to the password. Names stay readable. |
 | `--hide-names` | `-hp` | The headers encrypted too: without the password not even the names can be listed. Requires `-p`. |
-| `-v SIZE` | `-v` | A volume set `name.part1.rar`, `name.part2.rar`… (`part01`… for ten or more), each at most SIZE bytes with everything included, at least 64 KiB and no more than 256 volumes. A file may be cut across volumes. A set that fits in one volume keeps the name given. |
+| `-v SIZE` | `-v` | A volume set `name.part1.rar`, `name.part2.rar`… (`part01`… for ten or more), each at most SIZE bytes with everything included, at least 64 KiB and no more than 256 volumes. A file may be cut across volumes. A set that fits in one volume keeps the name given, but is still a one-volume set, which `arca repair` refuses and WinRAR repairs. |
 | `--recovery PERCENT` | `-rr` | A Reed–Solomon recovery record of 1 to 100 percent, in the archive or in each volume, that `arca repair` and WinRAR's **Repair** use. Recovery volumes (`.rev`) are not written. |
 
 What creation refuses, before any input is read or any file is written:
@@ -125,7 +125,10 @@ Not supported, and refused rather than approximated: recovery volumes
 creation, and adding to, removing from or renaming inside an existing archive.
 A damaged single-volume archive that has a recovery record is rebuilt into a
 new file by [`arca repair`](cli-reference.md#repair); a damaged volume of a set
-is repaired by WinRAR from the recovery record it carries. The archive comment
+is repaired by WinRAR (`Rar r` on that volume) from the recovery record it
+carries. Arca does not yet open a set whose volume WinRAR rebuilt without
+encrypted headers: the rebuilt end block no longer says another volume
+follows, which Arca's reader requires of a volume that splits a file. The archive comment
 is shown by `arca list`, `arca comment` and the desktop window's status line.
 
 Every option was checked against WinRAR 7.23's console `Rar.exe`: `Rar t` and
