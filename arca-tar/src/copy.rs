@@ -16,10 +16,13 @@ const STEP: u64 = 4 << 20;
 /// leaves it out when that is `None`. An entry keeps its headers as they were
 /// when its name stays: owner, group, permissions, times, link target, device
 /// numbers and any pax record. A renamed one keeps all of that but its name.
+/// The `./` entry a reader steps over is copied as it was, and a global pax
+/// header in front of an entry left out moves to the next entry written.
 ///
 /// A hard link names an earlier entry, so it follows that entry when it is
 /// renamed, and the copy is refused when that entry is left out: the link
-/// would be left pointing at nothing.
+/// would be left pointing at nothing. Names and targets are compared once
+/// `.`, `..` and repeated slashes are resolved.
 ///
 /// `progress` hears the name of each entry before it is copied, with 0, and
 /// then every few megabytes of its data the bytes copied so far. False stops
@@ -35,33 +38,70 @@ pub fn copy_entries<R: Read, W: Write>(
     let mut gone: HashSet<String> = HashSet::new();
     let mut moved: HashMap<String, String> = HashMap::new();
     let mut written = Vec::new();
+    let mut carried = Vec::new();
     while let Some(e) = from.next_entry()? {
+        carried.extend(from.take_prelude());
         if !progress(&e.entry.name, 0) {
             return Err(Error::Cancelled);
         }
         let Some(new) = name(&e) else {
             from.skip_data(&e)?;
-            gone.insert(e.entry.name.clone());
+            gone.insert(normal(&e.entry.name));
+            carried.extend(globals(&e));
             continue;
         };
-        let link = match e.hard_link().map(without_current) {
-            Some(target) if gone.contains(target) => {
+        let link = match e.hard_link().map(normal) {
+            Some(target) if gone.contains(&target) => {
                 return Err(Error::Unsupported(format!(
                     "'{}' is a hard link to '{target}', which is being left out",
                     e.entry.name
                 )));
             }
-            Some(target) => moved.get(target).cloned(),
+            Some(target) => moved.get(&target).cloned(),
             None => None,
         };
         if new != e.entry.name {
-            moved.insert(e.entry.name.clone(), new.clone());
+            moved.insert(normal(&e.entry.name), new.clone());
         }
+        to.out.write_all(&std::mem::take(&mut carried))?;
         to.copy_header(&e, &new, link.as_deref())?;
         from.with_data(&e, |data| to.copy_data(data, e.data, &new, progress))?;
         written.push(without_current(&new).to_string());
     }
+    carried.extend(from.take_prelude());
+    to.out.write_all(&carried)?;
     Ok(written)
+}
+
+/// A path with `.` and empty parts dropped and each `..` taking the part
+/// before it away, as the entry it names would be found on disk.
+fn normal(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|last| *last != "..") => {
+                parts.pop();
+            }
+            _ => parts.push(part),
+        }
+    }
+    parts.join("/")
+}
+
+/// The global pax headers among the headers of `e`, as they were.
+fn globals(e: &TarEntry) -> Vec<u8> {
+    let Some(raw) = &e.headers else {
+        return Vec::new();
+    };
+    segments(raw)
+        .map(|all| {
+            all.iter()
+                .filter(|s| s.header[156] == b'g')
+                .flat_map(|s| s.whole.iter().copied())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 impl<W: Write> TarWriter<W> {

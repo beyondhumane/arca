@@ -1,5 +1,5 @@
 use super::*;
-use crate::{checksum, octal, write_octal, PAX_LIMIT};
+use crate::{checksum, octal, pax_record, ustar_header, write_octal, BLOCK, PAX_LIMIT};
 
 fn sample() -> Vec<u8> {
     let mut w = TarWriter::new(Vec::new());
@@ -256,4 +256,98 @@ fn kept_headers_that_do_not_parse_are_errors() {
     assert!(renamed(&twice, "b", None).is_err());
     assert!(renamed(&main, "b", Some("")).is_err());
     assert!(renamed(&main, &"n".repeat(limits::MAX_NAME + 1), None).is_err());
+}
+
+fn raw_entry(name: &str, kind: u8, data: &[u8], link: &str) -> Vec<u8> {
+    let size = data.len() as u64;
+    let mut out = ustar_header(name, "", link, size, 1_600_000_000, 0o644, kind).to_vec();
+    out.extend_from_slice(data);
+    out.resize(out.len().next_multiple_of(BLOCK), 0);
+    out
+}
+
+fn global() -> Vec<u8> {
+    raw_entry(
+        "pax_global_header",
+        b'g',
+        &pax_record("comment", "a commit"),
+        "",
+    )
+}
+
+fn ended(parts: &[Vec<u8>]) -> Vec<u8> {
+    let mut tar = parts.concat();
+    tar.extend_from_slice(&[0; 2 * BLOCK]);
+    tar
+}
+
+fn without(gone: &'static [&'static str]) -> impl Fn(&TarEntry) -> Option<String> {
+    move |e| (!gone.contains(&e.entry.name.as_str())).then(|| e.entry.name.clone())
+}
+
+#[test]
+fn the_root_entry_and_a_global_header_are_copied_as_they_were() {
+    let root = raw_entry("./", b'5', b"", "");
+    let a = raw_entry("./a", b'0', b"aaa", "");
+    let b = raw_entry("./b", b'0', b"b", "");
+    let tar = ended(&[global(), root.clone(), a.clone(), b.clone()]);
+    assert_eq!(copy(&tar, &same).unwrap(), tar);
+    let out = copy(&tar, &without(&["a"])).unwrap();
+    assert_eq!(out, ended(&[global(), root.clone(), b]));
+    let out = copy(&tar, &without(&["a", "b"])).unwrap();
+    assert_eq!(out, ended(&[global(), root]));
+}
+
+#[test]
+fn a_global_header_moves_to_the_next_entry_when_its_own_is_left_out() {
+    let a = raw_entry("a", b'0', b"aaa", "");
+    let b = raw_entry("b", b'0', b"b", "");
+    let tar = ended(&[global(), a, b.clone()]);
+    assert_eq!(copy(&tar, &without(&["a"])).unwrap(), ended(&[global(), b]));
+    assert_eq!(
+        copy(&tar, &without(&["a", "b"])).unwrap(),
+        ended(&[global()])
+    );
+    let only = ended(&[global()]);
+    let mut r = TarReader::new(&only[..]);
+    assert!(r.next_entry().unwrap().is_none());
+}
+
+#[test]
+fn hard_link_targets_are_matched_once_resolved() {
+    for target in ["dir//tool", "./dir/x/../tool", "dir/./tool/"] {
+        let tar = ended(&[
+            raw_entry("dir/tool", b'0', b"run", ""),
+            raw_entry("hard", b'1', b"", target),
+        ]);
+        let left_out = copy(&tar, &without(&["dir/tool"]));
+        assert!(
+            matches!(left_out, Err(Error::Unsupported(_))),
+            "{target}: {:?}",
+            left_out.err()
+        );
+        let out = copy(&tar, &|e| Some(e.entry.name.replace("dir/", "other/"))).unwrap();
+        let hard = listed(&out).into_iter().find(|e| e.0 == "hard").unwrap();
+        assert_eq!(hard.4.as_deref(), Some("other/tool"), "{target}");
+    }
+}
+
+#[test]
+fn damaged_copies_with_a_root_entry_never_panic() {
+    let tar = ended(&[
+        global(),
+        raw_entry("./", b'5', b"", ""),
+        raw_entry("./a", b'0', b"aaa", ""),
+        raw_entry("b", b'1', b"", "./a"),
+    ]);
+    for cut in (0..tar.len()).step_by(97) {
+        let _ = copy(&tar[..cut], &same);
+        let _ = copy(&tar[..cut], &without(&["a"]));
+    }
+    for at in (0..tar.len()).step_by(13) {
+        let mut bad = tar.clone();
+        bad[at] ^= 0x5a;
+        let _ = copy(&bad, &same);
+        let _ = copy(&bad, &without(&["a"]));
+    }
 }
