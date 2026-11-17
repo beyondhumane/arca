@@ -317,6 +317,12 @@ pub(crate) fn rank(mask: &str, archive: &Path) -> Option<(u8, usize)> {
         return Some((0, 0));
     }
     let whole = archive.to_string_lossy().replace('\\', "/");
+    let whole = match whole.strip_prefix("//?/") {
+        Some(rest) => rest
+            .strip_prefix("UNC/")
+            .map_or_else(|| rest.to_string(), |share| format!("//{share}")),
+        None => whole,
+    };
     let name = archive
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -801,6 +807,9 @@ mod tests {
         assert!(rank("/data/backups/", archive).is_some());
         assert!(rank("/data/back", archive).is_none(), "not a prefix match");
         assert!(rank("*.zip; *.7z", archive).is_some());
+        let verbatim = Path::new(r"\\?\D:\Backups\x.zip");
+        assert!(rank(r"D:\Backups\", verbatim).is_some());
+        assert!(rank(r"\\server\share", Path::new(r"\\?\UNC\server\share\x.zip")).is_some());
         assert!(rank("backup-2024.7z", archive) > rank("backup-*.7z", archive));
         assert!(rank("backup-*.7z", archive) > rank("*.7z", archive));
         assert!(rank("*.7z", archive) > rank("", archive));

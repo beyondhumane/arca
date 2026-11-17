@@ -268,17 +268,17 @@ impl AppController {
     fn access_failed(&mut self, pending: Pending, password: Option<&str>, error: arca_core::Error) {
         self.state.busy = false;
         self.state.overlay = false;
-        let saved = self.saved_attempt_failed();
+        let saved = self.saved_attempt_failed(password);
         if password_error(&error) {
             self.state.password_wrong = password.is_some() && !saved;
             self.state.archive_password = None;
             self.state.waiting_on_password = Some(pending);
             // The error itself is written for a log ("malformed archive: ...: wrong
             // password"), in English whatever the window speaks.
-            self.state.notice = if matches!(error, arca_core::Error::PasswordOrCorrupt) {
-                self.s().password_or_corrupt.to_string()
-            } else if saved {
+            self.state.notice = if saved {
                 self.s().saved_none_fit.to_string()
+            } else if matches!(error, arca_core::Error::PasswordOrCorrupt) {
+                self.s().password_or_corrupt.to_string()
             } else if password.is_some() {
                 self.s().password_wrong.to_string()
             } else {
@@ -2443,6 +2443,7 @@ impl AppController {
         }
         self.state.channel = None;
         self.state.waiting_on_password = None;
+        self.forget_attempts();
         self.state.password_input.clear();
         self.state.password_wrong = false;
         self.state.reread_dir = None;

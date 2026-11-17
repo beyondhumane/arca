@@ -12,10 +12,17 @@ pub(crate) struct PasswordState {
     typed: Option<Zeroizing<String>>,
 }
 
+impl PasswordState {
+    #[cfg(test)]
+    pub(super) fn trying(&self) -> bool {
+        self.trying.is_some()
+    }
+}
+
 struct Attempts {
     archives: Vec<PathBuf>,
     left: Vec<Zeroizing<String>>,
-    in_flight: bool,
+    in_flight: Option<Zeroizing<String>>,
 }
 
 impl AppController {
@@ -44,7 +51,7 @@ impl AppController {
     /// Takes the next saved password that fits and submits it in place of an
     /// answer, while the password box is up and nothing else is running.
     pub(super) fn try_saved_passwords(&mut self) {
-        self.state.saved.keyring.tick(Instant::now());
+        self.vault_tick();
         if self.state.channel.is_some() || self.state.busy {
             return;
         }
@@ -55,6 +62,7 @@ impl AppController {
         if archives.is_empty() {
             return;
         }
+        let weak = self.weak_check(&archives);
         let saved = &mut self.state.saved;
         if saved
             .trying
@@ -62,16 +70,20 @@ impl AppController {
             .is_none_or(|attempts| attempts.archives != archives)
         {
             let keyring = &saved.keyring;
-            let mut left: Vec<Zeroizing<String>> = keyring
-                .matching(&archives, true)
-                .into_iter()
-                .map(|i| keyring.entries[i].password.clone())
-                .collect();
+            let mut left: Vec<Zeroizing<String>> = if weak {
+                Vec::new()
+            } else {
+                keyring
+                    .matching(&archives, true)
+                    .into_iter()
+                    .map(|i| keyring.entries[i].password.clone())
+                    .collect()
+            };
             left.reverse();
             saved.trying = Some(Attempts {
                 archives,
                 left,
-                in_flight: false,
+                in_flight: None,
             });
         }
         let Some(attempts) = saved.trying.as_mut() else {
@@ -80,19 +92,34 @@ impl AppController {
         let Some(next) = attempts.left.pop() else {
             return;
         };
-        attempts.in_flight = true;
+        let password = next.to_string();
+        attempts.in_flight = Some(next);
         saved.keyring.touch();
-        self.submit_password(next.to_string());
+        self.submit_password(password);
     }
 
-    /// Whether the password that just failed was a saved one rather than
-    /// one typed in the box.
-    pub(super) fn saved_attempt_failed(&mut self) -> bool {
+    // A ZipCrypto check is one byte, so one wrong password in 256 passes it,
+    // and the same one passes every time. Such an archive gets its saved
+    // passwords offered, never tried, or a false match would stop the box
+    // from ever asking.
+    fn weak_check(&self, archives: &[PathBuf]) -> bool {
         self.state
+            .archive
+            .as_ref()
+            .is_some_and(|open| archives.contains(open))
+            && self.state.entries.iter().any(|entry| entry.zipcrypto)
+    }
+
+    /// Whether the password that just failed was the saved one sent for it,
+    /// rather than one typed in the box.
+    pub(super) fn saved_attempt_failed(&mut self, password: Option<&str>) -> bool {
+        let sent = self
+            .state
             .saved
             .trying
             .as_mut()
-            .is_some_and(|attempts| std::mem::take(&mut attempts.in_flight))
+            .and_then(|attempts| attempts.in_flight.take());
+        sent.is_some_and(|sent| Some(sent.as_str()) == password)
     }
 
     pub(super) fn password_accepted(&mut self, pending: &Pending, password: &str) {
@@ -157,7 +184,7 @@ impl AppController {
         saved.typed = (opening && saved.save_typed && !password.is_empty())
             .then(|| Zeroizing::new(password.clone()));
         if let Some(attempts) = saved.trying.as_mut() {
-            attempts.in_flight = false;
+            attempts.in_flight = None;
         }
         self.submit_password(password);
     }
@@ -170,8 +197,15 @@ impl AppController {
             return Vec::new();
         }
         let keyring = &self.state.saved.keyring;
-        keyring
-            .matching(&archives, false)
+        let mut picks = keyring.matching(&archives, false);
+        if self.weak_check(&archives) {
+            picks = keyring
+                .matching(&archives, true)
+                .into_iter()
+                .chain(picks)
+                .collect();
+        }
+        picks
             .into_iter()
             .map(|i| {
                 let entry = &keyring.entries[i];
@@ -199,7 +233,7 @@ impl AppController {
         self.state.saved.typed = None;
         self.state.saved.keyring.touch();
         if let Some(attempts) = self.state.saved.trying.as_mut() {
-            attempts.in_flight = false;
+            attempts.in_flight = None;
         }
         self.submit_password(password);
     }
@@ -240,7 +274,17 @@ impl AppController {
     /// Locks the vault once it has gone unused long enough; otherwise, how
     /// long it has left, so the window can wake up in time to lock it.
     pub(crate) fn vault_tick(&mut self) -> Option<std::time::Duration> {
-        self.state.saved.keyring.tick(Instant::now())
+        let was_open = self.state.saved.keyring.unlocked();
+        let left = self.state.saved.keyring.tick(Instant::now());
+        if was_open && !self.state.saved.keyring.unlocked() {
+            self.state.saved.trying = None;
+        }
+        left
+    }
+
+    pub(crate) fn lock_vault(&mut self) {
+        self.state.saved.keyring.lock();
+        self.state.saved.trying = None;
     }
 }
 

@@ -3,7 +3,7 @@
 use super::theme::{hex, palette_of};
 use super::widgets::*;
 use super::*;
-use crate::vault::{Saved, LOCK_AFTER};
+use crate::vault::{Saved, VaultError, LOCK_AFTER};
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
 use zeroize::Zeroizing;
@@ -19,6 +19,7 @@ pub(super) struct PasswordsPage {
     shown: Option<usize>,
     prompt_master: Zeroizing<String>,
     prompt_error: Option<String>,
+    was_unlocked: bool,
 }
 
 #[derive(Default)]
@@ -66,6 +67,13 @@ impl Shell {
         let keyring = &self.controller.state.saved.keyring;
         let (unlocked, has_file, can_keep) =
             (keyring.unlocked(), keyring.has_file(), keyring.can_keep());
+        if unlocked != self.passwords.was_unlocked {
+            self.passwords.was_unlocked = unlocked;
+            self.passwords.shown = None;
+            if !unlocked {
+                self.passwords.draft = None;
+            }
+        }
         let minutes = (LOCK_AFTER.as_secs() / 60).to_string();
         let status = if unlocked {
             fill(s.vault_state_open, &[("minutes", &minutes)])
@@ -182,7 +190,7 @@ impl Shell {
             }
         });
         if lock {
-            self.controller.state.saved.keyring.lock();
+            self.controller.lock_vault();
             self.passwords.changing = false;
             self.passwords.draft = None;
             self.passwords.shown = None;
@@ -271,10 +279,13 @@ impl Shell {
                     toggle = Some(i);
                 }
                 if shown {
-                    ui.label(
-                        RichText::new(entry.password.as_str())
-                            .font(super::theme::mono_font(ui.style(), 0.0))
-                            .color(hex(p.text)),
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(entry.password.as_str())
+                                .font(super::theme::mono_font(ui.style(), 0.0))
+                                .color(hex(p.text)),
+                        )
+                        .selectable(false),
                     );
                 }
             });
@@ -382,7 +393,7 @@ impl Shell {
                     .entries
                     .iter()
                     .position(|e| e.mask == mask && e.password == password)
-                    .map_or(Ok(()), |i| keyring.replace(i, entry)),
+                    .map_or(Err(VaultError::Locked), |i| keyring.replace(i, entry)),
                 None => keyring.add(entry),
             });
             self.passwords.shown = None;

@@ -95,6 +95,7 @@ fn when_no_saved_password_fits_the_box_asks_and_can_save_the_answer() {
         Some(Pending::OpenArchive)
     ));
     assert!(!app.state.password_wrong, "nobody typed anything");
+    assert_eq!(app.state.notice, app.s().saved_none_fit);
     app.dispatch(AppAction::SubmitPassword("typo".into()));
     settle(&mut app);
     assert!(app.state.password_wrong);
@@ -223,4 +224,58 @@ fn unlocking_from_the_box_tries_the_vault_and_secrets_stay_out_of_the_settings()
             "{secret} in the vault in the clear"
         );
     }
+}
+
+#[test]
+fn reopening_an_archive_tries_its_saved_passwords_afresh() {
+    let room = Room::new();
+    let archive = room.archive(Some("secret"), true);
+    let mut app = with(vec![saved("*.7z", "nope", true)]);
+    app.open(archive.clone());
+    settle(&mut app);
+    assert!(app.state.waiting_on_password.is_some());
+    app.state
+        .saved
+        .keyring
+        .add(saved("*.7z", "secret", true))
+        .unwrap();
+    app.open(archive);
+    settle(&mut app);
+    assert!(app.state.waiting_on_password.is_none());
+    assert_eq!(app.state.archive_password.as_deref(), Some("secret"));
+}
+
+#[test]
+fn zipcrypto_archives_get_saved_passwords_offered_and_not_tried() {
+    let room = Room::new();
+    let archive = zip(&room, "secret");
+    let mut app = with(vec![saved("*.zip", "secret", true)]);
+    app.state.archive = Some(archive.clone());
+    app.state.entries = list_entries(&archive, None, &|_, _, _| true).unwrap().0;
+    for entry in &mut app.state.entries {
+        entry.zipcrypto = true;
+    }
+    app.state.waiting_on_password = Some(Pending::OpenArchive);
+    app.try_saved_passwords();
+    assert!(app.state.waiting_on_password.is_some());
+    assert!(!app.state.busy);
+    assert_eq!(app.offered_passwords().len(), 1);
+}
+
+#[test]
+fn locking_forgets_the_passwords_waiting_to_be_tried() {
+    let room = Room::new();
+    let file = room.path("passwords.vault");
+    let mut app = AppController::new(Settings::default());
+    app.state.saved.keyring = Keyring::cheap(file);
+    app.create_vault("master").unwrap();
+    let mut kept = saved("*.zip", "wrong", true);
+    kept.session = false;
+    app.state.saved.keyring.add(kept).unwrap();
+    app.open(zip(&room, "secret"));
+    settle(&mut app);
+    assert!(app.state.saved.trying());
+    app.lock_vault();
+    assert!(!app.state.saved.trying());
+    assert!(app.state.saved.keyring.entries.is_empty());
 }
