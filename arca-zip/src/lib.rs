@@ -2260,7 +2260,7 @@ pub fn compress_block(data: &[u8], codec: Codec, level: Level) -> Result<(Vec<u8
 /// A file on its way into a new archive: where to read it from, the name it
 /// takes inside, and what its own metadata said.
 ///
-/// The size is here because the batching has to know it before anything is
+/// The size is here because the scheduling has to know it before anything is
 /// read, and the time because an archive that forgets when a file was written
 /// has lost something the file had.
 pub struct Source {
@@ -2279,41 +2279,114 @@ pub struct Source {
 ///
 /// Compressing in parallel means several files are in memory at once, and
 /// without a ceiling a folder of big files would ask for all of them at the
-/// same time. This is the ceiling per thread; the batches are cut so that what
-/// is in flight never goes over it.
+/// same time. This is the ceiling per thread; files are only taken up while
+/// what is in flight stays under it.
 const IN_FLIGHT_PER_THREAD: u64 = 32 * 1024 * 1024;
 
-/// Cuts the list into runs of files that fit in `cap` bytes together.
-///
-/// A file bigger than the whole budget comes out in a batch of its own, which
-/// is the caller's cue to stream it instead of reading it in.
-fn batches(files: &[Source], cap: u64) -> Vec<Vec<usize>> {
-    let mut v = Vec::new();
-    let mut current: Vec<usize> = Vec::new();
-    let mut sum = 0u64;
-    for (i, f) in files.iter().enumerate() {
-        if f.size > cap {
-            if !current.is_empty() {
-                v.push(std::mem::take(&mut current));
-                sum = 0;
-            }
-            v.push(vec![i]);
-            continue;
-        }
-        if sum + f.size > cap && !current.is_empty() {
-            v.push(std::mem::take(&mut current));
-            sum = 0;
-        }
-        current.push(i);
-        sum += f.size;
-    }
-    if !current.is_empty() {
-        v.push(current);
-    }
-    v
+struct Flow<T> {
+    next: usize,
+    held: u64,
+    ready: Vec<Option<T>>,
+    stop: bool,
+    lost: bool,
 }
 
-type Block = (usize, Vec<u8>, Method, u32, u64);
+struct Lost<'a, T>(&'a std::sync::Mutex<Flow<T>>, &'a std::sync::Condvar);
+
+impl<T> Drop for Lost<'_, T> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            let mut flow = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            flow.stop = true;
+            flow.lost = true;
+            self.1.notify_all();
+        }
+    }
+}
+
+/// Runs `work` for every index on `threads` threads and hands each result to
+/// `take`, on the calling thread, in index order.
+///
+/// Indices are taken up in order, and one is only taken while the `weights`
+/// of those taken and not yet handed over stay within `budget`, or when
+/// nothing is held at all, so a single item larger than the budget still
+/// gets through on its own. That keeps memory bounded however far `take`
+/// falls behind. The first error `take` returns stops everything: no index
+/// is taken up after it, and it is what this answers with.
+fn in_order<T: Send>(
+    weights: &[u64],
+    budget: u64,
+    threads: usize,
+    work: impl Fn(usize) -> T + Sync,
+    mut take: impl FnMut(usize, T) -> Result<()>,
+) -> Result<()> {
+    use std::sync::{Condvar, Mutex};
+    let n = weights.len();
+    let flow = Mutex::new(Flow {
+        next: 0,
+        held: 0,
+        ready: (0..n).map(|_| None).collect(),
+        stop: false,
+        lost: false,
+    });
+    let (room, arrived) = (Condvar::new(), Condvar::new());
+    let lock = || flow.lock().unwrap_or_else(|e| e.into_inner());
+    std::thread::scope(|scope| {
+        for _ in 0..threads.clamp(1, n.max(1)) {
+            scope.spawn(|| {
+                let _lost = Lost(&flow, &arrived);
+                loop {
+                    let i = {
+                        let mut f = lock();
+                        loop {
+                            if f.stop || f.next >= n {
+                                return;
+                            }
+                            let w = weights[f.next];
+                            if f.held == 0 || f.held.saturating_add(w) <= budget {
+                                break;
+                            }
+                            f = room.wait(f).unwrap_or_else(|e| e.into_inner());
+                        }
+                        let i = f.next;
+                        f.next += 1;
+                        f.held = f.held.saturating_add(weights[i]);
+                        i
+                    };
+                    let out = work(i);
+                    lock().ready[i] = Some(out);
+                    arrived.notify_all();
+                }
+            });
+        }
+        let result = (0..n).try_for_each(|i| {
+            let out = {
+                let mut f = lock();
+                loop {
+                    if let Some(out) = f.ready[i].take() {
+                        break out;
+                    }
+                    if f.lost {
+                        return Err(Error::Format("a compression thread stopped".into()));
+                    }
+                    f = arrived.wait(f).unwrap_or_else(|e| e.into_inner());
+                }
+            };
+            let taken = take(i, out);
+            lock().held -= weights[i];
+            room.notify_all();
+            taken
+        });
+        lock().stop = true;
+        room.notify_all();
+        result
+    })
+}
+
+enum Ready {
+    Block(Vec<u8>, Method, u32, u64),
+    Stream,
+}
 
 /// Writes a new archive at `out` holding `files`, compressing on every core.
 ///
@@ -2323,8 +2396,9 @@ type Block = (usize, Vec<u8>, Method, u32, u64);
 /// single thread. Nothing about the file that comes out says it was made this
 /// way -- it is an ordinary zip.
 ///
-/// Files are read in batches so that the memory held at once stays bounded, and
-/// one too big for the whole budget is streamed straight through instead.
+/// Files are read ahead of the writer only while what is in flight stays
+/// within a budget, so the memory held at once stays bounded, and one too big
+/// for the whole budget is streamed straight through instead.
 /// Streaming deflate uses a single core; zstd shares the requested thread budget
 /// with the streaming caller.
 ///
@@ -2395,8 +2469,9 @@ pub fn create_zip_into<W: Write + Seek>(
 /// single thread. Nothing about the file that comes out says it was made this
 /// way -- it is an ordinary zip.
 ///
-/// Files are read in batches so that the memory held at once stays bounded, and
-/// one too big for the whole budget is streamed straight through instead.
+/// Files are read ahead of the writer only while what is in flight stays
+/// within a budget, so the memory held at once stays bounded, and one too big
+/// for the whole budget is streamed straight through instead.
 /// Streaming deflate uses a single core; zstd shares the requested thread budget
 /// with the streaming caller.
 ///
@@ -2416,60 +2491,58 @@ fn write_in_parallel<W: Write + Seek>(
     total: usize,
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
 ) -> Result<u64> {
-    use rayon::prelude::*;
     use std::sync::atomic::Ordering;
 
     let threads = resolve_threads(threads);
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
-        .map_err(|e| Error::Format(format!("could not create the thread pool: {e}")))?;
     let cap = IN_FLIGHT_PER_THREAD * threads as u64;
     w.stream_threads = threads;
+    let weights: Vec<u64> = files
+        .iter()
+        .map(|s| if s.size > cap { 0 } else { s.size })
+        .collect();
     let mut bytes = 0u64;
 
-    for batch in batches(files, cap) {
-        if batch.len() == 1 && files[batch[0]].size > cap {
-            let s = &files[batch[0]];
-            if !notify(done.load(Ordering::Relaxed), total, &s.name) {
-                return Err(Error::Cancelled);
-            }
-            let source = io::BufReader::with_capacity(STREAM_BUF, std::fs::File::open(&s.path)?);
-            w.add_with_password(&s.name, source, s.codec, s.level, Some(s.mtime), password)?;
-            done.fetch_add(1, Ordering::Relaxed);
-            bytes += s.size;
-            continue;
+    let compress = |i: usize| -> Result<Ready> {
+        let s = &files[i];
+        if s.size > cap {
+            return Ok(Ready::Stream);
         }
-        let produced: Vec<Result<Block>> = pool.install(|| {
-            batch
-                .par_iter()
-                .map(|&i| {
-                    let s = &files[i];
-                    let data = std::fs::read(&s.path)?;
-                    let (c, m, crc) = compress_block(&data, s.codec, s.level)?;
-                    let size = data.len() as u64;
-                    drop(data);
-                    let c = match password {
-                        Some(pw) => seal_block(&c, pw)?,
-                        None => c,
-                    };
-                    if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &s.name) {
-                        return Err(Error::Cancelled);
-                    }
-                    Ok((i, c, m, crc, size))
-                })
-                .collect()
-        });
-        for h in produced {
-            let (i, c, m, crc, size) = h?;
-            let s = &files[i];
-            match password {
-                Some(_) => w.add_sealed(&s.name, &c, size, m, Some(s.mtime))?,
-                None => w.add_compressed(&s.name, &c, crc, size, m, Some(s.mtime))?,
-            }
-            bytes += size;
+        let data = std::fs::read(&s.path)?;
+        let (c, m, crc) = compress_block(&data, s.codec, s.level)?;
+        let size = data.len() as u64;
+        drop(data);
+        let c = match password {
+            Some(pw) => seal_block(&c, pw)?,
+            None => c,
+        };
+        if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &s.name) {
+            return Err(Error::Cancelled);
         }
-    }
+        Ok(Ready::Block(c, m, crc, size))
+    };
+    in_order(&weights, cap, threads, compress, |i, ready| {
+        let s = &files[i];
+        match ready? {
+            Ready::Stream => {
+                if !notify(done.load(Ordering::Relaxed), total, &s.name) {
+                    return Err(Error::Cancelled);
+                }
+                let source =
+                    io::BufReader::with_capacity(STREAM_BUF, std::fs::File::open(&s.path)?);
+                w.add_with_password(&s.name, source, s.codec, s.level, Some(s.mtime), password)?;
+                done.fetch_add(1, Ordering::Relaxed);
+                bytes += s.size;
+            }
+            Ready::Block(c, m, crc, size) => {
+                match password {
+                    Some(_) => w.add_sealed(&s.name, &c, size, m, Some(s.mtime))?,
+                    None => w.add_compressed(&s.name, &c, crc, size, m, Some(s.mtime))?,
+                }
+                bytes += size;
+            }
+        }
+        Ok(())
+    })?;
     Ok(bytes)
 }
 
@@ -3401,47 +3474,57 @@ mod tests {
         assert_eq!(e.name, "caf\u{FFFD}.txt");
     }
 
-    // What is held in memory at once is the whole point of the cut, so this
-    // checks the two things that can go wrong: a run that adds up to more than
-    // the budget, and a single file that is bigger than the budget on its own
-    // -- that one has to come out alone, because the caller reads a batch in
-    // full and a file it cannot hold has to be streamed instead.
+    // What is held in memory at once is the whole point of the budget, so
+    // this checks what can go wrong: items taken up past it while the writer
+    // lags, an item larger than the whole budget never getting through, the
+    // order changing, and an error that does not stop the rest.
     #[test]
-    fn batches_never_hold_more_than_the_budget_at_once() {
-        let sizes = [3u64, 4, 3, 20, 1, 9, 1];
-        let files: Vec<Source> = sizes
-            .iter()
-            .enumerate()
-            .map(|(i, &size)| Source {
-                path: std::path::PathBuf::from(format!("{i}")),
-                name: format!("{i}"),
-                size,
-                mtime: 0,
-                codec: Codec::Deflate,
-                level: Level::NORMAL,
-            })
-            .collect();
-        let cut = batches(&files, 10);
+    fn in_order_hands_over_in_order_and_never_holds_more_than_the_budget() {
+        use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+        let weights: Vec<u64> = (0..400).map(|i| [3, 4, 3, 20, 1, 9, 1, 0][i % 8]).collect();
+        let held = AtomicU64::new(0);
+        let most = AtomicU64::new(0);
+        let mut seen = Vec::new();
+        in_order(
+            &weights,
+            10,
+            6,
+            |i| {
+                let now = held.fetch_add(weights[i], Ordering::SeqCst) + weights[i];
+                most.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_micros((i % 7) as u64 * 50));
+                i * 2
+            },
+            |i, out| {
+                assert_eq!(out, i * 2);
+                held.fetch_sub(weights[i], Ordering::SeqCst);
+                seen.push(i);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(seen, (0..weights.len()).collect::<Vec<_>>());
+        assert!(most.load(Ordering::SeqCst) <= 20, "held {most:?}");
 
-        let seen: Vec<usize> = cut.iter().flatten().copied().collect();
-        assert_eq!(
-            seen,
-            (0..sizes.len()).collect::<Vec<_>>(),
-            "every file, in order"
+        let started = AtomicUsize::new(0);
+        let mut taken = 0;
+        let stopped = in_order(
+            &[1; 1000],
+            4,
+            4,
+            |_| started.fetch_add(1, Ordering::SeqCst),
+            |i, _| {
+                taken += 1;
+                if i == 10 {
+                    return Err(Error::Cancelled);
+                }
+                Ok(())
+            },
         );
-        for b in &cut {
-            let sum: u64 = b.iter().map(|&i| files[i].size).sum();
-            if b.len() > 1 {
-                assert!(sum <= 10, "batch of {} adds up to {sum}", b.len());
-            } else {
-                assert_eq!(b.len(), 1);
-            }
-        }
-        assert_eq!(
-            cut.iter().find(|b| b.contains(&3)).unwrap(),
-            &vec![3],
-            "the big one goes alone"
-        );
+        assert!(matches!(stopped, Err(Error::Cancelled)));
+        assert_eq!(taken, 11);
+        assert!(started.load(Ordering::SeqCst) <= 15);
+        in_order(&[], 4, 4, |_| (), |_, _| Ok(())).unwrap();
     }
 
     // One call builds the archive both the window and the command line ask for,
