@@ -115,7 +115,7 @@ pub fn table(report: &Report) -> String {
 fn line(row: &Row, multi: bool, threads: usize) -> String {
     let label = row.codec.label();
     match &row.outcome {
-        Outcome::Unavailable(why) => format!("{label:<10}not in this build: {why}"),
+        Outcome::Unavailable(_) => format!("{label:<10}    not in this build"),
         Outcome::Measured {
             ratio,
             single,
