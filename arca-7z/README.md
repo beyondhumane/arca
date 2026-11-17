@@ -82,8 +82,14 @@ Phase::{Validate, Extract, Test, Create}
 
 ## Creation
 
-`Level::Store` uses Copy, and Fast/Normal/Best use LZMA2 levels 1/6/9. Each regular
-file is a separate block; creation is non-solid. Directories and empty files are
+`CreateOptions::compression` picks LZMA2 (default), LZMA, PPMd, BZip2 (with
+`codecs-native`), Deflate or Copy; `Level::Store` always uses Copy, and the level
+sets each method's parameters as 7-Zip does. PPMd models stay at or below
+`PPMD_MEMORY_MAX` (192 MiB) and every dictionary or model shrinks to its block.
+Files go in solid blocks of up to 256 MiB, one group per filter: each file's
+PE/ELF/Mach-O machine type picks BCJ, ARM, ARMT, ARM64, PPC, SPARC or IA-64, and
+PCM WAV gets Delta. `rewrite_7z` keeps each block's coders and reports the ones
+it could not keep. Directories and empty files are
 explicit `Source` entries, not recursively enumerated. Symlinks/special sources
 are rejected. Inputs must not change during creation.
 

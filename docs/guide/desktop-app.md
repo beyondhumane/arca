@@ -68,8 +68,10 @@ actions stay disabled for it. CBR cannot be created. See [RAR](rar.md#creating-r
 
 ## 7z
 
-Create 7z using Store or LZMA2 and the existing levels, in solid blocks and on as
-many cores as fit in 2 GiB; extraction decodes on one. Selected members of solid archives share one decoder per block
+Create 7z with LZMA2, LZMA, PPMd, BZip2, Deflate or Store, picked under Method in
+the compress box (hover it for when each one helps), in solid blocks with the
+filter each program or WAV file calls for; LZMA2 runs on as many cores as fit in
+2 GiB. Editing keeps each block's method. See [Creating archives](creating-archives.md#7z); extraction decodes on one. Selected members of solid archives share one decoder per block
 per pass, rather than reopening it for each member. Preview, open-file, Copy and
 Extract use the same validated read path. See [Encryption](encryption.md) and
 [resource limits](architecture.md#7z-boundaries).

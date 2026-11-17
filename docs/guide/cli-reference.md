@@ -44,8 +44,8 @@ Create an archive. The format is taken from the extension of the output file.
 | `<OUT>` | required | Output archive: .zip, .7z, .rar, .tar, .tar.gz (or .tgz), .tar.xz (or .txz), .xz, .tar.bz2 (or .tbz2, .tbz), .bz2, .tar.zst (or .tzst), .zst. An .xz, .bz2 or .zst takes exactly one file. |
 | `<INPUTS>...` | required | Files or directories to include. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
-| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto uses Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, bzip2 in .bz2 and .tar.bz2, Zstandard in .zst and .tar.zst and the RAR compressor in .rar (auto or store only). |
-| `-j, --threads <N>` | 0 | ZIP and XZ threads; 0 means every core. XZ uses as many as fit in 2 GiB, Zstandard as many as asked and bzip2 one; 7z and RAR use every core their memory budget allows, whatever this says. |
+| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2 · lzma · ppmd · bzip2. auto uses Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, bzip2 in .bz2 and .tar.bz2, Zstandard in .zst and .tar.zst and the RAR compressor in .rar (auto or store only). .7z takes lzma2, lzma, ppmd, bzip2 (with codecs-native), deflate or store, never zstd, which 7-Zip cannot read in a 7z. |
+| `-j, --threads <N>` | 0 | ZIP and XZ threads; 0 means every core. XZ uses as many as fit in 2 GiB, Zstandard as many as asked and bzip2 one; 7z with LZMA2 and RAR use every core their memory budget allows, whatever this says, and 7z with any other method one. |
 | `-p, --password <PASSWORD>` | none | Encrypt with AES-256 (.zip, .7z). Other tools will ask for it to open the archive. Refused for .rar. |
 | `--hide-names` | off | 7z only: encrypt headers; requires a nonempty password. |
 | `-v, --volume <SIZE>` | none | Split into parts of SIZE bytes, or with k, m or g for KiB, MiB, GiB: `out.zip.001`, `out.zip.002`… as 7-Zip does. Refuses to replace an existing `.001`. Not for .rar. See [split volumes](creating-archives.md#split-volumes). |
@@ -140,7 +140,7 @@ arca diff --quick -p secret a.7z b.zip
 
 Rewrite a `.zip` with a different password, or with none. Entries aren’t compressed again, because WinZip AES encrypts the already-compressed bytes.
 
-7z password changes and archive mutation are unsupported. See [Creating archives](creating-archives.md#7z) for codec restrictions and empty-only encryption.
+7z password changes and archive mutation are unsupported. See [Creating archives](creating-archives.md#7z) for the methods, their parameters and filters, and empty-only encryption.
 
 | Argument / option | Default | Description |
 | --- | --- | --- |
