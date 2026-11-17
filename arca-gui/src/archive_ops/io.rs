@@ -1270,12 +1270,12 @@ fn collect_sources(
 ) -> std::io::Result<Vec<(PathBuf, String)>> {
     fn walk(
         p: &Path,
+        meta: fs::Metadata,
         base: &Path,
         out: &mut Vec<(PathBuf, String)>,
         directories: bool,
         links: &mut Vec<Link>,
     ) -> std::io::Result<()> {
-        let meta = fs::symlink_metadata(p)?;
         let rel = p.strip_prefix(base).unwrap_or(p);
         let name = rel.to_string_lossy().replace('\\', "/");
         if meta.is_dir() {
@@ -1285,7 +1285,7 @@ fn collect_sources(
             let mut children: Vec<_> = fs::read_dir(p)?.collect::<std::io::Result<Vec<_>>>()?;
             children.sort_by_key(|d| d.file_name());
             for c in children {
-                walk(&c.path(), base, out, directories, links)?;
+                walk(&c.path(), c.metadata()?, base, out, directories, links)?;
             }
         } else if meta.is_file() {
             out.push((p.to_path_buf(), name));
@@ -1303,7 +1303,8 @@ fn collect_sources(
     let mut v = Vec::new();
     for e in inputs {
         let base = e.parent().unwrap_or(Path::new(""));
-        walk(e, base, &mut v, directories, links)?;
+        let meta = fs::symlink_metadata(e)?;
+        walk(e, meta, base, &mut v, directories, links)?;
     }
     Ok(v)
 }
