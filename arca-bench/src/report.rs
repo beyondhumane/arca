@@ -98,11 +98,13 @@ pub fn table(report: &Report) -> String {
         t,
         "Speeds in MB/s of uncompressed data (1 MB = 10^6 bytes), the median of the runs."
     );
-    let rated: Vec<&str> = RATED.iter().map(|c| c.label()).collect();
+    let (last, rest) = RATED.split_last().expect("codecs to rate");
+    let rest: Vec<&str> = rest.iter().map(|c| c.label()).collect();
+    let rated = format!("{} and {}", rest.join(", "), last.label());
     let _ = writeln!(
         t,
         "The rating is the geometric mean of the {} speeds; compare it between builds with the same codecs.",
-        rated.join(", ")
+        rated
     );
     let _ = writeln!(
         t,

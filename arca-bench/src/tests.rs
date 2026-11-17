@@ -88,6 +88,7 @@ fn a_short_run_measures_every_codec_on_text() {
     });
     let text = table(&report);
     assert!(text.contains("Reproduce: arca bench --codecs --threads 2 --seconds 0 --size 2"));
+    assert!(text.contains("of the Deflate, LZMA2 and bzip2 speeds"));
     for codec in Codec::ALL {
         assert!(text.contains(codec.label()));
     }
