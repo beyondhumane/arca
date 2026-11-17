@@ -70,13 +70,14 @@ const PAX_LIMIT: u64 = 64 * 1024;
 #[derive(Default)]
 struct Longer {
     name: Option<String>,
+    link: Option<String>,
     size: Option<u64>,
     mtime: Option<i64>,
 }
 
 impl Longer {
     fn is_empty(&self) -> bool {
-        self.name.is_none() && self.size.is_none() && self.mtime.is_none()
+        self.name.is_none() && self.link.is_none() && self.size.is_none() && self.mtime.is_none()
     }
 
     /// Reads pax records, each `<length> <key>=<value>\n` where the length
@@ -98,6 +99,7 @@ impl Longer {
             let value = std::str::from_utf8(value).map_err(|_| bad())?;
             match key {
                 b"path" => self.name = Some(value.to_string()),
+                b"linkpath" => self.link = Some(value.to_string()),
                 b"size" => self.size = Some(value.parse().map_err(|_| bad())?),
                 b"mtime" => {
                     let whole = value.split('.').next().unwrap_or(value);
@@ -169,6 +171,30 @@ pub fn mode_of(meta: &std::fs::Metadata) -> u32 {
     }
 }
 
+/// The path a symbolic link going into a tar holds, read from the link
+/// itself and never followed. `None` for anything that is not a link, for a
+/// target that is not UTF-8, and everywhere but Unix, where a link needs
+/// privileges to make and so is left out as it always was.
+pub fn link_target(path: &std::path::Path, meta: &std::fs::Metadata) -> Option<String> {
+    #[cfg(unix)]
+    {
+        if !meta.file_type().is_symlink() {
+            return None;
+        }
+        let target = std::fs::read_link(path)
+            .ok()?
+            .into_os_string()
+            .into_string()
+            .ok()?;
+        (!target.is_empty() && target.len() <= limits::MAX_NAME).then_some(target)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, meta);
+        None
+    }
+}
+
 /// Whether a 512-byte block is a TAR header with a valid checksum.
 pub fn is_header(block: &[u8]) -> bool {
     let Ok(header) = <&[u8; BLOCK]>::try_from(block) else {
@@ -190,6 +216,9 @@ pub struct TarEntry {
     /// The typeflag: `0` or NUL a file, `5` a folder, `1` a hard link, `2` a
     /// symbolic link, `3` to `6` devices and pipes, `V` a volume label.
     pub kind: u8,
+    /// What a link points to: for a symbolic link the path it holds, for a
+    /// hard link the name of an earlier entry. `None` for anything else.
+    pub link: Option<String>,
 }
 
 impl TarEntry {
@@ -198,6 +227,20 @@ impl TarEntry {
     /// writing them as files would leave empty files where a tar puts links.
     pub fn is_plain(&self) -> bool {
         self.entry.is_dir || matches!(self.kind, b'0' | 0 | b'7')
+    }
+
+    /// The path a symbolic link holds.
+    pub fn symlink(&self) -> Option<&str> {
+        self.link
+            .as_deref()
+            .filter(|_| self.kind == b'2' && !self.entry.is_dir)
+    }
+
+    /// The earlier entry a hard link names.
+    pub fn hard_link(&self) -> Option<&str> {
+        self.link
+            .as_deref()
+            .filter(|_| self.kind == b'1' && !self.entry.is_dir)
     }
 }
 
@@ -268,7 +311,8 @@ impl<R: Read> TarReader<R> {
                         longer.name = Some(text_field(&name));
                     }
                     b'K' => {
-                        self.payload(size, limits::MAX_NAME as u64 + 1)?;
+                        let link = self.payload(size, limits::MAX_NAME as u64 + 1)?;
+                        longer.link = Some(text_field(&link));
                     }
                     b'x' => {
                         let records = self.payload(size, PAX_LIMIT)?;
@@ -335,6 +379,14 @@ impl<R: Read> TarReader<R> {
             )));
         }
         let is_dir = kind == b'5' || name.ends_with('/');
+        let link = match longer.link {
+            Some(link) => Some(link),
+            None if matches!(kind, b'1' | b'2') => Some(text_field(&header[157..257])),
+            None => None,
+        };
+        if link.as_ref().is_some_and(|l| l.len() > limits::MAX_NAME) {
+            return Err(Error::Limit("link target too long".into()));
+        }
 
         let entry = Entry {
             // A tar name is bytes too, but this reader has always taken them as
@@ -362,6 +414,7 @@ impl<R: Read> TarReader<R> {
             data: if is_dir { 0 } else { size },
             mode: octal(&header[100..108], "mode").map_or(0, |m| (m & 0o7777) as u32),
             kind,
+            link,
         }))
     }
 
@@ -510,12 +563,52 @@ impl<W: Write> TarWriter<W> {
         mode: u32,
         data: R,
     ) -> Result<()> {
+        let kind = if name.ends_with('/') { b'5' } else { b'0' };
+        self.put(name, size, mtime, mode, kind, "")?;
+        // No more than the size just recorded, whatever the source holds now.
+        let written = io::copy(&mut data.take(size), &mut self.out)?;
+        if written != size {
+            return Err(Error::Format(format!(
+                "'{name}': {size} bytes declared but {written} written"
+            )));
+        }
+        self.pad(size)
+    }
+
+    /// A link, which has no data of its own: `kind` is `b'2'` for a symbolic
+    /// link holding `target`, `b'1'` for a hard link to the earlier entry
+    /// named `target`.
+    pub fn add_link(&mut self, name: &str, target: &str, mtime: i64, kind: u8) -> Result<()> {
+        if !matches!(kind, b'1' | b'2') {
+            return Err(Error::Format(format!("'{name}' is not a link")));
+        }
+        if target.is_empty() || target.contains('\0') {
+            return Err(Error::Format(format!("'{name}' has no usable link target")));
+        }
+        self.put(name, 0, mtime, 0o777, kind, target)
+    }
+
+    /// The headers of one entry, a pax one first when the ustar header cannot
+    /// hold all it records.
+    fn put(
+        &mut self,
+        name: &str,
+        size: u64,
+        mtime: i64,
+        mode: u32,
+        kind: u8,
+        link: &str,
+    ) -> Result<()> {
         if name.len() > limits::MAX_NAME {
             return Err(Error::Limit(format!("name of {} bytes", name.len())));
         }
+        if link.len() > limits::MAX_NAME {
+            return Err(Error::Limit(format!("link target of {} bytes", link.len())));
+        }
         // What the ustar header cannot hold goes in a pax header in front of
         // it, which every tar since 2001 reads: a name past its 255 bytes, a
-        // size from 8 GiB up, a time before 1970 or past 2242.
+        // link target past 100, a size from 8 GiB up, a time before 1970 or
+        // past 2242.
         let mut pax = Vec::new();
         let (prefix, base) = match split_name(name) {
             Some(parts) => parts,
@@ -524,6 +617,9 @@ impl<W: Write> TarWriter<W> {
                 ("", cut_name(name, 100))
             }
         };
+        if link.len() > 100 {
+            pax.extend(pax_record("linkpath", link));
+        }
         if size > OCTAL_11 {
             pax.extend(pax_record("size", &size.to_string()));
         }
@@ -534,6 +630,7 @@ impl<W: Write> TarWriter<W> {
             let header = ustar_header(
                 &format!("PaxHeaders/{}", cut_name(base, 89)),
                 "",
+                "",
                 pax.len() as u64,
                 mtime,
                 0o644,
@@ -543,17 +640,16 @@ impl<W: Write> TarWriter<W> {
             self.out.write_all(&pax)?;
             self.pad(pax.len() as u64)?;
         }
-        let kind = if name.ends_with('/') { b'5' } else { b'0' };
-        self.out
-            .write_all(&ustar_header(base, prefix, size, mtime, mode, kind))?;
-        // No more than the size just recorded, whatever the source holds now.
-        let written = io::copy(&mut data.take(size), &mut self.out)?;
-        if written != size {
-            return Err(Error::Format(format!(
-                "'{name}': {size} bytes declared but {written} written"
-            )));
-        }
-        self.pad(size)
+        self.out.write_all(&ustar_header(
+            base,
+            prefix,
+            cut_name(link, 100),
+            size,
+            mtime,
+            mode,
+            kind,
+        ))?;
+        Ok(())
     }
 
     fn pad(&mut self, size: u64) -> Result<()> {
@@ -579,6 +675,7 @@ const OCTAL_11: u64 = 0o777_7777_7777;
 fn ustar_header(
     base: &str,
     prefix: &str,
+    link: &str,
     size: u64,
     mtime: i64,
     mode: u32,
@@ -600,6 +697,7 @@ fn ustar_header(
         mtime.clamp(0, OCTAL_11 as i64) as u64,
     );
     header[156] = kind;
+    header[157..157 + link.len()].copy_from_slice(link.as_bytes());
     header[257..262].copy_from_slice(b"ustar");
     header[263..265].copy_from_slice(b"00");
     header[345..345 + prefix.len()].copy_from_slice(prefix.as_bytes());
@@ -837,6 +935,131 @@ mod tests {
         assert_eq!(got[0].3, b"hi");
         assert_eq!(got[1].0, "link");
         assert_eq!(got.len(), 2);
+        assert_eq!(
+            links(&tar).unwrap()[1],
+            ("link".into(), Some("target.txt".into()))
+        );
+    }
+
+    /// A header of `kind` for `name` pointing at `target`, which may fill the
+    /// whole linkname field and so carry no NUL.
+    fn link_header(name: &str, kind: u8, target: &[u8]) -> Vec<u8> {
+        let mut h = header(name, kind, 0);
+        h[157..157 + target.len()].copy_from_slice(target);
+        h[148..156].copy_from_slice(b"        ");
+        let sum = checksum(<&[u8; BLOCK]>::try_from(&h[..]).unwrap());
+        write_octal(&mut h[148..155], u64::from(sum));
+        h
+    }
+
+    fn links(tar: &[u8]) -> Result<Vec<(String, Option<String>)>> {
+        let mut r = TarReader::new(tar);
+        let mut out = Vec::new();
+        while let Some(e) = r.next_entry()? {
+            r.skip_data(&e)?;
+            out.push((e.entry.name, e.link));
+        }
+        Ok(out)
+    }
+
+    #[test]
+    fn link_targets_are_read_from_the_header_gnu_and_pax() {
+        let full = "t".repeat(100);
+        let long = format!("{}/{}", "d".repeat(150), "e".repeat(80));
+        let mut tar = link_header("sym", b'2', b"../lib/x.so");
+        tar.extend(link_header("hard", b'1', b"./a.txt"));
+        tar.extend(link_header("full", b'2', full.as_bytes()));
+        tar.extend(header("plain", b'0', 0));
+        let records = pax(&[("linkpath", &long)]);
+        tar.extend(header("PaxHeaders/x", b'x', records.len() as u64));
+        tar.extend(padded(&records));
+        tar.extend(link_header("paxed", b'2', b"cut"));
+        tar.extend(end());
+        let got = links(&tar).unwrap();
+        let expected = [
+            ("sym", Some("../lib/x.so")),
+            ("hard", Some("./a.txt")),
+            ("full", Some(full.as_str())),
+            ("plain", None),
+            ("paxed", Some(long.as_str())),
+        ];
+        for (got, (name, link)) in got.iter().zip(expected) {
+            assert_eq!(got.0, name);
+            assert_eq!(got.1.as_deref(), link);
+        }
+        let mut r = TarReader::new(&tar[..]);
+        let sym = r.next_entry().unwrap().unwrap();
+        assert_eq!(sym.symlink(), Some("../lib/x.so"));
+        assert_eq!(sym.hard_link(), None);
+        r.skip_data(&sym).unwrap();
+        let hard = r.next_entry().unwrap().unwrap();
+        assert_eq!((hard.symlink(), hard.hard_link()), (None, Some("./a.txt")));
+    }
+
+    #[test]
+    fn broken_link_targets_are_errors_not_panics() {
+        // A long link name with no entry after it, then cut inside its data.
+        let mut alone = header("././@LongLink", b'K', 7);
+        alone.extend(padded(b"target\0"));
+        assert!(links(&alone).is_err());
+        let mut then_end = alone.clone();
+        then_end.extend(end());
+        assert!(links(&then_end).is_err());
+        let mut cut = header("././@LongLink", b'K', 600);
+        cut.extend(vec![b'a'; 100]);
+        assert!(links(&cut).is_err());
+        // Larger than any name may be, in either extension.
+        let mut huge = header("././@LongLink", b'K', 100_000);
+        huge.extend(end());
+        assert!(matches!(links(&huge), Err(Error::Limit(_))));
+        let records = pax(&[("linkpath", &"x".repeat(limits::MAX_NAME + 1))]);
+        let mut tar = header("PaxHeaders/x", b'x', records.len() as u64);
+        tar.extend(padded(&records));
+        tar.extend(link_header("l", b'2', b"y"));
+        tar.extend(end());
+        assert!(matches!(links(&tar), Err(Error::Limit(_))));
+        // Not UTF-8 in a pax record, and cut in the middle of the header.
+        let mut tar = header("PaxHeaders/x", b'x', 14);
+        tar.extend(padded(b"14 linkpath=\xff\n"));
+        tar.extend(link_header("l", b'2', b"y"));
+        tar.extend(end());
+        assert!(links(&tar).is_err());
+        let whole = link_header("l", b'2', b"target");
+        assert!(links(&whole[..300]).is_err());
+        // Bytes that are not UTF-8 in the header field are kept as best they can be.
+        let mut odd = link_header("l", b'2', b"\xff\xfe");
+        odd.extend(end());
+        assert_eq!(
+            links(&odd).unwrap()[0].1.as_deref(),
+            Some("\u{fffd}\u{fffd}")
+        );
+    }
+
+    #[test]
+    fn links_round_trip_with_short_long_and_non_ascii_targets() {
+        let long = format!("../{}/{}", "日本".repeat(30), "ñ".repeat(40));
+        assert!(long.len() > 100);
+        let mut w = TarWriter::new(Vec::new());
+        w.add("a.txt", 1, 0, 0o644, &b"a"[..]).unwrap();
+        w.add_link("short", "a.txt", 1_700_000_000, b'2').unwrap();
+        w.add_link("long", &long, 1_700_000_000, b'2').unwrap();
+        w.add_link("hard", "a.txt", 1_700_000_000, b'1').unwrap();
+        w.add_link("bad", "", 0, b'2').unwrap_err();
+        w.add_link("bad", "a.txt", 0, b'0').unwrap_err();
+        let tar = w.finish().unwrap();
+        let got = links(&tar).unwrap();
+        assert_eq!(got.len(), 4);
+        assert_eq!(got[1], ("short".into(), Some("a.txt".into())));
+        assert_eq!(got[2], ("long".into(), Some(long.clone())));
+        assert_eq!(got[3], ("hard".into(), Some("a.txt".into())));
+        let mut r = TarReader::new(&tar[..]);
+        let file = r.next_entry().unwrap().unwrap();
+        r.skip_data(&file).unwrap();
+        let short = r.next_entry().unwrap().unwrap();
+        assert_eq!(
+            (short.kind, short.entry.size, short.is_plain()),
+            (b'2', 0, false)
+        );
     }
 
     #[test]
@@ -949,7 +1172,7 @@ mod tests {
     #[test]
     fn sizes_and_times_past_ustar_fields_are_kept() {
         let huge = (8u64 << 30) + 5;
-        let header = ustar_header("big", "", huge, -1, 0o644, b'0');
+        let header = ustar_header("big", "", "", huge, -1, 0o644, b'0');
         assert_eq!(unsigned(&header[124..136], "size").unwrap(), huge);
         assert!(is_header(&header));
         let record = pax_record("size", &huge.to_string());
