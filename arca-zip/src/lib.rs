@@ -1474,7 +1474,8 @@ impl<W: Write + Seek> ZipWriter<W> {
     // seeks straight back to it to patch the sizes once they are known. The AES
     // field, when there is one, goes after it so that offset stays put. With
     // `known` the checksum and sizes go in at once and nothing is patched
-    // later. Answers with the length of the header.
+    // later. An entry whose sizes are known to fit in 32 bits then needs
+    // no Zip64 field at all. Answers with the length of the header.
     fn write_lfh(
         &mut self,
         name_str: &[u8],
@@ -1486,7 +1487,8 @@ impl<W: Write + Seek> ZipWriter<W> {
     ) -> Result<u64> {
         let (crc_val, comp_size, uncompressed) = known.unwrap_or((0, 0, 0));
         let short = |n: u64| n.min(0xFFFF_FFFF) as u32;
-        let extra_len = EXTRA_Z64 + aes_extra.map_or(0, |x| x.len());
+        let zip64 = known.is_none_or(|(_, c, u)| c >= 0xFFFF_FFFF || u >= 0xFFFF_FFFF);
+        let extra_len = if zip64 { EXTRA_Z64 } else { 0 } + aes_extra.map_or(0, |x| x.len());
         let flags: u16 = if aes_extra.is_some() { 0x0801 } else { 0x0800 };
         let mut h = Vec::with_capacity(LFH_FIXED + name_str.len() + extra_len);
         h.extend_from_slice(&SIG_LFH.to_le_bytes());
@@ -1501,10 +1503,12 @@ impl<W: Write + Seek> ZipWriter<W> {
         h.extend_from_slice(&(name_str.len() as u16).to_le_bytes());
         h.extend_from_slice(&(extra_len as u16).to_le_bytes());
         h.extend_from_slice(name_str);
-        h.extend_from_slice(&0x0001u16.to_le_bytes());
-        h.extend_from_slice(&16u16.to_le_bytes());
-        h.extend_from_slice(&uncompressed.to_le_bytes());
-        h.extend_from_slice(&comp_size.to_le_bytes());
+        if zip64 {
+            h.extend_from_slice(&0x0001u16.to_le_bytes());
+            h.extend_from_slice(&16u16.to_le_bytes());
+            h.extend_from_slice(&uncompressed.to_le_bytes());
+            h.extend_from_slice(&comp_size.to_le_bytes());
+        }
         if let Some(x) = aes_extra {
             h.extend_from_slice(x);
         }
@@ -2619,8 +2623,12 @@ mod tests {
         let out = w.finish().unwrap();
         assert_eq!(out.seeks, 0);
 
-        let mut a = ZipArchive::open(IoCursor::new(out.inner.into_inner())).unwrap();
+        let buf = out.inner.into_inner();
+        let mut a = ZipArchive::open(IoCursor::new(buf.clone())).unwrap();
         for (i, body) in bodies.iter().enumerate() {
+            let at = a.entries()[i].offset as usize;
+            let extra_len = u16::from_le_bytes([buf[at + 28], buf[at + 29]]);
+            assert_eq!(extra_len, 0, "{}", a.entries()[i].name);
             let mut got = Vec::new();
             a.extract_to(i, &mut got).unwrap();
             assert_eq!(&got, body);
@@ -2629,6 +2637,21 @@ mod tests {
         a.extract_to_with(bodies.len(), &mut got, Some("pw"))
             .unwrap();
         assert_eq!(got, b"sealed");
+    }
+
+    #[test]
+    fn a_local_header_keeps_its_zip64_field_when_a_size_needs_it() {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        let big = 0x1_0000_0000u64;
+        w.add_compressed("big", b"x", 0, big, Method::Store, None)
+            .unwrap();
+        let buf = w.finish().unwrap().into_inner();
+        assert_eq!(&buf[18..26], &[1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(u16::from_le_bytes([buf[28], buf[29]]), EXTRA_Z64 as u16);
+        let field = &buf[LFH_FIXED + 3..LFH_FIXED + 3 + EXTRA_Z64];
+        assert_eq!(&field[..4], &[0x01, 0x00, 0x10, 0x00]);
+        assert_eq!(field[4..12], big.to_le_bytes());
+        assert_eq!(field[12..20], 1u64.to_le_bytes());
     }
 
     #[cfg(feature = "codecs-native")]
