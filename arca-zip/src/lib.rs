@@ -2151,6 +2151,21 @@ pub fn seal_block(compressed: &[u8], password: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+#[cfg(feature = "codecs-native")]
+const SCRATCH_MAX: usize = 1 << 20;
+
+#[cfg(feature = "codecs-native")]
+type Deflater = Option<(i32, libdeflater::Compressor, Vec<u8>)>;
+
+#[cfg(feature = "codecs-native")]
+type ZstdBulk = Option<(i32, zstd::bulk::Compressor<'static>)>;
+
+#[cfg(feature = "codecs-native")]
+thread_local! {
+    static DEFLATER: std::cell::RefCell<Deflater> = const { std::cell::RefCell::new(None) };
+    static ZSTD: std::cell::RefCell<ZstdBulk> = const { std::cell::RefCell::new(None) };
+}
+
 /// Deflates a block that is already in memory.
 ///
 /// The same deflate everything reads -- what changes is who does the work.
@@ -2176,14 +2191,29 @@ fn deflate_block(data: &[u8], level: Level) -> Result<Vec<u8>> {
         // libdeflate does not know goes the same way: nothing fails here, it is
         // done by the other road.
         if !data.is_empty() {
-            if let Ok(lvl) = libdeflater::CompressionLvl::new(level.to_libdeflate()) {
-                let mut c = libdeflater::Compressor::new(lvl);
-                let mut out = vec![0u8; c.deflate_compress_bound(data.len())];
+            let n = level.to_libdeflate();
+            if let Ok(lvl) = libdeflater::CompressionLvl::new(n) {
                 // Data that will not compress comes out larger than it went in,
                 // and the bound is there to cover that. If it somehow did not,
                 // zlib finishes the job rather than the archive failing.
-                if let Ok(n) = c.deflate_compress(data, &mut out) {
-                    out.truncate(n);
+                let done = DEFLATER.with(|slot| {
+                    let mut slot = slot.borrow_mut();
+                    let (_, c, scratch) = match &mut *slot {
+                        Some(kept) if kept.0 == n => kept,
+                        other => other.insert((n, libdeflater::Compressor::new(lvl), Vec::new())),
+                    };
+                    let bound = c.deflate_compress_bound(data.len());
+                    if bound > SCRATCH_MAX {
+                        let mut out = vec![0u8; bound];
+                        let n = c.deflate_compress(data, &mut out).ok()?;
+                        out.truncate(n);
+                        return Some(out);
+                    }
+                    scratch.resize(bound.max(scratch.len()), 0);
+                    let n = c.deflate_compress(data, &mut scratch[..bound]).ok()?;
+                    Some(scratch[..n].to_vec())
+                });
+                if let Some(out) = done {
                     return Ok(out);
                 }
             }
@@ -2202,7 +2232,19 @@ pub fn compress_block(data: &[u8], codec: Codec, level: Level) -> Result<(Vec<u8
         Codec::Zstd => {
             #[cfg(feature = "codecs-native")]
             {
-                let c = zstd::bulk::compress(data, level.to_zstd()).map_err(Error::Io)?;
+                let n = level.to_zstd();
+                let c = ZSTD
+                    .with(|slot| {
+                        let mut slot = slot.borrow_mut();
+                        let (_, c) = match &mut *slot {
+                            Some(kept) if kept.0 == n => kept,
+                            other => other.insert((n, zstd::bulk::Compressor::new(n)?)),
+                        };
+                        let mut out = c.compress(data)?;
+                        out.shrink_to_fit();
+                        Ok::<_, io::Error>(out)
+                    })
+                    .map_err(Error::Io)?;
                 Ok((c, Method::Zstd, crc_val))
             }
             #[cfg(not(feature = "codecs-native"))]
@@ -2484,9 +2526,6 @@ mod tests {
         }
     }
 
-    // A seek flushes whatever buffer sits in front of the file, so patching
-    // each header after its data turned every small entry into several small
-    // writes. A block already in memory has everything its header needs.
     #[test]
     fn blocks_already_compressed_are_written_without_seeking_back() {
         let bodies: Vec<Vec<u8>> = (0..20)
@@ -2557,6 +2596,30 @@ mod tests {
                     .read_to_end(&mut got)
                     .unwrap();
                 assert_eq!(got, want, "level {level:?}, {} bytes", want.len());
+            }
+        }
+    }
+
+    #[cfg(feature = "codecs-native")]
+    #[test]
+    fn a_kept_compressor_gives_the_bytes_a_fresh_one_would() {
+        let text = b"a kept compressor and its scratch buffer ".repeat(60_000);
+        let inputs: [&[u8]; 3] = [&text[..5_000], &text, &text[..70]];
+        for level in [Level::NORMAL, Level::FAST, Level::BEST, Level::NORMAL] {
+            for data in inputs {
+                let n = level.to_libdeflate();
+                let mut fresh =
+                    libdeflater::Compressor::new(libdeflater::CompressionLvl::new(n).unwrap());
+                let mut want = vec![0u8; fresh.deflate_compress_bound(data.len())];
+                let len = fresh.deflate_compress(data, &mut want).unwrap();
+                want.truncate(len);
+                assert_eq!(deflate_block(data, level).unwrap(), want);
+
+                let (zstd_got, ..) = compress_block(data, Codec::Zstd, level).unwrap();
+                assert_eq!(
+                    zstd_got,
+                    zstd::bulk::compress(data, level.to_zstd()).unwrap()
+                );
             }
         }
     }
