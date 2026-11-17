@@ -183,6 +183,7 @@ pub struct Strings {
     pub compressing: &'static str,
     pub testing: &'static str,
     pub extracted_to: &'static str,
+    pub links_left_out: &'static str,
     // Only a drag out of an archive says these, and only Windows has one.
     #[cfg_attr(not(windows), allow(dead_code))]
     pub dragged_out: &'static str,
@@ -620,6 +621,7 @@ const EN: Strings = Strings {
     compressing: "Compressing",
     testing: "Testing",
     extracted_to: "Extracted {size} into {dest}",
+    links_left_out: "{n} links left out: their target is outside the folder or this system cannot create them",
     dragged_out: "Extracted {size} where it was dropped",
     drag_out_failed: "{n} could not be extracted",
     created: "Created {name}: {from} to {to} ({pct} saved)",
@@ -1050,6 +1052,7 @@ const ES: Strings = Strings {
     compressing: "Comprimiendo",
     testing: "Comprobando",
     extracted_to: "Extraído {size} en {dest}",
+    links_left_out: "{n} enlaces omitidos: su destino está fuera de la carpeta o este sistema no puede crearlos",
     dragged_out: "Extraído {size} donde se soltó",
     drag_out_failed: "No se pudieron extraer {n}",
     created: "Creado {name}: {from} a {to} ({pct} ahorrado)",
@@ -1480,6 +1483,7 @@ const UK: Strings = Strings {
     compressing: "Стиснення",
     testing: "Перевірка",
     extracted_to: "Видобуто {size} до {dest}",
+    links_left_out: "Пропущено посилань: {n} — їхня ціль поза папкою або ця система не може їх створити",
     dragged_out: "Видобуто {size} туди, куди перетягнуто",
     drag_out_failed: "Не вдалося видобути: {n}",
     created: "Створено {name}: з {from} до {to} (економія {pct})",

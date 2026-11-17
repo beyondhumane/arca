@@ -111,6 +111,7 @@ struct Paced<'a, R> {
     inner: R,
     name: &'a str,
     notify: &'a (dyn Fn(usize, usize, &str) -> bool + Sync),
+    at: (usize, usize),
     since: u64,
     stopped: bool,
 }
@@ -125,9 +126,16 @@ impl<'a, R: Read> Paced<'a, R> {
             inner,
             name,
             notify,
+            at: (0, 1),
             since: 0,
             stopped: false,
         }
+    }
+
+    /// Reports the stream as entry `done` of `total` rather than the only one.
+    fn at(mut self, done: usize, total: usize) -> Self {
+        self.at = (done, total);
+        self
     }
 
     fn check<T>(&self, result: arca_core::Result<T>) -> arca_core::Result<T> {
@@ -142,13 +150,13 @@ impl<R: Read> Read for Paced<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.since >= STEP {
             self.since = 0;
-            if !(self.notify)(0, 1, self.name) {
+            if !(self.notify)(self.at.0, self.at.1, self.name) {
                 self.stopped = true;
                 return Err(std::io::Error::other("cancelled"));
             }
         }
         let n = self.inner.read(buf)?;
-        if n == 0 && !buf.is_empty() && !(self.notify)(0, 1, self.name) {
+        if n == 0 && !buf.is_empty() && !(self.notify)(self.at.0, self.at.1, self.name) {
             self.stopped = true;
             return Err(std::io::Error::other("cancelled"));
         }
@@ -688,15 +696,32 @@ fn write_entry(
     reader: &mut dyn Read,
     ask: &dyn Fn(&Path) -> Answer,
 ) -> arca_core::Result<u64> {
-    use arca_core::extraction::Conflict;
     destination
-        .write_entry(name, is_dir, mtime, reader, &mut |path| match ask(path) {
-            Answer::Replace | Answer::ReplaceAll => Conflict::Overwrite,
-            Answer::Skip | Answer::SkipAll => Conflict::Skip,
-            Answer::Rename | Answer::RenameAll => Conflict::Rename,
-            Answer::Cancel => Conflict::Cancel,
+        .write_entry(name, is_dir, mtime, reader, &mut |path| {
+            conflict_of(ask(path))
         })
         .map(|written| written.unwrap_or(0))
+}
+
+fn conflict_of(answer: Answer) -> arca_core::extraction::Conflict {
+    use arca_core::extraction::Conflict;
+    match answer {
+        Answer::Replace | Answer::ReplaceAll => Conflict::Overwrite,
+        Answer::Skip | Answer::SkipAll => Conflict::Skip,
+        Answer::Rename | Answer::RenameAll => Conflict::Rename,
+        Answer::Cancel => Conflict::Cancel,
+    }
+}
+
+pub(crate) fn extract(
+    archive: &Path,
+    dest: &Path,
+    wanted: &[bool],
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+    ask: &dyn Fn(&Path) -> Answer,
+    password: Option<&str>,
+) -> arca_core::Result<u64> {
+    extract_reporting(archive, dest, wanted, notify, ask, password, &mut 0)
 }
 
 // A .zip is random access: the central directory says where every entry starts,
@@ -708,7 +733,10 @@ fn write_entry(
 // Asking the window from several threads at once would put the same dialog on
 // screen twice, and racing on which name is free gives a different result every
 // run.
-pub(crate) fn extract(
+//
+// `links_left_out` is told how many links of a TAR were not made, because
+// their target lies outside `dest` or this system cannot make them.
+pub(crate) fn extract_reporting(
     archive: &Path,
     dest: &Path,
     wanted: &[bool],
@@ -717,6 +745,7 @@ pub(crate) fn extract(
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     ask: &dyn Fn(&Path) -> Answer,
     password: Option<&str>,
+    links_left_out: &mut usize,
 ) -> arca_core::Result<u64> {
     let Some(format) = detect(archive) else {
         return Err(arca_core::Error::Unsupported("unknown format".into()));
@@ -815,32 +844,52 @@ pub(crate) fn extract(
         }
         // Each file goes in under a temporary name and is renamed only once
         // its data has been read to the end, so a corrupt or truncated archive
-        // never leaves a short file under the real name.
+        // never leaves a short file under the real name. Links are made last,
+        // by `Destination`, and only those that stay inside `dest`.
         Container::Tar | Container::TarGz | Container::TarXz => {
             let mut r = TarReader::new(open_source(archive, format)?);
+            let mut destination = arca_core::extraction::Destination::new(dest);
+            let mut answer = |path: &Path| conflict_of(ask(path));
             let total = wanted.len();
             let mut i = 0usize;
             while let Some(e) = r.next_entry()? {
                 if !notify(i, total, &e.entry.name) {
                     return Err(arca_core::Error::Cancelled);
                 }
-                if !e.is_plain() || !wanted.is_empty() && !wanted.get(i).copied().unwrap_or(true) {
+                if !wanted.is_empty() && !wanted.get(i).copied().unwrap_or(true) {
                     r.skip_data(&e)?;
                     i += 1;
                     continue;
                 }
-                match dest_path(dest, &e.entry.name, e.entry.is_dir, ask, &mut claimed)? {
-                    Some(path) => {
-                        let at = (i, total, e.entry.name.as_str());
-                        bytes += unpack(&path, (e.entry.mtime, Some(e.mode)), notify, at, |out| {
-                            r.with_data(&e, |data| Ok(std::io::copy(data, out)?))
-                        })?;
-                    }
-                    None => r.skip_data(&e)?,
+                if let Some(target) = e.symlink() {
+                    destination.write_symlink(&e.entry.name, target)?;
+                } else if let Some(target) = e.hard_link() {
+                    let (mtime, mode) = (e.entry.mtime, Some(e.mode));
+                    destination.write_hard_link(&e.entry.name, target, mtime, mode, &mut answer)?;
+                }
+                if e.is_plain() {
+                    let name = e.entry.name.as_str();
+                    let written = r.with_data(&e, |data| {
+                        let mut data = Paced::new(data, name, notify).at(i, total);
+                        let result = destination.write_file(
+                            name,
+                            e.entry.is_dir,
+                            e.entry.mtime,
+                            Some(e.mode),
+                            &mut data,
+                            &mut answer,
+                        );
+                        data.check(result)
+                    })?;
+                    bytes += written.unwrap_or(0);
+                } else {
+                    r.skip_data(&e)?;
                 }
                 i += 1;
             }
             arca_xz::drain(&mut r.into_inner())?;
+            destination.make_links(&mut answer)?;
+            *links_left_out = destination.refused().len();
             let _ = notify(i, i, "");
         }
     }
@@ -955,7 +1004,7 @@ pub(crate) fn test_archive(
 }
 
 pub(crate) fn collect_files(inputs: &[PathBuf]) -> std::io::Result<Vec<(PathBuf, String)>> {
-    collect_sources(inputs, false)
+    collect_sources(inputs, false, &mut Vec::new())
 }
 
 /// Ceilings for walking the sources of a new RAR archive. The writer checks
@@ -1111,15 +1160,22 @@ pub(crate) fn collect_rar_sources(
     Ok(walk.out)
 }
 
+/// A symbolic link a TAR stores as one: its name, what it holds, its time.
+type Link = (String, String, i64);
+
+/// The files under `inputs`, the folders too when `directories`, and in
+/// `links` the symbolic links among them, which are never followed.
 fn collect_sources(
     inputs: &[PathBuf],
     directories: bool,
+    links: &mut Vec<Link>,
 ) -> std::io::Result<Vec<(PathBuf, String)>> {
     fn walk(
         p: &Path,
         base: &Path,
         out: &mut Vec<(PathBuf, String)>,
         directories: bool,
+        links: &mut Vec<Link>,
     ) -> std::io::Result<()> {
         let meta = fs::symlink_metadata(p)?;
         let rel = p.strip_prefix(base).unwrap_or(p);
@@ -1131,7 +1187,7 @@ fn collect_sources(
             let mut children: Vec<_> = fs::read_dir(p)?.collect::<std::io::Result<Vec<_>>>()?;
             children.sort_by_key(|d| d.file_name());
             for c in children {
-                walk(&c.path(), base, out, directories)?;
+                walk(&c.path(), base, out, directories, links)?;
             }
         } else if meta.is_file() {
             out.push((p.to_path_buf(), name));
@@ -1140,6 +1196,8 @@ fn collect_sources(
                 std::io::ErrorKind::InvalidInput,
                 "7z sources must be regular files or directories",
             ));
+        } else if let Some(target) = arca_tar::link_target(p, &meta) {
+            links.push((name, target, mtime_of(&meta)));
         }
         Ok(())
     }
@@ -1147,9 +1205,17 @@ fn collect_sources(
     let mut v = Vec::new();
     for e in inputs {
         let base = e.parent().unwrap_or(Path::new(""));
-        walk(e, base, &mut v, directories)?;
+        walk(e, base, &mut v, directories, links)?;
     }
     Ok(v)
+}
+
+/// The symbolic links of a new TAR, after its files.
+fn add_links<W: Write>(w: &mut TarWriter<W>, links: &[Link]) -> arca_core::Result<()> {
+    for (name, target, mtime) in links {
+        w.add_link(name, target, *mtime, b'2')?;
+    }
+    Ok(())
 }
 
 fn mtime_of(m: &fs::Metadata) -> i64 {
@@ -1204,7 +1270,8 @@ pub(crate) fn compress(
         return Ok((source_bytes, final_size));
     }
     let own = arca_core::extraction::OwnOutput::new(out);
-    let mut files = collect_sources(inputs, format == Format::SevenZ)?;
+    let mut links = Vec::new();
+    let mut files = collect_sources(inputs, format == Format::SevenZ, &mut links)?;
     files.retain(|(path, name)| name.ends_with('/') || !own.is_own(path));
     if format == Format::Xz && !(inputs.len() == 1 && files.len() == 1 && inputs[0].is_file()) {
         return Err(arca_core::Error::Unsupported(
@@ -1263,7 +1330,7 @@ pub(crate) fn compress(
         Container::Tar | Container::TarGz => {
             fn tar_into<W: Write>(
                 sink: W,
-                files: &[(PathBuf, String)],
+                (files, links): (&[(PathBuf, String)], &[Link]),
                 notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
                 bytes: &mut u64,
             ) -> arca_core::Result<W> {
@@ -1283,19 +1350,21 @@ pub(crate) fn compress(
                     )?;
                     *bytes += meta.len();
                 }
+                add_links(&mut w, links)?;
                 w.finish()
             }
+            let sources = (files.as_slice(), links.as_slice());
             staged(out, |raw| {
                 if format == Format::TarGz {
                     let gz = flate2::write::GzEncoder::new(
                         raw,
                         flate2::Compression::new(level.to_flate2()),
                     );
-                    tar_into(gz, &files, notify, &mut source_bytes)?
+                    tar_into(gz, sources, notify, &mut source_bytes)?
                         .finish()?
                         .flush()?;
                 } else {
-                    tar_into(raw, &files, notify, &mut source_bytes)?.flush()?;
+                    tar_into(raw, sources, notify, &mut source_bytes)?.flush()?;
                 }
                 Ok(())
             })?;
@@ -1325,6 +1394,7 @@ pub(crate) fn compress(
             if !notify(total, total, "") {
                 return Err(arca_core::Error::Cancelled);
             }
+            add_links(&mut w, &links)?;
             w.finish()?.finish()?.flush()?;
             Ok(())
         })?,
@@ -1547,6 +1617,66 @@ mod tests {
             "{result:?}"
         );
         assert_eq!(fs::read(dest.join("big.bin")).unwrap(), b"keep");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // A TAR goes through the same guarded destination as the command line:
+    // a stop inside a big entry takes the half-written file with it, and the
+    // links that are not made are counted for the window to report.
+    #[test]
+    fn tar_extraction_stops_inside_an_entry_and_counts_the_links_left_out() {
+        let dir = room("tar-links");
+        let archive = dir.join("links.tar");
+        let mut tar = TarWriter::new(File::create(&archive).unwrap());
+        tar.add("big.bin", 3 * STEP, 0, 0o644, std::io::repeat(7))
+            .unwrap();
+        tar.add_link("near", "big.bin", 0, b'2').unwrap();
+        tar.add_link("far", "/etc/passwd", 0, b'2').unwrap();
+        tar.add_link("up", "../outside", 0, b'2').unwrap();
+        tar.add_link("hard", "big.bin", 0, b'1').unwrap();
+        tar.finish().unwrap();
+
+        let dest = dir.join("out");
+        let looks = AtomicUsize::new(0);
+        let stopped = extract(
+            &archive,
+            &dest,
+            &[],
+            &|_, _, _| looks.fetch_add(1, Ordering::Relaxed) < 1,
+            &|_| Answer::Replace,
+            None,
+        );
+        assert!(
+            matches!(stopped, Err(arca_core::Error::Cancelled)),
+            "{stopped:?}"
+        );
+        assert_eq!(fs::read_dir(&dest).unwrap().count(), 0);
+
+        let mut left_out = 0;
+        let written = extract_reporting(
+            &archive,
+            &dest,
+            &[],
+            &|_, _, _| true,
+            &|_| Answer::Replace,
+            None,
+            &mut left_out,
+        )
+        .unwrap();
+        assert_eq!(written, 3 * STEP);
+        assert_eq!(fs::metadata(dest.join("hard")).unwrap().len(), 3 * STEP);
+        assert!(!dest.join("far").exists() && !dest.join("up").exists());
+        assert!(!dir.join("outside").exists());
+        if cfg!(unix) {
+            assert_eq!(left_out, 2);
+            assert!(fs::symlink_metadata(dest.join("near"))
+                .unwrap()
+                .file_type()
+                .is_symlink());
+        } else {
+            assert_eq!(left_out, 3);
+            assert!(fs::symlink_metadata(dest.join("near")).is_err());
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 }

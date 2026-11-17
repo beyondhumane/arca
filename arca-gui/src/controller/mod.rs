@@ -419,15 +419,31 @@ impl AppController {
             Box::new(move |tx, reply_rx, stop, hold| {
                 let notify = worker_notify(&tx, &stop, &hold);
                 let ask = conflict_asker(&tx, &reply_rx);
-                let result = extract(&archive, &dest, &wanted, &notify, &ask, pw.as_deref());
+                let mut left_out = 0;
+                let result = extract_reporting(
+                    &archive,
+                    &dest,
+                    &wanted,
+                    &notify,
+                    &ask,
+                    pw.as_deref(),
+                    &mut left_out,
+                );
                 let _ = tx.send(match result {
-                    Ok(bytes) => Message::Done(fill(
-                        s.extracted_to,
-                        &[
-                            ("size", &human(bytes)),
-                            ("dest", &dest.display().to_string()),
-                        ],
-                    )),
+                    Ok(bytes) => {
+                        let mut done = fill(
+                            s.extracted_to,
+                            &[
+                                ("size", &human(bytes)),
+                                ("dest", &dest.display().to_string()),
+                            ],
+                        );
+                        if left_out > 0 {
+                            done.push_str(". ");
+                            done.push_str(&fill(s.links_left_out, &[("n", &left_out.to_string())]));
+                        }
+                        Message::Done(done)
+                    }
                     Err(e) => Message::Failed(e.to_string()),
                 });
             }),
