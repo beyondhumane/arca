@@ -422,6 +422,7 @@ version = "0.10.0"
 dependencies = [
  "aes",
  "arca-core",
+ "bzip2",
  "crc32fast",
  "ctr",
  "flate2",

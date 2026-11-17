@@ -45,6 +45,9 @@ arca-icons = { path = "arca-icons" }
 arca-brand = { path = "arca-brand" }
 # DEFLATE: zlib-rs, la implementacion en Rust mas rapida medida (ver diseno S02)
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+# bzip2: libbz2-rs-sys, el port a Rust de libbzip2. Sin compilador de C, asi que
+# no necesita la bandera codecs-native.
+bzip2 = "0.6.1"
 crc32fast = "1"
 # Zstandard: bindings a libzstd, con su multihilo interno activado.
 zstd = { version = "0.14", features = ["zstdmt"] }
