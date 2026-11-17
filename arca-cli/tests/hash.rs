@@ -148,3 +148,26 @@ fn paths_and_check_cannot_be_combined() {
     let out = arca(room.path(), &["hash"]);
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn names_from_a_sum_file_are_printed_without_control_characters() {
+    let room = tempfile::tempdir().unwrap();
+    let dir = room.path();
+    fs::write(
+        dir.join("SUMS"),
+        format!("{ABC_SHA256}  evil\u{1b}[2Jname\u{202e}txt.exe\n"),
+    )
+    .unwrap();
+    let out = arca(dir, &["hash", "--check", "SUMS"]);
+    assert_eq!(out.status.code(), Some(1));
+    let (printed, errors) = (stdout(&out), String::from_utf8_lossy(&out.stderr));
+    assert!(printed.contains("FAILED open or read"), "{printed}");
+    for text in [printed.as_str(), &errors] {
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+        assert!(!text.contains('\u{202e}'), "{text:?}");
+    }
+    assert!(
+        printed.contains("evil\u{fffd}[2Jname\u{fffd}txt.exe"),
+        "{printed:?}"
+    );
+}

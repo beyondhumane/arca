@@ -97,6 +97,7 @@ fn verify(sums: &Path, forced: Option<Algorithm>) -> Result<bool> {
         |i| listed[i].0,
         |path, result| {
             let (_, wanted, name) = &listed[next];
+            let name = super::printable(name);
             next += 1;
             match result {
                 Ok(found) if found == *wanted => writeln!(out, "{name}: OK")?,
@@ -108,7 +109,10 @@ fn verify(sums: &Path, forced: Option<Algorithm>) -> Result<bool> {
                     unreadable += 1;
                     writeln!(out, "{name}: FAILED open or read")?;
                     out.flush()?;
-                    eprintln!("arca: {}: {error}", path.display());
+                    eprintln!(
+                        "arca: {}: {error}",
+                        super::printable(&path.to_string_lossy())
+                    );
                 }
             }
             Ok(())
