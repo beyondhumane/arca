@@ -129,6 +129,80 @@ arca extract big.zip -o out
 7z x -o"out" big7z.zip
 ```
 
+## LZMA y LZMA2: .xz, .tar.xz y .7z
+
+Windows 11, Ryzen 7 3700X (8 núcleos, 16 hilos), frente a xz 5.8.1 de Git for Windows; 7-Zip no estaba instalado. Otras compilaciones compartían la máquina mientras se medía, así que cada fila es la mediana de pasadas intercaladas, con su intervalo entre corchetes, y se da tanto el tiempo de reloj como el tiempo de CPU del propio proceso. «Antes» es Arca en el commit `4b1d67b` y «después», el mismo código con el trabajo de LZMA de `roadmap/lzma-speed`; los dos dicen `arca 0.10.0`.
+
+El corpus son 80 MiB que cualquier máquina regenera byte a byte: 24 MiB de prosa, 24 de código parecido a Rust y 24 de código máquina parecido a x86, y 8 MiB de bytes aleatorios.
+
+```sh
+cargo build --release
+cargo run --release -p arca-bench --example lzma_corpus -- corpus
+tar -cf corpus.tar corpus
+xz -1 -T0 -kc corpus.tar > t1.tar.xz   # 27 bloques
+xz -6 -T0 -kc corpus.tar > t6.tar.xz   # 4 bloques
+xz -6 -T1 -kc corpus.tar > s6.tar.xz   # 1 bloque
+```
+
+### Extraer un .tar.xz
+
+Tiempo de reloj con su intervalo y, después, tiempo de CPU, mediana de 5. Arca además lee el TAR y escribe los cuatro archivos; xz escribe el `.tar`.
+
+| Archivo | Arca antes | Arca después | xz -T1 | xz -T0 |
+| --- | --- | --- | --- | --- |
+| `t1.tar.xz`, 27 bloques | 1.70 s [1.44–14.11] · 1.56 s | 0.27 s [0.18–0.89] · 1.64 s | 1.08 s [0.88–1.12] · 1.06 s | **0.20 s** [0.17–0.22] · 1.11 s |
+| `t6.tar.xz`, 4 bloques | 1.38 s [1.28–2.96] · 1.34 s | 0.59 s [0.57–0.64] · 1.23 s | 0.87 s [0.81–0.99] · 0.88 s | **0.42 s** [0.40–0.47] · 0.89 s |
+| `s6.tar.xz`, 1 bloque | 1.32 s [1.29–1.53] · 1.28 s | 1.13 s [1.11–1.20] · 1.13 s | **0.86 s** [0.83–0.90] · 0.81 s | 0.86 s [0.85–1.00] · 0.86 s |
+
+```sh
+arca extract t1.tar.xz -o out
+xz -dkf -T1 t1.tar.xz
+xz -dkf -T0 t1.tar.xz
+```
+
+Un `.xz` escrito en varios hilos es una serie de bloques independientes, y Arca descomprime ahora un bloque por núcleo, como hace `xz -T0`. Un archivo de un solo bloque se sigue descomprimiendo en un hilo; ahí las sumas de comprobación de XZ más rápidas han recortado el tiempo de Arca un 14%, pero sigue gastando 1.13 s de CPU frente a los 0.81 s de xz, en parte por leer el TAR y escribir los archivos: su descompresor, en Rust seguro, es más lento que el de liblzma. Con muchos bloques pequeños Arca se acerca más a `xz -T0`; con cuatro, el bloque mayor marca el ritmo de las dos herramientas.
+
+### Crear un .tar.xz
+
+Mediana de 3. Arca con `-l 1` y `-l 6` frente a `xz -1` y `xz -6` sobre los mismos archivos; los tamaños no se separan más de un 0.03% en ningún nivel.
+
+| Orden | Reloj | CPU | Tamaño |
+| --- | --- | --- | --- |
+| Arca antes, `-l 1`, 16 hilos | 1.63 s [1.51–1.80] | 11.09 s | 36,000,336 |
+| Arca después, `-l 1`, 16 hilos | 1.59 s [1.49–1.62] | 10.98 s | 36,000,336 |
+| `xz -1 -T0` | **1.44 s** [1.43–1.55] | 12.13 s | 36,001,028 |
+| Arca antes, `-l 6`, 14 hilos | 32.46 s [29.64–36.25] | 86.91 s | 30,456,380 |
+| Arca después, `-l 6`, 14 hilos | 38.66 s [26.36–48.31] | 88.78 s | 30,456,380 |
+| `xz -6 -T0` | **32.60 s** [24.94–44.92] | 69.53 s | 30,463,552 |
+| Arca después, `-l 6 -j 1` | 91.68 s [86.20–91.96] | 76.22 s | 30,341,456 |
+| `xz -6 -T1` | **69.56 s** [65.70–149.00] | 65.05 s | 30,347,164 |
+
+```sh
+arca create out.tar.xz corpus -l 6
+arca create out.tar.xz corpus -l 6 -j 1
+xz -6 -T0 -kf corpus.tar
+xz -6 -T1 -kf corpus.tar
+```
+
+El compresor no ha cambiado: las dos filas de Arca de cada nivel no se separan más que sus intervalos, y en un hilo Arca gasta un 17% más de CPU que xz con el nivel 6. Con ese nivel, la mayor parte del tiempo se va en el buscador de coincidencias en árbol binario, que recorre memoria que la caché no tiene, el mismo trabajo que hace xz. Los dos cortan la entrada en bloques de tres diccionarios, 24 MiB con el nivel 6, así que 80 MiB dan solo cuatro bloques que comprimir a la vez, y el de prosa, el más lento, marca el tiempo de reloj.
+
+### 7z, nivel a nivel
+
+Mediana de 3 para crear y de 5 para extraer, con archivos hechos por Arca a partir del mismo directorio `corpus`. Los tamaños no han cambiado ni un byte.
+
+| Nivel | Crear antes | Crear después | Extraer antes | Extraer después | Tamaño |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 1.44 s [1.38–1.48] | 1.57 s [1.56–1.62] | 1.52 s [1.29–7.80] | **0.29 s** [0.23–0.58] | 35,998,493 |
+| 6 | 32.30 s [31.21–32.97] | 33.83 s [30.69–35.30] | 2.49 s [1.59–15.27] | **0.76 s** [0.59–1.24] | 30,457,591 |
+| 9 | 127.48 s [114.34–169.06] | 128.72 s [117.23–173.85] | 1.72 s [1.38–2.06] | 1.59 s [1.24–8.76] | 30,231,863 |
+
+```sh
+arca create out.7z corpus -l 6
+arca extract out.7z -o out
+```
+
+La extracción descomprime ahora los datos LZMA2 en varios hilos allí donde el flujo reinicia su diccionario, como hacen cada pocos diccionarios los compresores multihilo; un bloque de una sola tirada, como el que escribe el nivel 9, se sigue descomprimiendo en un hilo. El tiempo de CPU de la extracción se quedó entre 1.2 y 1.6 s antes y después. Crear con el nivel 1 perdió un 9% de tiempo de reloj, más de lo que separan los intervalos, probablemente porque el compresor LZMA2 multihilo de lzma-rust2 0.22.0, que .7z comparte ahora con .xz, no deja en cola más de un trozo por encima de sus hilos, mientras que 0.21.0 leía por adelantado sin límite.
+
 ## Contra NanaZip, en un archivo lo bastante grande como para doler
 
 Un `.zip` de 3.13 GB con 1513 archivos que al descomprimirse ocupan 6.28 GB, todo en Deflate, con 13 entradas de más de 100 MB. Windows 11, 16 núcleos, NanaZip 7.0.1832, y un SSD SATA sin DRAM (Kingston A400).
