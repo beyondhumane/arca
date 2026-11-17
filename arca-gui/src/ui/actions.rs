@@ -426,8 +426,6 @@ pub(crate) enum DialogKind {
         roots: Vec<String>,
         copy: bool,
     },
-    /// The other side of a comparison: an archive, or a folder, to set
-    /// against `first`, or against the open archive when there is none.
     Compare {
         first: Option<PathBuf>,
         folder: bool,

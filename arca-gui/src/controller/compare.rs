@@ -33,7 +33,6 @@ impl CompareFilter {
     }
 }
 
-/// What a comparison found, and which of it the dialog is showing.
 pub(crate) struct Comparison {
     pub(crate) first: String,
     pub(crate) second: String,
@@ -56,8 +55,6 @@ impl Comparison {
             .count()
     }
 
-    /// The rows being shown, one `marker path` line each, as `arca diff`
-    /// prints them.
     pub(crate) fn lines(&self) -> String {
         self.shown()
             .iter()
@@ -79,9 +76,6 @@ fn label(path: &Path) -> String {
 }
 
 impl AppController {
-    /// Compares `first`, or the open archive when there is none, with
-    /// `second`, an archive or a folder. The open archive's password, when it
-    /// has one, is tried on the other side too.
     pub(crate) fn start_compare(&mut self, first: Option<PathBuf>, second: PathBuf) {
         let (first, password) = match first {
             Some(first) => (first, None),
@@ -136,8 +130,6 @@ impl AppController {
         self.enqueue(task);
     }
 
-    /// With exactly two things picked on the disk, compares them with each
-    /// other and says so.
     pub(crate) fn compare_picked(&mut self) -> bool {
         let mut picked = self.selected_disk_paths();
         if picked.len() != 2 {

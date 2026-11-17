@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
-/// What a name stands for. A link is only told apart where the format says
-/// so, which is a TAR and the disk; anywhere else it reads as a file.
+// A link is only told apart where the format says so, which is a TAR and the
+// disk; anywhere else it reads as a file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
     File,
@@ -55,15 +55,13 @@ pub(crate) enum Source {
     Folder,
 }
 
-/// One side of a comparison: an archive, or a folder on the disk, listed by
-/// name. Names have forward slashes, no `.` steps and no slash at the end, so
-/// a folder `x/` and a file `x` meet under one name; folders that only show
-/// in the path of what is inside them are listed too.
 pub struct Side {
     pub(crate) items: BTreeMap<String, Item>,
     pub(crate) source: Source,
 }
 
+// Names are keyed without the slash a folder ends in, so a folder `x/` and a
+// file `x` meet under one name and read as a change of type.
 pub(crate) fn key(name: &str) -> String {
     name.replace('\\', "/")
         .split('/')
@@ -81,8 +79,6 @@ fn mtime_of(meta: &fs::Metadata) -> Option<i64> {
 }
 
 impl Side {
-    /// An archive in any format Arca reads, a RAR volume set from any of its
-    /// volumes, or a folder.
     pub fn open(path: &Path, password: Option<&str>, notify: Notify<'_>) -> Result<Side> {
         if fs::metadata(path)?.is_dir() {
             return Side::folder(path, notify);
@@ -261,7 +257,6 @@ impl Side {
         }
     }
 
-    /// How many names the side lists, folders included.
     pub fn len(&self) -> usize {
         self.items.len()
     }

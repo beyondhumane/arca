@@ -17,8 +17,6 @@ use side::{Item, Origin, Source};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Told how far along the work is, `(done, total, name)`, and asked whether
-/// to carry on. A zero total means the end is not known yet.
 pub type Notify<'a> = &'a (dyn Fn(usize, usize, &str) -> bool + Sync);
 
 // A ZIP keeps its times in DOS form, to the even second, and some tools round
@@ -27,15 +25,10 @@ const TIME_SLACK: i64 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Change {
-    /// Only in the second side.
     Added,
-    /// Only in the first side.
     Removed,
-    /// In both, with different contents or a link to somewhere else.
     Changed,
-    /// A file on one side, a folder or a link on the other.
     Type,
-    /// The same contents with a different modification time.
     Time,
 }
 
@@ -54,7 +47,6 @@ impl Change {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Difference {
     pub change: Change,
-    /// With forward slashes, and a slash at the end for a folder.
     pub path: String,
 }
 
@@ -66,10 +58,7 @@ impl Difference {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Options {
-    /// Compare sizes, and the CRC32 where both sides record one, without
-    /// reading any contents.
     pub quick: bool,
-    /// Report files whose only difference is the modification time.
     pub times: bool,
 }
 
@@ -113,10 +102,9 @@ fn judge(a: &Item, b: &Item, options: Options) -> Verdict {
     }
 }
 
-/// What two sides hold differently, in name order. Folders are compared by
-/// what they hold, never by their dates. A side that cannot be read, or an
-/// entry that has to be read and cannot be, is an error rather than a
-/// difference.
+// A side that cannot be read, or an entry that has to be read and cannot be,
+// is an error and never a difference: a damaged archive must not pass for a
+// changed one.
 pub fn compare(
     a: &Side,
     b: &Side,
@@ -183,8 +171,6 @@ pub fn compare(
     Ok(out)
 }
 
-/// The SHA-256 of each named file of one side, reported to `notify` as
-/// the `offset`-th onwards of `total`.
 fn digests(
     side: &Side,
     wanted: &[(&str, &Item)],

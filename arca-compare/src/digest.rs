@@ -14,8 +14,6 @@ pub(crate) const BUF: usize = 256 * 1024;
 // Bytes between two looks at "carry on?", so a stop lands inside a large file.
 const STEP: u64 = 4 << 20;
 
-/// One entry that was read: where it sits in the listing, its name, and in
-/// the order they were asked for its checksums, or why it could not be read.
 pub struct Digest {
     pub index: usize,
     pub name: String,
@@ -88,7 +86,6 @@ fn digest(index: usize, name: &str, sums: Result<Vec<String>>) -> Result<Digest>
     }
 }
 
-/// The checksums of one file on the disk, reported to `notify` as `at`.
 pub fn digest_file(
     path: &Path,
     algorithms: &[Algorithm],
@@ -101,7 +98,6 @@ pub fn digest_file(
     })
 }
 
-/// What a TAR, compressed or not, reads as.
 pub fn tar_source(archive: &Path, format: Format) -> Result<Box<dyn Read>> {
     if arca_stream::handles(format) {
         return Ok(arca_stream::open(archive, format)?);
@@ -136,11 +132,9 @@ impl Write for Slot {
     }
 }
 
-/// Entries of an archive, each streamed through the hasher by the same
-/// readers testing and extracting use; nothing is written to disk. `entries`
-/// is the archive's listing in `format`, `wanted` is indexed like it, and
-/// folders are never read. A ZIP entry that cannot be read is a digest with
-/// its error; in the other formats one damaged entry fails the whole pass.
+// A ZIP entry that cannot be read is a digest with its error; in the other
+// formats one damaged entry fails the whole pass, because each entry is
+// decoded from the stream before it.
 pub fn digest_entries(
     archive: &Path,
     format: Format,

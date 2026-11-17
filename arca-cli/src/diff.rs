@@ -2,8 +2,6 @@ use arca_compare::{compare, Options, Side};
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
-/// The exit status, as diff gives it: 0 when both sides hold the same, 1 when
-/// they do not, 2 when one of them could not be read.
 pub(crate) fn run(
     a: &Path,
     b: &Path,

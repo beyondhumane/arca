@@ -4,8 +4,6 @@ use super::*;
 use arca_compare::Change;
 use eframe::egui::{self, RichText};
 
-/// The native picker for the other side of a comparison, opened beside
-/// `first` or, failing that, beside the open archive.
 pub(super) fn picked(
     first: Option<PathBuf>,
     folder: bool,
@@ -37,8 +35,6 @@ pub(super) fn picked(
 }
 
 impl Shell {
-    /// Two things picked on the disk are compared with each other at once;
-    /// one thing, or the open archive, is compared with what gets picked next.
     pub(super) fn begin_compare(&mut self, folder: bool) {
         if self.controller.compare_picked() {
             return;
