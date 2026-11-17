@@ -54,6 +54,16 @@ of an encrypted 7z asks for its password first if the window does not have it
 yet; the rewritten archive keeps that password, and hides its names again if
 they were hidden.
 
+**Settings > Passwords** keeps passwords for later, each with a label and a mask
+(`*.zip`, `backup-*.7z`, a folder, or none for every archive). The ones with
+**Try without asking** on are tried before the password box appears, most
+specific mask first; the rest are offered in the box as **Use …** buttons. The
+box also has **Save this password**, which keeps what you type once it has
+opened the archive. Without a master password, saved passwords last until Arca
+closes; with one, they are written encrypted beside the settings and the vault
+locks after 10 minutes unused. When it is locked, the password box can unlock it
+in place. See [saved passwords](encryption.md#saved-passwords) for the details.
+
 ## RAR
 
 **Create** offers RAR next to ZIP and 7z and writes a new single-volume RAR5

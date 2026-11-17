@@ -105,3 +105,38 @@ a member. Retry resumes the original action; cancel does not write output.
 Changing an existing password is **ZIP-only**. Adding, deleting and renaming
 entries also work in 7z: the archive is decoded and encoded again with the same
 password, and with its names hidden again if they were.
+
+## Saved passwords
+
+The window can keep archive passwords in **Settings > Passwords** and try them before it asks. The command line can’t use them yet; `arca` still takes `-p`.
+
+### What gets tried, and when
+
+Each saved password has a label, a mask and a **Try without asking** switch. A mask is a name pattern with `*` and `?` (`*.zip`, `backup-*.7z`), a folder (`D:\Backups\` takes in everything under it), several of those separated by `;`, or nothing, which fits every archive. Case is ignored.
+
+When opening, extracting, testing, previewing, computing checksums, comparing or editing an encrypted 7z needs a password, the window first tries the saved passwords whose mask fits and that have **Try without asking** on: an exact name first, then the masks with the most fixed characters, then the ones without a mask. Each try is the same local check the password box runs; no password leaves the computer. Saved passwords with the switch off aren’t tried: the password box offers them as **Use …** buttons. If none fit, the box asks as usual, without calling the attempt a wrong password.
+
+**Save this password** in the password box keeps the password you type, but only once it has opened the archive, so a typo is never kept. It’s saved with the archive’s name as its mask and **Try without asking** on, and from then on that archive opens without asking. Widen the mask in Settings to cover a whole folder or family of names.
+
+### The master password
+
+Nothing is written to disk without a master password. Without one, saved passwords last until Arca closes. With one, they go to `passwords.vault` beside `gui.conf` (`%APPDATA%\Arca` on Windows, `~/Library/Application Support/Arca` on macOS, `$XDG_CONFIG_HOME/Arca` or `~/.config/Arca` elsewhere). They never go into `gui.conf`, a log or the clipboard.
+
+| Step | Algorithm |
+| --- | --- |
+| Key derivation | Argon2id (v1.3), 64 MiB, 3 passes, 1 lane, 32-byte key |
+| Salt | Random 16 bytes, new for every master password |
+| Cipher | AES-256-GCM, a random 12-byte nonce for every write |
+| Authentication | The GCM tag covers the whole list and, as associated data, the header with the cost parameters |
+
+The file starts with `ARCAVLT\0`, a format version and the Argon2id cost, so a later version can raise the cost or change the format and still read this one. A file from a newer Arca is refused rather than misread, and a file that asks for an absurd cost (over 1 GiB, 64 passes or 16 lanes) is refused before any work is done.
+
+- **Wrong master password or damaged file.** GCM can’t tell them apart, and Arca doesn’t pretend to. A truncated or altered file is refused the same way, never read halfway.
+- **Never overwritten blind.** Before every write Arca checks that the file is still the one it read. A file that changed (another window, a restore, damage) is left alone and the change is refused. A file that can’t be opened can only be **set aside**: it’s renamed with a timestamp, not deleted, so it still opens with the old master password.
+- **Locking.** The vault locks after 10 minutes without use and when the window closes. Locking drops the key and the passwords read from the file; passwords kept only for the session stay until Arca closes.
+- **Memory.** The key, the master password, the decrypted list and the saved passwords are held in buffers that are zeroed when freed. A password handed to an open, extract or test job is still a plain string, like a typed one.
+
+> [!NOTE]
+> **ZipCrypto and automatic tries**
+>
+> The ZipCrypto password check is a single byte, so a wrong saved password has a 1 in 256 chance of passing it, and each saved password that is tried is one more chance. Such a password is then caught by the checksum during extraction, and the task fails instead of the box asking again. AES archives check a two-byte verifier and the HMAC, so this is far less likely there.

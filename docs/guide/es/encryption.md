@@ -106,3 +106,38 @@ Cambiar una contraseña existente es **exclusivo de ZIP**. Añadir, borrar y
 renombrar entradas también funciona en 7z: el archivo se descomprime y se vuelve
 a comprimir con la misma contraseña, y con los nombres otra vez ocultos si lo
 estaban.
+
+## Contraseñas guardadas
+
+La ventana puede guardar contraseñas de archivos en **Ajustes > Contraseñas** y probarlas antes de preguntar. La línea de órdenes todavía no las usa; `arca` sigue pidiendo `-p`.
+
+### Qué se prueba, y cuándo
+
+Cada contraseña guardada tiene una etiqueta, una máscara y un interruptor **Probar sin preguntar**. Una máscara es un patrón de nombre con `*` y `?` (`*.zip`, `copia-*.7z`), una carpeta (`D:\Copias\` abarca todo lo que hay debajo), varias de esas separadas por `;`, o nada, que encaja con cualquier archivo. No distingue mayúsculas de minúsculas.
+
+Cuando abrir, extraer, probar, previsualizar, calcular sumas, comparar o editar un 7z cifrado necesita una contraseña, la ventana prueba primero las guardadas cuya máscara encaja y que tienen **Probar sin preguntar** activado: primero un nombre exacto, luego las máscaras con más caracteres fijos y al final las que no tienen máscara. Cada intento es la misma comprobación local que hace la ventana de contraseña; ninguna contraseña sale del ordenador. Las guardadas con el interruptor apagado no se prueban: la ventana de contraseña las ofrece como botones **Usar …**. Si ninguna sirve, la ventana pregunta como siempre, sin llamar contraseña incorrecta al intento.
+
+**Guardar esta contraseña**, en la ventana de contraseña, guarda la que escribes, pero solo cuando ya ha abierto el archivo, así que una errata nunca se guarda. Se guarda con el nombre del archivo como máscara y **Probar sin preguntar** activado, y desde entonces ese archivo se abre sin preguntar. Amplía la máscara en Ajustes para abarcar una carpeta entera o una familia de nombres.
+
+### La contraseña maestra
+
+Sin contraseña maestra no se escribe nada en disco: las contraseñas guardadas duran hasta que se cierra Arca. Con ella, van a `passwords.vault`, junto a `gui.conf` (`%APPDATA%\Arca` en Windows, `~/Library/Application Support/Arca` en macOS, `$XDG_CONFIG_HOME/Arca` o `~/.config/Arca` en el resto). Nunca van a `gui.conf`, a un registro ni al portapapeles.
+
+| Paso | Algoritmo |
+| --- | --- |
+| Derivación de clave | Argon2id (v1.3), 64 MiB, 3 pasadas, 1 carril, clave de 32 bytes |
+| Sal | 16 bytes aleatorios, nuevos con cada contraseña maestra |
+| Cifrado | AES-256-GCM, un nonce aleatorio de 12 bytes en cada escritura |
+| Autenticación | La etiqueta GCM cubre la lista entera y, como datos asociados, la cabecera con los parámetros de coste |
+
+El archivo empieza por `ARCAVLT\0`, una versión de formato y el coste de Argon2id, así que una versión posterior puede subir el coste o cambiar el formato y seguir leyendo este. Un archivo de un Arca más nuevo se rechaza en vez de leerse mal, y uno que pide un coste absurdo (más de 1 GiB, 64 pasadas o 16 carriles) se rechaza antes de hacer ningún trabajo.
+
+- **Contraseña maestra incorrecta o archivo dañado.** GCM no los distingue, y Arca no finge hacerlo. Un archivo truncado o alterado se rechaza igual, nunca se lee a medias.
+- **Nunca se sobrescribe a ciegas.** Antes de cada escritura Arca comprueba que el archivo sigue siendo el que leyó. Si ha cambiado (otra ventana, una restauración, un daño) se deja como está y el cambio se rechaza. Un archivo que no se puede abrir solo se puede **apartar**: se renombra con una marca de tiempo, no se borra, así que sigue abriéndose con la contraseña maestra antigua.
+- **Bloqueo.** El almacén se bloquea tras 10 minutos sin uso y al cerrar la ventana. Bloquear descarta la clave y las contraseñas leídas del archivo; las guardadas solo para la sesión siguen hasta que se cierra Arca.
+- **Memoria.** La clave, la contraseña maestra, la lista descifrada y las contraseñas guardadas viven en búferes que se ponen a cero al liberarse. Una contraseña que se pasa a un trabajo de abrir, extraer o probar sigue siendo una cadena normal, como una escrita a mano.
+
+> [!NOTE]
+> **ZipCrypto y los intentos automáticos**
+>
+> La comprobación de contraseña de ZipCrypto es un solo byte, así que una contraseña guardada incorrecta tiene una probabilidad entre 256 de superarla, y cada contraseña guardada que se prueba es una oportunidad más. Esa contraseña la detecta después la suma de comprobación al extraer, y la tarea falla en lugar de volver a preguntar. Los archivos AES comprueban un verificador de dos bytes y el HMAC, así que ahí es mucho menos probable.

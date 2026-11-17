@@ -54,6 +54,18 @@ borrar o renombrar entradas de un 7z cifrado pide antes su contraseña si la
 ventana aún no la tiene; el archivo reescrito conserva esa contraseña y vuelve a
 ocultar los nombres si estaban ocultos.
 
+**Ajustes > Contraseñas** guarda contraseñas para más adelante, cada una con una
+etiqueta y una máscara (`*.zip`, `copia-*.7z`, una carpeta o ninguna para todos
+los archivos). Las que tienen **Probar sin preguntar** activado se prueban antes
+de que aparezca la ventana de contraseña, empezando por la máscara más
+específica; las demás se ofrecen en la ventana como botones **Usar …**. La
+ventana tiene además **Guardar esta contraseña**, que guarda lo que escribes en
+cuanto ha abierto el archivo. Sin contraseña maestra, las guardadas duran hasta
+que se cierra Arca; con ella, se escriben cifradas junto a los ajustes y el
+almacén se bloquea tras 10 minutos sin uso. Si está bloqueado, la ventana de
+contraseña puede desbloquearlo ahí mismo. Los detalles están en
+[contraseñas guardadas](encryption.md#contraseñas-guardadas).
+
 ## RAR
 
 **Crear** ofrece RAR junto a ZIP y 7z y escribe un archivo RAR5 nuevo de un solo
