@@ -1,6 +1,8 @@
 //! Toolkit-independent application state and action controller.
 
 mod actions;
+mod compare;
+pub(crate) use compare::CompareFilter;
 pub(crate) mod disk;
 #[cfg(test)]
 use disk::disk_dir;
@@ -60,6 +62,7 @@ pub(crate) struct AppController {
     entries_gen: u64,
     rows: std::cell::RefCell<RowCache>,
     checksums: hashes::ChecksumState,
+    compare: compare::CompareState,
 }
 
 /// Rows already built, so that drawing a frame does not build them again. A
@@ -316,6 +319,7 @@ impl AppController {
             AppAction::OpenFile(index) => self.open_file(index),
             AppAction::Preview(index) => self.view_entry(index),
             AppAction::Checksums => self.start_checksums(),
+            AppAction::Compare { first, second } => self.start_compare(first, second),
             AppAction::Navigate(path) => self.go_to(path),
             AppAction::Back => self.go_back(),
             AppAction::Forward => self.go_forward(),
@@ -809,6 +813,7 @@ impl AppController {
             entries_gen: 0,
             rows: Default::default(),
             checksums: Default::default(),
+            compare: Default::default(),
             state: AppState {
                 view: View::Browse,
                 settings,
@@ -2032,6 +2037,7 @@ impl AppController {
         }
         let close_window = self.poll_tasks();
         self.poll_checksums();
+        self.poll_compare();
         if let Some((pending, password)) = resume {
             self.resume_access(pending, password);
         }

@@ -1,5 +1,6 @@
 mod actions;
 mod browser;
+mod compare;
 mod dialogs;
 mod hashes;
 mod header;
@@ -49,6 +50,10 @@ enum DialogResult {
         roots: Vec<String>,
         copy: bool,
         to: Option<PathBuf>,
+    },
+    Compare {
+        first: Option<PathBuf>,
+        second: Option<PathBuf>,
     },
 }
 
@@ -562,6 +567,8 @@ impl Shell {
             Some(ModalKind::Properties)
         } else if self.controller.checksums().is_some() {
             Some(ModalKind::Checksums)
+        } else if self.controller.comparison().is_some() {
+            Some(ModalKind::Compare)
         } else if state.show_update && state.update.is_some() {
             Some(ModalKind::Update)
         } else if state.show_settings {
@@ -595,6 +602,7 @@ impl Shell {
             ModalKind::Search => self.search = None,
             ModalKind::Properties => self.properties = None,
             ModalKind::Checksums => self.controller.close_checksums(),
+            ModalKind::Compare => self.controller.close_comparison(),
             ModalKind::Update => self.controller.state.show_update = false,
         }
     }
@@ -963,6 +971,7 @@ impl Shell {
                     copy,
                     to: rfd::FileDialog::new().pick_folder(),
                 },
+                DialogKind::Compare { first, folder } => compare::picked(first, folder, beside),
             };
             let _ = tx.send(result);
             ctx.request_repaint();
@@ -1048,6 +1057,12 @@ impl Shell {
                     self.controller.move_on_disk(&roots, &target);
                 }
             }
+            DialogResult::Compare {
+                first,
+                second: Some(second),
+            } => self
+                .controller
+                .dispatch(AppAction::Compare { first, second }),
             DialogResult::SaveCopy(Some(dest)) => {
                 if let Some(archive) = self.controller.state.archive.clone() {
                     if dest != archive {
@@ -1319,6 +1334,9 @@ impl Shell {
             }),
             RowAction::TestArchive => self.shortcut(Shortcut::Test),
             RowAction::Checksums => self.controller.dispatch(AppAction::Checksums),
+            RowAction::Compare | RowAction::CompareFolder => {
+                self.begin_compare(action == RowAction::CompareFolder)
+            }
             RowAction::OpenInPane => {
                 if let Some(row) = row.filter(|row| row.is_dir && !row.up) {
                     self.controller.open_in_pane(&row.path);
