@@ -25,6 +25,7 @@ Commands:
   hash      Print or check checksums of files, in the sha256sum format
   password  Add, change or remove the password of an existing archive
   repair    Rebuild a damaged ZIP from the entries that can still be read
+  diff      Compare two archives, or an archive and a folder
   bench     Measure the R1 and R2 performance requirements
 
 Options:
@@ -99,6 +100,39 @@ arca hash -a crc32 setup.exe
 
 Las rutas se imprimen tal como se dieron, con `/` entre carpetas en todos los sistemas. Un fichero de sumas puede llevar `*` delante del nombre (modo binario), finales de línea de Windows, una marca de orden de bytes y los nombres escapados que escribe `sha256sum` para nombres con una barra invertida o un salto de línea. Las líneas que no son sumas se avisan y se saltan. Un fichero que no se puede leer, una suma que no coincide o un fichero de sumas sin ninguna línea válida dan el estado de salida 1. BLAKE3 no se ofrece: su crate de Rust necesita por defecto un compilador de C.
 
+## diff
+
+Compara dos archivos, o un archivo y una carpeta, e imprime una línea por cada nombre en el que los dos lados difieren. Cada lado puede ser cualquier archivo que lea `list`, un juego de volúmenes RAR nombrado por cualquiera de sus volúmenes, o una carpeta. Las entradas se leen directamente de los archivos y nunca se extraen.
+
+| Argumento / opción | Por defecto | Descripción |
+| --- | --- | --- |
+| `<A>` | obligatorio | Primer archivo o carpeta. |
+| `<B>` | obligatorio | Segundo archivo o carpeta. |
+| `--quick` | no | Compara tamaños, y el CRC32 cuando los dos lados lo guardan, sin leer ningún contenido. |
+| `--times` | no | Informa también de los ficheros con el mismo contenido cuyas fechas de modificación se separan más de 2 segundos. |
+| `-p, --password <PASSWORD>` | ninguna | Contraseña del primer archivo, y del segundo salvo que se dé `--password-b`. |
+| `--password-b <PASSWORD>` | la de `-p` | Contraseña del segundo archivo. |
+
+```sh
+arca diff v1.0.zip v1.1.zip
+arca diff copia.tar.zst ~/proyecto       # ¿la copia sigue coincidiendo con la carpeta?
+arca diff --quick -p secreto a.7z b.zip
+```
+
+| Línea | Significado |
+| --- | --- |
+| `+ ruta` | Solo en B. |
+| `- ruta` | Solo en A. |
+| `M ruta` | En los dos, con distinto contenido, o un enlace que apunta a otro sitio. |
+| `T ruta` | Un fichero en un lado y una carpeta o un enlace en el otro. |
+| `m ruta` | Mismo contenido y distinta fecha de modificación (solo con `--times`). |
+
+- Las líneas salen por orden de nombre. Los nombres usan `/` y las carpetas terminan en `/`. Se comparan tal como están escritos, así que las mayúsculas cuentan. Se ignoran un `./` inicial, las barras dobles y las barras invertidas.
+- Una carpeta se compara por lo que contiene, no por su propio nombre: `arca diff a.zip salida` después de `arca x a.zip -o salida` no imprime nada. Las carpetas que solo aparecen en la ruta de sus ficheros cuentan como carpetas, así que un archivo sin entradas de carpeta sigue coincidiendo con lo que se extrae de él.
+- Por defecto, los ficheros del mismo tamaño se leen en los dos lados y se comparan por SHA-256, salvo que los dos lados guarden CRC32 y no coincidan. Un `.xz`, `.bz2` o `.zst` suelto no tiene un tamaño fiable, así que siempre se lee.
+- Los enlaces solo se distinguen en TAR y en el disco. Un enlace duro de TAR cuenta como el fichero que nombra. Los dispositivos y las tuberías se dejan fuera.
+- Un lado que no se puede abrir, una contraseña incorrecta o ausente, o una entrada que hay que leer y no se puede, dan el estado de salida 2 en vez de una diferencia.
+
 ## password
 
 Reescribe un `.zip` con otra contraseña, o sin ninguna. Las entradas no se vuelven a comprimir, porque el cifrado WinZip AES cifra los bytes ya comprimidos.
@@ -143,6 +177,6 @@ Mide los requisitos de rendimiento R1 y R2 contra un archivo.
 | Estado | Significado |
 | --- | --- |
 | `0` | Éxito. |
-| `1` | Error de archivo/E/S, incluida contraseña incorrecta o datos cifrados corruptos. Se imprime como `arca: <message>` en la salida de error. También un `hash` que no pudo leer un fichero o encontró una suma que no coincide. |
-| `2` | Sintaxis u opciones CLI inválidas, indicadas por el analizador de argumentos. |
+| `1` | Error de archivo/E/S, incluida contraseña incorrecta o datos cifrados corruptos. Se imprime como `arca: <message>` en la salida de error. También un `hash` que no pudo leer un fichero o encontró una suma que no coincide, y un `diff` que encontró diferencias. |
+| `2` | Sintaxis u opciones CLI inválidas, indicadas por el analizador de argumentos. También un `diff` que no pudo leer uno de sus lados: en `diff`, 1 solo significa que difieren. |
 </content>
