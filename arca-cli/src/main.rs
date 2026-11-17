@@ -10,6 +10,7 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+mod diff;
 mod hash;
 mod rar;
 mod sevenz;
@@ -151,6 +152,31 @@ enum Cmd {
         archive: PathBuf,
         #[arg(short = 'o', long, help = "Where to write the rebuilt archive (.zip)")]
         out: PathBuf,
+    },
+    #[command(
+        about = "Compare two archives, or an archive and a folder",
+        long_about = "Prints one line for each name the two sides hold differently:\n  + only in the second    - only in the first\n  M contents differ       T a file on one side, a folder or link on the other\n  m only the modification time differs (with --times)\n\nA folder is compared by what it holds, not by its own name. Contents are\ncompared by size and then by SHA-256, reading the entries without extracting\nthem.\n\nExit status: 0 if both hold the same, 1 if they differ, 2 on an error."
+    )]
+    Diff {
+        #[arg(help = "First archive or folder")]
+        a: PathBuf,
+        #[arg(help = "Second archive or folder")]
+        b: PathBuf,
+        #[arg(
+            long,
+            help = "Compare only sizes, and the CRC32 where both sides store one, without reading contents"
+        )]
+        quick: bool,
+        #[arg(long, help = "Also report files that differ only in modification time")]
+        times: bool,
+        #[arg(
+            short = 'p',
+            long,
+            help = "Password of the first archive, and of the second unless --password-b is given"
+        )]
+        password: Option<String>,
+        #[arg(long, value_name = "PASSWORD", help = "Password of the second archive")]
+        password_b: Option<String>,
     },
     #[command(about = "Measure the R1 and R2 performance requirements")]
     Bench {
@@ -319,6 +345,20 @@ fn run(cli: Cli) -> Result<()> {
             new.as_deref(),
         ),
         Cmd::Repair { archive, out } => repair_zip(&archive, &out),
+        Cmd::Diff {
+            a,
+            b,
+            quick,
+            times,
+            password,
+            password_b,
+        } => std::process::exit(diff::run(
+            &a,
+            &b,
+            arca_compare::Options { quick, times },
+            password.as_deref(),
+            password_b.as_deref().or(password.as_deref()),
+        )),
         Cmd::Bench { archive } => bench(&archive),
     }
 }

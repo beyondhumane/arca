@@ -280,6 +280,7 @@ name = "arca-cli"
 version = "0.10.0"
 dependencies = [
  "arca-7z",
+ "arca-compare",
  "arca-core",
  "arca-iso",
  "arca-rar",
