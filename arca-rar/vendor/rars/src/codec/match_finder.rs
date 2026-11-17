@@ -61,6 +61,31 @@ fn resolve(newest: usize, link: u32) -> usize {
     newest - (newest as u32).wrapping_sub(link) as usize
 }
 
+/// Arca: the most hash bits a window-sized table gets, four mebi-entries
+/// (16 MiB of heads), reached by an 8 MiB window.
+const MAX_WINDOW_HASH_BITS: u32 = 22;
+
+/// Arca: hash bits for a table with one head per two bytes of `window`, never
+/// fewer than `floor`.
+///
+/// A fixed 17-bit table shares each head among window / 128 Ki positions, so a
+/// 4 MiB window put about 32 unrelated positions behind every head. Every one
+/// of them is a node a tree descent or a chain walk visits and compares, each a
+/// cache miss, for no match. Scaling the table with the window, as LZMA sizes
+/// its own, leaves about two. Positions that share their first four bytes
+/// still share a head, so no match is lost. `arca create out.rar random -l 1`
+/// on the 8 MiB random kind of Arca's benchmark corpus
+/// (`arca-rar/tests/rar-bench.ps1`) took 4.2 s of CPU rather than 6.7 s, and
+/// 2.4 s rather than 4.6 s at `-l 6`. The table costs two bytes per byte of
+/// window, which the writer's workspace estimate charges.
+pub(crate) fn window_hash_bits(window: usize, floor: u32) -> u32 {
+    let window = window.max(1).checked_next_power_of_two().unwrap_or(1 << 31);
+    window
+        .trailing_zeros()
+        .saturating_sub(1)
+        .clamp(floor, MAX_WINDOW_HASH_BITS.max(floor))
+}
+
 /// The multiplicative mix every finder hashes with.
 fn mix(value: u32, bits: u32) -> usize {
     (value.wrapping_mul(0x9E37_79B1) >> (32 - bits)) as usize
@@ -74,6 +99,9 @@ pub(crate) struct MatchFinder<const MIN_MATCH: usize, B: Budget = Allowance> {
     /// The highest position inserted so far, and so at least as high as any
     /// position a link can name. Truncated links are read back against it.
     newest: usize,
+    /// Arca: the width of `head`, fixed per `MIN_MATCH` or scaled to the
+    /// window by [`Self::with_window_hash`].
+    hash_bits: u32,
 }
 
 #[cfg(any(test, feature = "write"))]
@@ -98,12 +126,22 @@ impl<const MIN_MATCH: usize, B: Budget> MatchFinder<MIN_MATCH, B> {
     /// names the position it named, so that check rejects it the same way it
     /// rejects a match that is merely too far away.
     pub(crate) fn with_allowance(window: usize, allowance: &B) -> Result<Self> {
+        Self::with_hash_bits(window, Self::HASH_BITS, allowance)
+    }
+
+    /// Arca: a finder whose head table grows with its window. See
+    /// [`window_hash_bits`].
+    pub(crate) fn with_window_hash(window: usize, allowance: &B) -> Result<Self> {
+        Self::with_hash_bits(window, window_hash_bits(window, Self::HASH_BITS), allowance)
+    }
+
+    fn with_hash_bits(window: usize, hash_bits: u32, allowance: &B) -> Result<Self> {
         let window = window
             .max(1)
             .checked_next_power_of_two()
             .ok_or(super::Error::InvalidData("finder window overflows"))?;
         Ok(Self {
-            head: Buffer::filled(1 << Self::HASH_BITS, NO_LINK, allowance)?,
+            head: Buffer::filled(1 << hash_bits, NO_LINK, allowance)?,
             // Zero rather than the sentinel, and nothing reads it either way: a
             // link is only ever followed from a position that has been
             // inserted, and inserting a position writes its slot first. Zero
@@ -112,15 +150,18 @@ impl<const MIN_MATCH: usize, B: Budget> MatchFinder<MIN_MATCH, B> {
             prev: Buffer::filled(window, 0, allowance)?,
             mask: window - 1,
             newest: 0,
+            hash_bits,
         })
     }
 
-    #[cfg(feature = "write")]
+    // Arca: only tests ask a chain finder for its allowance now that the
+    // optimal collector always holds a tree.
+    #[cfg(all(test, feature = "write"))]
     pub(crate) fn allowance(&self) -> B {
         self.head.allowance()
     }
 
-    fn hash(input: &[u8], pos: usize) -> usize {
+    fn hash(&self, input: &[u8], pos: usize) -> usize {
         let value = if MIN_MATCH == 3 {
             u32::from(input[pos])
                 | (u32::from(input[pos + 1]) << 8)
@@ -128,14 +169,14 @@ impl<const MIN_MATCH: usize, B: Budget> MatchFinder<MIN_MATCH, B> {
         } else {
             u32::from_le_bytes([input[pos], input[pos + 1], input[pos + 2], input[pos + 3]])
         };
-        mix(value, Self::HASH_BITS)
+        mix(value, self.hash_bits)
     }
 
     /// Records `pos` as a future match candidate. Positions too close to the
     /// end of the input to fit `MIN_MATCH` bytes are ignored.
     pub(crate) fn insert(&mut self, input: &[u8], pos: usize) {
         if pos + MIN_MATCH <= input.len() {
-            let hash = Self::hash(input, pos);
+            let hash = self.hash(input, pos);
             self.prev[pos & self.mask] = self.head[hash];
             self.head[hash] = pos as u32;
             self.newest = self.newest.max(pos);
@@ -146,7 +187,7 @@ impl<const MIN_MATCH: usize, B: Budget> MatchFinder<MIN_MATCH, B> {
     /// [`NO_POSITION`]. The caller must ensure at least `MIN_MATCH` bytes are
     /// readable at `pos`.
     pub(crate) fn first(&self, input: &[u8], pos: usize) -> usize {
-        resolve(self.newest, self.head[Self::hash(input, pos)])
+        resolve(self.newest, self.head[self.hash(input, pos)])
     }
 
     /// Returns the next-older candidate in `candidate`'s chain, or
@@ -180,6 +221,8 @@ pub(crate) struct TreeMatchFinder<B: Budget = Allowance> {
     /// then the greater-or-equal one, in LZMA's layout.
     son: Buffer<u32, B>,
     mask: usize,
+    /// Arca: the width of `head`, scaled to the window. See [`window_hash_bits`].
+    hash_bits: u32,
 }
 
 impl TreeMatchFinder {
@@ -194,14 +237,15 @@ impl<B: Budget> TreeMatchFinder<B> {
     const MIN_MATCH: usize = 4;
 
     /// Builds a finder that remembers the last `window` positions, at eight
-    /// bytes of links per byte of window.
+    /// bytes of links per byte of window and two of heads.
     pub(crate) fn with_allowance(window: usize, allowance: &B) -> Result<Self> {
         let window = window
             .max(1)
             .checked_next_power_of_two()
             .ok_or(super::Error::InvalidData("finder window overflows"))?;
+        let hash_bits = window_hash_bits(window, Self::HASH_BITS);
         Ok(Self {
-            head: Buffer::filled(1 << Self::HASH_BITS, NO_LINK, allowance)?,
+            head: Buffer::filled(1 << hash_bits, NO_LINK, allowance)?,
             // Zero rather than the sentinel for the same reason as the chain
             // finder's `prev`: a slot is always written during its position's
             // own insertion before any link can lead to it, and untouched
@@ -214,6 +258,7 @@ impl<B: Budget> TreeMatchFinder<B> {
                 allowance,
             )?,
             mask: window - 1,
+            hash_bits,
         })
     }
 
@@ -251,7 +296,7 @@ impl<B: Budget> TreeMatchFinder<B> {
         debug_assert!(len_limit >= Self::MIN_MATCH && pos + len_limit <= input.len());
         let hash = mix(
             u32::from_le_bytes([input[pos], input[pos + 1], input[pos + 2], input[pos + 3]]),
-            Self::HASH_BITS,
+            self.hash_bits,
         );
         let mut current = resolve(pos, self.head[hash]);
         self.head[hash] = pos as u32;

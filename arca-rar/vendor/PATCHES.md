@@ -33,13 +33,52 @@ source was consulted for any of it.
   `nice_length` and `parse_passes`, which default to the crate's constants.
   Levels 2 and 3 stop at 64 bytes and price each block once and twice;
   level 3 also searches 32 candidates rather than 128
-  (`rar50/write/filter_policy.rs`). Levels 0, 1, 4 and 5 are unchanged.
+  (`rar50/write/filter_policy.rs`). Levels 0 and 1 are unchanged; levels 4
+  and 5 are lightened below.
+- **Hash tables sized to the window.** The chain finder the RAR 5 encoder
+  builds (`MatchFinder::with_window_hash`) and the tree finder give their
+  head table one entry per two bytes of window, from 2^17 up to 2^22 entries,
+  instead of a fixed 2^17 (`codec/match_finder.rs`, `window_hash_bits`). The
+  RAR 2.x and 2.9 encoders keep the fixed tables. The writer's workspace
+  estimate charges the two bytes per window byte (`rar50/write/mod.rs`,
+  `streaming_lz_workspace`, 17 and 13 become 19 and 15).
+- **Tree search for runs with history.** A run that starts on history (a
+  large member's later runs, or a solid member) searched through hash
+  chains. It now gets the tree too, seeded with the newest quarter of a
+  dictionary of that history (`codec/rar50/encoder.rs`,
+  `OptimalCollector::with_allowance`, `HISTORY_SEED_DIVISOR`); history
+  older than that is out of reach of the run's first matches. The chain
+  arm of the collector is gone. `parallel_streaming_blocks_are_byte_identical_to_serial_blocks`
+  lets the writer's stream come out up to a thousandth larger than the
+  reference's, which reaches all its history through chains.
+- **Remembered distances settled once per position.** The optimal parse
+  copied the four remembered distances and the last length into every
+  target a cheaper arrival landed on; it now works them out once, when it
+  reaches a position, from the arrival that won (`price_optimal_paths`).
+  The tokens are the same. The two pricing tests that compared the whole
+  workspace with the reference implementation compare the arrivals (price,
+  length, distance), since the remembered distances are now only settled at
+  positions the parse prices.
+- **Stepping over data that keeps missing.** `EncodeOptions` gains
+  `skip_after_misses`: after that many searches in a row find nothing, the
+  lazy parse and the optimal parse's collector step over one more position
+  per further run of misses, emitting them as literals without searching or
+  inserting them, until a match turns up. The first 64 KiB of a parse's
+  input are always searched, so small files are not affected. Level 1
+  starts after 16 misses, levels 2 and 3 after 64 and levels 4 and 5 after
+  128 (`rar50/write/filter_policy.rs`).
+- **Lighter top levels.** Level 4 searches 64 candidates out to 128 bytes
+  and prices each block twice; level 5 searches 128 out to 256 and prices
+  three times (`rar50/write/filter_policy.rs`). They used to search 256 and
+  512 out to 512 bytes.
 
 Measured with `arca create out.rar <dir> -l <level>` on 144 MiB of source and
 executables (1,382 files), Windows 11, 16 threads, together with the
 `parallel` feature and the 4 GiB writer budget set in `arca-rar`; every
-archive passes `UnRAR t`. See the commit that brought this copy in for the
-numbers.
+archive passes `UnRAR t`. See the commit that brought this copy in for those
+numbers. The later patches were measured against WinRAR on the corpus
+`arca-rar/examples/rar-corpus.rs` generates, with `arca-rar/tests/rar-bench.ps1`;
+the method and the figures are in `docs/guide/benchmarks.md`.
 
 Container fixes, which do not touch the encoder:
 

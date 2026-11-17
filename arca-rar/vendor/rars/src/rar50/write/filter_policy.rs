@@ -177,14 +177,18 @@ pub(super) fn should_store_compressed_payload(
 /// It flattens out: the last doubling buys 0.4% for another two seconds. So
 /// the top of the ladder sits at 512 rather than chasing it, and level 3 stays
 /// near what the default already cost.
+///
+/// Arca: once the tree searched every run, depth stopped paying for itself
+/// well before 512. Levels 4 and 5 now search 64 and 128; see
+/// [`encode_options_for_level`].
 fn match_candidates_for_level(level: u8) -> Result<usize> {
     match level {
         0 => Ok(0),
         1 => Ok(8),
         2 => Ok(32),
         3 => Ok(32),
-        4 => Ok(256),
-        5 => Ok(512),
+        4 => Ok(64),
+        5 => Ok(128),
         _ => Err(Error::InvalidArgument(
             "RAR 5 compression level must be in the range 0..5",
         )),
@@ -245,17 +249,39 @@ pub(super) fn encode_options_for_level(
         // Arca: levels 2 and 3 stop looking at 64 bytes and price each block
         // once or twice rather than three times. On Arca's 144 MiB mixed corpus
         // that took level 3 from about 130 s to about 25 s for 3% more output;
-        // levels 4 and 5 keep the full parse for the smallest archive.
-        .with_nice_length(if matches!(level, 2 | 3) { 64 } else { NICE_LENGTH_FULL })
+        // levels 4 and 5 kept the full parse for the smallest archive.
+        //
+        // Arca: with the tree searching runs that carry history too, levels 4
+        // and 5 stop at 128 and 256 bytes and level 4 prices twice. On the repo
+        // kind of Arca's benchmark corpus (`arca-rar/tests/rar-bench.ps1`),
+        // `arca create -l 7` took 7.7 s of CPU rather than 13.7 s for 0.02%
+        // more output and `-l 9` 10.8 s rather than 13.0 s for 0.07% less; the
+        // corpus's log came out 1.5% larger at `-l 7`.
+        .with_nice_length(match level {
+            2 | 3 => 64,
+            4 => 128,
+            5 => 256,
+            _ => NICE_LENGTH_FULL,
+        })
         .with_parse_passes(match level {
             2 => 1,
-            3 => 2,
+            3 | 4 => 2,
             _ => PARSE_PASSES_FULL,
+        })
+        // Arca: stop searching every position of data that keeps missing,
+        // which is mostly data that is already compressed. Level 1 starts
+        // stepping after 16 misses in a row, levels 2 and 3 after 64, and the
+        // two that are there for size after 128.
+        .with_skip_after_misses(match level {
+            1 => 16,
+            2 | 3 => 64,
+            _ => 128,
         }))
 }
 
-/// What levels 4 and 5 keep: the encoder's own defaults.
+/// What level 1 keeps: the encoder's own nice length.
 const NICE_LENGTH_FULL: usize = EncodeOptions::new(0).nice_length;
+/// What level 5 keeps: the encoder's own number of passes.
 const PARSE_PASSES_FULL: usize = EncodeOptions::new(0).parse_passes;
 
 /// The encoder settings to try for a level, smallest output kept.

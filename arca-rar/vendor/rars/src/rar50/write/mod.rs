@@ -756,7 +756,9 @@ fn source_integrity_with_allowance<B: crate::codec::workspace::Budget>(
 fn streaming_lz_workspace(dictionary_size: u64, block_size: usize, optimal_parse: bool) -> u64 {
     // Runs retain up to a dictionary of new input as well as history and
     // combined search bytes. Charge those buffers alongside finder links.
-    let per_window_byte = if optimal_parse { 17 } else { 13 };
+    // Arca: two more per byte for the finders' head tables, which now grow
+    // with the window (`codec::match_finder::window_hash_bits`).
+    let per_window_byte = if optimal_parse { 19 } else { 15 };
     dictionary_size
         .checked_next_power_of_two()
         .unwrap_or(dictionary_size)
@@ -2299,11 +2301,19 @@ mod tests {
         // Arca: the streaming writer keeps the tree finder across a member's
         // blocks where this per-block reference starts each block afresh, so
         // the two no longer match byte for byte. What has to hold is that the
-        // writer's stream decodes to the input and packs no worse.
+        // writer's stream decodes to the input and packs no worse. A run that
+        // starts on history seeds its tree with only the newest quarter of the
+        // dictionary, so it may miss a match the reference's chains reach:
+        // that is allowed to cost a thousandth.
         let decoded =
             crate::codec::rar50::decode_lz(&parallel, algorithm_version, original.len()).unwrap();
         assert!(decoded == original);
-        assert!(parallel.len() <= serial.len(), "{} > {}", parallel.len(), serial.len());
+        assert!(
+            parallel.len() <= serial.len() + serial.len() / 1000,
+            "{} > {}",
+            parallel.len(),
+            serial.len()
+        );
     }
 
     #[test]

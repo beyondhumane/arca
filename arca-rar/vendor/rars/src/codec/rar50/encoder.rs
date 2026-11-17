@@ -505,7 +505,17 @@ pub struct EncodeOptions {
     /// Arca: how many times the optimal parse prices a block, at most
     /// [`OPTIMAL_PARSE_PASSES`].
     pub parse_passes: usize,
+    /// Arca: after this many searches in a row find nothing, the search
+    /// starts stepping over positions, one more for each further run of as
+    /// many misses, until a match turns up. Zero searches everywhere. The
+    /// first 64 KiB a parse reaches across are always searched.
+    pub skip_after_misses: usize,
 }
+
+/// Arca: how far into its input a parse searches every position however
+/// often it misses. A file starts with nothing to match, so without this a
+/// small file lost its first matches to the stepping.
+const MISS_SKIP_WARMUP: usize = 64 * 1024;
 
 impl EncodeOptions {
     pub const fn new(max_match_candidates: usize) -> Self {
@@ -517,12 +527,20 @@ impl EncodeOptions {
             optimal_parse: false,
             nice_length: NICE_MATCH_LENGTH,
             parse_passes: OPTIMAL_PARSE_PASSES,
+            skip_after_misses: 0,
         }
     }
 
     /// Arca: a shorter nice length searches and prices less per position.
     pub const fn with_nice_length(mut self, length: usize) -> Self {
         self.nice_length = if length < 8 { 8 } else { length };
+        self
+    }
+
+    /// Arca: let a search that keeps missing step over positions. See
+    /// [`Self::skip_after_misses`].
+    pub const fn with_skip_after_misses(mut self, misses: usize) -> Self {
+        self.skip_after_misses = misses;
         self
     }
 
@@ -784,25 +802,21 @@ pub(crate) fn streaming_blocks_with_allowance<B: Budget>(
             None => true,
         }
     };
-    // Arca: a member with no history keeps the tree finder for every block,
-    // not only the first. The tree is what makes searching at every position
-    // affordable, and the blocks arrive in order, which is all it asks.
+    // Arca: the optimal parse keeps the tree finder for every block, not only
+    // the first, and for a run that carries history as well as one that does
+    // not. The tree is what makes searching at every position affordable, and
+    // the blocks arrive in order, which is all it asks.
     if blocks.is_empty() {
         return Ok(output);
     }
-    let mut search = if start == 0 && options.optimal_parse {
+    let mut search = if options.optimal_parse {
         SharedMemberSearch::Optimal(OptimalCollector::with_allowance(
-            &combined, 0, options, allowance,
+            &combined, at, options, allowance,
         )?)
     } else {
-        let finder = member_finder_with_allowance(&combined, at, options, allowance)?;
-        if options.optimal_parse {
-            SharedMemberSearch::Optimal(OptimalCollector {
-                finder: CollectorFinder::Chains(finder),
-            })
-        } else {
-            SharedMemberSearch::Lazy(finder)
-        }
+        SharedMemberSearch::Lazy(member_finder_with_allowance(
+            &combined, at, options, allowance,
+        )?)
     };
     for &(end, is_last) in blocks {
         let end = start + end;
@@ -1206,7 +1220,7 @@ fn member_finder_with_allowance<B: Budget>(
     allowance: &B,
 ) -> Result<Rar50MatchFinder<B>> {
     let mut finder =
-        Rar50MatchFinder::with_allowance(finder_window(options, combined.len()), allowance)?;
+        Rar50MatchFinder::with_window_hash(finder_window(options, combined.len()), allowance)?;
     for pos in 0..start {
         finder.insert(combined, pos);
     }
@@ -1226,7 +1240,7 @@ fn seeded_finder<B: Budget>(
     // long enough to fill.
     let behind = block.start.min(options.max_match_distance);
     let mut finder =
-        Rar50MatchFinder::with_allowance(behind + (block.end - block.start), allowance)?;
+        Rar50MatchFinder::with_window_hash(behind + (block.end - block.start), allowance)?;
     for pos in block.start - behind..block.start {
         finder.insert(combined, pos);
     }
@@ -1288,18 +1302,19 @@ struct BlockMatches<B: Budget = Allowance> {
 /// Searching once is also what makes the tree finder affordable, and the tree
 /// is where the speed is: pricing every position means searching at every
 /// position, which is the load a chain walk carries worst and a tree carries
-/// best. A member that starts with no history gets the tree. One that carries
-/// history keeps the chains, because the only way into a tree is a descent per
-/// position, and paying that across a dictionary of history would cost more
-/// than the chains ever did.
+/// best. Arca: every member gets the tree, and one that carries history has
+/// the newest part of it seeded in (see [`HISTORY_SEED_DIVISOR`]).
 struct OptimalCollector<B: Budget = Allowance> {
     finder: CollectorFinder<B>,
 }
 
 enum CollectorFinder<B: Budget = Allowance> {
     Tree(match_finder::TreeMatchFinder<B>),
-    Chains(Rar50MatchFinder<B>),
 }
+
+/// Arca: the share of the dictionary the tree is seeded with when a parse
+/// starts on history, one quarter.
+const HISTORY_SEED_DIVISOR: usize = 4;
 
 impl OptimalCollector {
     #[cfg(test)]
@@ -1316,17 +1331,38 @@ impl<B: Budget> OptimalCollector<B> {
         options: EncodeOptions,
         allowance: &B,
     ) -> Result<Self> {
-        let finder = if start == 0 {
-            CollectorFinder::Tree(match_finder::TreeMatchFinder::with_allowance(
-                finder_window(options, combined.len()),
-                allowance,
-            )?)
-        } else {
-            CollectorFinder::Chains(member_finder_with_allowance(
-                combined, start, options, allowance,
-            )?)
-        };
-        Ok(Self { finder })
+        let mut tree = match_finder::TreeMatchFinder::with_allowance(
+            finder_window(options, combined.len()),
+            allowance,
+        )?;
+        // Arca: history goes into the tree too, rather than sending the parse
+        // to the chain finder, which carries a search at every position worst.
+        // A tree takes history one descent per position, so only the newest
+        // quarter of a dictionary is seeded, and older history is out of reach
+        // of the run's first matches. On the 20 MiB log of Arca's benchmark
+        // corpus (`arca-rar/tests/rar-bench.ps1`), `arca create -l 9` took 28 s
+        // of CPU rather than 99 s and packed 0.5% smaller. A descent with no
+        // reach reports nothing, so seeding collects nothing.
+        let seeded = (options.max_match_distance / HISTORY_SEED_DIVISOR).min(start);
+        let mut nothing = Buffer::new(allowance);
+        for pos in start - seeded..start {
+            let avail = combined.len() - pos;
+            if avail < 4 {
+                continue;
+            }
+            tree.matches(
+                combined,
+                pos,
+                avail.min(options.nice_length),
+                0,
+                options.max_match_candidates,
+                &mut nothing,
+            )
+            .map_err(Into::into)?;
+        }
+        Ok(Self {
+            finder: CollectorFinder::Tree(tree),
+        })
     }
 
     /// Finds the matches the parse will price at each position of `block`,
@@ -1347,7 +1383,6 @@ impl<B: Budget> OptimalCollector<B> {
     ) -> Result<BlockMatches<B>> {
         let allowance = match &self.finder {
             CollectorFinder::Tree(finder) => finder.allowance(),
-            CollectorFinder::Chains(finder) => finder.allowance(),
         };
         let span = block.end - block.start;
         let mut matches = BlockMatches {
@@ -1360,9 +1395,15 @@ impl<B: Budget> OptimalCollector<B> {
         // reaches the same decision from the same lengths, so the two agree on
         // which positions matter without having to be told.
         let mut committed_through = block.start;
+        // Arca: where the next search happens once misses start stepping over
+        // positions, and how many searches in a row have found nothing.
+        let mut next_search = block.start;
+        let mut misses = 0usize;
         for pos in block.clone() {
             matches.starts.push_admitted(matches.runs.len() as u32);
-            let searching = pos >= committed_through && options.max_match_candidates != 0;
+            let searching = pos >= committed_through
+                && pos >= next_search
+                && options.max_match_candidates != 0;
             let max_distance = pos.min(options.max_match_distance);
             let before = matches.runs.len();
             match &mut self.finder {
@@ -1396,48 +1437,13 @@ impl<B: Budget> OptimalCollector<B> {
                             last.0 = match_length(combined, pos, last.1 as usize, limit) as u32;
                         }
                     }
-                }
-                CollectorFinder::Chains(finder) => {
-                    // Inserting into a chain is one store, so every position
-                    // goes in whether or not it is searched from. That keeps a
-                    // solid member's candidates exactly what they were.
-                    finder.insert(combined, pos);
-                    let max_length = (block.end - pos).min(MAX_ENCODER_MATCH_LENGTH);
-                    if !searching || max_distance == 0 || max_length < 4 {
-                        continue;
-                    }
-                    // The chain walks nearest first, so the first distance to
-                    // reach a length is the cheapest one that can.
-                    let mut longest = 0usize;
-                    let mut checked = 0usize;
-                    let mut candidate = finder.first(combined, pos);
-                    while candidate != match_finder::NO_POSITION
-                        && longest < max_length
-                        && longest < options.nice_length
-                    {
-                        if candidate >= pos {
-                            candidate = finder.previous(candidate);
-                            continue;
+                    if options.skip_after_misses != 0 && pos >= MISS_SKIP_WARMUP {
+                        if matches.runs.len() == before {
+                            misses += 1;
+                        } else {
+                            misses = 0;
                         }
-                        let distance = pos - candidate;
-                        if distance > max_distance {
-                            break;
-                        }
-                        checked += 1;
-                        if combined[candidate + longest] == combined[pos + longest] {
-                            let length = match_length(combined, pos, distance, max_length);
-                            if length > longest {
-                                matches
-                                    .runs
-                                    .push((length as u32, distance as u32))
-                                    .map_err(Into::into)?;
-                                longest = length;
-                            }
-                        }
-                        if checked >= options.max_match_candidates {
-                            break;
-                        }
-                        candidate = finder.previous(candidate);
+                        next_search = pos + 1 + misses / options.skip_after_misses;
                     }
                 }
             }
@@ -1534,7 +1540,6 @@ fn encode_lz_block_in_window(
         MemberSearch::Lazy(finder) => finder.allowance(),
         MemberSearch::Optimal(collector) => match &collector.finder {
             CollectorFinder::Tree(finder) => finder.allowance(),
-            CollectorFinder::Chains(finder) => finder.allowance(),
         },
     };
     encode_lz_block_with_allowance(
@@ -2329,6 +2334,30 @@ fn price_optimal_paths(
         if index < committed_through {
             continue;
         }
+        // Arca: the distance memory a position is reached with is worked out
+        // once, when the parse gets there, from the arrival that won, rather
+        // than copied into every target each time a cheaper arrival lands on
+        // it. Only priced positions make arrivals, and each comes before this
+        // one and had its own memory settled when the parse passed it, so the
+        // tokens are the same and the inner loop stores three words, not eight.
+        if index > 0 {
+            let length = arrive_length[index] as usize;
+            if length == 0 {
+                // A literal emits no distance, so it leaves the remembered
+                // ones exactly as it found them.
+                arrive_reps[index] = arrive_reps[index - 1];
+                arrive_last_length[index] = arrive_last_length[index - 1];
+            } else {
+                let from = index - length;
+                let mut arrived = EncoderMatchState {
+                    reps: arrive_reps[from].map(|distance| distance as usize),
+                    last_length: arrive_last_length[from] as usize,
+                };
+                arrived.remember(length, arrive_distance[index] as usize);
+                arrive_reps[index] = arrived.reps.map(|distance| distance as u32);
+                arrive_last_length[index] = arrived.last_length as u32;
+            }
+        }
         // Every priced position extends a literal path to its successor;
         // a committed match skips only to an already priced endpoint. Blocks
         // are at most 1 MiB, so even all 15-bit literals stay below u32::MAX.
@@ -2341,10 +2370,6 @@ fn price_optimal_paths(
             price[index + 1] = literal;
             arrive_length[index + 1] = 0;
             arrive_distance[index + 1] = 0;
-            // A literal emits no distance, so it leaves the remembered ones
-            // exactly as it found them.
-            arrive_reps[index + 1] = arrive_reps[index];
-            arrive_last_length[index + 1] = arrive_last_length[index];
         }
 
         let max_distance = pos.min(options.max_match_distance);
@@ -2421,10 +2446,6 @@ fn price_optimal_paths(
                         price[target] = reached;
                         arrive_length[target] = reach as u32;
                         arrive_distance[target] = distance as u32;
-                        let mut next = state;
-                        next.remember(reach, distance);
-                        arrive_reps[target] = next.reps.map(|distance| distance as u32);
-                        arrive_last_length[target] = next.last_length as u32;
                     }
                 }
                 length = reach + 1;
@@ -2578,7 +2599,6 @@ fn encode_tokens_with_progress(
         MemberSearch::Lazy(finder) => finder.allowance().clone(),
         MemberSearch::Optimal(collector) => match &collector.finder {
             CollectorFinder::Tree(finder) => finder.allowance().clone(),
-            CollectorFinder::Chains(finder) => finder.allowance().clone(),
         },
     };
     encode_tokens_with_allowance(
@@ -2698,6 +2718,7 @@ fn encode_tokens_with_allowance<B: Budget>(
     let mut state = EncoderMatchState::default();
     let mut next_report = 0usize;
     let mut pending_match: Option<MatchCandidate> = None;
+    let mut misses = 0usize;
     while pos < end {
         let candidate = pending_match
             .take()
@@ -2733,12 +2754,26 @@ fn encode_tokens_with_allowance<B: Budget>(
                 finder.insert(combined, history_pos);
             }
             pos += length;
+            misses = 0;
         } else {
             tokens
                 .push(EncodeToken::Literal(combined[pos]))
                 .map_err(Into::into)?;
             finder.insert(combined, pos);
             pos += 1;
+            // Arca: a search that keeps missing steps over the positions
+            // after it, emitted as literals and left out of the finder. See
+            // [`EncodeOptions::skip_after_misses`].
+            if options.skip_after_misses != 0 && pos >= MISS_SKIP_WARMUP {
+                misses += 1;
+                let skip = (misses / options.skip_after_misses).min(end - pos);
+                for &byte in &combined[pos..pos + skip] {
+                    tokens
+                        .push(EncodeToken::Literal(byte))
+                        .map_err(Into::into)?;
+                }
+                pos += skip;
+            }
         }
         let consumed = pos - start;
         if consumed >= next_report {

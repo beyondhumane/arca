@@ -2,7 +2,7 @@
 description: Cada medición, la máquina detrás y los casos donde Arca pierde.
 group: Referencia
 order: 14
-keywords: rendimiento velocidad benchmarks nanazip 7-zip zip números puntuación códecs hilos performance speed benchmarks nanazip 7-zip zip numbers rating codecs threads
+keywords: rendimiento velocidad benchmarks nanazip 7-zip zip números puntuación códecs hilos rar rar5 winrar performance speed benchmarks nanazip 7-zip zip numbers rating codecs threads
 ---
 
 # Benchmarks
@@ -335,4 +335,61 @@ El disco sostenía 327 MB/s antes de las cuatro ejecuciones y 90 MB/s después. 
 > **Por qué Arca gana aquí**
 >
 > El tiempo de reloj de NanaZip es igual a su tiempo de CPU: su propio procesador es el límite. Arca gasta algo más de CPU que de reloj (1.1 núcleos), así que la descompresión se solapa con la escritura y el tiempo de reloj se ajusta al disco: 6.28 GB en 21.9 s son 294 MB/s frente a un techo de 327 MB/s. El decodificador más rápido es lo que lo consigue.
+
+## RAR 5 contra WinRAR
+
+Arca escribe RAR 5 con su propio compresor, una copia parcheada de `rars` (véase `arca-rar/vendor/PATCHES.md`). Estas cifras lo comparan con el `Rar.exe` de consola de WinRAR 7.23 en el nivel al que corresponde cada nivel de Arca: `-l 1`, `3`, `6`, `7` y `9` de Arca contra `-m1` a `-m5`.
+
+AMD Ryzen 7 3700X (8 núcleos, 16 hilos), 32 GB, Windows 11. **La máquina estaba ocupada**: durante todas las pruebas se compilaban otros proyectos, y la carga del procesador medida antes de cada ejecución estuvo casi siempre entre el 60 y el 100%. El tiempo real varía el doble o más de una ejecución a otra, así que las tablas dan primero el tiempo de CPU de todo el proceso (con todos sus hilos) y el tamaño, que la carga mueve mucho menos. Cada cifra es la mediana de 3 ejecuciones; el CSV que escribe el script guarda cada ejecución con su carga.
+
+El corpus se genera, así que cualquiera puede reconstruir los mismos bytes, y como datos reales se añade este repositorio en un commit fijo:
+
+```powershell
+cargo build --release -p arca-cli
+cargo run --release -p arca-rar --example rar-corpus -- $env:TEMP\rar-corpus
+mkdir $env:TEMP\rar-corpus\repo
+git archive --format=tar 4b1d67b | tar -x -C $env:TEMP\rar-corpus\repo
+powershell -ExecutionPolicy Bypass -File arca-rar\tests\rar-bench.ps1 `
+    -Corpus $env:TEMP\rar-corpus -Runs 3 `
+    -Kinds "text,log,source,exe,media,random,small,repo,all"
+```
+
+Cada ejecución es `arca create out.rar <dir> -l N` o `Rar.exe a -mN -ep1 -r -idq out.rar <dir>`, las dos sin modo sólido, y cada archivo que escribe Arca se comprueba con `Rar.exe t`. «Antes» es Arca en el commit `4b1d67b`, medido de la misma forma el mismo día.
+
+### El corpus entero
+
+`all` es el árbol entero en un solo archivo: los 77 MiB que escribe el generador más los 16 MiB del tipo `repo`, 97,441,208 bytes en 4286 archivos.
+
+| Nivel | Antes: CPU | real | tamaño | **Ahora: CPU** | real | tamaño | WinRAR: CPU | real | tamaño |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `-l 1` / `-m1` | 33.8 s | 123.1 s | 46,836,620 | **21.3 s** | 36.8 s | 46,936,551 | 8.1 s | 2.9 s | 47,234,842 |
+| `-l 3` / `-m2` | 81.4 s | 104.6 s | 44,067,047 | **62.2 s** | 32.5 s | 43,880,430 | 12.5 s | 2.9 s | 44,341,281 |
+| `-l 6` / `-m3` | 96.7 s | 46.9 s | 43,648,504 | **89.8 s** | 51.9 s | 43,419,805 | 21.2 s | 5.7 s | 42,537,059 |
+| `-l 7` / `-m4` | 188.2 s | 135.7 s | 43,332,800 | **79.5 s** | 44.3 s | 43,353,431 | 29.9 s | 6.5 s | 42,258,443 |
+| `-l 9` / `-m5` | 181.5 s | 201.7 s | 43,244,674 | **101.7 s** | 82.0 s | 43,240,314 | 31.7 s | 6.2 s | 42,206,709 |
+
+Aquí el tiempo real de Arca no es sobre todo el del compresor: el escritor guarda cada miembro en su propio archivo temporal antes de montar el archivo, y en Windows eso cuesta milisegundos por archivo (véase más abajo). Para comparar compresores, la cifra que vale es el tiempo de CPU. Frente a WinRAR, Arca usa ahora 2.6× su tiempo de CPU con `-l 1`, 4.2× con `-l 6` y 3.2× con `-l 9`, frente a 4.9×, 5.3× y 4.9× antes. Sus archivos salen un 0.6% y un 1.0% más pequeños con `-l 1` y `-l 3`, y entre un 2.1% y un 2.6% más grandes de `-l 6` en adelante, casi todo por el tipo `media`, donde WinRAR aplica un filtro delta y Arca ninguno.
+
+### Por tipo, `-l 6` contra `-m3`
+
+| Tipo | Antes: CPU | tamaño | **Ahora: CPU** | tamaño | WinRAR: CPU | tamaño |
+| --- | --- | --- | --- | --- | --- | --- |
+| `text` | 12.48 s | 3,106,714 | **12.45 s** | 3,106,714 | 2.09 s | 3,303,767 |
+| `log` | 32.89 s | 3,311,320 | **21.12 s** | 3,042,982 | 5.95 s | 3,524,354 |
+| `source` | 3.78 s | 2,125,845 | **4.11 s** | 2,125,845 | 1.11 s | 2,188,815 |
+| `exe` | 15.45 s | 7,255,811 | **12.02 s** | 7,255,835 | 3.64 s | 7,711,395 |
+| `media` | 8.80 s | 7,985,548 | **1.59 s** | 8,023,086 | 2.30 s | 6,056,962 |
+| `random` | 7.62 s | 8,388,863 | **1.11 s** | 8,388,863 | 1.58 s | 8,388,944 |
+| `small` | 8.91 s | 3,668,621 | **7.81 s** | 3,668,621 | 1.31 s | 3,549,840 |
+| `repo` | 10.30 s | 7,774,219 | **6.84 s** | 7,776,296 | 2.25 s | 7,778,575 |
+
+Con texto, registros y código fuente Arca escribe entre un 3% y un 14% menos que WinRAR con entre tres y seis veces su tiempo de CPU; con el tipo real `repo` los dos quedan a menos de un 0.1% con tres veces. `media` y `random` son ahora más rápidos que en WinRAR, porque la búsqueda salta la entrada que no deja de fallar.
+
+### Dónde sigue perdiendo Arca
+
+- **Tiempo de CPU.** El análisis óptimo busca en un árbol binario en cada posición y pone precio a cada longitud de coincidencia. Comprime más que WinRAR texto, registros y código fuente, pero de `-l 3` en adelante sigue costando entre tres y seis veces el tiempo de CPU de WinRAR.
+- **Audio, imágenes y ejecutables.** El escritor de Arca no aplica ningún filtro de datos (`FilterPolicy::None` en `arca-rar/src/writer.rs`), así que falta el filtro delta que WinRAR usa con el PCM y el mapa de bits del tipo `media`: ahí sale un 32% más grande con `-l 6`. Los ejecutables reales pierden del mismo modo el filtro E8/E9, cosa que el tipo sintético `exe` no refleja.
+- **Muchos archivos pequeños.** El escritor guarda los bytes comprimidos de cada miembro en un archivo temporal junto a la salida antes de montar el archivo. En Windows eso cuesta milisegundos por archivo, así que los 3000 archivos del tipo `small` tardan segundos de tiempo real con mucho menos tiempo de CPU. Es cosa de ese almacenamiento intermedio del escritor, no del compresor: `arca create out.rar small -l 0` tarda 2.6 s con los mismos archivos.
+- **Cabeceras.** Arca guarda un hash BLAKE2sp de cada archivo donde WinRAR guarda un CRC32: 28 bytes más por archivo, unos 84 KB en el tipo `small`.
+- **Pocos archivos grandes.** Un miembro se comprime en tramos de un diccionario cada uno (de 1 a 16 MiB según el nivel), y cada tramo es un trabajo, así que un único archivo de 4 MiB con `-l 6` ocupa un solo núcleo.
 </content>
