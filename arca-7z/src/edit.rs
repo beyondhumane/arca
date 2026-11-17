@@ -60,8 +60,10 @@ pub struct Recoded {
 /// Writes `input` again at `output` with `change` applied, then reads all of
 /// `output` back. An encrypted archive needs its password and keeps it, with
 /// its names hidden again if they were; a partly encrypted one comes out
-/// encrypted throughout. Every entry keeps its times and attributes. Returns
-/// the blocks that could not keep their coders.
+/// encrypted throughout. The password is held to the archive before anything
+/// is written, even when no encrypted entry is kept, so that a wrong one is
+/// refused rather than used to encrypt what was plain. Every entry keeps its
+/// times and attributes. Returns the blocks that could not keep their coders.
 pub fn rewrite_7z(
     input: &Path,
     output: &Path,
@@ -99,6 +101,11 @@ pub fn rewrite_7z(
         return Err(Error::Unsupported(
             "encrypting only empty entries requires hide_names to validate the password".into(),
         ));
+    }
+    if options.password.is_some()
+        && !(0..plan.len()).any(|i| plan[i].is_some() && data(i) && source.entries[i].encrypted)
+    {
+        source.check_password()?;
     }
     let total = plan.iter().flatten().count() + change.add.len();
     let mut expected = Vec::with_capacity(total);

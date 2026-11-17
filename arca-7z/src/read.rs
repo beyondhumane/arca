@@ -176,6 +176,96 @@ impl<R: Read + Seek> SevenZArchive<R> {
         Ok(())
     }
 
+    /// Holds the password to the encrypted blocks without decoding them all:
+    /// one of them has to decode, cheapest first, as far as the end of its
+    /// first entry with a checksum, or to its end when only the block has
+    /// one. An encrypted header has already been held to it by `open`.
+    pub(crate) fn check_password(&mut self) -> Result<()> {
+        if !self.encrypted || self.archive.header_encrypted {
+            return Ok(());
+        }
+        let archive = &self.archive;
+        let mut checks = Vec::new();
+        for (block, coders) in archive.blocks.iter().enumerate() {
+            if !coders
+                .coders
+                .iter()
+                .any(|c| c.encoder_method_id() == M::ID_AES256_SHA256)
+            {
+                continue;
+            }
+            let first = archive.stream_map.block_first_file_index[block];
+            let mut offset = 0u64;
+            let mut target = None;
+            for i in (first..archive.files.len())
+                .take_while(|&i| archive.stream_map.file_block_index[i] == Some(block))
+            {
+                let file = &archive.files[i];
+                if !file.has_stream {
+                    continue;
+                }
+                if file.size > 0 && file.has_crc {
+                    target = Some((offset, file.size, file.crc as u32));
+                    break;
+                }
+                offset = offset.saturating_add(file.size);
+            }
+            let cost = match target {
+                Some((start, size, _)) => start.saturating_add(size),
+                None if coders.has_crc => coders.get_unpack_size(),
+                None => continue,
+            };
+            if cost > 0 {
+                checks.push((cost, block, target));
+            }
+        }
+        if checks.is_empty() {
+            return Err(Error::Unsupported(
+                "encrypted empty streams cannot validate a password without encrypted headers"
+                    .into(),
+            ));
+        }
+        checks.sort_unstable_by_key(|&(cost, block, _)| (cost, block));
+        for (cost, block, target) in checks {
+            if self.decodes(block, cost, target) {
+                return Ok(());
+            }
+        }
+        Err(Error::PasswordOrCorrupt)
+    }
+
+    fn decodes(&mut self, block: usize, cost: u64, target: Option<(u64, u64, u32)>) -> bool {
+        let Ok(mut reader) =
+            BlockDecoder::new(1, block, &self.archive, &self.password, &mut self.source)
+                .into_reader()
+        else {
+            return false;
+        };
+        let start = target.map_or(0, |(start, _, _)| start);
+        if io::copy(&mut (&mut reader).take(start), &mut io::sink()).ok() != Some(start) {
+            return false;
+        }
+        let mut hasher = crc32fast::Hasher::new();
+        let mut left = cost - start;
+        let mut buf = vec![0u8; 64 * 1024];
+        while left > 0 {
+            let want = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+            match reader.read(&mut buf[..want]) {
+                Ok(0) => return false,
+                Ok(n) => {
+                    hasher.update(&buf[..n]);
+                    left -= n as u64;
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => return false,
+            }
+        }
+        match target {
+            Some((_, _, crc)) => hasher.finalize() == crc,
+            None => io::copy(&mut reader, &mut io::sink()).is_ok_and(|rest| rest == 0),
+        }
+    }
+
     pub fn test(&mut self, notify: &mut dyn FnMut(Progress<'_>) -> bool) -> Result<()> {
         let selected = vec![true; self.len()];
         self.run(&selected, Phase::Test, &mut |_, _, _| Ok(()), notify)

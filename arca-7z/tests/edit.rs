@@ -3,8 +3,8 @@ use arca_7z::{
 };
 use arca_core::{Entry, Error, Level, Method};
 use sevenz_rust2::{
-    encoder_options::Lzma2Options, Archive, ArchiveEntry, ArchiveWriter, NtTime, Password,
-    SourceReader,
+    encoder_options::{AesEncoderOptions, Lzma2Options},
+    Archive, ArchiveEntry, ArchiveWriter, EncoderMethod, NtTime, Password, SourceReader,
 };
 use std::{
     fs,
@@ -439,4 +439,56 @@ fn progress_covers_the_copy_and_the_read_back() {
     .unwrap();
     assert!(phases.contains(&Phase::Create));
     assert!(phases.contains(&Phase::Test));
+}
+
+/// A 7z with a plain header, a plain block and a block encrypted with
+/// `right`, the way another program can write one.
+fn partly_encrypted(room: &Room) -> PathBuf {
+    let path = room.path("partial.7z");
+    let mut writer = ArchiveWriter::create(&path).unwrap();
+    writer.set_encrypt_header(false);
+    writer.set_content_methods(vec![Lzma2Options::from_level(1).into()]);
+    let plain = b"plain text that was never encrypted".repeat(100);
+    writer
+        .push_archive_entry(ArchiveEntry::new_file("plain.txt"), Some(&plain[..]))
+        .unwrap();
+    writer.set_content_methods(vec![
+        AesEncoderOptions::new(Password::from("right")).into(),
+        Lzma2Options::from_level(1).into(),
+    ]);
+    let secret = b"secret".repeat(100);
+    writer
+        .push_archive_entry(ArchiveEntry::new_file("secret.txt"), Some(&secret[..]))
+        .unwrap();
+    writer.set_content_methods(vec![EncoderMethod::COPY.into()]);
+    writer.finish().unwrap();
+    path
+}
+
+#[test]
+fn a_wrong_password_is_refused_even_when_nothing_encrypted_is_kept() {
+    let room = Room::new();
+    let input = partly_encrypted(&room);
+    let out = room.path("out.7z");
+    let drop_secret = |e: &Entry| (e.name != "secret.txt").then(|| e.name.clone());
+    let error = rewrite(&input, &out, Some("wrong"), &drop_secret, &[]).unwrap_err();
+    assert!(arca_7z::password_required(&error), "{error:?}");
+    assert!(!out.exists());
+    let error = rewrite(&input, &out, Some("wrong"), &keep, &[]).unwrap_err();
+    assert!(arca_7z::password_required(&error), "{error:?}");
+    rewrite(&input, &out, Some("right"), &drop_secret, &[]).unwrap();
+    let again = SevenZArchive::open(fs::File::open(&out).unwrap(), Some("right")).unwrap();
+    assert!(again.has_encrypted());
+    assert_eq!(
+        listed(&out, Some("right")),
+        vec![(
+            "plain.txt".to_string(),
+            false,
+            None,
+            b"plain text that was never encrypted".repeat(100)
+        )]
+    );
+    let hidden = made(&room, Some("secret"), true);
+    let error = rewrite(&hidden, &out, Some("wrong"), &drop_secret, &[]).unwrap_err();
+    assert!(arca_7z::password_required(&error), "{error:?}");
 }

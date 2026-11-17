@@ -133,3 +133,38 @@ fn a_damaged_header_its_own_input_and_cut_files_are_refused_without_panic() {
         Err(arca_core::Error::Cancelled)
     ));
 }
+
+#[test]
+fn a_wrong_password_saves_nothing_even_from_the_plain_blocks() {
+    use sevenz_rust2::{
+        encoder_options::{AesEncoderOptions, Lzma2Options},
+        ArchiveEntry, ArchiveWriter, EncoderMethod, Password,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("partial.7z");
+    let mut writer = ArchiveWriter::create(&input).unwrap();
+    writer.set_encrypt_header(false);
+    writer.set_content_methods(vec![Lzma2Options::from_level(1).into()]);
+    let plain = b"plain text".repeat(100);
+    writer
+        .push_archive_entry(ArchiveEntry::new_file("plain.txt"), Some(&plain[..]))
+        .unwrap();
+    writer.set_content_methods(vec![
+        AesEncoderOptions::new(Password::from("right")).into(),
+        Lzma2Options::from_level(1).into(),
+    ]);
+    let secret = b"secret".repeat(100);
+    writer
+        .push_archive_entry(ArchiveEntry::new_file("secret.txt"), Some(&secret[..]))
+        .unwrap();
+    writer.set_content_methods(vec![EncoderMethod::COPY.into()]);
+    writer.finish().unwrap();
+    let out = dir.path().join("out.7z");
+    let error = salvage_7z(&input, &out, Some("wrong"), Level::FAST, &mut |_| true)
+        .err()
+        .unwrap();
+    assert!(arca_7z::password_required(&error), "{error:?}");
+    assert!(!out.exists());
+    let saved = salvage_7z(&input, &out, Some("right"), Level::FAST, &mut |_| true).unwrap();
+    assert_eq!((saved.kept, saved.lost.len()), (2, 0));
+}
