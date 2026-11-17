@@ -17,7 +17,9 @@ use crate::i18n::Strings;
 use crate::{archive_stem, detect, human, moved_name, sum_for, Format, INSTALLER_LIMIT};
 use arca_core::{Codec, Level};
 use std::collections::HashSet;
-use std::fs::{self, File};
+use std::fs;
+#[cfg(test)]
+use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
