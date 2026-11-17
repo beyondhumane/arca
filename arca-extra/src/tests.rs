@@ -494,9 +494,13 @@ fn gzip(data: &[u8]) -> Vec<u8> {
 }
 
 fn xz(data: &[u8]) -> Vec<u8> {
+    compress(Format::Xz, data)
+}
+
+fn compress(format: Format, data: &[u8]) -> Vec<u8> {
     let mut e = arca_stream::encoder(
         Vec::new(),
-        Format::Xz,
+        format,
         arca_core::Level::FAST,
         1,
         Some(data.len() as u64),
@@ -643,7 +647,12 @@ fn rpm_payload() -> Vec<u8> {
 #[test]
 fn an_rpm_lists_its_cpio_payload_compressed_or_not() {
     let payload = rpm_payload();
-    for bytes in [rpm(payload.clone()), rpm(gzip(&payload)), rpm(xz(&payload))] {
+    for bytes in [
+        rpm(payload.clone()),
+        rpm(gzip(&payload)),
+        rpm(xz(&payload)),
+        rpm(compress(Format::Bz2, &payload)),
+    ] {
         let (_dir, a) = open(Format::Rpm, &bytes);
         let a = a.unwrap();
         assert_eq!(
@@ -1010,4 +1019,67 @@ fn names_lose_their_dot_slash_and_trailing_slash() {
     assert_eq!(clean("/abs"), "abs");
     assert_eq!(clean("."), "");
     assert_eq!(clean("././x"), "x");
+}
+
+// --- Random payloads through the third-party decoders ---------------------
+
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+
+    fn bytes(&mut self, n: usize) -> Vec<u8> {
+        (0..n).map(|_| self.next() as u8).collect()
+    }
+}
+
+// Release builds abort on a panic, so whatever delharc makes of garbage has
+// to be an error. Debug assertions are on here, which checks more than a
+// release build would.
+#[test]
+fn every_lzh_method_survives_random_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("random.lzh");
+    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    let methods: [&[u8; 5]; 9] = [
+        b"-lh1-", b"-lh4-", b"-lh5-", b"-lh6-", b"-lh7-", b"-lzs-", b"-lz5-", b"-pm1-", b"-pm2-",
+    ];
+    for round in 0..3000 {
+        let method = methods[round % methods.len()];
+        let len = 1 + (rng.next() % 300) as usize;
+        let packed = rng.bytes(len);
+        let original = vec![0u8; 4096 + (rng.next() % 61440) as usize];
+        let mut bytes = lzh_member(method, "r", &packed, &original);
+        bytes.push(0);
+        fs::write(&path, &bytes).unwrap();
+        let a = ExtraArchive::open(&path, Format::Lzh).unwrap();
+        let _ = a.test(&[], &|_, _, _| true);
+    }
+}
+
+#[test]
+fn lzx_survives_random_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("random.cab");
+    let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+    let template = cab(&[("r", &vec![0u8; 40_000])], false, false);
+    let data_at = 36 + 8 + 16 + 2;
+    for round in 0..1500 {
+        let mut bytes = template.clone();
+        let window: u16 = if round % 2 == 0 { 0x1003 } else { 0x1503 };
+        bytes[42..44].copy_from_slice(&window.to_le_bytes());
+        for at in [data_at + 8, data_at + 8 + cab::MAX_BLOCK + 8] {
+            let end = (at + cab::MAX_BLOCK).min(bytes.len());
+            let noise = rng.bytes(end - at);
+            bytes[at..end].copy_from_slice(&noise);
+        }
+        fs::write(&path, &bytes).unwrap();
+        let a = ExtraArchive::open(&path, Format::Cab).unwrap();
+        let _ = a.test(&[], &|_, _, _| true);
+    }
 }
