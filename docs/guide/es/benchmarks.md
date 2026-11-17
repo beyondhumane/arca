@@ -119,7 +119,7 @@ Ryzen 7 3700X (8 núcleos, 16 hilos), Windows 11, con la protección en tiempo r
 El corpus son 50,000 archivos de 0 a 16,384 bytes en 100 carpetas, 410,069,593 bytes en total, tres partes de texto parecido a prosa por una de bytes aleatorios, generados a partir de una semilla fija:
 
 ```sh
-cargo run --release -p arca-bench --example small_files -- C:\b\small
+cargo run --release -p arca-bench --example small_files -- C:/b/small
 ```
 
 | Crear, 16 hilos, 16 pasadas | Reloj | CPU | Memoria máxima | Archivo |
@@ -162,8 +162,8 @@ Extraer es tiempo del sistema de archivos, no de Arca: de 33 a 35 segundos de CP
 La aplicación de escritorio volvía a abrir el archivo para cada entrada que extraía, detrás de un búfer nuevo de 256 KiB que el salto a la entrada desechaba. Contado en un hilo con el ejemplo que reproduce ese patrón, son 50,001 aperturas y 26,218,015,557 bytes leídos para este archivo de 251 MB, frente a 2 aperturas y 251,341,637 bytes ahora. La ventana en sí no se cronometró.
 
 ```sh
-cargo run --release -p arca-zip --example read_amplification -- small.zip baseline
-cargo run --release -p arca-zip --example read_amplification -- small.zip both
+cargo run --release -p arca-zip --example read_amplification -- C:/b/small.zip baseline
+cargo run --release -p arca-zip --example read_amplification -- C:/b/small.zip both
 ```
 
 ### Tamaño en Deflate frente al ZIP de WinRAR
@@ -177,11 +177,15 @@ Los tamaños no dependen de la máquina. 7-Zip no estaba instalado, así que Win
 | 16 archivos de texto grandes, 326,882,067 bytes | 123,443,446 | 117,071,830 | **117,038,415** | 123,301,735 | 122,832,147 |
 
 ```sh
-cargo run --release -p arca-bench --example small_files -- C:\b\small
-cargo run --release -p arca-bench --example small_files -- C:\b\text 16 33554432 text
-mkdir C:\b\src && git archive 4b1d67b | tar -x -C C:\b\src
-arca create out.zip C:\b\small -l 6
-"C:\Program Files\WinRAR\WinRAR.exe" a -afzip -m5 -ibck -y -r -ep1 out.zip C:\b\small\*
+cargo run --release -p arca-bench --example small_files -- C:/b/small
+cargo run --release -p arca-bench --example small_files -- C:/b/text 16 33554432 text
+mkdir C:/b/src && git archive 4b1d67b | tar -x -C C:/b/src
+arca create C:/b/out.zip C:/b/small -l 6
+```
+
+```powershell
+Start-Process -Wait "C:\Program Files\WinRAR\WinRAR.exe" `
+  -ArgumentList "a -afzip -m5 -ibck -y -r -ep1 C:\b\out.zip C:\b\small\*"
 ```
 
 Lo que cuesta cada nivel, en la misma máquina y con la misma carga, 3 pasadas de cada uno, 16 hilos:

@@ -16,6 +16,8 @@ param(
   [string]$Clean = ""
 )
 $ErrorActionPreference = "Stop"
+# powershell -File passes "a.exe,b.exe" as one string, not as an array.
+$Exes = @($Exes | ForEach-Object { $_ -split ',' } | Where-Object { $_ -ne "" })
 $res = @{}
 foreach ($e in $Exes) { $res[$e] = @{ w = @(); u = @(); k = @(); m = @() } }
 

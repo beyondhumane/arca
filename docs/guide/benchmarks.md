@@ -119,7 +119,7 @@ Ryzen 7 3700X (8 cores, 16 threads), Windows 11, Microsoft Defender real-time pr
 The corpus is 50,000 files of 0 to 16,384 bytes in 100 folders, 410,069,593 bytes in all, three parts prose-like text to one part random bytes, generated from a fixed seed:
 
 ```sh
-cargo run --release -p arca-bench --example small_files -- C:\b\small
+cargo run --release -p arca-bench --example small_files -- C:/b/small
 ```
 
 | Creating, 16 threads, 16 runs | Wall | CPU | Peak memory | Archive |
@@ -162,8 +162,8 @@ Extracting is the file system’s time, not Arca’s: of 33 to 35 seconds of CPU
 The desktop app opened the archive again for every entry it extracted, behind a fresh 256 KiB buffer that the seek to the entry then discarded. Counted on one thread with the example that models it, that is 50,001 opens and 26,218,015,557 bytes read for this 251 MB archive, against 2 opens and 251,341,637 bytes now. The window itself was not timed.
 
 ```sh
-cargo run --release -p arca-zip --example read_amplification -- small.zip baseline
-cargo run --release -p arca-zip --example read_amplification -- small.zip both
+cargo run --release -p arca-zip --example read_amplification -- C:/b/small.zip baseline
+cargo run --release -p arca-zip --example read_amplification -- C:/b/small.zip both
 ```
 
 ### Deflate size against WinRAR’s ZIP
@@ -177,11 +177,15 @@ Sizes do not depend on the machine. 7-Zip was not installed on the machine, so W
 | 16 large text files, 326,882,067 bytes | 123,443,446 | 117,071,830 | **117,038,415** | 123,301,735 | 122,832,147 |
 
 ```sh
-cargo run --release -p arca-bench --example small_files -- C:\b\small
-cargo run --release -p arca-bench --example small_files -- C:\b\text 16 33554432 text
-mkdir C:\b\src && git archive 4b1d67b | tar -x -C C:\b\src
-arca create out.zip C:\b\small -l 6
-"C:\Program Files\WinRAR\WinRAR.exe" a -afzip -m5 -ibck -y -r -ep1 out.zip C:\b\small\*
+cargo run --release -p arca-bench --example small_files -- C:/b/small
+cargo run --release -p arca-bench --example small_files -- C:/b/text 16 33554432 text
+mkdir C:/b/src && git archive 4b1d67b | tar -x -C C:/b/src
+arca create C:/b/out.zip C:/b/small -l 6
+```
+
+```powershell
+Start-Process -Wait "C:\Program Files\WinRAR\WinRAR.exe" `
+  -ArgumentList "a -afzip -m5 -ibck -y -r -ep1 C:\b\out.zip C:\b\small\*"
 ```
 
 What each level costs, on the same machine and under the same load, 3 runs each, 16 threads:
