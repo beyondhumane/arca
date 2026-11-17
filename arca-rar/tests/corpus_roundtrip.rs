@@ -48,6 +48,7 @@ fn create(written: &Written, level: u8, label: &str) -> PathBuf {
         .join(format!("{label}-{level}.rar"));
     let options = CreateOptions {
         level: Level::new(level),
+        ..CreateOptions::default()
     };
     create_rar(&archive, &written.sources, &options, &|_, _, _| true).unwrap();
     archive
