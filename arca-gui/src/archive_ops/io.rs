@@ -83,16 +83,7 @@ fn unpack(
         arca_core::extraction::set_executable(file, mode);
         Ok(n)
     };
-    if path.exists() {
-        return arca_core::extraction::write_staged(path, write);
-    }
-    let mut file = File::create(path)?;
-    let result = write(&mut file);
-    if result.is_err() {
-        drop(file);
-        let _ = fs::remove_file(path);
-    }
-    result
+    arca_core::extraction::write_new_or_staged(path, write)
 }
 
 pub(crate) fn open_source(archive: &Path, format: Format) -> arca_core::Result<Box<dyn Read>> {
@@ -659,14 +650,22 @@ pub(crate) fn dest_path(
     is_dir: bool,
     ask: &dyn Fn(&Path) -> Answer,
     claimed: &mut HashSet<PathBuf>,
+    made: &mut HashSet<PathBuf>,
 ) -> arca_core::Result<Option<PathBuf>> {
     let path = dest.join(arca_core::safe_name(name)?);
-    if is_dir {
-        fs::create_dir_all(&path)?;
-        return Ok(None);
+    let folder = if is_dir {
+        Some(path.as_path())
+    } else {
+        path.parent()
+    };
+    if let Some(p) = folder {
+        if !made.contains(p) {
+            fs::create_dir_all(p)?;
+            made.insert(p.to_path_buf());
+        }
     }
-    if let Some(p) = path.parent() {
-        fs::create_dir_all(p)?;
+    if is_dir {
+        return Ok(None);
     }
     if !path.exists() && !claimed.contains(&arca_core::extraction::claim_key(&path)) {
         claimed.insert(arca_core::extraction::claim_key(&path));
@@ -873,11 +872,14 @@ pub(crate) fn extract_reporting(
         Container::Zip => {
             let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             let mut jobs: Vec<(Entry, PathBuf)> = Vec::new();
+            let mut made = HashSet::new();
             for (i, e) in a.entries().iter().enumerate() {
                 if !wanted.is_empty() && !wanted.get(i).copied().unwrap_or(true) {
                     continue;
                 }
-                if let Some(path) = dest_path(dest, &e.name, e.is_dir, ask, &mut claimed)? {
+                if let Some(path) =
+                    dest_path(dest, &e.name, e.is_dir, ask, &mut claimed, &mut made)?
+                {
                     jobs.push((e.clone(), path));
                 }
             }
@@ -896,18 +898,26 @@ pub(crate) fn extract_reporting(
             let done = AtomicUsize::new(0);
             let written: Vec<u64> = jobs
                 .par_iter()
-                .map(|(e, path)| {
-                    let mut source =
-                        BufReader::with_capacity(BUF, arca_core::volumes::open(archive)?);
-                    let at = (done.load(Ordering::Relaxed), total, e.name.as_str());
-                    let w = unpack(path, (e.mtime, None), notify, at, |out| {
-                        arca_zip::extract_entry_with(&mut source, e, out, password)
-                    })?;
-                    if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &e.name) {
-                        return Err(arca_core::Error::Cancelled);
-                    }
-                    Ok(w)
-                })
+                .map_init(
+                    || None,
+                    |source, (e, path)| {
+                        let source = match source {
+                            Some(open) => open,
+                            empty => empty.insert(arca_zip::ExtractionReader::with_capacity(
+                                BUF,
+                                arca_core::volumes::open(archive)?,
+                            )?),
+                        };
+                        let at = (done.load(Ordering::Relaxed), total, e.name.as_str());
+                        let w = unpack(path, (e.mtime, None), notify, at, |out| {
+                            arca_zip::extract_entry_with(source, e, out, password)
+                        })?;
+                        if !notify(done.fetch_add(1, Ordering::Relaxed) + 1, total, &e.name) {
+                            return Err(arca_core::Error::Cancelled);
+                        }
+                        Ok(w)
+                    },
+                )
                 .collect::<arca_core::Result<Vec<u64>>>()?;
             bytes = written.iter().sum();
             let _ = notify(total, total, "");
