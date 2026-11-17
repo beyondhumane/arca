@@ -91,3 +91,22 @@ fn repair_refuses_its_input_a_missing_record_and_garbage() {
         .count();
     assert_eq!(leftovers, 0);
 }
+
+#[test]
+fn damaged_headers_say_why_they_cannot_be_repaired() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut bytes = built(Some(10), None);
+    let at = bytes.windows(8).position(|w| w == b"data.bin").unwrap();
+    bytes[at] ^= 0x20;
+    let input = dir.path().join("headers.rar");
+    fs::write(&input, &bytes).unwrap();
+    let output = dir.path().join("out.rar");
+    let error = arca_rar::repair(&input, &output, None, &|_, _, _| true).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("damaged headers cannot be repaired"),
+        "{error}"
+    );
+    assert!(!output.exists());
+}

@@ -33,7 +33,12 @@ pub(super) fn repair(
             File::open(input)?,
             reader::options(password, token),
         )
-        .map_err(|e| reader::at_path(reader::error(e), input))?;
+        .map_err(|e| match reader::at_path(reader::error(e), input) {
+            Error::Format(message) => Error::Format(format!(
+                "{message}; the recovery record is found through the headers, so damaged headers cannot be repaired"
+            )),
+            other => other,
+        })?;
         if is_volume(&archive) {
             return Err(Error::Unsupported(
                 "a RAR volume set cannot be repaired one volume at a time".into(),
