@@ -16,7 +16,7 @@ pub const MEMORY_LIMIT_MIB: u32 = 1024;
 pub const ENCODER_BUDGET_MIB: u64 = 2048;
 /// What the blocks a parallel decode holds at once may use between them:
 /// each one's compressed bytes, its decoded bytes and the decoder's window,
-/// which never outgrows the decoded bytes.
+/// which grows by doubling and so reaches at most twice the decoded bytes.
 pub const DECODER_BUDGET_MIB: u64 = 2048;
 const MAX_INDEX: u64 = 64 << 20;
 const HEADER: u64 = 12;

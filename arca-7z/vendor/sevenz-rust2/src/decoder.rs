@@ -126,7 +126,7 @@ pub fn add_decoder<I: Read>(
 
             // Arca: the multithreaded reader holds, per run of chunks between
             // dictionary resets, its compressed bytes, its output and a window
-            // that never outgrows the output, for every thread plus one queued
+            // no larger than the dictionary, for every thread plus one queued
             // and one being read. Runs of up to four dictionaries go to the
             // threads, which covers the runs of Arca's and 7-Zip's multithreaded
             // encoders; a longer one is decoded in place. A block that holds no

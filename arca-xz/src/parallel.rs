@@ -33,7 +33,7 @@ impl Block {
 
     fn cost(self) -> u64 {
         self.padded()
-            .saturating_add(self.size.saturating_mul(2))
+            .saturating_add(self.size.saturating_mul(3))
             .saturating_add(1 << 20)
     }
 }

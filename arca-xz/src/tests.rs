@@ -381,7 +381,7 @@ fn parallel_threads_stay_within_the_budget() {
     let blocks = [block(24 << 20); 64];
     let threads = parallel::threads(&blocks, 64) as u64;
     assert!(threads > 1);
-    assert!((threads + 2) * (12 + 48 + 1) <= DECODER_BUDGET_MIB);
+    assert!((threads + 2) * (12 + 72 + 1) <= DECODER_BUDGET_MIB);
 }
 
 #[test]
