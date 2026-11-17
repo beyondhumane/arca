@@ -54,7 +54,12 @@ STAGE="$WORK/stage"
 install -Dm755 "$BIN/arca" "$STAGE/usr/bin/arca"
 install -Dm755 "$BIN/arca-gui" "$STAGE/usr/bin/arca-gui"
 install -Dm644 "$HERE/arca.desktop" "$STAGE/usr/share/applications/arca.desktop"
-install -Dm644 "$ROOT/brand/arca-monolito-256.png" "$STAGE/usr/share/icons/hicolor/256x256/apps/dev.beyondhumane.Arca.png"
+# Dolphin's Extract and Compress entries. Read straight from this directory by
+# KDE Frameworks 5.85 and later; other file managers ignore it.
+install -Dm644 "$HERE/arca-extract.desktop" "$STAGE/usr/share/kio/servicemenus/arca-extract.desktop"
+install -Dm644 "$HERE/arca-compress.desktop" "$STAGE/usr/share/kio/servicemenus/arca-compress.desktop"
+# hicolor PNGs at the standard sizes, straight out of the .ico, plus the SVG.
+python3 "$HERE/icons.py" "$STAGE"
 install -Dm644 "$ROOT/LICENSE" "$STAGE/usr/share/licenses/arca/LICENSE"
 install -Dm644 "$ROOT/RAR-NOTICES.txt" "$STAGE/usr/share/licenses/arca/RAR-NOTICES.txt"
 install -Dm644 "$ROOT/README.md" "$STAGE/usr/share/doc/arca/README.md"
@@ -70,7 +75,10 @@ APPIMAGE_EXTRACT_AND_RUN=1 ARCH=$ARCH VERSION=$VERSION "$WORK/appimagetool" \
   --no-appstream --runtime-file "$WORK/runtime" \
   "$APPDIR" "$OUT/arca-v$VERSION-linux-$NAME.AppImage"
 
-# .deb and .rpm, named the way apt and dnf users expect.
+# .deb and .rpm, named the way apt and dnf users expect. The maintainer script
+# stays outside STAGE, which is the AppImage's tree too; nfpm.yaml reaches it
+# relative to STAGE, where nfpm runs.
+install -Dm755 "$HERE/refresh-caches.sh" "$WORK/scripts/refresh-caches.sh"
 for packager in deb rpm; do
   (cd "$STAGE" && VERSION=$VERSION GOARCH=$GOARCH \
     "$WORK/nfpm" package --config "$HERE/nfpm.yaml" --packager "$packager" --target "$OUT/")

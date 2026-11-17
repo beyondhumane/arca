@@ -2,10 +2,20 @@
 Type=Application
 Name=Arca
 GenericName=Archive Manager
-Comment=Create, browse and extract ZIP and TAR archives
+GenericName[es]=Gestor de archivos comprimidos
+GenericName[uk]=Менеджер архівів
+Comment=Create, browse and extract archives
+Comment[es]=Crea, explora y extrae archivos comprimidos
+Comment[uk]=Створення, перегляд і видобування архівів
 Exec=arca-gui %f
 Icon=dev.beyondhumane.Arca
 Terminal=false
 Categories=Utility;Archiving;Compression;
-MimeType=application/zip;application/x-tar;application/x-compressed-tar;
-Keywords=zip;tar;archive;extract;compress;
+# The archive types arca_core::Format offers to open, with the older and newer
+# shared-mime-info names where they differ; arca-setup's tests keep this in
+# step. ZIP-based documents and packages (.jar, .epub, .apk...) and CBR comics
+# are left to their own applications on purpose.
+MimeType=application/zip;application/x-7z-compressed;application/x-tar;application/x-compressed-tar;application/x-xz-compressed-tar;application/x-xz;application/x-bzip2-compressed-tar;application/x-bzip-compressed-tar;application/x-bzip1-compressed-tar;application/x-bzip2;application/x-bzip;application/x-zstd-compressed-tar;application/zstd;application/vnd.rar;application/x-rar;application/x-cd-image;application/vnd.efi.iso;
+Keywords=zip;7z;tar;rar;iso;archive;extract;compress;
+Keywords[es]=zip;7z;tar;rar;iso;archivo;comprimido;extraer;comprimir;
+Keywords[uk]=zip;7z;tar;rar;iso;архів;видобути;стиснути;

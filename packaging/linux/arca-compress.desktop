@@ -1,0 +1,23 @@
+[Desktop Entry]
+# Dolphin service menu (KDE Frameworks 5.85 and later, Plasma 6), installed to
+# /usr/share/kio/servicemenus. Offered for any file or folder, like "Add to
+# archive" in the Windows Explorer menu.
+Type=Service
+Icon=dev.beyondhumane.Arca
+MimeType=all/all;
+Actions=addToArchive;compressZip;
+X-KDE-Submenu=Arca
+
+[Desktop Action addToArchive]
+Name=Add to archive…
+Name[es]=Añadir al archivo…
+Name[uk]=Додати до архіву…
+Icon=dev.beyondhumane.Arca
+Exec=arca-gui --add %F
+
+[Desktop Action compressZip]
+Name=Compress to ZIP
+Name[es]=Comprimir en ZIP
+Name[uk]=Стиснути в ZIP
+Icon=dev.beyondhumane.Arca
+Exec=arca-gui --add-quick %F

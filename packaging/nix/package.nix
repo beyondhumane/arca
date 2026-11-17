@@ -2,8 +2,6 @@
   lib,
   rustPlatform,
   pkg-config,
-  copyDesktopItems,
-  makeDesktopItem,
   fontconfig,
   freetype,
   libxkbcommon,
@@ -61,7 +59,6 @@ rustPlatform.buildRustPackage {
 
   nativeBuildInputs = [
     pkg-config
-    copyDesktopItems
   ];
 
   buildInputs = [
@@ -70,38 +67,16 @@ rustPlatform.buildRustPackage {
   ]
   ++ runtimeLibs;
 
-  desktopItems = [
-    (makeDesktopItem {
-      name = "arca";
-      desktopName = "Arca";
-      genericName = "Archive Manager";
-      comment = "Create, browse and extract ZIP and TAR archives";
-      exec = "arca-gui %f";
-      # Reverse-DNS so no icon theme can shadow it: Colloid ships an
-      # unrelated "arca".
-      icon = "dev.beyondhumane.Arca";
-      categories = [
-        "Utility"
-        "Archiving"
-        "Compression"
-      ];
-      mimeTypes = [
-        "application/zip"
-        "application/x-tar"
-        "application/x-compressed-tar"
-      ];
-      keywords = [
-        "zip"
-        "tar"
-        "archive"
-        "extract"
-        "compress"
-      ];
-    })
-  ];
-
   postInstall = ''
+    # The same desktop entry and Dolphin menus as the .deb and .rpm. packaging/
+    # is outside src, so they come in as paths of their own.
+    install -Dm644 ${../linux/arca.desktop} $out/share/applications/arca.desktop
+    install -Dm644 ${../linux/arca-extract.desktop} $out/share/kio/servicemenus/arca-extract.desktop
+    install -Dm644 ${../linux/arca-compress.desktop} $out/share/kio/servicemenus/arca-compress.desktop
+    # The icon is named in reverse-DNS form so that no icon theme can shadow it:
+    # Colloid ships an unrelated "arca".
     install -Dm644 brand/arca-monolito-256.png $out/share/icons/hicolor/256x256/apps/dev.beyondhumane.Arca.png
+    install -Dm644 brand/arca-monolito-app-claro.svg $out/share/icons/hicolor/scalable/apps/dev.beyondhumane.Arca.svg
     install -Dm644 RAR-NOTICES.txt $out/share/licenses/arca/RAR-NOTICES.txt
   '';
 

@@ -179,4 +179,74 @@ mod tests {
         assert_eq!(table("Formats"), expected(false));
         assert_eq!(table("OnRequest"), expected(true));
     }
+
+    fn mime_types() -> BTreeSet<String> {
+        Format::SUFFIXES
+            .iter()
+            .flat_map(|(_, format)| format.mime_types())
+            .map(|mime| mime.to_string())
+            .collect()
+    }
+
+    fn desktop_key(text: &str, key: &str) -> Vec<String> {
+        text.lines()
+            .filter_map(|line| line.strip_prefix(&format!("{key}=")))
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn list(value: &str) -> BTreeSet<String> {
+        value
+            .split(';')
+            .filter(|item| !item.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn the_linux_desktop_entry_and_dolphin_menu_list_every_offered_type() {
+        for file in [
+            "packaging/linux/arca.desktop",
+            "packaging/linux/arca-extract.desktop",
+        ] {
+            let entry = repo(file);
+            let lines = desktop_key(&entry, "MimeType");
+            assert_eq!(lines.len(), 1, "{file}");
+            assert_eq!(list(&lines[0]), mime_types(), "{file}");
+            assert!(lines[0].ends_with(';'), "{file}");
+        }
+    }
+
+    #[test]
+    fn the_dolphin_menus_run_flags_the_window_understands() {
+        let startup = repo("arca-gui/src/archive_ops/mod.rs");
+        for file in [
+            "packaging/linux/arca-extract.desktop",
+            "packaging/linux/arca-compress.desktop",
+        ] {
+            let menu = repo(file);
+            let commands = desktop_key(&menu, "Exec");
+            assert!(!commands.is_empty(), "{file}");
+            for command in commands {
+                let flag = command
+                    .strip_prefix("arca-gui ")
+                    .and_then(|rest| rest.strip_suffix(" %F"))
+                    .unwrap_or_else(|| panic!("{file}: {command}"));
+                assert!(startup.contains(&format!("\"{flag}\" if")), "{flag}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_nix_package_installs_the_same_desktop_files() {
+        let nix = repo("packaging/nix/package.nix");
+        assert!(!nix.contains("mimeTypes"));
+        for file in [
+            "arca.desktop",
+            "arca-extract.desktop",
+            "arca-compress.desktop",
+        ] {
+            assert!(nix.contains(&format!("${{../linux/{file}}}")), "{file}");
+        }
+    }
 }
