@@ -62,9 +62,10 @@ source was consulted for any of it.
   `skip_after_misses`: after that many searches in a row find nothing, the
   lazy parse and the optimal parse's collector step over one more position
   per further run of misses, emitting them as literals without searching or
-  inserting them, until a match turns up. Level 1 starts after 16 misses,
-  levels 2 and 3 after 64 and levels 4 and 5 after 128
-  (`rar50/write/filter_policy.rs`).
+  inserting them, until a match turns up. The first 64 KiB of a parse's
+  input are always searched, so small files are not affected. Level 1
+  starts after 16 misses, levels 2 and 3 after 64 and levels 4 and 5 after
+  128 (`rar50/write/filter_policy.rs`).
 - **Lighter top levels.** Level 4 searches 64 candidates out to 128 bytes
   and prices each block twice; level 5 searches 128 out to 256 and prices
   three times (`rar50/write/filter_policy.rs`). They used to search 256 and

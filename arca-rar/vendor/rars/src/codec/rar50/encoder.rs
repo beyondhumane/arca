@@ -507,9 +507,15 @@ pub struct EncodeOptions {
     pub parse_passes: usize,
     /// Arca: after this many searches in a row find nothing, the search
     /// starts stepping over positions, one more for each further run of as
-    /// many misses, until a match turns up. Zero searches everywhere.
+    /// many misses, until a match turns up. Zero searches everywhere. The
+    /// first 64 KiB a parse reaches across are always searched.
     pub skip_after_misses: usize,
 }
+
+/// Arca: how far into its input a parse searches every position however
+/// often it misses. A file starts with nothing to match, so without this a
+/// small file lost its first matches to the stepping.
+const MISS_SKIP_WARMUP: usize = 64 * 1024;
 
 impl EncodeOptions {
     pub const fn new(max_match_candidates: usize) -> Self {
@@ -1431,7 +1437,7 @@ impl<B: Budget> OptimalCollector<B> {
                             last.0 = match_length(combined, pos, last.1 as usize, limit) as u32;
                         }
                     }
-                    if options.skip_after_misses != 0 {
+                    if options.skip_after_misses != 0 && pos >= MISS_SKIP_WARMUP {
                         if matches.runs.len() == before {
                             misses += 1;
                         } else {
@@ -2758,7 +2764,7 @@ fn encode_tokens_with_allowance<B: Budget>(
             // Arca: a search that keeps missing steps over the positions
             // after it, emitted as literals and left out of the finder. See
             // [`EncodeOptions::skip_after_misses`].
-            if options.skip_after_misses != 0 {
+            if options.skip_after_misses != 0 && pos >= MISS_SKIP_WARMUP {
                 misses += 1;
                 let skip = (misses / options.skip_after_misses).min(end - pos);
                 for &byte in &combined[pos..pos + skip] {
