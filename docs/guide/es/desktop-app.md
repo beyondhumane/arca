@@ -101,7 +101,7 @@ enlaces y registros pax), y las renombradas solo cambian el nombre; después se
 vuelve a comprimir con su propio códec: con el nivel elegido para los archivos
 nuevos cuando se añaden ficheros, y con el nivel 6 en los demás casos. Un enlace
 duro sigue a la entrada a la que apunta cuando esta se renombra, y se rechaza
-borrar una entrada a la que todavía apunta un enlace duro. La entrada `./` que
+borrar o sustituir una entrada a la que todavía apunta un enlace duro. La entrada `./` que
 algunas herramientas ponen al principio de un TAR no se conserva. Un 7z se
 descomprime y se vuelve a comprimir bloque a bloque, conservando el nombre, las
 fechas y los atributos de cada entrada, las carpetas vacías y los ficheros

@@ -99,7 +99,8 @@ entry by entry with its headers as they were (owner, permissions, times, links
 and pax records), the renamed ones changing only their name, and compressed
 again with its own codec: at the level picked for new archives when files are
 added, at level 6 otherwise. A hard link follows the entry it points to when that
-entry is renamed, and deleting an entry a hard link still points to is refused.
+entry is renamed, and deleting or replacing an entry a hard link still points to
+is refused.
 The `./` entry some tools put at the top of a TAR is not kept. A 7z is decoded
 and encoded again block by block, keeping each entry's name, times, attributes,
 empty folders and empty files; a stored block stays stored. Memory stays at one
