@@ -450,11 +450,11 @@ fn plan(
                 source.path.display()
             )));
         }
-        let is_parent = match parent_identity {
+        let is_parent = || match parent_identity {
             Some(parent) => identity(&meta) == Some(parent),
             None => parent_real.is_some() && fs::canonicalize(&source.path).ok() == parent_real,
         };
-        if meta.is_dir() && is_parent {
+        if meta.is_dir() && is_parent() {
             return Err(Error::Format(format!(
                 "RAR source '{}' is the output directory",
                 source.path.display()
