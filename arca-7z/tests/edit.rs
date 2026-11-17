@@ -492,3 +492,76 @@ fn a_wrong_password_is_refused_even_when_nothing_encrypted_is_kept() {
     let error = rewrite(&hidden, &out, Some("wrong"), &drop_secret, &[]).unwrap_err();
     assert!(arca_7z::password_required(&error), "{error:?}");
 }
+
+#[test]
+fn a_name_cannot_be_a_file_and_a_folder_at_once() {
+    let room = Room::new();
+    let input = made(&room, None, false);
+    let out = room.path("out.7z");
+    let file = room.write("new/file", b"x");
+    let over = |name: &str| {
+        [Addition {
+            source: Some(file.clone()),
+            name: name.into(),
+        }]
+    };
+    for (name, add) in [
+        ("a file over a folder with entries", over("src")),
+        ("a file under a file", over("tool.exe/inside")),
+    ] {
+        let clash = rewrite(&input, &out, None, &keep, &add);
+        assert!(matches!(clash, Err(Error::Format(_))), "{name}: {clash:?}");
+    }
+    let renamed = rewrite(
+        &input,
+        &out,
+        None,
+        &|e| Some(e.name.replace("tool.exe", "src/a.txt/tool.exe")),
+        &[],
+    );
+    assert!(matches!(renamed, Err(Error::Format(_))), "{renamed:?}");
+    rewrite(&input, &out, None, &keep, &over("src/hollow")).unwrap();
+    let got = listed(&out, None);
+    let hollow = got.iter().find(|e| e.0 == "src/hollow").unwrap();
+    assert!(!hollow.1 && hollow.3 == b"x");
+}
+
+#[test]
+fn an_archive_is_not_rewritten_over_itself() {
+    let room = Room::new();
+    let input = made(&room, None, false);
+    let before = fs::read(&input).unwrap();
+    let error = rewrite(&input, &input, None, &keep, &[]).unwrap_err();
+    assert!(matches!(error, Error::Format(_)), "{error:?}");
+    assert_eq!(fs::read(&input).unwrap(), before);
+}
+
+#[test]
+fn links_and_devices_are_not_added_as_files() {
+    let room = Room::new();
+    let input = made(&room, None, false);
+    let out = room.path("out.7z");
+    let target = room.write("new/target", b"through the link");
+    let link = room.path("new/link");
+    #[cfg(unix)]
+    let made_link = std::os::unix::fs::symlink(&target, &link).is_ok();
+    #[cfg(windows)]
+    let made_link = std::os::windows::fs::symlink_file(&target, &link).is_ok();
+    let mut sources = Vec::new();
+    if made_link {
+        sources.push(link);
+    }
+    #[cfg(unix)]
+    sources.push(PathBuf::from("/dev/null"));
+    for source in sources {
+        let add = [Addition {
+            source: Some(source.clone()),
+            name: "added".into(),
+        }];
+        let refused = rewrite(&input, &out, None, &keep, &add);
+        assert!(
+            matches!(refused, Err(Error::Unsupported(_))),
+            "{source:?}: {refused:?}"
+        );
+    }
+}

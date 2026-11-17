@@ -71,6 +71,11 @@ pub fn rewrite_7z(
     change: &Change<'_>,
     notify: &mut dyn FnMut(Progress<'_>) -> bool,
 ) -> Result<Vec<Recoded>> {
+    if output.exists() && fs::canonicalize(input)? == fs::canonicalize(output)? {
+        return Err(Error::Format(
+            "the rewritten 7z cannot be written over the one it is read from".into(),
+        ));
+    }
     let mut source = SevenZArchive::open(io::BufReader::new(fs::File::open(input)?), password)?;
     let password = password.filter(|p| !p.is_empty());
     if source.encrypted && password.is_none() {
@@ -82,19 +87,31 @@ pub fn rewrite_7z(
         hide_names: source.archive.header_encrypted,
         compression: compression_of(&source.archive),
     };
-    let plan = plan(&source, change)?;
-    let data = |i: usize| {
-        let file = &source.archive.files[i];
-        file.has_stream && file.size > 0
-    };
     let mut added = Vec::with_capacity(change.add.len());
     for addition in change.add {
         let meta = match &addition.source {
-            Some(path) => Some(fs::metadata(path)?),
+            Some(path) => {
+                let meta = fs::symlink_metadata(path)?;
+                if !meta.is_file() && !meta.is_dir() {
+                    return Err(Error::Unsupported(
+                        "7z source is not a regular file or directory".into(),
+                    ));
+                }
+                Some(meta)
+            }
             None => None,
         };
         added.push(meta);
     }
+    let folders: Vec<bool> = added
+        .iter()
+        .map(|meta| meta.as_ref().is_none_or(fs::Metadata::is_dir))
+        .collect();
+    let plan = plan(&source, change, &folders)?;
+    let data = |i: usize| {
+        let file = &source.archive.files[i];
+        file.has_stream && file.size > 0
+    };
     let any_data = (0..plan.len()).any(|i| plan[i].is_some() && data(i))
         || added.iter().flatten().any(|m| m.is_file() && m.len() > 0);
     if options.password.is_some() && !options.hide_names && !any_data {
@@ -245,16 +262,21 @@ fn chain_of(block: &sevenz_rust2::Block) -> (Vec<Stage>, Vec<String>) {
 }
 
 /// The name each entry of `source` keeps, checked the way the reader will
-/// check it: a usable path, and none twice.
+/// check it: a usable path, none twice, and none inside a file. `folders`
+/// says which additions are folders.
 fn plan<R: Read + io::Seek>(
     source: &SevenZArchive<R>,
     change: &Change<'_>,
+    folders: &[bool],
 ) -> Result<Vec<Option<String>>> {
     let mut added = HashSet::new();
-    for addition in change.add {
-        if !added.insert(entry_path(addition.name.trim_end_matches('/'))?) {
+    let mut kinds = Vec::with_capacity(source.entries.len() + change.add.len());
+    for (addition, &folder) in change.add.iter().zip(folders) {
+        let path = entry_path(addition.name.trim_end_matches('/'))?;
+        if !added.insert(path.clone()) {
             return Err(Error::Format("duplicate 7z entry name".into()));
         }
+        kinds.push((path, folder));
     }
     let mut taken = HashSet::new();
     let mut header_size = 0usize;
@@ -271,9 +293,10 @@ fn plan<R: Read + io::Seek>(
                 let path = entry_path(&name)?;
                 if added.contains(&path) {
                     None
-                } else if !taken.insert(path) {
+                } else if !taken.insert(path.clone()) {
                     return Err(Error::Format("duplicate 7z entry name".into()));
                 } else {
+                    kinds.push((path, entry.is_dir));
                     Some(name)
                 }
             }
@@ -292,6 +315,16 @@ fn plan<R: Read + io::Seek>(
     }
     if header_size > 16 * 1024 * 1024 {
         return Err(Error::Limit("7z header size".into()));
+    }
+    kinds.sort_unstable();
+    for pair in kinds.windows(2) {
+        let ((file, folder), (inside, _)) = (&pair[0], &pair[1]);
+        if !folder && inside.starts_with(file) {
+            return Err(Error::Format(format!(
+                "'{}' would be both a file and a folder in the 7z",
+                file.display()
+            )));
+        }
     }
     Ok(plan)
 }
