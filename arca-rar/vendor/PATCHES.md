@@ -34,6 +34,13 @@ source was consulted for any of it.
   Levels 2 and 3 stop at 64 bytes and price each block once and twice;
   level 3 also searches 32 candidates rather than 128
   (`rar50/write/filter_policy.rs`). Levels 0, 1, 4 and 5 are unchanged.
+- **Hash tables sized to the window.** The chain finder the RAR 5 encoder
+  builds (`MatchFinder::with_window_hash`) and the tree finder give their
+  head table one entry per two bytes of window, from 2^17 up to 2^22 entries,
+  instead of a fixed 2^17 (`codec/match_finder.rs`, `window_hash_bits`). The
+  RAR 2.x and 2.9 encoders keep the fixed tables. The writer's workspace
+  estimate charges the two bytes per window byte (`rar50/write/mod.rs`,
+  `streaming_lz_workspace`, 17 and 13 become 19 and 15).
 
 Measured with `arca create out.rar <dir> -l <level>` on 144 MiB of source and
 executables (1,382 files), Windows 11, 16 threads, together with the

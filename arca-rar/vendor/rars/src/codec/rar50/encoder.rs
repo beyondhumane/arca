@@ -1206,7 +1206,7 @@ fn member_finder_with_allowance<B: Budget>(
     allowance: &B,
 ) -> Result<Rar50MatchFinder<B>> {
     let mut finder =
-        Rar50MatchFinder::with_allowance(finder_window(options, combined.len()), allowance)?;
+        Rar50MatchFinder::with_window_hash(finder_window(options, combined.len()), allowance)?;
     for pos in 0..start {
         finder.insert(combined, pos);
     }
@@ -1226,7 +1226,7 @@ fn seeded_finder<B: Budget>(
     // long enough to fill.
     let behind = block.start.min(options.max_match_distance);
     let mut finder =
-        Rar50MatchFinder::with_allowance(behind + (block.end - block.start), allowance)?;
+        Rar50MatchFinder::with_window_hash(behind + (block.end - block.start), allowance)?;
     for pos in block.start - behind..block.start {
         finder.insert(combined, pos);
     }

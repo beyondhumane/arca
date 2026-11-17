@@ -712,7 +712,9 @@ fn source_integrity_with_allowance<B: crate::codec::workspace::Budget>(
 fn streaming_lz_workspace(dictionary_size: u64, block_size: usize, optimal_parse: bool) -> u64 {
     // Runs retain up to a dictionary of new input as well as history and
     // combined search bytes. Charge those buffers alongside finder links.
-    let per_window_byte = if optimal_parse { 17 } else { 13 };
+    // Arca: two more per byte for the finders' head tables, which now grow
+    // with the window (`codec::match_finder::window_hash_bits`).
+    let per_window_byte = if optimal_parse { 19 } else { 15 };
     dictionary_size
         .checked_next_power_of_two()
         .unwrap_or(dictionary_size)
