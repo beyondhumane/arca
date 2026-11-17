@@ -5,6 +5,7 @@ mod format;
 pub use format::{Container, Format};
 pub mod extraction;
 pub mod hash;
+pub mod sfx;
 pub mod volumes;
 
 pub mod limits {

@@ -221,7 +221,7 @@ impl Read for Joined {
     }
 }
 
-fn moved(from: u64, by: i64) -> io::Result<u64> {
+pub(crate) fn moved(from: u64, by: i64) -> io::Result<u64> {
     from.checked_add_signed(by).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
