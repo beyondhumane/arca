@@ -26,7 +26,7 @@ de tocar el fichero.
 
 | Formato | Sufijos | Qué se lee |
 |---|---|---|
-| CPIO | `.cpio` | `newc` y `crc` (initramfs de Linux, contenido de los RPM), `odc` de POSIX y las cabeceras binarias antiguas en cualquier orden de bytes. Las sumas de `crc` se comprueban. |
+| CPIO | `.cpio` | `newc` y `crc` (initramfs de Linux sin comprimir, contenido de los RPM), `odc` de POSIX y las cabeceras binarias antiguas en cualquier orden de bytes. Las sumas de `crc` se comprueban. |
 | AR | `.ar`, `.a` | Archivos de Unix y bibliotecas estáticas, con nombres largos de GNU (`//`) y de BSD (`#1/`). Las tablas de símbolos no son ficheros y no se listan. Los archivos «thin» se rechazan. |
 | DEB | `.deb`, `.udeb` | Los ficheros que instala el paquete y sus ficheros de control en `DEBIAN/`, como los deja `dpkg-deb -R`. `data.tar` y `control.tar` pueden ir sin comprimir o con gzip, xz, bzip2 o Zstandard. |
 | RPM | `.rpm` | El CPIO que lleva dentro, sin comprimir o con gzip, xz, bzip2 o Zstandard. Las firmas y los resúmenes de la cabecera no se comprueban, y el listado lo dice. |
@@ -63,6 +63,8 @@ sockets ni se listan ni se extraen; la línea de órdenes escribe
   de los paquetes con ficheros de más de 4 GiB.
 - **DEB:** los paquetes del formato antiguo 0.939 y `data.tar.lzma`.
 - **LZH:** `-lhx-` y las demás extensiones de UNLHA32.
+- **CPIO comprimido:** un `initrd.img` o un `.cpio.gz` es un CPIO dentro de gzip, a menudo detrás de un CPIO de microcódigo sin comprimir, y no se abre como CPIO; un `.cpio.xz`, `.cpio.bz2` o `.cpio.zst` se abre como un único fichero comprimido. Hay que descomprimirlo antes.
+- **Los nombres LZH** en una página de códigos, normalmente Shift-JIS en los archivos japoneses, se muestran con cada byte que no es ASCII como `%xx`.
 - **WIM** y **ARJ** no están soportados. Todavía no hay un lector de WIM en
   Rust puro que se mantenga: los crates publicados son primeras versiones, y WIM
   necesita además descompresores XPRESS y LZMS.

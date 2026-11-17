@@ -44,6 +44,7 @@ y a **Configuración > Aplicaciones predeterminadas** para estas extensiones:
 | `.xz`, `.txz` | XZ y TAR.XZ |
 | `.bz2`, `.tbz2`, `.tbz` | BZ2 y TAR.BZ2 |
 | `.zst`, `.tzst` | ZST y TAR.ZST |
+| `.cpio`, `.cab`, `.lzh`, `.lha` | CPIO, CAB y LZH, de solo lectura |
 | `.iso` | Imágenes de disco ISO, solo si se piden |
 
 Windows se fija solo en la última extensión, así que para él `copia.tar.xz` es

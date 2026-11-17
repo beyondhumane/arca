@@ -43,6 +43,7 @@ to **Settings > Default apps** for these extensions:
 | `.xz`, `.txz` | XZ and TAR.XZ |
 | `.bz2`, `.tbz2`, `.tbz` | BZ2 and TAR.BZ2 |
 | `.zst`, `.tzst` | ZST and TAR.ZST |
+| `.cpio`, `.cab`, `.lzh`, `.lha` | CPIO, CAB and LZH, read-only |
 | `.iso` | ISO disc images, only on request |
 
 Windows matches on the last extension, so `backup.tar.xz` is an `.xz` file to

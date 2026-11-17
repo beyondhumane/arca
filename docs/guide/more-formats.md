@@ -25,7 +25,7 @@ touched.
 
 | Format | Suffixes | What is read |
 |---|---|---|
-| CPIO | `.cpio` | `newc` and `crc` (Linux initramfs, RPM payloads), POSIX `odc` and the old binary headers in either byte order. The `crc` sums are checked. |
+| CPIO | `.cpio` | `newc` and `crc` (uncompressed Linux initramfs, RPM payloads), POSIX `odc` and the old binary headers in either byte order. The `crc` sums are checked. |
 | AR | `.ar`, `.a` | Unix archives and static libraries, with GNU (`//`) and BSD (`#1/`) long names. Symbol tables are not files and are not listed. Thin archives are refused. |
 | DEB | `.deb`, `.udeb` | The files the package installs, plus its control files under `DEBIAN/`, as `dpkg-deb -R` lays them out. `data.tar` and `control.tar` may be plain, gzip, xz, bzip2 or Zstandard. |
 | RPM | `.rpm` | The CPIO payload, plain or compressed with gzip, xz, bzip2 or Zstandard. Signatures and header digests are not checked, and the listing says so. |
@@ -60,6 +60,8 @@ prints `note: N device files, pipes or sockets are not listed`.
   headers of packages with files over 4 GiB.
 - **DEB:** packages in the old 0.939 format and `data.tar.lzma`.
 - **LZH:** `-lhx-` and the other UNLHA32 extensions.
+- **Compressed CPIO:** an `initrd.img` or a `.cpio.gz` is a CPIO inside gzip, often after an uncompressed microcode CPIO, and does not open as CPIO; a `.cpio.xz`, `.cpio.bz2` or `.cpio.zst` opens as a single compressed file. Decompress it first.
+- **LZH names** in a code page, usually Shift-JIS in Japanese archives, are shown with every non-ASCII byte as `%xx`.
 - **WIM** and **ARJ** are not supported. No maintained pure-Rust WIM reader
   exists yet: the crates published for it are first releases, and WIM also
   needs XPRESS and LZMS decoders.
