@@ -307,6 +307,49 @@ pub fn write_streaming_volumes_with_progress(
     resources: &WriterResources,
     progress: Option<&dyn WriteProgress>,
 ) -> Result<()> {
+    write_limited_volumes(
+        entries,
+        options,
+        extras,
+        engine::VolumeLimit::Payload(max_payload_per_volume),
+        sink,
+        resources,
+        progress,
+    )
+}
+
+/// Arca: as [`write_streaming_volumes_with_progress`], but `max_volume_bytes`
+/// bounds each whole volume file, as WinRAR's `-v` does: signature, headers,
+/// recovery record and end block included, not only the member data.
+pub fn write_streaming_volumes_sized_with_progress(
+    entries: &[ArchiveEntry],
+    options: WriterOptions,
+    extras: ArchiveExtras<'_>,
+    max_volume_bytes: u64,
+    sink: &mut dyn VolumeSink,
+    resources: &WriterResources,
+    progress: Option<&dyn WriteProgress>,
+) -> Result<()> {
+    write_limited_volumes(
+        entries,
+        options,
+        extras,
+        engine::VolumeLimit::Total(max_volume_bytes),
+        sink,
+        resources,
+        progress,
+    )
+}
+
+fn write_limited_volumes(
+    entries: &[ArchiveEntry],
+    options: WriterOptions,
+    extras: ArchiveExtras<'_>,
+    limit: engine::VolumeLimit,
+    sink: &mut dyn VolumeSink,
+    resources: &WriterResources,
+    progress: Option<&dyn WriteProgress>,
+) -> Result<()> {
     let control =
         crate::write_progress::ResourceProgress::new(resources, progress.map(ProgressReporter));
     let progress: Option<&dyn WriteProgress> =
@@ -365,7 +408,7 @@ pub fn write_streaming_volumes_with_progress(
         return Err(Error::NeedPassword);
     }
 
-    engine::write_volumes(
+    engine::write_limited_volumes(
         entries,
         engine::EnginePlan {
             compress: compression_plan(
@@ -388,7 +431,7 @@ pub fn write_streaming_volumes_with_progress(
             quick_open: false,
             progress: progress.map(ProgressReporter),
         },
-        max_payload_per_volume,
+        limit,
         sink,
         resources,
     )
