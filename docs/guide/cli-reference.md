@@ -23,6 +23,7 @@ Commands:
   extract   Extract the contents                                       [aliases: x]
   test      Check integrity without writing to disk                    [aliases: t]
   password  Add, change or remove the password of an existing archive
+  repair    Rebuild a damaged ZIP from the entries that can still be read
   bench     Measure the R1 and R2 performance requirements
 
 Options:
@@ -91,6 +92,24 @@ Rewrite a `.zip` with a different password, or with none. Entries aren’t compr
 | `-p, --password <PASSWORD>` | none | Current password, if the archive has one. |
 | `--new <NEW>` | none | New password. Leave it out to remove the encryption. |
 | `-o, --out <PATH>` | in place | Write here instead of replacing the archive in place. |
+
+## repair
+
+Rebuild a ZIP whose central directory is missing or damaged. Arca scans the file for local headers, takes each entry’s sizes from its header or, for streamed entries, from the data descriptor that follows the data, decompresses it and compares its CRC, and copies the entries that pass byte for byte into a new archive. Skipped entries are listed on standard error with their offset and the reason.
+
+```sh
+arca repair broken.zip -o fixed.zip
+```
+
+| Argument / option | Default | Description |
+| --- | --- | --- |
+| `<ARCHIVE>` | required | Damaged archive. It is only read, never modified. |
+| `-o, --out <PATH>` | required | Where to write the rebuilt archive (.zip). It can’t be the damaged archive itself. |
+
+- Encrypted entries can’t be checked without the password: they are copied after a structural check only and named on standard error.
+- What only the central directory held is lost: archive and entry comments, Unix permissions and other external attributes.
+- A ZIP stored inside an entry stays inside it. If that outer entry is damaged, though, the inner entries can surface as entries of their own.
+- The rebuilt archive is written under a temporary name, read back, and only then renamed. If nothing can be recovered, nothing is written and the command fails.
 
 ## bench
 

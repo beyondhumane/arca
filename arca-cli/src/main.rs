@@ -116,6 +116,16 @@ enum Cmd {
         )]
         out: Option<PathBuf>,
     },
+    #[command(
+        about = "Rebuild a damaged ZIP from the entries that can still be read",
+        long_about = "Scans the archive for local headers, checks every entry it finds and copies the\nsound ones unchanged into a new archive. The damaged archive is only read.\n\nEncrypted entries get a structural check only: without the password their\ncontents cannot be checked."
+    )]
+    Repair {
+        #[arg(help = "Damaged archive")]
+        archive: PathBuf,
+        #[arg(short = 'o', long, help = "Where to write the rebuilt archive (.zip)")]
+        out: PathBuf,
+    },
     #[command(about = "Measure the R1 and R2 performance requirements")]
     Bench {
         #[arg(help = "Archive to measure against")]
@@ -263,6 +273,7 @@ fn run(cli: Cli) -> Result<()> {
             password.as_deref(),
             new.as_deref(),
         ),
+        Cmd::Repair { archive, out } => repair_zip(&archive, &out),
         Cmd::Bench { archive } => bench(&archive),
     }
 }
@@ -997,6 +1008,78 @@ fn open_iso(archive: &Path) -> Result<arca_iso::IsoArchive> {
         eprintln!("note: {notice}");
     }
     Ok(a)
+}
+
+// The rebuilt archive is read back before it takes its final name, and it can
+// never take the damaged archive's name: that file may be the only copy of
+// entries this scan could not recover.
+fn repair_zip(archive: &Path, out: &Path) -> Result<()> {
+    if detect(out)? != Format::Zip {
+        return Err(Error::Unsupported(
+            "a repair writes a ZIP, so --out needs a .zip name".into(),
+        ));
+    }
+    if out.exists() && fs::canonicalize(archive)? == fs::canonicalize(out)? {
+        return Err(Error::Format(
+            "--out names the damaged archive; write the repaired one somewhere else".into(),
+        ));
+    }
+    let t0 = Instant::now();
+    let temp = staged_path(out);
+    let result = (|| {
+        let source = BufReader::with_capacity(BUF, File::open(archive)?);
+        let sink = BufWriter::with_capacity(BUF, File::create(&temp)?);
+        let (mut sink, report) = arca_zip::repair(source, sink)?;
+        sink.flush()?;
+        drop(sink);
+        if ZipArchive::open(File::open(&temp)?)?.len() != report.recovered.len() {
+            return Err(Error::Format(
+                "the rebuilt archive does not read back as written".into(),
+            ));
+        }
+        Ok(report)
+    })();
+    let report = match result {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = fs::remove_file(&temp);
+            return Err(e);
+        }
+    };
+
+    for s in &report.skipped {
+        eprintln!(
+            "  skipped at offset {}: {}: {}",
+            s.offset,
+            printable(s.name.as_deref().unwrap_or("?")),
+            printable(&s.reason)
+        );
+    }
+    if report.unreported > 0 {
+        eprintln!("  and {} more skipped", report.unreported);
+    }
+    for r in report.recovered.iter().filter(|r| !r.verified) {
+        eprintln!(
+            "  encrypted, copied without checking its contents: {}",
+            printable(&r.name)
+        );
+    }
+    if report.recovered.is_empty() {
+        let _ = fs::remove_file(&temp);
+        return Err(Error::Format(format!(
+            "no entry of '{}' could be recovered",
+            archive.display()
+        )));
+    }
+    fs::rename(&temp, out)?;
+    println!(
+        "{}: {} entries recovered, {} skipped in {:.3} s",
+        out.display(),
+        report.recovered.len(),
+        report.skipped.len() as u64 + report.unreported,
+        t0.elapsed().as_secs_f64()
+    );
+    Ok(())
 }
 
 fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
