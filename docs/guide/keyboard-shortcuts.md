@@ -25,12 +25,12 @@ List commands apply to the active pane. Text fields and dialogs retain their edi
 | <kbd>Ctrl+Shift+C</kbd> | Copy selected names as text |
 | <kbd>Ctrl+F</kbd> | Show and focus the active pane's filter |
 | <kbd>Ctrl+L</kbd> <kbd>Alt+D</kbd> <kbd>F4</kbd> | Type a path in the path bar |
-| <kbd>F2</kbd> | Rename the selected file or folder, on disk or in a writable ZIP |
+| <kbd>F2</kbd> | Rename the selected file or folder, on disk or in a ZIP, TAR or 7z archive |
 | <kbd>F3</kbd> | Enable integrated preview for the cursor file |
 | <kbd>Ctrl+T</kbd> | Test the archive |
 | <kbd>Ctrl+I</kbd> | Invert visible selection in the active pane |
 | <kbd>F5</kbd> | Reload the archive |
-| <kbd>Delete</kbd> | Confirm deletion of selected entries in a writable ZIP |
+| <kbd>Delete</kbd> | Confirm deletion of selected entries in a ZIP, TAR or 7z archive |
 | <kbd>Ctrl+Z</kbd> | Undo the last supported archive modification |
 | <kbd>Alt+W</kbd> | Extract here |
 | <kbd>Ctrl+Shift+N</kbd> | New folder |

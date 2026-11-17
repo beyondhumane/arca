@@ -15,7 +15,7 @@ The sidebar lists **Places** (home and the standard user folders), **Pinned** fo
 
 Right-click a file or folder for the full menu: **New folder with selection**, **Open**, **Open with** (the applications that accept that type), **Quick preview**, **Cut**, **Copy**, **Paste**, **Duplicate**, **Rename**, **Move to…**, **Copy to…**, **Compress**, **Copy path**, **Copy name**, **Select all**, **New folder**, **Pin to sidebar**, **Properties**, **Move to Trash** (**Delete**) and **Permanently delete** (**Shift+Delete**, after confirmation). Drag rows onto a folder or onto another pane to move them.
 
-Double-clicking an archive (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.xz`, `.tar.bz2`, `.bz2`, `.tar.zst`, `.zst`, `.rar`, `.iso` and the ZIP containers) opens it in place. Inside, the menu offers **Extract selection**, **Extract here**, **Extract all** and **Test**, plus **Rename**, **Delete**, **New folder** and **Paste** in a ZIP; a password is asked for when the archive needs one. **Up** or **Backspace** at the root, or **Close archive**, return to the folder with the cursor on the archive. Other files open with the system application.
+Double-clicking an archive (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.xz`, `.tar.bz2`, `.bz2`, `.tar.zst`, `.zst`, `.rar`, `.iso` and the ZIP containers) opens it in place. Inside, the menu offers **Extract selection**, **Extract here**, **Extract all** and **Test**, plus **Rename**, **Delete**, **New folder** and **Paste** in a ZIP, a TAR (plain, `.tar.gz`, `.tar.xz`, `.tar.bz2` or `.tar.zst`) or a 7z; a password is asked for when the archive needs one. **Up** or **Backspace** at the root, or **Close archive**, return to the folder with the cursor on the archive. Other files open with the system application.
 
 ## Panes, details and the sidebar
 
@@ -48,7 +48,10 @@ The create dialog offers ZIP and 7z passwords; 7z also offers **Hide file names*
 Hidden 7z headers prompt before listing. Content validation runs in a background
 worker before extract/test/preview/open actions; retry resumes that action and
 cancel leaves the destination untouched. **Remove password** and **Set password…**
-apply only to ZIP, never to an existing 7z.
+apply only to ZIP, never to an existing 7z. Adding, deleting or renaming entries
+of an encrypted 7z asks for its password first if the window does not have it
+yet; the rewritten archive keeps that password, and hides its names again if
+they were hidden.
 
 ## RAR
 
@@ -84,8 +87,26 @@ record it.
 
 ## Format limits
 
-Adding, deleting, renaming and changing passwords in an existing archive remain
-ZIP-only; 7z and RAR can be created but not modified afterwards. 7z virtual-file drag-out is disabled to avoid repeatedly decoding solid
+Adding, deleting, renaming, moving and making folders work in ZIP, TAR,
+TAR.GZ, TAR.XZ, TAR.BZ2, TAR.ZST and 7z; changing a password is ZIP-only. RAR
+can be created but not modified afterwards, and ISO, the ZIP containers and
+standalone XZ, BZ2 and ZST files are never modified.
+
+Every change writes a new archive beside the old one and reads it back in full
+before it takes the old one's place, so a stop or a failure halfway leaves the
+archive as it was, and **Undo** puts the previous version back. A TAR is copied
+entry by entry with its headers as they were (owner, permissions, times, links
+and pax records), the renamed ones changing only their name, and compressed
+again with its own codec: at the level picked for new archives when files are
+added, at level 6 otherwise. A hard link follows the entry it points to when that
+entry is renamed, and deleting an entry a hard link still points to is refused.
+The `./` entry some tools put at the top of a TAR is not kept. A 7z is decoded
+and encoded again block by block, keeping each entry's name, times, attributes,
+empty folders and empty files; a stored block stays stored. Memory stays at one
+decoder and one encoder however large a solid block is, but the time is that of
+decompressing and compressing the whole archive, and of reading it back.
+
+7z virtual-file drag-out is disabled to avoid repeatedly decoding solid
 blocks; use Copy or Extract instead. Copy, cut and paste use the system clipboard on
 Windows and Linux, so files move between Arca and the Explorer, Thunar, Dolphin
 or Nautilus. On Linux the other programs cannot tell a cut from a copy, so a

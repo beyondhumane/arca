@@ -15,7 +15,7 @@ La barra lateral enumera **Lugares** (la carpeta personal y las carpetas de usua
 
 Clic derecho sobre un archivo o carpeta para el menú completo: **Nueva carpeta con la selección**, **Abrir**, **Abrir con** (las aplicaciones que aceptan ese tipo), **Vista rápida**, **Cortar**, **Copiar**, **Pegar**, **Duplicar**, **Renombrar**, **Mover a…**, **Copiar a…**, **Comprimir**, **Copiar ruta**, **Copiar nombre**, **Seleccionar todo**, **Nueva carpeta**, **Fijar en la barra lateral**, **Propiedades**, **Mover a la papelera** (**Supr**) y **Eliminar permanentemente** (**Mayús+Supr**, con confirmación). Arrastra filas sobre una carpeta o sobre otro panel para moverlas.
 
-Hacer doble clic en un archivo comprimido (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.xz`, `.tar.bz2`, `.bz2`, `.tar.zst`, `.zst`, `.rar`, `.iso` y los contenedores ZIP) lo abre en el mismo sitio. Dentro, el menú ofrece **Extraer selección**, **Extraer aquí**, **Extraer todo** y **Comprobar**, además de **Renombrar**, **Eliminar**, **Nueva carpeta** y **Pegar** en un ZIP; la contraseña se pide cuando el archivo la necesita. **Arriba** o **Retroceso** en la raíz, o **Cerrar archivo**, vuelven a la carpeta con el cursor sobre el archivo. Los demás archivos se abren con la aplicación del sistema.
+Hacer doble clic en un archivo comprimido (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.xz`, `.tar.bz2`, `.bz2`, `.tar.zst`, `.zst`, `.rar`, `.iso` y los contenedores ZIP) lo abre en el mismo sitio. Dentro, el menú ofrece **Extraer selección**, **Extraer aquí**, **Extraer todo** y **Comprobar**, además de **Renombrar**, **Eliminar**, **Nueva carpeta** y **Pegar** en un ZIP, un TAR (sin comprimir, `.tar.gz`, `.tar.xz`, `.tar.bz2` o `.tar.zst`) o un 7z; la contraseña se pide cuando el archivo la necesita. **Arriba** o **Retroceso** en la raíz, o **Cerrar archivo**, vuelven a la carpeta con el cursor sobre el archivo. Los demás archivos se abren con la aplicación del sistema.
 
 ## Paneles, detalles y barra lateral
 
@@ -48,7 +48,10 @@ El diálogo admite contraseñas ZIP y 7z y permite **Ocultar nombres** en 7z.
 Las cabeceras 7z ocultas piden la contraseña antes de listar. Los datos se validan
 en segundo plano antes de extraer, probar, previsualizar o abrir; reintentar retoma
 esa acción y cancelar deja el destino intacto. **Quitar contraseña** y
-**Establecer contraseña…** solo se aplican a ZIP, nunca a un 7z existente.
+**Establecer contraseña…** solo se aplican a ZIP, nunca a un 7z existente. Añadir,
+borrar o renombrar entradas de un 7z cifrado pide antes su contraseña si la
+ventana aún no la tiene; el archivo reescrito conserva esa contraseña y vuelve a
+ocultar los nombres si estaban ocultos.
 
 ## RAR
 
@@ -85,8 +88,29 @@ fijo. Un `.bz2` suelto muestra un tamaño de 0, porque bzip2 no lo guarda.
 
 ## Límites por formato
 
-Añadir, borrar, renombrar y cambiar contraseñas en archivos existentes sigue
-siendo exclusivo de ZIP; 7z y RAR se pueden crear, pero no modificar después. Arrastrar ficheros virtuales fuera de un 7z está
+Añadir, borrar, renombrar, mover y crear carpetas funciona en ZIP, TAR, TAR.GZ,
+TAR.XZ, TAR.BZ2, TAR.ZST y 7z; cambiar la contraseña es exclusivo de ZIP. RAR se
+puede crear, pero no modificar después, y los ISO, los contenedores ZIP y los
+ficheros XZ, BZ2 y ZST sueltos nunca se modifican.
+
+Cada cambio escribe un archivo nuevo junto al antiguo y lo vuelve a leer entero
+antes de que ocupe su lugar, así que detenerlo a medias o un fallo dejan el
+archivo como estaba, y **Deshacer** recupera la versión anterior. Un TAR se copia
+entrada a entrada con sus cabeceras tal cual (propietario, permisos, fechas,
+enlaces y registros pax), y las renombradas solo cambian el nombre; después se
+vuelve a comprimir con su propio códec: con el nivel elegido para los archivos
+nuevos cuando se añaden ficheros, y con el nivel 6 en los demás casos. Un enlace
+duro sigue a la entrada a la que apunta cuando esta se renombra, y se rechaza
+borrar una entrada a la que todavía apunta un enlace duro. La entrada `./` que
+algunas herramientas ponen al principio de un TAR no se conserva. Un 7z se
+descomprime y se vuelve a comprimir bloque a bloque, conservando el nombre, las
+fechas y los atributos de cada entrada, las carpetas vacías y los ficheros
+vacíos; un bloque almacenado sigue almacenado. La memoria se queda en un
+decodificador y un codificador por grande que sea un bloque sólido, pero el
+tiempo es el de descomprimir y comprimir el archivo entero, y el de volver a
+leerlo.
+
+Arrastrar ficheros virtuales fuera de un 7z está
 desactivado para no descodificar repetidamente bloques sólidos: usa Copiar o
 Extraer. El portapapeles de ficheros depende de la plataforma.
 

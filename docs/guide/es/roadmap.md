@@ -35,9 +35,9 @@ comprimidas con bzip2 se leen.
 
 - **UDF:** las imágenes ISO se leen por ISO 9660, así que los ficheros que solo están en UDF (como `install.wim` en los medios de Windows) todavía no aparecen.
 - **Enlaces simbólicos:** se omiten al crear ZIP/TAR y se rechazan en 7z.
-- **Cambiar contraseñas y modificar 7z:** añadir, borrar y renombrar puede exigir reescribir bloques sólidos y queda fuera del alcance.
+- **Cambiar contraseñas de 7z:** añadir, borrar y renombrar entradas reescribe el archivo con su propia contraseña; cambiar esa contraseña todavía no se ofrece.
 - **Integración de escritorio en Linux y macOS:** el menú del Explorador es solo para Windows por ahora.
-- **Modificar fuera de ZIP:** ZIP ya se edita en la ventana; 7z solo se crea y se lee.
+- **Modificar fuera de ZIP, TAR y 7z:** RAR sigue siendo de solo lectura una vez creado, y las imágenes ISO y los contenedores ZIP nunca se modifican.
 - **Un formato nativo:** momento en el que Zstandard pasa a ser el códec por defecto.
 
 > [!TIP]

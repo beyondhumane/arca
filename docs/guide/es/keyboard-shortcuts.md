@@ -25,12 +25,12 @@ Las órdenes de lista actúan sobre el panel activo. Los campos de texto y los d
 | <kbd>Ctrl+Mayús+C</kbd> | Copiar los nombres seleccionados como texto |
 | <kbd>Ctrl+F</kbd> | Mostrar y enfocar el filtro del panel activo |
 | <kbd>Ctrl+L</kbd> <kbd>Alt+D</kbd> <kbd>F4</kbd> | Escribir una ruta en la barra de ruta |
-| <kbd>F2</kbd> | Renombrar el archivo o la carpeta seleccionados, en el disco o en un ZIP modificable |
+| <kbd>F2</kbd> | Renombrar el archivo o la carpeta seleccionados, en el disco o en un archivo ZIP, TAR o 7z |
 | <kbd>F3</kbd> | Activar la vista previa integrada del archivo del cursor |
 | <kbd>Ctrl+T</kbd> | Comprobar el archivo |
 | <kbd>Ctrl+I</kbd> | Invertir la selección visible del panel activo |
 | <kbd>F5</kbd> | Volver a leer el archivo |
-| <kbd>Supr</kbd> | Confirmar la eliminación de entradas seleccionadas de un ZIP modificable |
+| <kbd>Supr</kbd> | Confirmar la eliminación de entradas seleccionadas de un archivo ZIP, TAR o 7z |
 | <kbd>Ctrl+Z</kbd> | Deshacer la última modificación compatible |
 | <kbd>Alt+W</kbd> | Extraer aquí |
 | <kbd>Ctrl+Mayús+N</kbd> | Carpeta nueva |

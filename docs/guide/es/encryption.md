@@ -102,6 +102,7 @@ Las cabeceras ocultas piden la contraseña antes del listado; el resto se valida
 en segundo plano antes de extraer, probar, previsualizar o abrir una entrada.
 Reintentar retoma la acción original; cancelar no escribe salida.
 
-Cambiar contraseñas existentes, añadir, borrar y renombrar entradas son funciones
-**exclusivas de ZIP**. No están disponibles en 7z, cuyos bloques sólidos pueden
-necesitar una reescritura completa.
+Cambiar una contraseña existente es **exclusivo de ZIP**. Añadir, borrar y
+renombrar entradas también funciona en 7z: el archivo se descomprime y se vuelve
+a comprimir con la misma contraseña, y con los nombres otra vez ocultos si lo
+estaban.
