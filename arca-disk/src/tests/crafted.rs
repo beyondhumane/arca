@@ -159,7 +159,7 @@ fn read_fails(a: &DiskArchive, name: &str) {
 
 #[test]
 fn looping_exfat_chains_are_cut_where_they_loop() {
-    let (_dir, a) = open(Format::Vhd, &exfat_loop(1 << 20, 4096, 8, 1 << 50));
+    let (_dir, a) = open(Format::Vhd, &exfat_loop(1 << 20, 4096, 8, 512 << 20));
     let a = a.unwrap();
     for i in 0..8 {
         assert!(
@@ -183,7 +183,7 @@ fn chains_that_cross_stop_once_the_volume_is_walked() {
     let clusters = 1 << 18;
     let (_dir, a) = open(
         Format::Vhd,
-        &exfat_loop(clusters, clusters - 16, 6, 1 << 50),
+        &exfat_loop(clusters, clusters - 16, 6, u64::from(clusters) * 512),
     );
     let a = a.unwrap();
     assert_eq!(a.entries().len(), 6);
@@ -198,7 +198,7 @@ fn chains_that_cross_stop_once_the_volume_is_walked() {
 #[test]
 fn a_long_chain_walk_can_be_stopped() {
     let clusters = 1 << 18;
-    let image = exfat_loop(clusters, clusters - 16, 1, 1 << 50);
+    let image = exfat_loop(clusters, clusters - 16, 1, u64::from(clusters) * 512);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("loop.vhd");
     stdfs::write(&path, image).unwrap();
@@ -288,4 +288,46 @@ fn a_gpt_entry_that_spans_every_sector_is_cut_at_the_disk_end() {
         "{:?}",
         a.notices()
     );
+}
+
+#[test]
+fn a_dynamic_vhd_is_no_larger_than_its_block_table_reaches() {
+    let mut image = vhd_sparse(VHD_BLOCK, &[(0, &[0x42; 512])]);
+    let tail = image.len() - 512;
+    for at in [0, tail] {
+        let footer = &mut image[at..at + 512];
+        footer[40..48].copy_from_slice(&(1u64 << 50).to_be_bytes());
+        footer[48..56].copy_from_slice(&(1u64 << 50).to_be_bytes());
+        fix_vhd_checksum(footer);
+    }
+    let (_dir, a) = open(Format::Vhd, &image);
+    let a = a.unwrap();
+    assert_eq!(names(&a), ["disk.img"]);
+    assert_eq!(a.entries()[0].size, VHD_BLOCK);
+}
+
+#[test]
+fn a_dmg_is_no_larger_than_its_blocks_reach() {
+    let mut image = containers::dmg(&[("free (Apple_Free : 0)", &[0x42; 4096])]);
+    let koly = image.len() - 512;
+    image[koly + 492..koly + 500].copy_from_slice(&(1u64 << 40).to_be_bytes());
+    let (_dir, a) = open(Format::Dmg, &image);
+    let a = a.unwrap();
+    assert_eq!(names(&a), ["disk.img"]);
+    assert_eq!(a.entries()[0].size, 4096);
+}
+
+#[test]
+fn an_exfat_file_larger_than_the_volume_is_left_out() {
+    let fat = [0xffff_fff8, 0xffff_ffff, 0xffff_ffff];
+    let mut root = exfat_set("huge", false, 3, 1 << 50, 512, false);
+    root.extend(exfat_set("fits", false, 3, 1 << 20, 2, false));
+    let image = exfat_sparse(1 << 12, 2, &fat, &[(2, &root), (3, b"ok")]);
+    let (_dir, a) = open(Format::Vhd, &image);
+    let a = a.unwrap();
+    assert_eq!(names(&a), ["fits"]);
+    assert!(a.notices().iter().any(|n| n.contains("damaged")));
+    let fits = read(&a, "fits");
+    assert_eq!(&fits[..2], b"ok");
+    assert_eq!(fits.len(), 1 << 20);
 }

@@ -107,7 +107,7 @@ impl Dynamic {
         let bitmap = (block / 512).div_ceil(8).div_ceil(512) * 512;
         Ok(Dynamic {
             file,
-            size,
+            size: size.min(entries.saturating_mul(block)),
             block,
             bitmap,
             table,

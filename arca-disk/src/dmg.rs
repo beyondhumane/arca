@@ -93,7 +93,7 @@ fn parse(path: &Path) -> Result<(Dmg, Vec<Partition>, Vec<String>)> {
     let mut blocks = Vec::new();
     let mut partitions = Vec::new();
     let mut notices = Vec::new();
-    let mut size = be64(&koly, 492).saturating_mul(512);
+    let mut size = 0u64;
     let mut lzfse = false;
     let mut packed = 0u64;
     for (name, data) in blkx(&text)? {

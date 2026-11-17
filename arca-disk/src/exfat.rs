@@ -353,6 +353,10 @@ pub(crate) fn list(
                 pending.push((item.first, len, item.contiguous, name, depth + 1));
                 continue;
             }
+            if item.size > u64::from(table.geo.clusters) * table.geo.cluster {
+                broken += 1;
+                continue;
+            }
             let mut data = Vec::new();
             let stored = item.valid.min(item.size);
             table.runs(vol, item.first, stored, item.contiguous, runs, &mut data)?;

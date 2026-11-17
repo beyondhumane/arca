@@ -23,6 +23,7 @@ struct Data {
     pieces: Vec<(u64, Vec<Extent>)>,
     size: u64,
     initialized: u64,
+    allocated: u64,
     packed: bool,
     broken: bool,
 }
@@ -152,6 +153,7 @@ fn data_piece(a: &[u8], geo: &Geometry, data: &mut Data) -> Option<()> {
     if start == 0 {
         data.size = le64(a, 48);
         data.initialized = le64(a, 56).min(data.size);
+        data.allocated = le64(a, 40);
     }
     let runs = a.get(usize::from(le16(a, 32))..)?;
     data.pieces.push((start, decode_runs(runs, geo)?));
@@ -530,7 +532,7 @@ fn build(
             packed += 1;
             continue;
         }
-        if rec.data.broken {
+        if rec.data.broken || (rec.data.resident.is_none() && rec.data.size > rec.data.allocated) {
             broken += 1;
             continue;
         }
@@ -661,6 +663,42 @@ mod tests {
             names: vec![(parent, 1, name.to_string())],
             ..Record::default()
         }
+    }
+
+    #[test]
+    fn a_file_larger_than_its_allocation_is_left_out() {
+        let geo = Geometry {
+            cluster: 512,
+            clusters: 64,
+            record: 1024,
+        };
+        let file = |name: &str, size: u64| Record {
+            used: true,
+            names: vec![(ROOT, 1, name.to_string())],
+            data: Data {
+                pieces: vec![(
+                    0,
+                    vec![Extent {
+                        lcn: Some(1),
+                        clusters: 1,
+                    }],
+                )],
+                size,
+                initialized: size.min(512),
+                allocated: 512,
+                ..Data::default()
+            },
+            ..Record::default()
+        };
+        let records = HashMap::from([(16, file("fits", 300)), (17, file("huge", 1 << 50))]);
+        let listing = build(&records, &geo, 0, &mut Runs::default()).unwrap();
+        let names: Vec<&str> = listing
+            .members
+            .iter()
+            .map(|m| m.entry.name.as_str())
+            .collect();
+        assert_eq!(names, ["fits"]);
+        assert!(listing.notices.iter().any(|n| n.contains("damaged")));
     }
 
     #[test]
