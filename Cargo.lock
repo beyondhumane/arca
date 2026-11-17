@@ -353,6 +353,7 @@ version = "0.10.0"
 dependencies = [
  "arboard",
  "arca-7z",
+ "arca-bench",
  "arca-brand",
  "arca-compare",
  "arca-core",
