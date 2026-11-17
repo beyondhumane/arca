@@ -167,14 +167,14 @@ fn rewrite(
 }
 
 /// The compressor a TAR goes through on its way to the file.
-enum Packed<W: Write> {
+pub(super) enum Packed<W: Write> {
     Plain(W),
     Gz(flate2::write::GzEncoder<W>),
     Stream(arca_stream::Encoder<W>),
 }
 
 impl<W: Write> Packed<W> {
-    fn new(out: W, format: Format, level: Level) -> Result<Self> {
+    pub(super) fn new(out: W, format: Format, level: Level) -> Result<Self> {
         Ok(match format {
             Format::Tar => Packed::Plain(out),
             Format::TarGz => Packed::Gz(flate2::write::GzEncoder::new(
@@ -185,7 +185,7 @@ impl<W: Write> Packed<W> {
         })
     }
 
-    fn finish(self) -> Result<W> {
+    pub(super) fn finish(self) -> Result<W> {
         Ok(match self {
             Packed::Plain(w) => w,
             Packed::Gz(e) => e.finish()?,

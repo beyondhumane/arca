@@ -459,6 +459,13 @@ impl AppController {
                         self.state.tasks[i].result = self.state.notice.clone();
                         settled = true;
                     }
+                    Message::Repaired(path, password, text) => {
+                        self.state.repair.offer = Some(super::RepairOffer {
+                            path,
+                            password,
+                            text,
+                        });
+                    }
                     Message::Listing(..) | Message::AccessChecked(..) | Message::Comments(..) => {}
                 }
             }

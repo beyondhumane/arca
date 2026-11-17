@@ -629,6 +629,15 @@ impl Shell {
             {
                 self.overflow_action(OverflowAction::Comment);
             }
+            if ui
+                .add_enabled(
+                    idle && archive && crate::repairable(self.controller.state.format),
+                    egui::Button::new(s.repair_action),
+                )
+                .clicked()
+            {
+                self.overflow_action(OverflowAction::Repair);
+            }
             if self.controller.can_close_archive()
                 && ui
                     .add_enabled(idle, egui::Button::new(s.close_archive))

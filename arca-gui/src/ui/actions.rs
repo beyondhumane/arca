@@ -34,10 +34,11 @@ pub(crate) enum RowAction {
     Compare,
     CompareFolder,
     Comment,
+    Repair,
 }
 
 impl RowAction {
-    pub(crate) const ALL: [RowAction; 30] = [
+    pub(crate) const ALL: [RowAction; 31] = [
         RowAction::NewFolderWith,
         RowAction::Open,
         RowAction::OpenInPane,
@@ -68,6 +69,7 @@ impl RowAction {
         RowAction::Compare,
         RowAction::CompareFolder,
         RowAction::Comment,
+        RowAction::Repair,
     ];
 
     /// What the menu offers where there is no row under the pointer: the
@@ -166,6 +168,7 @@ impl RowAction {
             RowAction::Compare => (s.compare_with, ""),
             RowAction::CompareFolder => (s.compare_with_folder, ""),
             RowAction::Comment => (s.comment_action, ""),
+            RowAction::Repair => (s.repair_action, ""),
         }
     }
 
@@ -201,6 +204,7 @@ impl RowAction {
             RowAction::Compare => icon::GIT_DIFF,
             RowAction::CompareFolder => icon::FOLDERS,
             RowAction::Comment => icon::CHAT_TEXT,
+            RowAction::Repair => icon::WRENCH,
         }
     }
 
@@ -278,6 +282,7 @@ impl RowAction {
                     | Self::CopyTo
                     | Self::Properties
                     | Self::Trash
+                    | Self::Repair
             )
         }
     }
@@ -350,6 +355,7 @@ pub(crate) enum ModalKind {
     Label,
     Format,
     Comment,
+    Repaired,
 }
 
 pub(crate) fn column_text(
@@ -448,6 +454,7 @@ pub(crate) enum OverflowAction {
     Undo,
     SaveCopy,
     Comment,
+    Repair,
 }
 
 /// A selection being drawn by pulling across the list.

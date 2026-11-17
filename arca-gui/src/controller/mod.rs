@@ -27,6 +27,10 @@ mod jobs;
 mod jobs_tests;
 mod panes;
 mod preview;
+mod repair;
+#[cfg(test)]
+mod repair_tests;
+pub(crate) use repair::{RepairOffer, RepairState};
 #[cfg(all(test, feature = "rar"))]
 mod rar_tests;
 #[cfg(test)]
@@ -916,6 +920,7 @@ impl AppController {
                 show_update: false,
                 quiet: false,
                 comments: CommentState::default(),
+                repair: RepairState::default(),
                 browser: BrowserState::default(),
                 preview: PreviewState::default(),
             },
@@ -2066,7 +2071,8 @@ impl AppController {
                 }
                 // The rest is what a task says, and tasks have channels of
                 // their own.
-                Message::Created(..)
+                Message::Repaired(..)
+                | Message::Created(..)
                 | Message::ConflictBetween(..)
                 | Message::Conflict(..)
                 | Message::Done(..)
@@ -2596,6 +2602,7 @@ impl AppController {
             Job::Compress { .. } => s.compressing.to_string(),
             Job::Add { .. } => s.adding.to_string(),
             Job::Comment { .. } => s.commenting.to_string(),
+            Job::Repair { .. } => s.repairing.to_string(),
             // The only verb with a hole in it: which version is coming down is
             // known to the job, not to the list of words.
             Job::Update { tag, .. } => fill(s.update_downloading, &[("version", tag)]),
@@ -2622,6 +2629,7 @@ impl AppController {
                     | Job::Move { .. }
                     | Job::Add { .. }
                     | Job::Comment { .. }
+                    | Job::Repair { .. }
             );
         // The file on disk is about to change, so the listing has to be redone.
         //
@@ -2694,10 +2702,19 @@ impl AppController {
                 } else {
                     None
                 };
+                let repaired = match &job {
+                    Job::Repair { out, password, .. } => Some((out.clone(), password.clone())),
+                    _ => None,
+                };
                 let outcome = run_job_blocking(job, s, &notify, &ask);
                 if outcome.is_ok() {
                     if let Some((path, password)) = created {
                         let _ = tx.send(Message::Created(path, password));
+                    }
+                }
+                if let (Ok(text), Some((path, password))) = (&outcome, repaired) {
+                    if path.exists() {
+                        let _ = tx.send(Message::Repaired(path, password, text.clone()));
                     }
                 }
                 let _ = tx.send(match outcome {
@@ -2772,6 +2789,7 @@ fn touched_by(job: &Job) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
         | Job::NewFolder { archive, .. }
         | Job::Add { archive, .. }
         | Job::Comment { archive, .. } => (Vec::new(), vec![archive.clone()], Vec::new()),
+        Job::Repair { archive, out, .. } => (vec![archive.clone()], vec![out.clone()], Vec::new()),
         Job::CopyTo { archive, dest } => (vec![archive.clone()], vec![dest.clone()], Vec::new()),
         Job::Compress {
             out,
@@ -2837,7 +2855,11 @@ fn reread_target(job: &Job, current_dir: &str) -> Option<(PathBuf, Option<String
             volume,
             ..
         } => Some((first_output(out, *volume), password.clone(), String::new())),
-        Job::Extract { .. } | Job::Test { .. } | Job::CopyTo { .. } | Job::Update { .. } => None,
+        Job::Extract { .. }
+        | Job::Test { .. }
+        | Job::CopyTo { .. }
+        | Job::Update { .. }
+        | Job::Repair { .. } => None,
     }
 }
 

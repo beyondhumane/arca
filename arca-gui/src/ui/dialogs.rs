@@ -236,6 +236,7 @@ impl Shell {
                     ModalKind::Compare => self.compare_dialog(ui),
                     ModalKind::Update => self.update_dialog(ui),
                     ModalKind::Comment => self.comment_dialog(ui),
+                    ModalKind::Repaired => self.repaired_dialog(ui),
                 });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(measured, shown.content_size.y));

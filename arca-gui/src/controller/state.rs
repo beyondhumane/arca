@@ -149,6 +149,7 @@ pub(crate) struct AppState {
     // bar that flashes past says less than nothing.
     pub(crate) quiet: bool,
     pub(crate) comments: super::CommentState,
+    pub(crate) repair: super::RepairState,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

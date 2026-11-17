@@ -125,12 +125,13 @@ impl Shell {
     }
 
     /// Whether the entry of the row menu is there for this row at all: a
-    /// comment only on an entry of a ZIP.
+    /// comment only on an entry of a ZIP, a repair only on an archive on disk.
     pub(super) fn row_action_applies(&self, action: RowAction, row: Option<&Row>) -> bool {
         match action {
             RowAction::Comment => {
                 self.controller.can_comment() && row.is_some_and(|row| row.entry.is_some())
             }
+            RowAction::Repair => self.repair_applies(row),
             _ => true,
         }
     }
