@@ -43,6 +43,7 @@ pub struct Strings {
     pub option_assoc_hint: &'static str,
     /// What a .zip is called in the Explorer once Arca owns the type, and
     /// the name of its entry under New.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub zip_type: &'static str,
     pub option_path: &'static str,
     pub option_path_hint: &'static str,
