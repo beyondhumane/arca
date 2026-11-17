@@ -1001,6 +1001,8 @@ fn recovery_service_with_allowance<B: crate::codec::workspace::Budget>(
     Ok(header.len() as u64 + built.payload_len)
 }
 
+/// Arca: the recovery record's service header, shared by the writer and
+/// `recovery_service_len`, so the size it prices is the size it writes.
 #[cfg(feature = "recovery")]
 fn recovery_service_header(
     recovery_percent: u64,
@@ -1696,6 +1698,7 @@ impl VolumeWriter<'_> {
             .and_then(|free| free.checked_sub(header.len() as u64)))
     }
 
+    /// Arca: the HEAD_CRYPT block, empty when headers are not encrypted.
     fn head_crypt(&self) -> Result<Bytes> {
         let mut block = Bytes::new(self.resources);
         if let Some(keys) = self.header_keys {
@@ -1704,6 +1707,7 @@ impl VolumeWriter<'_> {
         Ok(block)
     }
 
+    /// Arca: the layout of volume `volume_number` around a body of `body_len`.
     fn layout(
         &self,
         head_crypt_len: u64,
@@ -1726,6 +1730,7 @@ impl VolumeWriter<'_> {
         )
     }
 
+    /// Arca: the main header flags every volume of the set carries.
     fn main_flags(&self) -> u64 {
         let mut main_flags = crate::rar50::MHFL_VOLUME | crate::rar50::MHFL_VOLUME_NUMBER;
         if self.solid {
@@ -1737,6 +1742,7 @@ impl VolumeWriter<'_> {
         main_flags
     }
 
+    /// Arca: the end block, saying whether another volume follows.
     fn end_block(&self, more_volumes_follow: bool) -> Result<Bytes> {
         let end_flags = if more_volumes_follow {
             crate::rar50::EFL_NEXT_VOLUME

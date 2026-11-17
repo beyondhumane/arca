@@ -341,6 +341,7 @@ pub fn write_streaming_volumes_sized_with_progress(
     )
 }
 
+/// Arca: what both volume entry points share, under either kind of limit.
 fn write_limited_volumes(
     entries: &[ArchiveEntry],
     options: WriterOptions,
