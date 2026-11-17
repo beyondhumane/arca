@@ -209,6 +209,7 @@ El archivo reconstruido se escribe con un nombre temporal, se vuelve a leer y so
 **7z.** Cada bloque sólido se descomprime por separado, así que el daño en un bloque no cuesta nada en los demás. En un bloque dañado se pierden la primera entrada que no cuadra con su CRC o no se descomprime y todas las que la siguen; una entrada sin CRC propio solo se conserva si su bloque entero se descomprime. Lo que se salva se vuelve a comprimir al nivel normal.
 
 - La cabecera del final de un 7z es la que dice dónde está cada bloque y cada entrada: un 7z con la cabecera dañada no se puede reparar.
+- Las carpetas solas no son una reparación: si se pierden todos los ficheros, no se escribe nada y la orden falla, aunque las carpetas se salven.
 
 **RAR.** Reconstruye el archivo a partir de su registro de recuperación, con el que tiene que haberse creado (*Añadir registro de recuperación* en WinRAR). Sin él, un RAR dañado no se puede reparar. Si el registro no encuentra nada mal, no se escribe nada.
 

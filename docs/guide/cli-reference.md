@@ -209,6 +209,7 @@ The rebuilt archive is written under a temporary name, read back, and only then 
 **7z.** Each solid block is decoded on its own, so damage in one block costs nothing in the others. In a damaged block, the first entry that fails its CRC or doesn’t decode and every entry after it are lost; an entry without a CRC of its own is kept only if its whole block decodes. The survivors are compressed again at the normal level.
 
 - The header at the end of a 7z is what says where every block and entry is: a 7z with a damaged header can’t be repaired.
+- Folders alone are not a repair: when every file is lost, nothing is written and the command fails, even if the folders survive.
 
 **RAR.** Rebuilds the archive from its recovery record, which it must have been made with (WinRAR’s *Add recovery record*). Without one, a damaged RAR can’t be repaired. When the record finds nothing wrong, nothing is written.
 

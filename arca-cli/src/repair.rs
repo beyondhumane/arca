@@ -309,7 +309,14 @@ fn repair_rar(archive: &Path, out: &Path, password: Option<&str>) -> Result<()> 
 fn repair_7z(archive: &Path, out: &Path, password: Option<&str>) -> Result<()> {
     let t0 = Instant::now();
     let temp = staged_path(out);
-    let report = match arca_7z::salvage_7z(archive, &temp, password, Level::NORMAL, &mut |_| true) {
+    let result = arca_7z::salvage_7z(archive, &temp, password, Level::NORMAL, &mut |_| true)
+        .and_then(|report| {
+            let rebuilt =
+                arca_7z::SevenZArchive::open(BufReader::new(File::open(&temp)?), password)?;
+            let any_file = rebuilt.entries().iter().any(|e| !e.is_dir);
+            Ok((report, any_file))
+        });
+    let (report, any_file) = match result {
         Ok(r) => r,
         Err(e) => {
             let _ = fs::remove_file(&temp);
@@ -318,6 +325,13 @@ fn repair_7z(archive: &Path, out: &Path, password: Option<&str>) -> Result<()> {
     };
     for (name, why) in &report.lost {
         eprintln!("  lost: {}: {}", printable(name), printable(why));
+    }
+    if !any_file {
+        let _ = fs::remove_file(&temp);
+        return Err(Error::Format(format!(
+            "no file of '{}' could be recovered",
+            archive.display()
+        )));
     }
     fs::rename(&temp, out)?;
     println!(
