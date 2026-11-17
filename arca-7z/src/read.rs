@@ -23,11 +23,11 @@ pub struct Progress<'a> {
 }
 
 pub struct SevenZArchive<R: Read + Seek> {
-    source: R,
-    archive: Archive,
-    entries: Vec<Entry>,
-    password: Password,
-    encrypted: bool,
+    pub(crate) source: R,
+    pub(crate) archive: Archive,
+    pub(crate) entries: Vec<Entry>,
+    pub(crate) password: Password,
+    pub(crate) encrypted: bool,
 }
 
 impl<R: Read + Seek> SevenZArchive<R> {
