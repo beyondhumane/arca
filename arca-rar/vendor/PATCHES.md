@@ -63,7 +63,12 @@ source was consulted for any of it.
   lazy parse and the optimal parse's collector step over one more position
   per further run of misses, emitting them as literals without searching or
   inserting them, until a match turns up. Level 1 starts after 16 misses,
-  the other levels after 64 (`rar50/write/filter_policy.rs`).
+  levels 2 and 3 after 64 and levels 4 and 5 after 128
+  (`rar50/write/filter_policy.rs`).
+- **Lighter top levels.** Level 4 searches 64 candidates out to 128 bytes
+  and prices each block twice; level 5 searches 128 out to 256 and prices
+  three times (`rar50/write/filter_policy.rs`). They used to search 256 and
+  512 out to 512 bytes.
 
 Measured with `arca create out.rar <dir> -l <level>` on 144 MiB of source and
 executables (1,382 files), Windows 11, 16 threads, together with the
