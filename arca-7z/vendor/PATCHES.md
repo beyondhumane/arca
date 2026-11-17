@@ -15,11 +15,15 @@ Local changes:
   The upstream `cdylib` collides between Cargo's abort and unwind artifacts in
   release integration tests; removing that unused output keeps release tests
   compatible with Arca's unchanged `panic = "abort"` release profile.
-- Pin `lzma-rust2 =0.21.0` and disable its `optimization` feature. Exact upstream
+- Pin `lzma-rust2 =0.22.0` and disable its `optimization` feature. Exact upstream
   LZMA source contains unsafe optimization/SIMD code; disabling this feature
   activates its own `forbid(unsafe_code)` guard. Add the same guard to sevenz.
-  LZMA crate SHA-256:
-  `fde178a3caf126c440fa15628147772d8ee590a39477d711353fbe2e58a73a5b`.
+  The workspace resolves this pin to the copy vendored in
+  `arca-xz/vendor/lzma-rust2` (see `arca-xz/vendor/PATCHES.md`), the same one
+  arca-xz uses, so .7z and .xz share one LZMA implementation. LZMA crate
+  SHA-256: `7277c9742229dc25243236d578b6471a798c554512c6f6a04365ec2e87c2a3bb`.
+  It was `=0.21.0` before; 0.22.0 bounds the pending jobs of the
+  multithreaded LZMA2 writer and keeps the same API.
 - Bound encoded/decoded headers, counts and decoder dictionaries before
   allocating; cap Zstd windows. Bound coders to four single-stream stages and
   reject malformed/disconnected/cyclic coder graphs and mismatched mappings.
