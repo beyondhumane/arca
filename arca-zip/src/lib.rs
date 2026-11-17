@@ -290,7 +290,12 @@ impl<R: Read + Seek> ZipArchive<R> {
             .get(idx)
             .ok_or_else(|| Error::Format(format!("no such entry: {idx}")))?
             .clone();
-        extract_entry_with(&mut self.source, &e, dest, password)
+        let central = self
+            .kept
+            .get(idx)
+            .and_then(|k| aes::parse_extra(&k.extra))
+            .map(|info| info.strength);
+        extract_verified(&mut self.source, &e, dest, password, central)
     }
 
     pub fn has_encrypted(&self) -> bool {
@@ -312,7 +317,17 @@ pub fn extract_entry_with<R: Read + Seek, W: Write>(
     dest: W,
     password: Option<&str>,
 ) -> Result<u64> {
-    let (crc_val, written) = extract_inner(source, e, dest, password)?;
+    extract_verified(source, e, dest, password, None)
+}
+
+fn extract_verified<R: Read + Seek, W: Write>(
+    source: &mut R,
+    e: &Entry,
+    dest: W,
+    password: Option<&str>,
+    central: Option<u8>,
+) -> Result<u64> {
+    let (crc_val, written) = extract_inner(source, e, dest, password, central)?;
 
     // AE-2 stores a zero CRC on purpose, and the HMAC has already spoken for
     // the contents. AE-1 keeps the real one, so a non-zero value still gets
@@ -341,7 +356,7 @@ pub fn checksum_entry<R: Read + Seek>(
     e: &Entry,
     password: Option<&str>,
 ) -> Result<u32> {
-    Ok(extract_inner(source, e, io::sink(), password)?.0)
+    Ok(extract_inner(source, e, io::sink(), password, None)?.0)
 }
 
 // Says whether a password can open the archive, reading only the few bytes at
@@ -429,6 +444,16 @@ fn open_data<'a, R: Read + Seek>(
     source: &'a mut R,
     e: &Entry,
 ) -> Result<(io::Take<&'a mut R>, Crypt)> {
+    open_data_with(source, e, None)
+}
+
+// `central` is the AES strength the central directory gives, used only when
+// the local header has no 0x9901 field of its own.
+fn open_data_with<'a, R: Read + Seek>(
+    source: &'a mut R,
+    e: &Entry,
+    central: Option<u8>,
+) -> Result<(io::Take<&'a mut R>, Crypt)> {
     source.seek(SeekFrom::Start(e.offset))?;
     let mut lfh = [0u8; LFH_FIXED];
     source.read_exact(&mut lfh)?;
@@ -474,14 +499,21 @@ fn open_data<'a, R: Read + Seek>(
     }
 
     // The key size decides how long the salt is, so it is read from the 0x9901
-    // field in this header, the one that travels with the data.
+    // field in this header, the one that travels with the data. Guessing it
+    // would read the salt short or long and fail as a wrong password.
     if let Crypt::Aes { strength } = &mut crypt {
         source.seek(SeekFrom::Current(n_len as i64))?;
         let mut extra = vec![0u8; x_len as usize];
         source.read_exact(&mut extra)?;
-        if let Some(info) = aes::parse_extra(&extra) {
-            *strength = info.strength;
-        }
+        *strength = aes::parse_extra(&extra)
+            .map(|info| info.strength)
+            .or(central)
+            .ok_or_else(|| {
+                Error::Format(format!(
+                    "'{}': the local header has no AES 0x9901 extra field to say its key size",
+                    e.name
+                ))
+            })?;
     }
 
     let data_start = e.offset + LFH_FIXED as u64 + n_len + x_len;
@@ -543,8 +575,9 @@ fn extract_inner<R: Read + Seek, W: Write>(
     e: &Entry,
     dest: W,
     password: Option<&str>,
+    central: Option<u8>,
 ) -> Result<(u32, u64)> {
-    let (mut bounded, crypt) = open_data(source, e)?;
+    let (mut bounded, crypt) = open_data_with(source, e, central)?;
     let mut cw = CrcWriter::new(dest);
 
     if let Crypt::Zip { check } = crypt {
@@ -4435,6 +4468,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn an_aes_entry_without_its_local_field_takes_the_directory_strength() {
+        let plain = b"la clave corta".repeat(10);
+        let mut buf = aes_archive(aes::STRENGTH_128, &plain, "k", true, 0);
+        let field = LFH_FIXED + "cifrado.txt".len();
+        buf.drain(field..field + 11);
+        buf[28..30].copy_from_slice(&0u16.to_le_bytes());
+        let eocd = buf.len() - EOCD_MIN;
+        let cd_at = u32::from_le_bytes(buf[eocd + 16..eocd + 20].try_into().unwrap()) - 11;
+        buf[eocd + 16..eocd + 20].copy_from_slice(&cd_at.to_le_bytes());
+
+        let mut a = ZipArchive::open(IoCursor::new(buf.clone())).unwrap();
+        let mut got = Vec::new();
+        a.extract_to_with(0, &mut got, Some("k")).unwrap();
+        assert_eq!(got, plain);
+
+        let e = a.entries()[0].clone();
+        let error = extract_entry_with(&mut IoCursor::new(buf), &e, io::sink(), Some("k"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("0x9901"), "{error}");
     }
 
     #[test]
