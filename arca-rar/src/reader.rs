@@ -196,6 +196,24 @@ pub(super) fn open(
     })
 }
 
+const MAX_COMMENT: u64 = 1 << 20;
+
+pub(super) fn comment(archive: &RarArchive, password: Option<&str>) -> Result<Option<String>> {
+    let Some(first) = archive.inner.archives.first() else {
+        return Ok(None);
+    };
+    controlled(&|_, _, _| true, |token| {
+        let limits = options(password, token)
+            .with_max_member_output_bytes(MAX_COMMENT)
+            .with_max_total_output_bytes(MAX_COMMENT);
+        let bytes = first.comment_with_options(limits).map_err(error)?;
+        Ok(bytes.map(|b| match String::from_utf8(b) {
+            Ok(text) => text,
+            Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+        }))
+    })
+}
+
 pub(super) fn validate_name(name: &str) -> Result<()> {
     if name.starts_with('/')
         || name

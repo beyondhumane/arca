@@ -145,6 +145,19 @@ impl RarArchive {
         }
     }
 
+    /// The archive comment, from the first volume, if it has one. A RAR 4
+    /// comment is compressed, so it is decoded under the same limits as a
+    /// member, and held to 1 MiB.
+    pub fn comment(&self, password: Option<&str>) -> Result<Option<String>> {
+        #[cfg(feature = "rar")]
+        return reader::comment(self, password);
+        #[cfg(not(feature = "rar"))]
+        {
+            let _ = password;
+            Err(disabled())
+        }
+    }
+
     /// Verifies the entire stream in private staging before touching destinations.
     /// Publication errors can leave earlier verified files in place; it is not a
     /// transaction over the destination directory. Solid predecessors are decoded
