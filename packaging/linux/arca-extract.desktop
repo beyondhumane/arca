@@ -18,6 +18,6 @@ Exec=arca-gui --extract-here %F
 [Desktop Action extractToFolder]
 Name=Extract to a new folder
 Name[es]=Extraer en una carpeta nueva
-Name[uk]=Видобути в нову теку
+Name[uk]=Видобути в нову папку
 Icon=dev.beyondhumane.Arca
 Exec=arca-gui --extract-to-folder %F
