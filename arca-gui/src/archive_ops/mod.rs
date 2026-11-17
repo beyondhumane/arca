@@ -502,7 +502,12 @@ pub(crate) fn run_job_blocking(
             // until it is finished: a three gigabyte archive would be a window
             // that had stopped answering for a minute. This one has a bar and a
             // way out, like everything else that takes a while.
-            let total = fs::metadata(&archive).map(|m| m.len()).unwrap_or(0);
+            //
+            // A split set comes out joined into one file: its first part alone
+            // would be a truncated archive.
+            let total = arca_core::volumes::open(&archive)
+                .and_then(|source| Ok(source.len()?))
+                .unwrap_or(0);
             let name = dest
                 .file_name()
                 .map(|x| x.to_string_lossy().to_string())
@@ -511,7 +516,7 @@ pub(crate) fn run_job_blocking(
             // archive itself under another spelling of its path, and creating
             // it would truncate the only copy before a byte had been read.
             let copied = io::staged(&dest, |mut to| -> arca_core::Result<u64> {
-                let mut from = BufReader::with_capacity(BUF, File::open(&archive)?);
+                let mut from = BufReader::with_capacity(BUF, arca_core::volumes::open(&archive)?);
                 let mut buf = vec![0u8; BUF];
                 let mut done = 0u64;
                 loop {

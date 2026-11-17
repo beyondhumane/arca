@@ -286,3 +286,44 @@ fn a_split_archive_open_in_the_window_cannot_be_changed() {
     assert_eq!(app.state.notice, app.s().split_read_only);
     assert_eq!(fs::read(part_path(&out, 1)).unwrap(), before);
 }
+
+#[test]
+fn saving_a_copy_of_a_split_archive_joins_its_parts() {
+    let room = Room::new();
+    let (source, big) = sample(&room);
+    let out = room.path("set.zip");
+    compress_split(
+        &out,
+        Some(40_000),
+        &[source],
+        Format::Zip,
+        Codec::Store,
+        Level::STORE,
+        GO,
+        (None, false),
+    )
+    .unwrap();
+    let copy = room.path("joined.zip");
+    run_job_blocking(
+        Job::CopyTo {
+            archive: part_path(&out, 2),
+            dest: copy.clone(),
+        },
+        crate::i18n::strings(crate::i18n::Lang::En),
+        GO,
+        &replace,
+    )
+    .unwrap();
+    let total: u64 = (1..=parts(&out))
+        .map(|i| fs::metadata(part_path(&out, i)).unwrap().len())
+        .sum();
+    assert_eq!(fs::metadata(&copy).unwrap().len(), total);
+    let (entries, _) = list_entries(&copy, None, GO).unwrap();
+    let at = entries
+        .iter()
+        .position(|e| e.name.ends_with("inner/b.bin"))
+        .unwrap();
+    let mut data = Vec::new();
+    read_entry(&copy, at, &mut data, None, GO).unwrap();
+    assert_eq!(data, big);
+}
