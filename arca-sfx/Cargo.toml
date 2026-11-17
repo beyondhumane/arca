@@ -1,0 +1,32 @@
+[package]
+name = "arca-sfx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Programa que se extrae a si mismo: lo que arca create --sfx pone delante del ZIP"
+
+[[bin]]
+name = "arca-sfx"
+path = "src/main.rs"
+
+[dependencies]
+arca-core.workspace = true
+arca-zip.workspace = true
+# The language the questions are asked in, the same way the window picks it.
+sys-locale = "0.3"
+
+# The folder picker and the message boxes. Only on Windows, the one platform
+# self-extractors are made for; elsewhere the stub talks through the console.
+[target."cfg(windows)".dependencies]
+rfd = "0.17"
+
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"

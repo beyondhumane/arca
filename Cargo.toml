@@ -17,6 +17,7 @@ members = [
     "arca-drag",
     "arca-notify",
     "arca-net",
+    "arca-sfx",
 ]
 # Solo compila en Windows: se queda fuera del workspace para que
 # `cargo build` siga funcionando en Linux y macOS.

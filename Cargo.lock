@@ -402,6 +402,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "arca-sfx"
+version = "0.10.0"
+dependencies = [
+ "arca-core",
+ "arca-zip",
+ "rfd",
+ "sys-locale",
+ "tempfile",
+ "winresource",
+]
+
+[[package]]
 name = "arca-stream"
 version = "0.10.0"
 dependencies = [
