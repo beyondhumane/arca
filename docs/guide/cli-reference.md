@@ -74,7 +74,7 @@ Extract the contents.
 | `<ARCHIVE>` | required | Archive to extract. |
 | `-o, --dest <DEST>` | . | Destination directory. |
 | `--on-conflict <POLICY>` | overwrite | overwrite · skip · rename. What to do when the file is already there. |
-| `-j, --threads <N>` | 0 | Threads to use. 0 means every core. Only .zip can go parallel. |
+| `-j, --threads <N>` | 0 | Threads to use. 0 means every core. Only .zip follows it; a multi-block .xz or .tar.xz and the LZMA2 blocks of a .7z always decode on every core their 2 GiB memory budget allows. |
 | `-p, --password <PASSWORD>` | none | Password of an encrypted archive (AES-256 or ZipCrypto). |
 
 ## test · t

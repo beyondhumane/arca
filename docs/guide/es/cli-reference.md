@@ -74,7 +74,7 @@ Extrae el contenido.
 | `<ARCHIVE>` | obligatorio | Archivo a extraer. |
 | `-o, --dest <DEST>` | . | Directorio de destino. |
 | `--on-conflict <POLICY>` | overwrite | overwrite · skip · rename. Qué hacer cuando el archivo ya existe. |
-| `-j, --threads <N>` | 0 | Hilos a usar. 0 significa todos los núcleos. Solo .zip puede ir en paralelo. |
+| `-j, --threads <N>` | 0 | Hilos a usar. 0 significa todos los núcleos. Solo .zip lo sigue; un .xz o .tar.xz de varios bloques y los bloques LZMA2 de un .7z se descomprimen siempre en todos los núcleos que caben en su presupuesto de 2 GiB de memoria. |
 | `-p, --password <PASSWORD>` | ninguna | Contraseña de un archivo cifrado (AES-256 o ZipCrypto). |
 
 ## test · t

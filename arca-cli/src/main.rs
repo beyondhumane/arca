@@ -112,7 +112,7 @@ enum Cmd {
             short = 'j',
             long,
             default_value_t = 0,
-            help = "Threads to use. 0 means every core. Only .zip can go parallel"
+            help = "Threads to use. 0 means every core. Only .zip follows it; a multi-block .xz or .tar.xz and the LZMA2 blocks of a .7z always decode on every core their 2 GiB memory budget allows"
         )]
         threads: usize,
         #[arg(short = 'p', long, help = "Password of an encrypted archive")]

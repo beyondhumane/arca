@@ -39,7 +39,7 @@ arca extract <ARCHIVE> [-o DIR] [--on-conflict POLICY] [-j THREADS] [-p PASSWORD
 | --- | --- | --- |
 | `-o, --dest` | `.` | Destination directory. Created if it doesn’t exist. |
 | `--on-conflict` | overwrite | What to do when a file already exists: overwrite, skip or rename. |
-| `-j, --threads` | 0 | Threads to use. 0 means every core. Only .zip can go parallel. |
+| `-j, --threads` | 0 | Threads to use. 0 means every core. Only .zip follows it; a multi-block .xz or .tar.xz and the LZMA2 blocks of a .7z always decode on every core their 2 GiB memory budget allows. |
 | `-p, --password` | none | Password of an encrypted archive (AES-256 or ZipCrypto). |
 
 ### Conflicts
@@ -54,7 +54,7 @@ ZIP destinations are decided up front on one thread. 7z resolves conflicts seque
 
 ## Parallel extraction
 
-A `.zip` is random access: the central directory says where every entry starts, so one thread per core can each open the file and decompress a different entry. A `.tar` is a single stream, and a `.tar.gz`, `.tar.xz`, `.tar.bz2` or `.tar.zst` a single compressed stream on top of it, so there’s nothing to split and extraction stays sequential. TAR entries and a standalone `.xz`, `.bz2` or `.zst` are written under a temporary name and renamed only once their data has been read and checked, so a truncated or corrupt archive leaves no short file under the real name. Entries that finished before the damage stay.
+A `.zip` is random access: the central directory says where every entry starts, so one thread per core can each open the file and decompress a different entry. A `.tar` is a single stream, and a `.tar.gz`, `.tar.bz2` or `.tar.zst` a single compressed stream on top of it, so there’s nothing to split and extraction stays sequential. A `.xz` or `.tar.xz` written on several threads, by Arca or by `xz -T0`, is different: it is a series of independent blocks whose sizes its index gives up front, so Arca decodes a block per core and hands them on in order. The LZMA2 data of a `.7z` written on several threads is split the same way, wherever the stream resets its dictionary. Both stay within 2 GiB of memory; a file that is a single block, or whose blocks are too large to fit, decodes on one thread. TAR entries and a standalone `.xz`, `.bz2` or `.zst` are written under a temporary name and renamed only once their data has been read and checked, so a truncated or corrupt archive leaves no short file under the real name. Entries that finished before the damage stay.
 
 | 287 MB in 16 text files · Windows 11 | Time |
 | --- | --- |
