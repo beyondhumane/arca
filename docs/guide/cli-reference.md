@@ -195,4 +195,4 @@ The table and the JSON end with the command that reproduces them. Progress goes 
 | `0` | Success. |
 | `1` | Archive/I/O error, including wrong password or corrupted encrypted data. Printed to standard error as `arca: <message>`. Also a `hash` that couldn’t read a file or found a checksum that didn’t match, and a `diff` that found differences. |
 | `2` | Invalid command-line syntax/options, reported by the argument parser. Also a `diff` that couldn’t read one of its sides: for `diff`, 1 only ever means the two differ. |
-| `130` | `bench --codecs` stopped by Ctrl+C, after printing what it measured. |
+| `130` | `bench --codecs` stopped by Ctrl+C, after printing what it measured. Only in builds with RAR, which install the handler; elsewhere Ctrl+C ends the process as usual. |

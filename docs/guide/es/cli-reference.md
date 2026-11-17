@@ -195,5 +195,5 @@ La tabla y el JSON terminan con la orden que los reproduce. El progreso va a la 
 | `0` | Éxito. |
 | `1` | Error de archivo/E/S, incluida contraseña incorrecta o datos cifrados corruptos. Se imprime como `arca: <message>` en la salida de error. También un `hash` que no pudo leer un fichero o encontró una suma que no coincide, y un `diff` que encontró diferencias. |
 | `2` | Sintaxis u opciones CLI inválidas, indicadas por el analizador de argumentos. También un `diff` que no pudo leer uno de sus lados: en `diff`, 1 solo significa que difieren. |
-| `130` | `bench --codecs` detenido con Ctrl+C, después de imprimir lo medido. |
+| `130` | `bench --codecs` detenido con Ctrl+C, después de imprimir lo medido. Solo en compilaciones con RAR, que instalan el manejador; en las demás Ctrl+C termina el proceso como siempre. |
 </content>
