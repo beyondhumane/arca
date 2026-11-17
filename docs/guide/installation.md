@@ -35,7 +35,7 @@ Run the installer. It’s produced with Inno Setup from `windows/arca.iss` and s
 
 ### Linux packages
 
-The `.deb` and `.rpm` install both binaries into `/usr/bin` and add Arca to the applications menu:
+The `.deb` and `.rpm` install both binaries into `/usr/bin` and set Arca up on the desktop:
 
 ```sh
 sudo apt install ./arca_*_amd64.deb      # Debian, Ubuntu
@@ -43,7 +43,26 @@ sudo dnf install ./arca-*.x86_64.rpm     # Fedora
 sudo zypper install ./arca-*.x86_64.rpm  # openSUSE
 ```
 
-The AppImage needs no installation. Make it executable and run it; `--cli` runs the command line instead of the window:
+| Path | What it does |
+| --- | --- |
+| `/usr/share/applications/arca.desktop` | Arca in the applications menu, and in **Open with** for ZIP, 7z, RAR, TAR, TAR.GZ, XZ, BZ2 and ZST (alone or around a TAR) and ISO images |
+| `/usr/share/icons/hicolor/*/apps/dev.beyondhumane.Arca.*` | The icon from 16 to 256 px, plus the SVG |
+| `/usr/share/kio/servicemenus/arca-*.desktop` | An **Arca** submenu in Dolphin: **Extract here** and **Extract to a new folder** on archives, **Add to archive…** and **Compress to ZIP** on anything |
+
+Installing never changes which program opens a type by default: choose Arca in **Open with**, or make it the default in your desktop’s settings. ZIP-based packages and documents such as `.jar`, `.apk` or `.epub` are not claimed; Arca still opens them from the window. Every type above already has a standard name in shared-mime-info, so Arca ships no MIME definitions of its own. After installing and after removing, the package refreshes the desktop-entry and icon caches if `update-desktop-database` and `gtk-update-icon-cache` are present.
+
+Other file managers keep their context-menu entries in your own configuration, so a package can’t add them:
+
+- **Nautilus (GNOME Files)**: save a script like this one in `~/.local/share/nautilus/scripts/` and make it executable; it appears under **Scripts** in the right-click menu. `--extract-to-folder`, `--add` and `--add-quick` give the other actions.
+
+  ```sh
+  #!/bin/sh
+  exec arca-gui --extract-here "$@"
+  ```
+
+- **Thunar**: in **Edit > Configure custom actions…**, add an action with the command `arca-gui --extract-here %F` (or one of the other flags) and pick the file types under **Appearance Conditions**.
+
+The AppImage needs no installation and doesn’t register anything with the desktop. Make it executable and run it; `--cli` runs the command line instead of the window:
 
 ```sh
 chmod +x arca-v*-linux-x86_64.AppImage
@@ -60,6 +79,8 @@ tar -xzf arca-v*-linux-x86_64.tar.gz
 # then move the arca binary onto your PATH, for example:
 sudo mv arca /usr/local/bin/
 ```
+
+On macOS the release is the two binaries, not an app bundle, so Finder can’t offer **Open with Arca** or give archives Arca’s icon. That takes an `Arca.app` whose `Info.plist` declares the archive types (`CFBundleDocumentTypes`, plus `UTImportedTypeDeclarations` for the formats macOS has no type for), and a signed, notarised build so that Gatekeeper lets it open. The release workflow doesn’t build any of that yet.
 
 > [!TIP]
 > **macOS Gatekeeper**

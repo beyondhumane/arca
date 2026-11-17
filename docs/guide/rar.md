@@ -43,8 +43,10 @@ dialog on shared machines. The GUI prompts before listing encrypted headers,
 retries identifiable incorrect passwords, and keeps the password for the open archive.
 RAR4 encrypted headers can report an incorrect password as a format error;
 reopen with the correct password rather than assuming the archive is damaged.
-The title identifies an open RAR as read-only. No operating-system file
-associations are added by this feature.
+The title identifies an open RAR as read-only. The Windows installer and the
+Linux packages offer Arca for `.rar` in Open with, next to the other archive
+types and only when you choose it; Arca never makes itself the default.
+`.cbr` comics are not offered.
 
 Listing, testing, previews and extraction are supported. Solid streams are
 decoded sequentially. A selected extraction still verifies every file,
@@ -178,8 +180,8 @@ Integrity guarantees depend on the checksums/authenticators the archive carries.
 
 ## Deliberate exclusions and dependency notes
 
-- No recovery/repair, modification of existing archives, OS associations or
-  claim of exhaustive RAR compatibility. Unsupported methods/metadata return
+- No recovery/repair, modification of existing archives, automatic OS
+  associations or claim of exhaustive RAR compatibility. Unsupported methods/metadata return
   errors. Creation is limited to the single-volume RAR5 profile above.
 - Independent fixtures, multivolume regressions, official UnRAR comparisons and
   bounded mutation fuzzing extend reader coverage; the seeded creation harness

@@ -49,7 +49,10 @@ Se admiten listado, comprobación, vistas previas y extracción. Los archivos
 sólidos se decodifican secuencialmente. Incluso una extracción parcial verifica
 todos los miembros antes de publicar los seleccionados. La comprobación en la
 GUI siempre verifica el RAR completo. El título indica que el archivo abierto es
-de solo lectura; no se añaden asociaciones del sistema operativo.
+de solo lectura. El instalador de Windows y los paquetes de Linux ofrecen Arca
+para `.rar` en Abrir con, junto a los demás tipos de archivo comprimido y solo
+si lo eliges; Arca nunca se hace predeterminada. Los cómics `.cbr` no se
+ofrecen.
 
 No se permite añadir, borrar, renombrar, mover, crear carpetas internas ni
 cambiar contraseñas en un RAR o CBR existente. Copiar el contenedor como archivo

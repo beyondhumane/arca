@@ -33,7 +33,7 @@ Ejecuta el instalador. Está generado con Inno Setup desde `windows/arca.iss` y 
 
 ### Paquetes de Linux
 
-El `.deb` y el `.rpm` instalan los dos binarios en `/usr/bin` y añaden Arca al menú de aplicaciones:
+El `.deb` y el `.rpm` instalan los dos binarios en `/usr/bin` e integran Arca en el escritorio:
 
 ```sh
 sudo apt install ./arca_*_amd64.deb      # Debian, Ubuntu
@@ -41,7 +41,26 @@ sudo dnf install ./arca-*.x86_64.rpm     # Fedora
 sudo zypper install ./arca-*.x86_64.rpm  # openSUSE
 ```
 
-La AppImage no necesita instalación. Dale permiso de ejecución y ábrela; con `--cli` se ejecuta la línea de comandos en lugar de la ventana:
+| Ruta | Para qué sirve |
+| --- | --- |
+| `/usr/share/applications/arca.desktop` | Arca en el menú de aplicaciones y en **Abrir con** para ZIP, 7z, RAR, TAR, TAR.GZ, XZ, BZ2 y ZST (solos o envolviendo un TAR) e imágenes ISO |
+| `/usr/share/icons/hicolor/*/apps/dev.beyondhumane.Arca.*` | El icono de 16 a 256 px, más el SVG |
+| `/usr/share/kio/servicemenus/arca-*.desktop` | Un submenú **Arca** en Dolphin: **Extraer aquí** y **Extraer en una carpeta nueva** en los archivos comprimidos, **Añadir al archivo…** y **Comprimir en ZIP** en cualquier cosa |
+
+Instalar nunca cambia qué programa abre cada tipo por defecto: elige Arca en **Abrir con**, o hazla predeterminada en la configuración de tu escritorio. Los paquetes y documentos basados en ZIP, como `.jar`, `.apk` o `.epub`, no se reclaman; Arca los sigue abriendo desde la ventana. Todos los tipos de la lista tienen ya un nombre estándar en shared-mime-info, así que Arca no instala definiciones MIME propias. Tras instalar y tras desinstalar, el paquete actualiza las cachés de entradas de escritorio y de iconos si están `update-desktop-database` y `gtk-update-icon-cache`.
+
+Otros gestores de archivos guardan sus entradas del menú contextual en tu propia configuración, así que un paquete no puede añadirlas:
+
+- **Nautilus (Archivos de GNOME)**: guarda un script como este en `~/.local/share/nautilus/scripts/` y dale permiso de ejecución; aparece en **Scripts** en el menú del botón derecho. `--extract-to-folder`, `--add` y `--add-quick` dan las demás acciones.
+
+  ```sh
+  #!/bin/sh
+  exec arca-gui --extract-here "$@"
+  ```
+
+- **Thunar**: en **Editar > Configurar acciones personalizadas…**, añade una acción con la orden `arca-gui --extract-here %F` (u otra de las opciones) y elige los tipos de archivo en **Condiciones de aparición**.
+
+La AppImage no necesita instalación ni registra nada en el escritorio. Dale permiso de ejecución y ábrela; con `--cli` se ejecuta la línea de comandos en lugar de la ventana:
 
 ```sh
 chmod +x arca-v*-linux-x86_64.AppImage
@@ -58,6 +77,8 @@ tar -xzf arca-v*-linux-x86_64.tar.gz
 # luego mueve el binario arca a tu PATH, por ejemplo:
 sudo mv arca /usr/local/bin/
 ```
+
+En macOS la versión publicada son los dos binarios, no un paquete de aplicación, así que el Finder no puede ofrecer **Abrir con Arca** ni dar a los archivos comprimidos el icono de Arca. Para eso hace falta un `Arca.app` cuyo `Info.plist` declare los tipos de archivo (`CFBundleDocumentTypes`, más `UTImportedTypeDeclarations` para los formatos que macOS no conoce), y una compilación firmada y notarizada para que Gatekeeper la deje abrirse. El flujo de publicación todavía no genera nada de eso.
 
 > [!TIP]
 > **Gatekeeper de macOS**

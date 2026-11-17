@@ -18,8 +18,11 @@ En Windows, Arca se integra con el Explorador de archivos para que puedas abrir 
 | Menú moderno de Windows 11 | `IExplorerCommand` más un paquete MSIX disperso |
 | Menú clásico (Mostrar más opciones) | `IContextMenu` más claves de registro |
 
-Ambas se destinan a Windows 11. La integración `.7z` necesita verificación en
-Windows, por separado de las comprobaciones de terminal en Linux.
+Ambas se destinan a Windows 11. Ofrecen **Abrir con Arca**, **Extraer aquí** y
+**Extraer en "nombre\"** para todos los formatos que Arca lee, incluidos los
+contenedores ZIP como `.jar` o `.epub` y los volúmenes RAR como `.r00`, y
+nombran la carpeta exactamente como lo hará la ventana. **Añadir al archivo…**
+funciona con cualquier selección.
 
 ## Progreso, no silencio
 
@@ -29,10 +32,44 @@ Hacer clic derecho en un archivo comprimido abre la ventana de Arca con una barr
 
 El instalador se genera con Inno Setup desde `windows/arca.iss`. Descarga `arca-setup-<version>-x86_64.exe` desde la [última versión](https://github.com/beyondhumane/arca/releases/latest), o lee [windows/README.md](https://github.com/beyondhumane/arca/tree/main/windows) para compilarlo tú mismo.
 
-El instalador registra `.7z` junto a ZIP/TAR/gzip para Abrir con y seleccionar
-aplicaciones predeterminadas. El Explorador reconoce `.7z` para Abrir/Extraer y
-quita la extensión al nombrar el destino. Añadir a archivo crea uno nuevo con
-la selección; no modifica el 7z seleccionado. El diálogo de creación ofrece 7z.
+### Asociaciones de archivos
+
+Con la opción de asociaciones activada, el instalador añade Arca a **Abrir con**
+y a **Configuración > Aplicaciones predeterminadas** para estas extensiones:
+
+| Extensiones | Formatos |
+| --- | --- |
+| `.zip`, `.7z`, `.rar`, `.tar` | ZIP, 7z, RAR, TAR |
+| `.gz`, `.tgz` | TAR.GZ |
+| `.xz`, `.txz` | XZ y TAR.XZ |
+| `.bz2`, `.tbz2`, `.tbz` | BZ2 y TAR.BZ2 |
+| `.zst`, `.tzst` | ZST y TAR.ZST |
+| `.iso` | Imágenes de disco ISO, solo si se piden |
+
+Windows se fija solo en la última extensión, así que para él `copia.tar.xz` es
+un fichero `.xz`; Arca lee el nombre completo y lo abre como TAR.XZ.
+
+Arca nunca se hace predeterminada por su cuenta: se registra junto a lo que ya
+abre esos ficheros, y eres tú quien la elige en **Abrir con** o en
+Configuración. El instalador nuevo, `arca-setup`, hace una excepción: toma
+`.zip` para tu cuenta de usuario, para que aparezca **Nuevo > Archivo ZIP de
+Arca** en el Explorador, y se lo devuelve a quien lo tuviera antes al
+desinstalar Arca.
+
+Las imágenes de disco vienen desactivadas, porque el Explorador ya las monta.
+Marca la casilla de las imágenes de disco (.iso) en el instalador de Inno Setup,
+ejecuta `arca-setup.exe --iso` o, en la instalación de desarrollo,
+`windows\install.ps1 -Iso`.
+
+Los paquetes y documentos basados en ZIP (`.jar`, `.apk`, `.epub`, `.cbz` y el
+resto de [contenedores ZIP](zip-containers.md)) y los cómics `.cbr` nunca se
+asocian: son de Java, de las herramientas de Android y de los lectores de
+libros y cómics. Arca los abre cuando se lo pides, desde el menú contextual o
+desde la ventana.
+
+La lista sale de `arca_core::Format`. `arca-setup` la calcula al ejecutarse, y
+sus pruebas fallan si `windows/arca.iss`, `windows/install.ps1` o la extensión
+del Explorador en `windows/arca-shell` no coinciden con ella.
 
 ## Por qué vive fuera del workspace
 
