@@ -2415,6 +2415,7 @@ impl AppController {
         self.state.listing = true;
         self.show_job(self.s().opening, archive_stem(&path), true);
         let (stop, hold) = self.fresh_flags();
+        let comment_label = self.s().archive_comment_word;
         self.spawn(0, move |tx| {
             let notify = worker_notify(tx, &stop, &hold);
             let result = (|| {
@@ -2424,7 +2425,9 @@ impl AppController {
                 if !notify(0, 0, "") {
                     return Err(arca_core::Error::Cancelled);
                 }
-                list_entries(&path, password.as_deref(), &notify)
+                let (entries, mut notices) = list_entries(&path, password.as_deref(), &notify)?;
+                notices.extend(comment_notice(&path, comment_label));
+                Ok((entries, notices))
             })();
             let _ = tx.send(Message::Listing(path, result, password));
         });
