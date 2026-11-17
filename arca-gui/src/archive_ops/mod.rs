@@ -806,4 +806,42 @@ mod tests {
             "folder/file.txt.bak"
         );
     }
+
+    fn zip_with_comment(room: &Room, name: &str, comment: &[u8]) -> std::path::PathBuf {
+        let path = room.path(name);
+        let mut w = arca_zip::ZipWriter::new(fs::File::create(&path).unwrap());
+        w.add(
+            "a.txt",
+            &b"a"[..],
+            arca_core::Codec::Store,
+            arca_core::Level::STORE,
+            None,
+        )
+        .unwrap();
+        w.set_comment(comment).unwrap();
+        w.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn a_zip_comment_becomes_one_clean_status_line() {
+        let room = Room::new();
+        let label = strings(Lang::Es).archive_comment_word;
+        let commented = zip_with_comment(&room, "c.zip", b"line one\r\n\x1b[31mline two\t ");
+        assert_eq!(
+            super::comment_notice(&commented, label).as_deref(),
+            Some("Comentario del archivo: line one [31mline two")
+        );
+
+        let long = zip_with_comment(&room, "long.zip", &[b'x'; 500]);
+        let notice = super::comment_notice(&long, "C").unwrap();
+        assert_eq!(notice.chars().count(), "C: ".len() + 160 + 1);
+        assert!(notice.ends_with('…'));
+
+        let plain = zip_with_comment(&room, "plain.zip", b"");
+        assert_eq!(super::comment_notice(&plain, label), None);
+        let tar = room.path("not.tar");
+        fs::write(&tar, b"").unwrap();
+        assert_eq!(super::comment_notice(&tar, label), None);
+    }
 }
