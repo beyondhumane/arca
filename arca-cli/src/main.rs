@@ -814,7 +814,11 @@ fn create(
     raw_list.retain(|(path, _, _)| !own.is_own(path));
     if !matches!(
         format_kind.container(),
-        Container::Tar | Container::TarGz | Container::TarXz
+        Container::Tar
+            | Container::TarGz
+            | Container::TarXz
+            | Container::TarBz2
+            | Container::TarZst
     ) {
         links.clear();
     }
