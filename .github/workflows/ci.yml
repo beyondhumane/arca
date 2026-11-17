@@ -54,6 +54,16 @@ jobs:
       - run: cargo test --workspace
       - run: python3 arca-rar/tests/check-features.py
       - run: python3 packaging/rar-notices.py --check
+      # What the .deb and .rpm put on the desktop, checked here rather than
+      # first met by the release job. The Dolphin menus are Type=Service, a KDE
+      # extension desktop-file-validate rejects, so only the entry is validated;
+      # arca-setup's tests already compare the type lists of all three.
+      - name: Linux desktop integration
+        run: |
+          sudo apt-get install -y desktop-file-utils
+          desktop-file-validate packaging/linux/arca.desktop
+          python3 packaging/linux/icons.py "$RUNNER_TEMP/icons"
+          find "$RUNNER_TEMP/icons" -type f | sort
       - run: cargo clippy --workspace --all-targets --no-default-features --features codecs-native -- -D warnings
       - run: cargo test --workspace --no-default-features --features codecs-native
       - name: Bounded RAR mutation campaign
