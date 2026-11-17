@@ -115,7 +115,12 @@ mod tests {
             .into_iter()
             .filter(|kind| kind.on_request)
             .collect();
+        let mut removed = BTreeSet::new();
         for line in script.lines().filter(|line| line.starts_with("Root: HKCU")) {
+            if line.contains("Tasks: not ") {
+                removed.insert(line.to_string());
+                continue;
+            }
             let parts = quoted(line);
             let (Some(key), Some(name)) = (parts.first(), parts.get(1)) else {
                 continue;
@@ -182,6 +187,30 @@ mod tests {
         assert_eq!(capabilities, expected);
         assert_eq!(supported, all);
         assert!(!asked_for.is_empty());
+        let unless = r"Tasks: not fileassoc\iso";
+        let mut taken_back = BTreeSet::new();
+        for kind in &asked_for {
+            let (ext, progid) = (&kind.extension, &kind.progid);
+            taken_back.extend([
+                format!(
+                    r#"Root: HKCU; Subkey: "Software\Classes\{progid}"; ValueType: none; Flags: deletekey; {unless}"#
+                ),
+                format!(
+                    r#"Root: HKCU; Subkey: "Software\Classes\{ext}\OpenWithProgids"; ValueType: none; ValueName: "{progid}"; Flags: deletevalue; {unless}"#
+                ),
+                format!(
+                    r#"Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: none; ValueName: "{ext}"; Flags: deletevalue; {unless}"#
+                ),
+                format!(
+                    r#"Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: none; ValueName: "{ext}"; Flags: deletevalue; {unless}"#
+                ),
+            ]);
+            assert!(
+                script.contains(&format!("ForgetDefault('{ext}');")),
+                "{ext}"
+            );
+        }
+        assert_eq!(removed, taken_back);
         let forget = script
             .lines()
             .filter_map(|line| line.trim().strip_prefix("Exts["))
@@ -217,6 +246,21 @@ mod tests {
         };
         assert_eq!(table("Formats"), expected(false));
         assert_eq!(table("OnRequest"), expected(true));
+        assert!(script.contains("$Known = $Formats + $OnRequest"));
+        assert!(script.contains(
+            "if (-not $Registered.ContainsKey($ext)) { Unregister-Type $ext $Known[$ext].ProgId }"
+        ));
+        let start = script.find("function Unregister-Type(").unwrap();
+        let body = &script[start..start + script[start..].find("\n}").unwrap()];
+        for place in [
+            r#""Software\Classes\$progid""#,
+            r"OpenWithProgids",
+            r"arca-gui.exe\SupportedTypes",
+            r"Capabilities\FileAssociations",
+            r"UserChoice",
+        ] {
+            assert!(body.contains(place), "{place}");
+        }
     }
 
     fn mime_types() -> BTreeSet<String> {

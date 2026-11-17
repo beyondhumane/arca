@@ -238,6 +238,14 @@ Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: st
 Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: string; ValueName: ".iso"; ValueData: "Arca.iso"; Tasks: fileassoc\iso
 Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "Arca"; ValueData: "Software\Arca\Capabilities"; Flags: uninsdeletevalue; Tasks: fileassoc
 
+; Inno leaves alone the keys of a task that is not selected, so unticking disc
+; images on a reinstall would keep the .iso registration of the previous one.
+; With ValueType: none these only delete.
+Root: HKCU; Subkey: "Software\Classes\Arca.iso"; ValueType: none; Flags: deletekey; Tasks: not fileassoc\iso
+Root: HKCU; Subkey: "Software\Classes\.iso\OpenWithProgids"; ValueType: none; ValueName: "Arca.iso"; Flags: deletevalue; Tasks: not fileassoc\iso
+Root: HKCU; Subkey: "Software\Classes\Applications\arca-gui.exe\SupportedTypes"; ValueType: none; ValueName: ".iso"; Flags: deletevalue; Tasks: not fileassoc\iso
+Root: HKCU; Subkey: "Software\Arca\Capabilities\FileAssociations"; ValueType: none; ValueName: ".iso"; Flags: deletevalue; Tasks: not fileassoc\iso
+
 [Code]
 const
   ModernPackage = 'Arca.Archivador';
@@ -352,6 +360,25 @@ begin
   Result := ExpandConstant('{param:update|0}') = '1';
 end;
 
+// Whatever the user picked in Settings > Default apps points at one of our
+// ProgIDs, and the uninstall is about to delete those. Leaving UserChoice
+// behind pins the extension to a handler that no longer exists: the file then
+// opens with nothing and Settings shows a broken entry that is awkward to undo.
+//
+// Writing a UserChoice is blocked by Windows, on purpose, because it is how an
+// application would steal a default. Deleting one is allowed, and it puts the
+// extension back to whatever Windows decides on its own.
+procedure ForgetDefault(const Ext: string);
+var
+  Key, ProgId: string;
+begin
+  Key := 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\' + Ext + '\UserChoice';
+  if RegQueryStringValue(HKCU, Key, 'ProgId', ProgId) then
+    // Only ours. Somebody else's default is none of our business.
+    if Copy(ProgId, 1, 5) = 'Arca.' then
+      RegDeleteKeyIncludingSubkeys(HKCU, Key);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   // Before copying: on an upgrade the DLL is already loaded and locked.
@@ -365,6 +392,10 @@ begin
       RegisterModernMenu();
     if WizardIsTaskSelected('addtopath') then
       AddToPath();
+    // The [Registry] section has already taken back an earlier disc image
+    // registration; a default pointing at it would now open nothing.
+    if not WizardIsTaskSelected('fileassoc\iso') then
+      ForgetDefault('.iso');
     // No manual SHChangeNotify here. ChangesAssociations=yes already makes
     // Setup notify the shell, and an earlier attempt to call it through
     // PowerShell left an unbalanced quote in -Command: powershell then waits
@@ -372,18 +403,9 @@ begin
   end;
 end;
 
-// Whatever the user picked in Settings > Default apps points at one of our
-// ProgIDs, and the uninstall is about to delete those. Leaving UserChoice
-// behind pins the extension to a handler that no longer exists: the file then
-// opens with nothing and Settings shows a broken entry that is awkward to undo.
-//
-// Writing a UserChoice is blocked by Windows, on purpose, because it is how an
-// application would steal a default. Deleting one is allowed, and it puts the
-// extension back to whatever Windows decides on its own.
 procedure ForgetDefaults();
 var
   Exts: array[0..17] of string;
-  Key, ProgId: string;
   I: Integer;
 begin
   Exts[0] := '.zip';
@@ -405,13 +427,7 @@ begin
   Exts[16] := '.lzh';
   Exts[17] := '.lha';
   for I := 0 to 17 do
-  begin
-    Key := 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\' + Exts[I] + '\UserChoice';
-    if RegQueryStringValue(HKCU, Key, 'ProgId', ProgId) then
-      // Only ours. Somebody else's default is none of our business.
-      if Copy(ProgId, 1, 5) = 'Arca.' then
-        RegDeleteKeyIncludingSubkeys(HKCU, Key);
-  end;
+    ForgetDefault(Exts[I]);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
