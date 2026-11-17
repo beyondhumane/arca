@@ -128,3 +128,24 @@ fn a_rar_without_a_recovery_record_cannot_be_repaired() {
     assert!(text(&out).1.contains("recovery record"), "{}", text(&out).1);
     assert!(!fixed.exists());
 }
+
+#[test]
+fn a_tar_xz_whose_first_header_is_damaged_is_still_taken_for_a_tar() {
+    let dir = tempfile::tempdir().unwrap();
+    let tar = made(dir.path(), "plain.tar");
+    let mut bytes = std::fs::read(&tar).unwrap();
+    bytes[3] ^= 0x20;
+    let damaged = dir.path().join("damaged.tar");
+    std::fs::write(&damaged, &bytes).unwrap();
+    let stream = dir.path().join("stream.xz");
+    let packed = run(&["create".as_ref(), stream.as_os_str(), damaged.as_os_str()]);
+    assert!(packed.status.success(), "{}", text(&packed).1);
+    let broken = dir.path().join("broken.tar.xz");
+    std::fs::rename(&stream, &broken).unwrap();
+    let fixed = dir.path().join("fixed.tar.xz");
+    let out = repair(&broken, &fixed);
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stdout.contains("entries recovered, 1 lost"), "{stdout}");
+    assert!(run(&["test".as_ref(), fixed.as_os_str()]).status.success());
+}

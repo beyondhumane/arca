@@ -11,11 +11,21 @@ use std::time::Instant;
 // it reads back, and never the damaged archive's: that file may be the only
 // copy of whatever could not be recovered.
 pub(crate) fn run(archive: &Path, out: &Path, password: Option<&str>) -> Result<()> {
-    let format = detect_archive(archive)?;
-    if detect(out)? != format {
+    // Looking inside a .tar.xz decodes its first header, which is what may be
+    // damaged, so a name that says what the archive is wins.
+    let format = match Format::detect(archive) {
+        Some(named) if repairable(named) => named,
+        _ => detect_archive(archive)?,
+    };
+    let writes = if format.container() == Container::Zip {
+        Format::Zip
+    } else {
+        format
+    };
+    if detect(out)? != writes {
         return Err(Error::Unsupported(format!(
             "a repair writes the format it reads, so --out needs a .{} name",
-            format.extension()
+            writes.extension()
         )));
     }
     if out.exists() && fs::canonicalize(archive)? == fs::canonicalize(out)? {
@@ -37,6 +47,20 @@ pub(crate) fn run(archive: &Path, out: &Path, password: Option<&str>) -> Result<
             format.label()
         ))),
     }
+}
+
+fn repairable(format: Format) -> bool {
+    matches!(
+        format.container(),
+        Container::Zip
+            | Container::Tar
+            | Container::TarGz
+            | Container::TarXz
+            | Container::TarBz2
+            | Container::TarZst
+            | Container::Rar
+            | Container::SevenZ
+    )
 }
 
 fn repair_zip(archive: &Path, out: &Path) -> Result<()> {
