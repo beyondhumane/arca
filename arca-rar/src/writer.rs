@@ -128,10 +128,8 @@ fn write(
     resources: &WriterResources,
     reporter: &Reporter<'_>,
 ) -> rars::Result<()> {
-    // RAR has six levels where Arca has ten.
-    let level = [0, 1, 1, 2, 2, 3, 3, 4, 4, 5][usize::from(options.level.get())];
     let writer_options = WriterOptions::new(ArchiveVersion::Rar50, FeatureSet::store_only())
-        .with_compression_level(level);
+        .with_compression_level(rar_level(options.level));
     let extras = ArchiveExtras::default().with_filter_policy(FilterPolicy::None);
     write_streaming_archive_with_progress(
         entries,
@@ -392,7 +390,12 @@ fn open_regular(path: &Path) -> io::Result<File> {
     })
 }
 
-fn write_error(error: rars::Error) -> Error {
+// RAR has six levels where Arca has ten.
+pub(super) fn rar_level(level: arca_core::Level) -> u8 {
+    [0, 1, 1, 2, 2, 3, 3, 4, 4, 5][usize::from(level.get())]
+}
+
+pub(super) fn write_error(error: rars::Error) -> Error {
     match error.kind() {
         ErrorKind::Cancelled => Error::Cancelled,
         ErrorKind::ResourceLimit => Error::Limit(error.to_string()),

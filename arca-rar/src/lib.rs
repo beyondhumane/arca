@@ -4,12 +4,15 @@
 use arca_core::{Entry, Error, Level, Result};
 use std::path::{Path, PathBuf};
 
+mod memory;
 #[cfg(feature = "rar")]
 mod reader;
 #[cfg(feature = "rar")]
 mod volumes;
 #[cfg(feature = "rar")]
 mod writer;
+
+pub use memory::{pack_in_memory, MemoryArchive};
 
 /// Ceilings enforced by [`create_rar`], chosen to match what the reader
 /// accepts so every archive Arca writes is one Arca can open again.
