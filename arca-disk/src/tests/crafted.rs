@@ -59,17 +59,9 @@ pub(crate) fn vhd_sparse(size: u64, pieces: &[(u64, &[u8])]) -> Vec<u8> {
     out
 }
 
-/// An exFAT volume of `clusters` 512-byte clusters, in a sparse VHD, whose
-/// FAT loops 2 -> 3 -> ... -> `ring` + 1 -> 2, with `files` files of `size`
-/// bytes that all start at cluster 2.
-pub(crate) fn exfat_loop(clusters: u32, ring: u32, files: usize, size: u64) -> Vec<u8> {
-    let mut dir = Vec::new();
-    for i in 0..files {
-        dir.extend(exfat_set(&format!("f{i}"), false, 2, size, size, true));
-    }
-    let root = ring + 2;
-    let root_clusters = dir.len().div_ceil(512).max(1) as u32;
-    assert!(root + root_clusters <= clusters + 2);
+/// An exFAT volume of `clusters` 512-byte clusters in a sparse VHD, with the
+/// root folder at cluster `root`, the FAT `fat` and `data` put at clusters.
+fn exfat_sparse(clusters: u32, root: u32, fat: &[u32], data: &[(u32, &[u8])]) -> Vec<u8> {
     let fat_sectors = (u64::from(clusters) + 2).saturating_mul(4).div_ceil(512) as u32;
     let heap = 24 + fat_sectors;
     let total = u64::from(heap) + u64::from(clusters);
@@ -88,6 +80,25 @@ pub(crate) fn exfat_loop(clusters: u32, ring: u32, files: usize, size: u64) -> V
     boot[110] = 1;
     boot[510] = 0x55;
     boot[511] = 0xaa;
+    let fat: Vec<u8> = fat.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let mut pieces: Vec<(u64, &[u8])> = vec![(0, &boot), (24 * 512, &fat)];
+    for &(c, bytes) in data {
+        pieces.push(((u64::from(heap) + u64::from(c - 2)) * 512, bytes));
+    }
+    vhd_sparse(total * 512, &pieces)
+}
+
+/// An exFAT volume of `clusters` 512-byte clusters, in a sparse VHD, whose
+/// FAT loops 2 -> 3 -> ... -> `ring` + 1 -> 2, with `files` files of `size`
+/// bytes that all start at cluster 2.
+pub(crate) fn exfat_loop(clusters: u32, ring: u32, files: usize, size: u64) -> Vec<u8> {
+    let mut dir = Vec::new();
+    for i in 0..files {
+        dir.extend(exfat_set(&format!("f{i}"), false, 2, size, size, true));
+    }
+    let root = ring + 2;
+    let root_clusters = dir.len().div_ceil(512).max(1) as u32;
+    assert!(root + root_clusters <= clusters + 2);
     let mut fat = vec![0u32; (root + root_clusters) as usize];
     fat[0] = 0xffff_fff8;
     fat[1] = 0xffff_ffff;
@@ -99,12 +110,7 @@ pub(crate) fn exfat_loop(clusters: u32, ring: u32, files: usize, size: u64) -> V
         fat[c as usize] = c + 1;
     }
     fat[(root + root_clusters - 1) as usize] = 0xffff_ffff;
-    let fat: Vec<u8> = fat.iter().flat_map(|v| v.to_le_bytes()).collect();
-    let root_at = (u64::from(heap) + u64::from(root - 2)) * 512;
-    vhd_sparse(
-        total * 512,
-        &[(0, &boot), (24 * 512, &fat), (root_at, &dir)],
-    )
+    exfat_sparse(clusters, root, &fat, &[(root, &dir)])
 }
 
 /// A FAT16 volume of 5000 512-byte clusters holding one file of almost
@@ -213,4 +219,54 @@ fn a_looping_fat_chain_is_cut_where_it_loops() {
         a.notices()
     );
     read_fails(&a, "LOOP.BIN");
+}
+
+#[test]
+fn a_huge_sparse_exfat_folder_is_read_only_up_to_its_end() {
+    let mut fat = vec![0u32; 3];
+    fat[0] = 0xffff_fff8;
+    fat[1] = 0xffff_ffff;
+    fat[2] = 0xffff_ffff;
+    let root = exfat_set("Big", true, 3, 256 << 20, 256 << 20, false);
+    let inner = exfat_set("inner.txt", false, 1 << 19, 2, 2, false);
+    let image = exfat_sparse(
+        1 << 20,
+        2,
+        &fat,
+        &[(2, &root), (3, &inner), (1 << 19, b"hi")],
+    );
+    let (_dir, a) = open(Format::Vhd, &image);
+    let a = a.unwrap();
+    assert_eq!(names(&a), ["Big", "Big/inner.txt"]);
+    assert_eq!(read(&a, "Big/inner.txt"), b"hi");
+}
+
+/// The HFS+ sample in a sparse VHD of a little over 1 GiB, whose catalog
+/// fork claims the whole GiB: only the nodes the leaf chain names are read.
+fn hfs_big_catalog(broken: bool) -> Vec<u8> {
+    let mut first = super::hfs::hfs();
+    if broken {
+        assert_eq!(first[24 * 512 + 8], 1);
+        first[24 * 512 + 8] = 0;
+    }
+    let block = 512u64;
+    let size = 1u64 << 30;
+    let blocks = (size + (4 << 20)) / block;
+    let h = &mut first[1024..1536];
+    h[44..48].copy_from_slice(&(blocks as u32).to_be_bytes());
+    h[272..280].copy_from_slice(&size.to_be_bytes());
+    h[272 + 20..272 + 24].copy_from_slice(&((size / block) as u32).to_be_bytes());
+    vhd_sparse(blocks * block, &[(0, &first)])
+}
+
+#[test]
+fn a_huge_hfs_plus_catalog_is_read_a_node_at_a_time() {
+    let (_dir, a) = open(Format::Vhd, &hfs_big_catalog(false));
+    super::hfs::check_hfs(&a.unwrap(), "");
+    let (_dir, a) = open(Format::Vhd, &hfs_big_catalog(true));
+    assert!(
+        matches!(a, Err(Error::Format(ref e)) if e.contains("header node")),
+        "{:?}",
+        a.err()
+    );
 }

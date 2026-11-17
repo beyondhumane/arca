@@ -119,6 +119,8 @@ impl Table<'_> {
         Ok(())
     }
 
+    /// A folder's entries, read a piece at a time up to `len` bytes and no
+    /// further than the piece holding the entry that ends the folder.
     fn read(
         &mut self,
         vol: &mut Volume<'_>,
@@ -126,17 +128,30 @@ impl Table<'_> {
         len: u64,
         contiguous: bool,
     ) -> Result<Vec<u8>> {
-        if contiguous {
-            return match self.span(first, len) {
-                Some(at) => vol.bytes(at, len),
-                None => Ok(Vec::new()),
-            };
-        }
+        let ends = |piece: &[u8]| piece.as_chunks::<32>().0.iter().any(|e| e[0] == 0);
         let mut out = Vec::new();
+        if contiguous {
+            let Some(at) = self.span(first, len) else {
+                return Ok(out);
+            };
+            while (out.len() as u64) < len {
+                let n = PAGE.min(len - out.len() as u64);
+                let piece = vol.bytes(at + out.len() as u64, n)?;
+                out.extend_from_slice(&piece);
+                if ends(&piece) {
+                    break;
+                }
+            }
+            return Ok(out);
+        }
         let mut seen = HashSet::new();
         let mut c = first;
         while self.geo.valid(c) && seen.insert(c) && (out.len() as u64) < len {
-            out.extend(vol.bytes(self.geo.offset(c), self.geo.cluster)?);
+            let piece = vol.bytes(self.geo.offset(c), self.geo.cluster)?;
+            out.extend_from_slice(&piece);
+            if ends(&piece) {
+                break;
+            }
             match self.next(vol, c)? {
                 Some(next) => c = next,
                 None => break,

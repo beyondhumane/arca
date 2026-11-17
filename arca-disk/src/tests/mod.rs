@@ -5,7 +5,7 @@ pub(crate) mod build;
 pub(crate) mod containers;
 mod crafted;
 pub(crate) mod filesystems;
-mod hfs;
+pub(crate) mod hfs;
 mod images;
 
 use build::*;
