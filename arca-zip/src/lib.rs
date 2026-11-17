@@ -3,9 +3,11 @@
 pub mod aes;
 pub mod pages;
 mod reader;
+mod repair;
 pub mod zipcrypto;
 
 pub use reader::ExtractionReader;
+pub use repair::{repair, Recovered, Repaired, Skipped};
 
 use arca_core::{limits, Codec, Cursor, Entry, Error, Level, Method, Result};
 use flate2::write::DeflateEncoder;
