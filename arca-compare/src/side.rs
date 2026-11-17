@@ -1,7 +1,7 @@
 use crate::Notify;
 use arca_core::{Container, Entry, Error, Format, Result};
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 // A link is only told apart where the format says so, which is a TAR and the
@@ -101,12 +101,14 @@ impl Side {
         };
         let mut tar_kinds: Vec<TarKind> = Vec::new();
         let entries = match format.container() {
-            Container::Zip => arca_zip::ZipArchive::open(File::open(path)?)?
+            Container::Zip => arca_zip::ZipArchive::open(arca_core::volumes::open(path)?)?
                 .entries()
                 .to_vec(),
-            Container::SevenZ => arca_7z::SevenZArchive::open(File::open(path)?, password)?
-                .entries()
-                .to_vec(),
+            Container::SevenZ => {
+                arca_7z::SevenZArchive::open(arca_core::volumes::open(path)?, password)?
+                    .entries()
+                    .to_vec()
+            }
             Container::Rar => arca_rar::RarArchive::open_with_progress(path, password, notify)?
                 .entries()
                 .to_vec(),

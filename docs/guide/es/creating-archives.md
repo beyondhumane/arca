@@ -2,13 +2,13 @@
 description: Niveles, códecs, hilos y formatos para arca create, incluidos los nuevos archivos RAR5.
 group: Uso de Arca
 order: 4
-keywords: crear comprimir nivel códec zstd deflate store hilos tar gzip xz txz lzma2 bzip2 bz2 tbz2 zst tzst rar rar5 -l -c -j create compress level codec zstd deflate store threads tar gzip xz txz lzma2 rar rar5 -l -c -j
+keywords: crear comprimir nivel códec zstd deflate store hilos tar gzip xz txz lzma2 bzip2 bz2 tbz2 zst tzst rar rar5 dividir partes volumen 001 sfx autoextraíble exe -l -c -j -v create compress level codec zstd deflate store threads tar gzip xz txz lzma2 rar rar5 -l -c -j
 ---
 
 # Crear archivos
 
 ```text
-arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [--hide-names]
+arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [--hide-names] [-v SIZE] [--sfx [--console]]
 ```
 
 | Opción | Valores | Por defecto | Descripción |
@@ -18,6 +18,9 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | `-j, --threads` | un número | 0 | Límite de hilos ZIP, XZ y Zstandard. 0 usa todos los núcleos; bzip2 usa siempre uno; 7z y RAR usan todos los núcleos que permite su presupuesto de memoria. |
 | `-p, --password` | texto | ninguna | Cifra ZIP o 7z con AES-256. Se rechaza en .rar. |
 | `--hide-names` | indicador | desactivado | Cifra también las cabeceras 7z; exige una contraseña no vacía. |
+| `-v, --volume` | un tamaño: bytes, o k, m, g | ninguno | Divide el archivo en partes de ese tamaño, `salida.zip.001`, `salida.zip.002`… No en .rar. |
+| `--sfx` | indicador | desactivado | Escribe un programa de Windows que se extrae solo en lugar de un archivo. |
+| `--console` | indicador | desactivado | Con `--sfx`: el programa pregunta e informa en la consola. |
 
 ## Niveles
 
@@ -160,6 +163,66 @@ Zstandard necesita la característica `codecs-native`, activa por defecto.
 bzip2 nunca guarda el tamaño original, y un flujo Zstandard escrito a una
 tubería puede no guardarlo tampoco, así que `list` muestra 0 para ellos. Los
 datos sobrantes al final que no son otro flujo son un error.
+
+## Dividir en partes
+
+```sh
+arca create copia.zip fotos/ -v 700m       # copia.zip.001, copia.zip.002, …
+arca create copia.7z fotos/ -v 4092m       # partes que caben en FAT32
+arca create registros.tar.xz registros/ -v 100m
+```
+
+`-v` corta los bytes del archivo terminado en partes del tamaño indicado, igual
+que el `-v` de 7-Zip: todas las partes menos la última tienen exactamente ese
+tamaño y no se les añade nada, así que 7-Zip y NanaZip también abren el
+conjunto. El tamaño es un número de bytes, o uno terminado en `k`, `m` o `g`
+para KiB, MiB y GiB. Funciona con ZIP, 7z, todas las variantes de TAR y los
+flujos de un solo fichero; `.rar` se rechaza, porque RAR tiene volúmenes
+propios que Arca no escribe. Un conjunto tiene como mucho 9999 partes: un
+tamaño demasiado pequeño para eso es un error y no deja nada detrás.
+
+Las partes se escriben directamente en su carpeta final, una tras otra, así que
+el archivo nunca existe allí como un único fichero grande; por eso un conjunto
+de 4 GB cabe en una memoria FAT32. Se escriben con nombres temporales y solo
+toman su nombre real cuando el conjunto está completo, de modo que una parada o
+un error no dejan un conjunto a medias. `create` se niega a sustituir un `.001`
+existente: borra antes las partes viejas o elige otro nombre. Dar
+`copia.zip.001` como nombre de salida equivale a dar `copia.zip`.
+
+Para leer un conjunto basta con abrir cualquiera de sus partes:
+`arca list copia.zip.002`, `arca test` y `arca extract` encuentran las demás en
+la misma carpeta y las leen como un solo archivo. Tienen que estar todas,
+numeradas sin huecos, y todas menos la última deben medir lo mismo; el error
+nombra la parte que falta o que es demasiado corta. Un archivo dividido es de
+solo lectura: `arca password` y las órdenes de edición de la ventana lo
+rechazan. Los conjuntos multivolumen de RAR (`.part1.rar`) y las imágenes ISO
+divididas no se unen de esta forma.
+
+## Programas que se extraen solos
+
+```sh
+arca create instalar.exe mis-ficheros/ --sfx
+arca create instalar.exe mis-ficheros/ --sfx --console
+```
+
+`--sfx` escribe un programa de Windows que lleva dentro un ZIP con las
+entradas. Al ejecutarlo muestra un selector de carpeta y extrae en la carpeta
+elegida, con las mismas comprobaciones de rutas que `arca extract`: ninguna
+entrada puede acabar fuera de esa carpeta y un fichero cuya suma de
+comprobación no coincide no se escribe. Los ficheros que ya estén allí se
+sustituyen. Con `--console` el programa pide la carpeta en la consola desde la
+que se lanzó y propone por defecto una carpeta junto a él, con su nombre. Los
+dos tipos aceptan también `-o CARPETA` para extraer ahí sin preguntar, pensado
+para scripts.
+
+El programa es el `arca-sfx.exe` que viene con Arca, instalado junto a
+`arca.exe`; `arca create` lo copia y le añade el ZIP y una cola corta que dice
+dónde empieza el ZIP. Si no está, `create` dice dónde lo buscó
+(`cargo build -p arca-sfx` lo compila desde el código fuente, y `ARCA_SFX_STUB`
+puede señalar otra copia). El ZIP de dentro usa Deflate o Store, así que
+`-c zstd` y `-c lzma2` se rechazan, y `-p`, `--hide-names` y `-v` no se pueden
+combinar con `--sfx`. Los autoextraíbles se hacen para Windows; los paquetes de
+Linux y macOS no incluyen el programa.
 
 ## Qué se guarda
 

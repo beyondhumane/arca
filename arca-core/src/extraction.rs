@@ -674,7 +674,13 @@ impl OwnOutput {
             return false;
         };
         let key = claim_key(Path::new(name));
-        if !self.names.iter().any(|n| claim_key(Path::new(n)) == key) {
+        let unstaged = name
+            .to_str()
+            .map(|n| n.strip_suffix(".arca-new").unwrap_or(n))
+            .and_then(|n| crate::volumes::split_part(Path::new(n)));
+        let part = unstaged
+            .is_some_and(|(whole, _)| claim_key(&whole) == claim_key(Path::new(&self.names[0])));
+        if !part && !self.names.iter().any(|n| claim_key(Path::new(n)) == key) {
             return false;
         }
         let parent = match path.parent() {
@@ -702,6 +708,10 @@ mod tests {
         assert!(own.is_own(&room.path().join("sub/pack.zip.arca-new")));
         assert!(!own.is_own(&room.path().join("pack.zip")));
         assert!(!own.is_own(&room.path().join("sub/other.zip")));
+        assert!(own.is_own(&room.path().join("sub/pack.zip.001")));
+        assert!(own.is_own(&room.path().join("sub/pack.zip.012.arca-new")));
+        assert!(!own.is_own(&room.path().join("sub/pack.zip.0001")));
+        assert!(!own.is_own(&room.path().join("pack.zip.001")));
     }
     use std::fs;
 

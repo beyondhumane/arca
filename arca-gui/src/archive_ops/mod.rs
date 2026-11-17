@@ -9,6 +9,8 @@ mod rar_tests;
 #[cfg(test)]
 mod sevenz_tests;
 #[cfg(test)]
+mod split_tests;
+#[cfg(test)]
 mod streams_tests;
 #[cfg(test)]
 mod xz_tests;
@@ -19,7 +21,9 @@ use crate::i18n::Strings;
 use crate::{archive_stem, detect, human, moved_name, sum_for, Format, INSTALLER_LIMIT};
 use arca_core::{Codec, Level};
 use std::collections::HashSet;
-use std::fs::{self, File};
+use std::fs;
+#[cfg(test)]
+use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -96,6 +100,7 @@ pub(crate) enum Job {
         level: Level,
         password: Option<String>,
         hide_names: bool,
+        volume: Option<u64>,
     },
     // Putting files in. Same rebuild as Delete, and for the same reason: the
     // central directory is at the end of the file.
@@ -193,6 +198,7 @@ pub(crate) fn parse_args() -> Startup {
             level: Level::NORMAL,
             password: None,
             hide_names: false,
+            volume: None,
         }),
         other if !other.starts_with("--") => Startup::Browse(Some(PathBuf::from(other))),
         _ => Startup::Browse(None),
@@ -501,7 +507,12 @@ pub(crate) fn run_job_blocking(
             // until it is finished: a three gigabyte archive would be a window
             // that had stopped answering for a minute. This one has a bar and a
             // way out, like everything else that takes a while.
-            let total = fs::metadata(&archive).map(|m| m.len()).unwrap_or(0);
+            //
+            // A split set comes out joined into one file: its first part alone
+            // would be a truncated archive.
+            let total = arca_core::volumes::open(&archive)
+                .and_then(|source| Ok(source.len()?))
+                .unwrap_or(0);
             let name = dest
                 .file_name()
                 .map(|x| x.to_string_lossy().to_string())
@@ -510,7 +521,7 @@ pub(crate) fn run_job_blocking(
             // archive itself under another spelling of its path, and creating
             // it would truncate the only copy before a byte had been read.
             let copied = io::staged(&dest, |mut to| -> arca_core::Result<u64> {
-                let mut from = BufReader::with_capacity(BUF, File::open(&archive)?);
+                let mut from = BufReader::with_capacity(BUF, arca_core::volumes::open(&archive)?);
                 let mut buf = vec![0u8; BUF];
                 let mut done = 0u64;
                 loop {
@@ -584,6 +595,7 @@ pub(crate) fn run_job_blocking(
             level,
             password,
             hide_names,
+            volume,
         } => {
             if inputs.is_empty() {
                 return Err(s.nothing_to_do.to_string());
@@ -596,8 +608,9 @@ pub(crate) fn run_job_blocking(
                     ));
                 }
             }
-            let (from, to) = compress(
+            let (from, to) = compress_split(
                 &out,
+                volume,
                 &inputs,
                 format,
                 codec,
@@ -614,7 +627,12 @@ pub(crate) fn run_job_blocking(
             Ok(fill(
                 s.created,
                 &[
-                    ("name", &out.display().to_string()),
+                    (
+                        "name",
+                        &arca_core::volumes::first_output(&out, volume)
+                            .display()
+                            .to_string(),
+                    ),
                     ("from", &human(from)),
                     ("to", &human(to)),
                     ("pct", &format!("{pct:.1}%")),

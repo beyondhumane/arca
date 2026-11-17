@@ -102,7 +102,7 @@ pub fn tar_source(archive: &Path, format: Format) -> Result<Box<dyn Read>> {
     if arca_stream::handles(format) {
         return Ok(arca_stream::open(archive, format)?);
     }
-    let f = BufReader::with_capacity(BUF, File::open(archive)?);
+    let f = BufReader::with_capacity(BUF, arca_core::volumes::open(archive)?);
     Ok(match format {
         Format::TarGz => Box::new(flate2::read::MultiGzDecoder::new(f)),
         _ => Box::new(f),
@@ -161,7 +161,8 @@ pub fn digest_entries(
                         return Err(Error::Cancelled);
                     }
                     let sums = hash_with(algorithms, notify, at, |out| {
-                        let mut source = BufReader::with_capacity(BUF, File::open(archive)?);
+                        let mut source =
+                            BufReader::with_capacity(BUF, arca_core::volumes::open(archive)?);
                         arca_zip::extract_entry_with(&mut source, entry, out, password)
                     });
                     let row = digest(i, &entry.name, sums)?;
@@ -171,7 +172,7 @@ pub fn digest_entries(
                 .collect::<Result<Vec<_>>>()?;
         }
         Container::SevenZ => {
-            let mut a = arca_7z::SevenZArchive::open(File::open(archive)?, password)?;
+            let mut a = arca_7z::SevenZArchive::open(arca_core::volumes::open(archive)?, password)?;
             a.extract(
                 &picked,
                 &mut |i, entry, reader| {

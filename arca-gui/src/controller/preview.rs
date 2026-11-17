@@ -424,7 +424,8 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
         detect(&request.archive).ok_or_else(|| Error::Unsupported("unknown format".into()))?;
     let result = match format.container() {
         Container::Zip => {
-            let mut archive = arca_zip::ZipArchive::open(fs::File::open(&request.archive)?)?;
+            let mut archive =
+                arca_zip::ZipArchive::open(arca_core::volumes::open(&request.archive)?)?;
             let entry = archive
                 .entries()
                 .get(request.index)
@@ -470,7 +471,7 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
         }
         Container::SevenZ => {
             let mut archive = arca_7z::SevenZArchive::open(
-                fs::File::open(&request.archive)?,
+                arca_core::volumes::open(&request.archive)?,
                 request.password.as_deref(),
             )?;
             let entry = archive

@@ -6,7 +6,7 @@ mod write;
 
 pub use edit::{rewrite_7z, Addition, Change};
 pub use read::{Phase, Progress, SevenZArchive};
-pub use write::{create_7z, workers, CreateOptions, Source};
+pub use write::{create_7z, create_7z_into, workers, CreateOptions, Source};
 
 use arca_core::{Error, Result};
 

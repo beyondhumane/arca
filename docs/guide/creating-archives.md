@@ -2,13 +2,13 @@
 description: Levels, codecs, threads and formats for arca create, including new RAR5 archives.
 group: Using Arca
 order: 4
-keywords: create compress level codec zstd deflate store threads tar gzip xz txz lzma2 bzip2 bz2 tbz2 zst tzst rar rar5 -l -c -j
+keywords: create compress level codec zstd deflate store threads tar gzip xz txz lzma2 bzip2 bz2 tbz2 zst tzst rar rar5 split volume 001 sfx self-extracting exe -l -c -j -v
 ---
 
 # Creating archives
 
 ```text
-arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [--hide-names]
+arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [--hide-names] [-v SIZE] [--sfx [--console]]
 ```
 
 | Option | Values | Default | Description |
@@ -18,6 +18,9 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | `-j, --threads` | a number | 0 | ZIP, XZ, Zstandard and RAR thread limit. 0 means every core; bzip2 always uses one; 7z uses every core its memory budget allows. |
 | `-p, --password` | text | none | Encrypt ZIP or 7z with AES-256. Refused for .rar. |
 | `--hide-names` | flag | off | Encrypt 7z headers too; requires a nonempty password. |
+| `-v, --volume` | a size: bytes, or k, m, g | none | Split the archive into parts of that size, `out.zip.001`, `out.zip.002`… Not for .rar. |
+| `--sfx` | flag | off | Make a self-extracting Windows program instead of an archive. |
+| `--console` | flag | off | With `--sfx`: the program asks and reports in the console. |
 
 ## Levels
 
@@ -160,6 +163,63 @@ frames made with `zstd --long=31` are refused. Zstandard needs the default
 bzip2 never records the original size, and a Zstandard stream written to a
 pipe may not either, so `list` shows 0 for them. Trailing data that is not
 another stream is an error.
+
+## Split volumes
+
+```sh
+arca create backup.zip photos/ -v 700m     # backup.zip.001, backup.zip.002, …
+arca create backup.7z photos/ -v 4092m     # parts that fit on FAT32
+arca create logs.tar.xz logs/ -v 100m
+```
+
+`-v` cuts the finished archive’s bytes into parts of the given size, the way
+7-Zip’s `-v` does: every part but the last has exactly that size, and nothing
+is added to them, so 7-Zip and NanaZip open the set too. The size is a number
+of bytes, or one ending in `k`, `m` or `g` for KiB, MiB and GiB. It works for
+ZIP, 7z, every TAR variant and the single-file streams; `.rar` is refused,
+because RAR has volumes of its own that Arca does not write. A set has at most
+9999 parts: a size too small for that is an error, and nothing is left behind.
+
+The parts are written straight to their final folder, one after the other, so
+the archive never exists as one big file there; that is what lets a 4 GB set
+land on a FAT32 stick. They are written under temporary names and only take
+their real names once the whole set is complete, so a stop or an error leaves
+no partial set. `create` refuses to replace an existing `.001`; remove the old
+parts first, or pick another name. Passing `backup.zip.001` as the output name
+is the same as passing `backup.zip`.
+
+To read a set, open any of its parts: `arca list backup.zip.002`, `arca test`
+and `arca extract` find the others in the same folder and read them as one
+archive. Every part must be there and numbered without gaps, and every part
+but the last must have the same size; a missing or short part is named in the
+error. A split archive is read-only: `arca password` and the window’s
+editing commands refuse it. RAR multivolume sets (`.part1.rar`) and split ISO
+images are not joined this way.
+
+## Self-extracting programs
+
+```sh
+arca create setup.exe my-files/ --sfx
+arca create setup.exe my-files/ --sfx --console
+```
+
+`--sfx` writes a Windows program that carries a ZIP of the inputs. Running it
+shows a folder picker and extracts into the folder chosen, with the same path
+checks as `arca extract`: an entry cannot land outside that folder, and a file
+whose checksum does not match is not written. Files already there are
+replaced. With `--console` the program asks for the folder in the console it
+was started from, and offers a folder beside itself, named after it, by
+default. Either kind also accepts `-o FOLDER` to extract there without asking,
+for scripts.
+
+The program is the `arca-sfx.exe` that comes with Arca, installed next to
+`arca.exe`; `arca create` copies it, appends the ZIP and a short trailer that
+says where the ZIP starts. If it is not there, `create` says where it looked
+(`cargo build -p arca-sfx` builds it from source, and `ARCA_SFX_STUB` can name
+another copy). The ZIP inside uses Deflate or Store, so `-c zstd` and
+`-c lzma2` are refused, and `-p`, `--hide-names` and `-v` cannot be combined
+with `--sfx`. Self-extractors are made for Windows; the Linux and macOS
+packages do not include the stub.
 
 ## What gets stored
 

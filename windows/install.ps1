@@ -248,10 +248,11 @@ Pop-Location
 $Exe = "$Root\target\x86_64-pc-windows-msvc\release\arca.exe"
 $Gui = "$Root\target\x86_64-pc-windows-msvc\release\arca-gui.exe"
 $Dll = "$PSScriptRoot\arca-shell\target\x86_64-pc-windows-msvc\release\arca_shell.dll"
+$Sfx = "$Root\target\x86_64-pc-windows-msvc\release\arca-sfx.exe"
 
 Write-Host "==> Copying" -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path $Dest, "$Dest\Assets" | Out-Null
-Copy-Item $Exe, $Gui, $Dll $Dest -Force
+Copy-Item $Exe, $Gui, $Sfx, $Dll $Dest -Force
 Copy-Item "$PSScriptRoot\AppxManifest.xml" $Dest -Force
 Copy-Item "$PSScriptRoot\install.ps1" $Dest -Force
 Copy-Item "$Root\LICENSE", "$Root\README.md" $Dest -Force

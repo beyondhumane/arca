@@ -82,6 +82,7 @@ Pop-Location
 # --- 2. Package folder ------------------------------------------------------
 New-Item -ItemType Directory -Force -Path $Dest, "$Dest\Assets" | Out-Null
 Copy-Item "$Root\target\x86_64-pc-windows-msvc\release\arca.exe" $Dest -Force
+Copy-Item "$Root\target\x86_64-pc-windows-msvc\release\arca-sfx.exe" $Dest -Force
 Copy-Item "$PSScriptRoot\arca-shell\target\x86_64-pc-windows-msvc\release\arca_shell.dll" $Dest -Force
 # The manifest ships with its version at zeros and gets it stamped here, the
 # same as the installer does. Windows reads that number and shows it under

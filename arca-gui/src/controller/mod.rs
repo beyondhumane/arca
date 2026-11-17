@@ -45,6 +45,7 @@ use crate::{
     tree,
 };
 #[cfg(windows)]
+use arca_core::volumes::first_output;
 use arca_core::Entry;
 use arca_core::{Codec, Level};
 use std::collections::{HashMap, HashSet};
@@ -581,6 +582,28 @@ impl AppController {
         }
     }
 
+    /// The volume size the compress box asks for: none, a preset, or what was
+    /// typed, where a number on its own is taken as MB. RAR is never split.
+    pub(crate) fn volume_size(&self) -> Result<Option<u64>, ()> {
+        if self.state.format == Format::Rar {
+            return Ok(None);
+        }
+        match self.state.volume {
+            VolumeChoice::Custom => {
+                let typed = self.state.volume_text.trim();
+                let typed = if !typed.is_empty() && typed.bytes().all(|b| b.is_ascii_digit()) {
+                    format!("{typed}m")
+                } else {
+                    typed.to_string()
+                };
+                arca_core::volumes::parse_size(&typed)
+                    .map(Some)
+                    .map_err(|_| ())
+            }
+            preset => Ok(preset.bytes()),
+        }
+    }
+
     /// Text the create and settings dialogs show instead of the ZIP codec
     /// picker and the password controls for a format that has its own fixed
     /// compressor and no encryption, so nothing is accepted and then dropped.
@@ -733,6 +756,7 @@ impl AppController {
         let password = (matches!(format, Format::Zip | Format::SevenZ)
             && !self.state.add_password.is_empty())
         .then(|| self.state.add_password.clone());
+        let volume = self.volume_size().ok()?;
         Some(Job::Compress {
             out: self
                 .state
@@ -746,6 +770,7 @@ impl AppController {
             level: self.state.level,
             password,
             hide_names: format == Format::SevenZ && self.state.hide_names,
+            volume,
         })
     }
     pub(crate) fn select_all_visible(&mut self) {
@@ -854,6 +879,8 @@ impl AppController {
                 password_input: String::new(),
                 add_password: String::new(),
                 hide_names: false,
+                volume: VolumeChoice::None,
+                volume_text: String::new(),
                 archive_password: None,
                 archive_bytes: None,
                 reread_dir: None,
@@ -1041,7 +1068,13 @@ impl AppController {
         }
     }
     fn cannot_change(&self, format: Option<Format>) -> String {
+        let split = self
+            .state
+            .archive
+            .as_deref()
+            .is_some_and(arca_core::volumes::is_part);
         match format {
+            _ if split => self.s().split_read_only.to_string(),
             Some(f) if !f.can_write() => f.read_only().to_string(),
             Some(f) if editable(f) => self.s().only_zip_can_change.to_string(),
             _ => self.s().only_archives_change.to_string(),
@@ -1973,7 +2006,9 @@ impl AppController {
                     if let Some(f) = detect(&path) {
                         self.state.format = f;
                     }
-                    self.state.archive_bytes = fs::metadata(&path).ok().map(|m| m.len());
+                    self.state.archive_bytes = arca_core::volumes::open(&path)
+                        .and_then(|source| Ok(source.len()?))
+                        .ok();
                     // The name of what is open goes where every other
                     // program puts it, which frees a whole row above the
                     // list for nothing at all.
@@ -2485,6 +2520,11 @@ impl AppController {
             | Job::Add { archive, .. } => Some(archive),
             _ => None,
         };
+        if mutation.is_some_and(|archive| arca_core::volumes::is_part(archive)) {
+            self.state.error = true;
+            self.state.notice = self.s().split_read_only.into();
+            return;
+        }
         if !can_edit(&job) {
             self.state.error = true;
             self.state.notice = self.cannot_change(mutation.and_then(|archive| detect(archive)));
@@ -2615,13 +2655,14 @@ impl AppController {
                     out,
                     password,
                     format,
+                    volume,
                     ..
                 } = &mut job
                 {
                     let output = if *format == Format::Rar {
                         new_only_output(out)
                     } else {
-                        creation_output(out, &ask)
+                        creation_output(out, *volume, &ask)
                     };
                     match output {
                         Ok(path) => *out = path,
@@ -2630,7 +2671,7 @@ impl AppController {
                             return;
                         }
                     }
-                    Some((out.clone(), password.clone()))
+                    Some((first_output(out, *volume), password.clone()))
                 } else {
                     None
                 };
@@ -2712,7 +2753,12 @@ fn touched_by(job: &Job) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
         | Job::NewFolder { archive, .. }
         | Job::Add { archive, .. } => (Vec::new(), vec![archive.clone()], Vec::new()),
         Job::CopyTo { archive, dest } => (vec![archive.clone()], vec![dest.clone()], Vec::new()),
-        Job::Compress { out, inputs, .. } => (inputs.clone(), vec![out.clone()], Vec::new()),
+        Job::Compress {
+            out,
+            inputs,
+            volume,
+            ..
+        } => (inputs.clone(), vec![first_output(out, *volume)], Vec::new()),
         Job::Update { .. } => (Vec::new(), Vec::new(), Vec::new()),
     }
 }
@@ -2762,7 +2808,12 @@ fn reread_target(job: &Job, current_dir: &str) -> Option<(PathBuf, Option<String
             password.clone(),
             moved_name(current_dir, moves),
         )),
-        Job::Compress { out, password, .. } => Some((out.clone(), password.clone(), String::new())),
+        Job::Compress {
+            out,
+            password,
+            volume,
+            ..
+        } => Some((first_output(out, *volume), password.clone(), String::new())),
         Job::Extract { .. } | Job::Test { .. } | Job::CopyTo { .. } | Job::Update { .. } => None,
     }
 }
@@ -3076,6 +3127,7 @@ mod compress_tests {
             level: Level::NORMAL,
             password,
             hide_names: false,
+            volume: None,
         }
     }
 

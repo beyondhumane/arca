@@ -5,6 +5,8 @@ mod format;
 pub use format::{Association, Container, Format};
 pub mod extraction;
 pub mod hash;
+pub mod sfx;
+pub mod volumes;
 
 pub mod limits {
     pub const MAX_NAME: usize = 4096;

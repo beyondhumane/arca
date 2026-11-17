@@ -3,7 +3,6 @@ use arca_core::{Error, Level, Result};
 use bzip2::bufread::MultiBzDecoder;
 use bzip2::write::BzEncoder;
 use bzip2::Compression;
-use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -69,7 +68,7 @@ impl<R: BufRead> Read for Decoder<R> {
 }
 
 pub(crate) fn open(path: &Path) -> Result<Box<dyn Read + Send>> {
-    let mut file = File::open(path)?;
+    let mut file = arca_core::volumes::open(path)?;
     check_header(&mut file)?;
     file.seek(SeekFrom::Start(0))?;
     Ok(Box::new(decoder(BufReader::with_capacity(BUF, file))))

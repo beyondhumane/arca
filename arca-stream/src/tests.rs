@@ -443,3 +443,80 @@ fn zstd_says_it_was_left_out_of_the_build() {
     assert!(encoder(Vec::new(), Format::Zst, Level::NORMAL, 1, None).is_err());
     assert_eq!(identify(&path), Some(Format::Zst));
 }
+
+fn cut(room: &Room, name: &str, bytes: &[u8], size: usize) -> PathBuf {
+    let whole = room.0.join(name);
+    for (i, chunk) in bytes.chunks(size).enumerate() {
+        std::fs::write(arca_core::volumes::part_path(&whole, i as u32 + 1), chunk).unwrap();
+    }
+    whole
+}
+
+#[test]
+fn split_streams_read_as_the_whole_file() {
+    let room = Room::new("split");
+    let data = sample(200_000);
+    for format in single_formats() {
+        let packed = compress(format, &data, 1, Some(data.len() as u64));
+        let name = format!("notes.txt.{}", format.extension());
+        let whole = cut(&room, &name, &packed, packed.len() / 3 + 1);
+        let second = arca_core::volumes::part_path(&whole, 2);
+        assert_eq!(identify(&second), Some(format));
+        let mut out = Vec::new();
+        open(&second, format)
+            .unwrap()
+            .read_to_end(&mut out)
+            .unwrap();
+        assert_eq!(out, data);
+        let e = entry(&second, format).unwrap();
+        assert_eq!(e.name, "notes.txt");
+        assert_eq!(e.compressed_size, packed.len() as u64);
+        assert_eq!(output_name(&second), "notes.txt");
+    }
+}
+
+#[test]
+fn a_split_tar_stream_is_still_a_tar() {
+    let room = Room::new("split-tar");
+    let mut tar = arca_tar::TarWriter::new(Vec::new());
+    let data = sample(50_000);
+    tar.add("a.bin", data.len() as u64, 0, 0o644, &data[..])
+        .unwrap();
+    let tar = tar.finish().unwrap();
+    let packed = compress(Format::TarXz, &tar, 1, None);
+    let whole = cut(&room, "b.tar.xz", &packed, 1000);
+    assert_eq!(
+        identify(&arca_core::volumes::part_path(&whole, 1)),
+        Some(Format::TarXz)
+    );
+    let unnamed = cut(&room, "b.bin", &packed, 1000);
+    assert_eq!(
+        identify(&arca_core::volumes::part_path(&unnamed, 1)),
+        Some(Format::TarXz)
+    );
+    assert_eq!(identify(Path::new("x.rar.001")), None);
+    assert_eq!(identify(Path::new("x.iso.001")), None);
+}
+
+#[test]
+fn a_broken_split_stream_fails_without_panicking() {
+    let room = Room::new("split-broken");
+    let data = sample(100_000);
+    let packed = compress(Format::Xz, &data, 1, Some(data.len() as u64));
+    let size = packed.len() / 4 + 1;
+    let whole = cut(&room, "c.xz", &packed, size);
+    let first = arca_core::volumes::part_path(&whole, 1);
+    let last = arca_core::volumes::part_path(&whole, 4);
+    let full = std::fs::read(&last).unwrap();
+    std::fs::write(&last, &full[..full.len() / 2]).unwrap();
+    let mut out = Vec::new();
+    assert!(open(&first, Format::Xz)
+        .and_then(|mut r| r.read_to_end(&mut out).map_err(Into::into))
+        .is_err());
+    std::fs::write(&last, &full).unwrap();
+    std::fs::remove_file(arca_core::volumes::part_path(&whole, 2)).unwrap();
+    let error = open(&first, Format::Xz).err().unwrap().to_string();
+    assert!(error.contains("c.xz.002"), "{error}");
+    assert!(entry(&first, Format::Xz).is_err());
+    assert_eq!(identify(&first), Some(Format::Xz));
+}

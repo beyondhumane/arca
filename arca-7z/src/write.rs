@@ -39,6 +39,31 @@ pub fn create_7z(
     options: &CreateOptions<'_>,
     notify: &mut dyn FnMut(Progress<'_>) -> bool,
 ) -> Result<()> {
+    let parent = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    create_7z_into(
+        io::BufWriter::new(temporary.as_file_mut()),
+        sources,
+        options,
+        notify,
+    )?
+    .flush()?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(output).map_err(|e| Error::Io(e.error))?;
+    Ok(())
+}
+
+/// [`create_7z`] into any seekable writer, which it hands back once the
+/// archive is complete, so that it can go somewhere other than one file.
+pub fn create_7z_into<W: Write + io::Seek>(
+    out: W,
+    sources: &[Source],
+    options: &CreateOptions<'_>,
+    notify: &mut dyn FnMut(Progress<'_>) -> bool,
+) -> Result<W> {
     if sources.len() > 100_000 {
         return Err(Error::Limit("7z entry count".into()));
     }
@@ -90,13 +115,7 @@ pub fn create_7z(
     }) {
         return Err(Error::Cancelled);
     }
-    let parent = output
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    let mut writer = ArchiveWriter::new(io::BufWriter::new(temporary.as_file_mut()))
-        .map_err(|e| upstream(e, false))?;
+    let mut writer = ArchiveWriter::new(out).map_err(|e| upstream(e, false))?;
     writer.set_encrypt_header(options.hide_names);
     let entry_of = |index: usize| new_entry(&sources[index].name, &metadata[index]);
     // Folders and empty files have no data and go in first, outside any block.
@@ -130,7 +149,8 @@ pub fn create_7z(
     let Tracker { notify, bytes, .. } = tracker.into_inner();
     // A header must never reuse the last file's AES salt and IV.
     writer.set_content_methods(methods(options, false, 1)?);
-    writer.finish()?.flush()?;
+    let mut out = writer.finish()?;
+    out.flush()?;
     if !notify(Progress {
         phase: Phase::Create,
         entries_done: sources.len(),
@@ -140,9 +160,7 @@ pub fn create_7z(
     }) {
         return Err(Error::Cancelled);
     }
-    temporary.as_file().sync_all()?;
-    temporary.persist(output).map_err(|e| Error::Io(e.error))?;
-    Ok(())
+    Ok(out)
 }
 
 /// The entry for a file or folder going in under `name`, with its time.
