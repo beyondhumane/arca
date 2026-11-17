@@ -5,6 +5,8 @@ use crate::device::{le16, Volume};
 pub(crate) const MAX_DEPTH: usize = 128;
 const MAX_RUNS: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_FOLDER_BYTES: u64 = 1024 * 1024 * 1024;
+const CHAIN_SLACK: u64 = 64 * 1024;
+const CHAIN_CHECK: u64 = 4096;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Run {
@@ -89,6 +91,95 @@ impl Runs {
         }
         runs.push(run);
         Ok(())
+    }
+}
+
+/// The cluster-chain steps the files of one volume take between them. Each
+/// cluster of a sound volume belongs to one file at most, so the chains of
+/// all its files add up to no more steps than it has clusters; past that,
+/// chains cross, and the files left are cut short.
+pub(crate) struct Chains<'a> {
+    left: u64,
+    taken: u64,
+    carry_on: &'a dyn Fn() -> bool,
+    looped: usize,
+    spent: bool,
+}
+
+impl<'a> Chains<'a> {
+    pub fn new(clusters: u32, carry_on: &'a dyn Fn() -> bool) -> Self {
+        Chains {
+            left: u64::from(clusters) + CHAIN_SLACK,
+            taken: 0,
+            carry_on,
+            looped: 0,
+            spent: false,
+        }
+    }
+
+    /// Takes one more step: false once the volume's steps are spent.
+    pub fn step(&mut self) -> Result<bool> {
+        self.taken += 1;
+        if self.taken.is_multiple_of(CHAIN_CHECK) && !(self.carry_on)() {
+            return Err(Error::Cancelled);
+        }
+        if self.left == 0 {
+            self.spent = true;
+            return Ok(false);
+        }
+        self.left -= 1;
+        Ok(true)
+    }
+
+    pub fn looped(&mut self) {
+        self.looped += 1;
+    }
+
+    pub fn notices(&self, notices: &mut Vec<String>) {
+        if self.looped > 0 {
+            notices.push(format!(
+                "{} files have a cluster chain that loops; they are cut where it loops",
+                self.looped
+            ));
+        }
+        if self.spent {
+            notices.push(
+                "the cluster chains of the files cross one another; the files whose chains ran past the volume's clusters are cut short"
+                    .into(),
+            );
+        }
+    }
+}
+
+/// Brent's cycle detection over the clusters of one chain, in constant
+/// memory: a chain that loops is caught within a few turns of its loop.
+pub(crate) struct Cycle {
+    mark: u32,
+    power: u64,
+    lap: u64,
+}
+
+impl Cycle {
+    pub fn new(first: u32) -> Self {
+        Cycle {
+            mark: first,
+            power: 1,
+            lap: 0,
+        }
+    }
+
+    /// Whether `next`, the cluster after the last one, closes a loop.
+    pub fn closes(&mut self, next: u32) -> bool {
+        if next == self.mark {
+            return true;
+        }
+        self.lap += 1;
+        if self.lap == self.power {
+            self.mark = next;
+            self.power *= 2;
+            self.lap = 0;
+        }
+        false
     }
 }
 

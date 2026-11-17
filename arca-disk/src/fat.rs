@@ -2,7 +2,7 @@ use arca_core::{dos_to_unix, Error, Result};
 use std::collections::{HashMap, HashSet};
 
 use crate::device::{le16, le32, Volume};
-use crate::fs::{self, Kind, Listing, Member, Run, Runs, MAX_DEPTH};
+use crate::fs::{self, Chains, Cycle, Kind, Listing, Member, Run, Runs, MAX_DEPTH};
 
 const MAX_DIRECTORY_BYTES: u64 = 4 * 1024 * 1024;
 const PAGE: u64 = 64 * 1024;
@@ -114,9 +114,10 @@ impl Bpb {
 }
 
 /// The allocation table, read a page at a time as chains reach into it.
-struct Table {
+struct Table<'a> {
     bpb: Bpb,
     pages: HashMap<u64, Vec<u8>>,
+    chains: Chains<'a>,
 }
 
 enum Next {
@@ -125,7 +126,7 @@ enum Next {
     Broken,
 }
 
-impl Table {
+impl Table<'_> {
     fn byte(&mut self, vol: &mut Volume<'_>, at: u64) -> Result<u8> {
         if at >= self.bpb.fat_len {
             return Err(Error::Format("a FAT chain points past the table".into()));
@@ -196,8 +197,8 @@ impl Table {
         }
         let mut cluster = start;
         let mut got = 0u64;
-        let mut steps = 0u32;
-        loop {
+        let mut cycle = Cycle::new(start);
+        while self.chains.step()? {
             let len = self.bpb.cluster.min(limit - got);
             runs.add(
                 out,
@@ -207,15 +208,19 @@ impl Table {
                 },
             )?;
             got += len;
-            steps += 1;
-            if got >= limit || steps >= self.bpb.clusters {
-                return Ok(());
+            if got >= limit {
+                break;
             }
             match self.next(vol, cluster)? {
+                Next::Cluster(next) if cycle.closes(next) => {
+                    self.chains.looped();
+                    break;
+                }
                 Next::Cluster(next) => cluster = next,
-                Next::End | Next::Broken => return Ok(()),
+                Next::End | Next::Broken => break,
             }
         }
+        Ok(())
     }
 }
 
@@ -247,6 +252,7 @@ pub(crate) fn list(
     let mut table = Table {
         bpb,
         pages: HashMap::new(),
+        chains: Chains::new(bpb.clusters, carry_on),
     };
     let mut listing = Listing::default();
     let mut seen = HashSet::new();
@@ -314,6 +320,7 @@ pub(crate) fn list(
             })?;
         }
     }
+    table.chains.notices(&mut listing.notices);
     if broken > 0 {
         listing.notices.push(format!(
             "{broken} folders have a damaged or shared cluster chain; their contents are not listed"
@@ -322,7 +329,7 @@ pub(crate) fn list(
     Ok(listing)
 }
 
-fn directory(vol: &mut Volume<'_>, table: &mut Table, start: u32) -> Result<Option<Vec<u8>>> {
+fn directory(vol: &mut Volume<'_>, table: &mut Table<'_>, start: u32) -> Result<Option<Vec<u8>>> {
     if !table.bpb.valid(start) {
         return Ok(None);
     }

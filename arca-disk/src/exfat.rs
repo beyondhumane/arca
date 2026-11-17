@@ -2,7 +2,7 @@ use arca_core::{dos_to_unix, Error, Result};
 use std::collections::{HashMap, HashSet};
 
 use crate::device::{le16, le32, le64, Volume};
-use crate::fs::{self, Kind, Listing, Member, Run, Runs, MAX_DEPTH};
+use crate::fs::{self, Chains, Cycle, Kind, Listing, Member, Run, Runs, MAX_DEPTH};
 
 const MAX_DIRECTORY_BYTES: u64 = 256 * 1024 * 1024;
 const PAGE: u64 = 64 * 1024;
@@ -26,12 +26,13 @@ impl Geometry {
     }
 }
 
-struct Table {
+struct Table<'a> {
     geo: Geometry,
     pages: HashMap<u64, Vec<u8>>,
+    chains: Chains<'a>,
 }
 
-impl Table {
+impl Table<'_> {
     fn next(&mut self, vol: &mut Volume<'_>, c: u32) -> Result<Option<u32>> {
         let at = u64::from(c) * 4;
         if at + 4 > self.geo.fat_len {
@@ -53,9 +54,20 @@ impl Table {
         Ok(Some(value).filter(|&v| self.geo.valid(v)))
     }
 
+    /// Where `len` bytes lie on the volume from cluster `first` on, when they
+    /// lie one cluster after another; `None` when they run past the heap.
+    fn span(&self, first: u32, len: u64) -> Option<u64> {
+        if len == 0 || !self.geo.valid(first) {
+            return None;
+        }
+        let clusters = len.div_ceil(self.geo.cluster);
+        (u64::from(first - 2) + clusters <= u64::from(self.geo.clusters))
+            .then(|| self.geo.offset(first))
+    }
+
     /// The runs holding `len` bytes from cluster `first`, which lie one after
-    /// another when the file needs no chain. A broken chain ends the runs
-    /// early, and the file reads short.
+    /// another when the file needs no chain. A broken or looping chain ends
+    /// the runs early, and the file reads short.
     fn runs(
         &mut self,
         vol: &mut Volume<'_>,
@@ -65,26 +77,25 @@ impl Table {
         runs: &mut Runs,
         out: &mut Vec<Run>,
     ) -> Result<()> {
+        if contiguous {
+            return match self.span(first, len) {
+                Some(at) => runs.add(
+                    out,
+                    Run::Disk {
+                        at: vol.base + at,
+                        len,
+                    },
+                ),
+                None => Ok(()),
+            };
+        }
         if len == 0 || !self.geo.valid(first) {
             return Ok(());
         }
-        if contiguous {
-            let clusters = len.div_ceil(self.geo.cluster);
-            if u64::from(first - 2) + clusters > u64::from(self.geo.clusters) {
-                return Ok(());
-            }
-            return runs.add(
-                out,
-                Run::Disk {
-                    at: vol.base + self.geo.offset(first),
-                    len,
-                },
-            );
-        }
         let mut c = first;
         let mut got = 0;
-        let mut steps = 0u32;
-        while got < len && steps < self.geo.clusters {
+        let mut cycle = Cycle::new(first);
+        while got < len && self.chains.step()? {
             let n = self.geo.cluster.min(len - got);
             runs.add(
                 out,
@@ -94,9 +105,12 @@ impl Table {
                 },
             )?;
             got += n;
-            steps += 1;
             if got < len {
                 match self.next(vol, c)? {
+                    Some(next) if cycle.closes(next) => {
+                        self.chains.looped();
+                        break;
+                    }
                     Some(next) => c = next,
                     None => break,
                 }
@@ -113,15 +127,10 @@ impl Table {
         contiguous: bool,
     ) -> Result<Vec<u8>> {
         if contiguous {
-            let mut pieces = Vec::new();
-            self.runs(vol, first, len, true, &mut Runs::default(), &mut pieces)?;
-            let mut out = Vec::new();
-            for piece in pieces {
-                if let Run::Disk { at, len } = piece {
-                    out.extend(vol.bytes(at - vol.base, len)?);
-                }
-            }
-            return Ok(out);
+            return match self.span(first, len) {
+                Some(at) => vol.bytes(at, len),
+                None => Ok(Vec::new()),
+            };
         }
         let mut out = Vec::new();
         let mut seen = HashSet::new();
@@ -285,6 +294,7 @@ pub(crate) fn list(
     }
     let root = le32(&boot, 96);
     let mut table = Table {
+        chains: Chains::new(geo.clusters, carry_on),
         geo,
         pages: HashMap::new(),
     };
@@ -341,6 +351,7 @@ pub(crate) fn list(
             })?;
         }
     }
+    table.chains.notices(&mut listing.notices);
     if broken > 0 {
         listing.notices.push(format!(
             "{broken} directory entries are damaged and were left out"
