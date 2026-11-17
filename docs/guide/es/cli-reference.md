@@ -9,7 +9,7 @@ keywords: cli línea de comandos opciones flags referencia ayuda estado de salid
 
 ZIP, 7z, TAR (sin comprimir, gzip, XZ, bzip2 y Zstandard), XZ, bzip2 y Zstandard sueltos y [RAR](rar.md) están activos por defecto. RAR permite `list`,
 `test` y `extract`, con `-p` para datos o cabeceras cifradas, y `create` para
-nuevos archivos RAR5 de un solo volumen. Modificar un RAR o CBR existente, y
+nuevos archivos RAR5, sólidos, cifrados, en volúmenes o con registro de recuperación. Modificar un RAR o CBR existente, y
 crear CBR, siempre se rechaza.
 
 ```text
@@ -47,10 +47,12 @@ Crea un archivo. El formato se toma de la extensión del archivo de salida.
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
 | `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2 · lzma · ppmd · bzip2. auto usa Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz, bzip2 en .bz2 y .tar.bz2, Zstandard en .zst y .tar.zst y el compresor RAR en .rar (solo auto o store). .7z admite lzma2, lzma, ppmd, bzip2 (con codecs-native), deflate o store, nunca zstd, que 7-Zip no lee dentro de un 7z. |
 | `-j, --threads <N>` | 0 | Hilos ZIP y XZ; 0 usa todos los núcleos. XZ usa tantos como quepan en 2 GiB, Zstandard tantos como se pidan y bzip2 uno; 7z con LZMA2 y RAR usan todos los núcleos que permite su presupuesto de memoria, diga lo que diga esta opción, y 7z con otro método, uno. |
-| `-p, --password <PASSWORD>` | ninguna | Cifra con AES-256 (.zip, .7z). Otras herramientas la pedirán para abrir el archivo. Se rechaza en .rar. |
-| `--hide-names` | desactivado | Solo 7z: cifra cabeceras; exige una contraseña no vacía. |
-| `-v, --volume <SIZE>` | ninguno | Divide en partes de SIZE bytes, o con k, m o g para KiB, MiB, GiB: `salida.zip.001`, `salida.zip.002`… como hace 7-Zip. Se niega a sustituir un `.001` existente. No en .rar. Véase [dividir en partes](creating-archives.md#dividir-en-partes). |
-| `--sfx` | desactivado | Escribe un programa de Windows que se extrae solo (cualquier nombre, normalmente `.exe`) a partir del `arca-sfx.exe` que hay junto a arca. No con `-p`, `--hide-names` ni `-v`. Véase [programas que se extraen solos](creating-archives.md#programas-que-se-extraen-solos). |
+| `-p, --password <PASSWORD>` | ninguna | Cifra con AES-256 (.zip, .7z, .rar). Otras herramientas la pedirán para abrir el archivo. |
+| `--hide-names` | desactivado | .7z y .rar: cifra también las cabeceras, para ocultar los nombres; exige una contraseña no vacía. En .rar es el `-hp` de WinRAR. |
+| `-v, --volume <SIZE>` | ninguno | Divide en partes de SIZE bytes, o con k, m o g para KiB, MiB, GiB: `salida.zip.001`, `salida.zip.002`… como hace 7-Zip. Se niega a sustituir un `.001` existente. Un .rar se escribe en cambio como conjunto de volúmenes RAR, `salida.part1.rar`, `salida.part2.rar`…, como hace el `-v` de WinRAR, cada uno de como mucho SIZE (al menos 64 KiB); no puede existir ningún volumen con ese nombre. Véase [dividir en partes](creating-archives.md#dividir-en-partes) y [RAR](creating-archives.md#rar). |
+| `--solid` | desactivado | Solo .rar: comprime los ficheros como un único flujo, como el `-s` de WinRAR. |
+| `--recovery <PERCENT>` | ninguno | Solo .rar: añade un registro de recuperación de PERCENT (de 1 a 100, `3` o `3%`), en cada volumen de un conjunto, como el `-rr` de WinRAR. `arca repair` y WinRAR reconstruyen con él los datos dañados. |
+| `--sfx` | desactivado | Escribe un programa de Windows que se extrae solo (cualquier nombre, normalmente `.exe`) a partir del `arca-sfx.exe` que hay junto a arca. No con `-p`, `--hide-names`, `-v`, `--solid` ni `--recovery`. Véase [programas que se extraen solos](creating-archives.md#programas-que-se-extraen-solos). |
 | `--console` | desactivado | Con `--sfx`: el programa pide la carpeta e informa en la consola en lugar de en ventanas. |
 
 ## list · l

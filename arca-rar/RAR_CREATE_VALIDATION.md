@@ -167,3 +167,32 @@ disposition is now untouched, so `nohup` remains effective. RAR creation
 explicitly handles SIGINT/SIGTERM even if a parent ignored them. Windows uses
 `ctrlc 3.4.7` for console interruption. Both adapters use safe APIs; their
 platform implementations contain unsafe code outside Arca's parser boundary.
+
+## Follow-up: solid, encryption, hidden names, volumes and recovery records
+
+Windows 11, WinRAR 7.23 console `Rar.exe` (`RAR 7.23 x64`, 27 Jun 2026),
+2026-11-17. Creation now takes `--solid`, `-p`, `--hide-names`, `-v SIZE` and
+`--recovery PERCENT` for `.rar`, in any combination (see the
+[RAR guide](../docs/guide/rar.md#creating-rar5-archives)).
+
+| Check | Result |
+| --- | --- |
+| WinRAR reads Arca | `Rar t -p<pw>` and `Rar x` accept solid, encrypted, hidden-name, recovery-record and best-level archives, each whole and as a 100 KiB volume set, and all options together; every extracted tree equals the source; `Rar t -pwrong` fails on each encrypted one. |
+| WinRAR repairs Arca | An archive with a 5 % recovery record, plain and with hidden names, damaged over 100 bytes of member data: `Rar t` fails, `Rar r` writes `fixed.<name>`, which `Rar t` accepts and Arca extracts to the source. With hidden names the repaired file equals the original; without, it differs only in the end block, which WinRAR writes with its skip-if-unknown flag. |
+| Arca reads WinRAR | WinRAR `-s`, `-p`, `-hp`, `-rr3%` and `-s -hp -rr5% -v100k` archives are opened, tested and extracted by Arca to the source. |
+| Volume sizes | Every volume but the last is filled to within 1 KiB of the size and none exceeds it, recovery record and encrypted headers included, as WinRAR's are; 500 small members with `-hp` and a 5 % record at the 64 KiB minimum also fit. |
+| Arca repairs Arca | `arca repair` restores a damaged `-hp` archive with a 5 % record to the original bytes. |
+
+Two vendored container fixes came out of this ([PATCHES.md](vendor/PATCHES.md)):
+the locator in archives with encrypted headers pointed 38 bytes short of the
+recovery record, which WinRAR rejected in volume sets with a split member, and
+volumes were bounded by member data only.
+
+```sh
+cargo test -p arca-rar --features rar --test writer_features
+cargo test -p arca-rar --features rar --test writer_features -- --ignored   # needs Rar.exe; ARCA_RAR overrides the path
+```
+
+`interop.sh` repeats the read-back with UnRAR in CI (`UNRAR=...`), which has
+`t` and `x` but no repair. `create-stress.py` was updated for the new refusals
+but not rerun here, as this host has no Python.

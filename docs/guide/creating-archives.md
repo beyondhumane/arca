@@ -2,13 +2,13 @@
 description: Levels, codecs, threads and formats for arca create, including new RAR5 archives.
 group: Using Arca
 order: 4
-keywords: create compress level codec zstd deflate store threads tar gzip xz txz lzma2 lzma ppmd bcj arm64 delta filter bzip2 bz2 tbz2 zst tzst rar rar5 split volume 001 sfx self-extracting exe -l -c -j -v
+keywords: create compress level codec zstd deflate store threads tar gzip xz txz lzma2 lzma ppmd bcj arm64 delta filter bzip2 bz2 tbz2 zst tzst rar rar5 solid recovery part1 split volume 001 sfx self-extracting exe -l -c -j -v
 ---
 
 # Creating archives
 
 ```text
-arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [--hide-names] [-v SIZE] [--sfx [--console]]
+arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [--hide-names] [-v SIZE] [--solid] [--recovery PERCENT] [--sfx [--console]]
 ```
 
 | Option | Values | Default | Description |
@@ -16,9 +16,11 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | `-l, --level` | store · fast · normal · best | normal | Compression level. |
 | `-c, --codec` | auto · store · deflate · zstd · lzma2 · lzma · ppmd · bzip2 | auto | Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, bzip2 in .bz2 and .tar.bz2, Zstandard in .zst and .tar.zst, the RAR compressor in .rar (auto or store only). .7z also takes lzma, ppmd, bzip2, deflate and store, see [7z](#7z). |
 | `-j, --threads` | a number | 0 | ZIP, XZ, Zstandard and RAR thread limit. 0 means every core; bzip2 always uses one; 7z with LZMA2 uses every core its memory budget allows, and one with any other method. |
-| `-p, --password` | text | none | Encrypt ZIP or 7z with AES-256. Refused for .rar. |
-| `--hide-names` | flag | off | Encrypt 7z headers too; requires a nonempty password. |
-| `-v, --volume` | a size: bytes, or k, m, g | none | Split the archive into parts of that size, `out.zip.001`, `out.zip.002`… Not for .rar. |
+| `-p, --password` | text | none | Encrypt ZIP, 7z or RAR with AES-256. |
+| `--hide-names` | flag | off | Encrypt 7z or RAR headers too, so names are hidden; requires a nonempty password. |
+| `-v, --volume` | a size: bytes, or k, m, g | none | Split the archive into parts of that size, `out.zip.001`, `out.zip.002`…; a .rar becomes RAR volumes `out.part1.rar`, `out.part2.rar`… instead. |
+| `--solid` | flag | off | RAR only: compress the files as one stream. |
+| `--recovery` | 1 to 100, with or without `%` | none | RAR only: add a recovery record of that percentage. |
 | `--sfx` | flag | off | Make a self-extracting Windows program instead of an archive. |
 | `--console` | flag | off | With `--sfx`: the program asks and reports in the console. |
 
@@ -115,19 +117,38 @@ encryption requires `--hide-names` so the password can actually be checked.
 ```sh
 arca create backup.rar documents/ notes.txt -l best
 arca create stored.rar big.iso -c store
+arca create private.rar documents/ -p secret --hide-names
+arca create photos.rar photos/ --solid -v 700m --recovery 3
 ```
 
-Creates a new single-volume, non-solid, unencrypted RAR5 archive that official
-UnRAR and 7-Zip open. The four levels select the RAR compressor strength;
-`-c store` equals `-l store` and any other explicit codec is refused. Creation
-uses every core by default, or as many threads as `-j` says, stores empty files and directories,
-and rejects symbolic links and special files instead of following them.
+Creates a new RAR5 archive that WinRAR, official UnRAR and 7-Zip open. The four
+levels select the RAR compressor strength; `-c store` equals `-l store` and any
+other explicit codec is refused. Creation uses every core by default, or as
+many threads as `-j` says, stores empty files and directories, and rejects
+symbolic links and special files instead of following them.
 
-RAR output is never encrypted (`-p` and `--hide-names` are refused), never a
-`.cbr`, never solid or multivolume, and never replaces an existing file: the
-archive is staged beside the output, verified with Arca's reader and published
-only if the name is still free. Existing RAR/CBR archives stay read-only.
-Limits and the complete list of refusals are in the [RAR guide](rar.md#creating-rar5-archives).
+The rest is what WinRAR offers when it creates an archive:
+
+- `--solid` compresses the files as one stream, as WinRAR's `-s`.
+- `-p` encrypts every file with AES-256, as WinRAR's `-p`; `--hide-names` also
+  encrypts the headers, as `-hp`, so not even the names can be listed without
+  the password.
+- `-v SIZE` writes a RAR volume set, as `-v`: `photos.part1.rar`,
+  `photos.part2.rar`… (`part01` once there are ten or more), each at most SIZE
+  bytes, recovery record and headers included, and at least 64 KiB. A set that
+  fits in one volume keeps the name you gave. These are RAR's own volumes, not
+  `.001` parts.
+- `--recovery PERCENT` adds a recovery record of 1 to 100 percent, to each
+  volume of a set, as `-rr`. [`arca repair`](cli-reference.md#repair)
+  and WinRAR rebuild damaged data from it. Recovery volumes (`.rev`) are not
+  written.
+
+They combine freely. RAR output is never a `.cbr` and never replaces an
+existing file, nor joins volumes with the same name: the archive or the whole
+set is staged beside the output, opened and decoded with Arca's reader (with
+the password), and published only if every name is still free. Existing
+RAR/CBR archives stay read-only. Limits and the complete list of refusals are
+in the [RAR guide](rar.md#creating-rar5-archives).
 
 ## TAR and gzip
 
@@ -206,8 +227,8 @@ arca create logs.tar.xz logs/ -v 100m
 7-Zip’s `-v` does: every part but the last has exactly that size, and nothing
 is added to them, so 7-Zip and NanaZip open the set too. The size is a number
 of bytes, or one ending in `k`, `m` or `g` for KiB, MiB and GiB. It works for
-ZIP, 7z, every TAR variant and the single-file streams; `.rar` is refused,
-because RAR has volumes of its own that Arca does not write. A set has at most
+ZIP, 7z, every TAR variant and the single-file streams; a `.rar` is not cut
+this way but written as RAR volumes instead (see [RAR](#rar)). A set has at most
 9999 parts: a size too small for that is an error, and nothing is left behind.
 
 The parts are written straight to their final folder, one after the other, so

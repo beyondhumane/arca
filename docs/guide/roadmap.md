@@ -17,10 +17,11 @@ creation, passwords and hidden names are implemented for CLI and desktop. See
 [accepted design](https://github.com/beyondhumane/arca/blob/main/docs/plans/7z-format.md).
 
 [RAR/CBR reading](rar.md) is enabled by default, including modern and legacy
-multivolume sets, passwords, previews and verified extraction. New single-volume
-RAR5 archives can be created at four levels. Existing RAR/CBR archives remain
-read-only: mutation, encrypted, solid or multivolume output and CBR creation are
-not supported. A damaged single-volume RAR made with a recovery record can be
+multivolume sets, passwords, previews and verified extraction. New RAR5 archives
+can be created at four levels, solid, encrypted with or without hidden names, as
+volume sets and with a recovery record, as WinRAR makes them. Existing RAR/CBR
+archives remain read-only: mutation, recovery volumes and CBR creation are not
+supported. A damaged single-volume RAR made with a recovery record can be
 rebuilt into a new file with `arca repair`.
 
 Standalone `.xz` and `.tar.xz`/`.txz` can be created, listed, tested and

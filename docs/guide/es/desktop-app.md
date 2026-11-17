@@ -68,11 +68,14 @@ contraseña puede desbloquearlo ahí mismo. Los detalles están en
 
 ## RAR
 
-**Crear** ofrece RAR junto a ZIP y 7z y escribe un archivo RAR5 nuevo de un solo
-volumen con el nivel elegido. Con RAR seleccionado el diálogo muestra el
-compresor RAR fijo y una nota de que la salida nunca se cifra; el campo de
-contraseña, **Ocultar nombres** y el selector de códec ZIP no aparecen, y una
-contraseña escrita para ZIP o 7z se conserva para cuando vuelvas. Un nombre de
+**Crear** ofrece RAR junto a ZIP y 7z y escribe un archivo RAR5 nuevo con el
+nivel elegido. Con RAR seleccionado el diálogo muestra el compresor RAR fijo en
+lugar del selector de códec ZIP y, con él, el campo de contraseña, **Ocultar nombres**,
+una tarjeta **Opciones de RAR** con **Archivo sólido** y **Registro de
+recuperación** (un porcentaje, un 3 % para empezar) y **Dividir en volúmenes**,
+que en RAR escribe un conjunto de volúmenes `nombre.part1.rar`,
+`nombre.part2.rar`… de al menos 64 KiB cada uno. Cuando el conjunto está
+escrito, la ventana abre su primer volumen. Un nombre de
 salida ya ocupado se rechaza antes de escribir nada, con un mensaje para elegir
 otro nombre; no se ofrece Reemplazar porque la creación de RAR nunca sustituye
 un fichero. El archivo nuevo se abre de solo lectura como cualquier

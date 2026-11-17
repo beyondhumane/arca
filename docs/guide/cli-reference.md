@@ -9,7 +9,7 @@ keywords: cli command line options flags reference help exit status
 
 ZIP, 7z, TAR (plain, gzip, XZ, bzip2 and Zstandard), standalone XZ, bzip2 and Zstandard, and [RAR](rar.md) are enabled by default. RAR supports `list`,
 `test` and `extract`, including `-p` for encrypted data or headers, and
-`create` for new single-volume RAR5 archives. Modifying an existing RAR or
+`create` for new RAR5 archives, solid, encrypted, in volumes or with a recovery record. Modifying an existing RAR or
 CBR, and creating CBR, is always rejected.
 
 ```text
@@ -47,10 +47,12 @@ Create an archive. The format is taken from the extension of the output file.
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
 | `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2 · lzma · ppmd · bzip2. auto uses Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, bzip2 in .bz2 and .tar.bz2, Zstandard in .zst and .tar.zst and the RAR compressor in .rar (auto or store only). .7z takes lzma2, lzma, ppmd, bzip2 (with codecs-native), deflate or store, never zstd, which 7-Zip cannot read in a 7z. |
 | `-j, --threads <N>` | 0 | ZIP and XZ threads; 0 means every core. XZ uses as many as fit in 2 GiB, Zstandard as many as asked and bzip2 one; 7z with LZMA2 and RAR use every core their memory budget allows, whatever this says, and 7z with any other method one. |
-| `-p, --password <PASSWORD>` | none | Encrypt with AES-256 (.zip, .7z). Other tools will ask for it to open the archive. Refused for .rar. |
-| `--hide-names` | off | 7z only: encrypt headers; requires a nonempty password. |
-| `-v, --volume <SIZE>` | none | Split into parts of SIZE bytes, or with k, m or g for KiB, MiB, GiB: `out.zip.001`, `out.zip.002`… as 7-Zip does. Refuses to replace an existing `.001`. Not for .rar. See [split volumes](creating-archives.md#split-volumes). |
-| `--sfx` | off | Write a self-extracting Windows program (any name, usually `.exe`) from the `arca-sfx.exe` found next to arca. Not with `-p`, `--hide-names` or `-v`. See [self-extracting programs](creating-archives.md#self-extracting-programs). |
+| `-p, --password <PASSWORD>` | none | Encrypt with AES-256 (.zip, .7z, .rar). Other tools will ask for it to open the archive. |
+| `--hide-names` | off | .7z and .rar: encrypt headers too, so names are hidden; requires a nonempty password. In .rar this is WinRAR’s `-hp`. |
+| `-v, --volume <SIZE>` | none | Split into parts of SIZE bytes, or with k, m or g for KiB, MiB, GiB: `out.zip.001`, `out.zip.002`… as 7-Zip does. Refuses to replace an existing `.001`. A .rar becomes a RAR volume set instead, `out.part1.rar`, `out.part2.rar`… as WinRAR’s `-v` makes, each at most SIZE (at least 64 KiB); no volume of that name may exist. See [split volumes](creating-archives.md#split-volumes) and [RAR](creating-archives.md#rar). |
+| `--solid` | off | .rar only: compress the files as one stream, as WinRAR’s `-s`. |
+| `--recovery <PERCENT>` | none | .rar only: add a recovery record of PERCENT (1 to 100, `3` or `3%`), in each volume of a set, as WinRAR’s `-rr`. `arca repair` and WinRAR rebuild damaged data from it. |
+| `--sfx` | off | Write a self-extracting Windows program (any name, usually `.exe`) from the `arca-sfx.exe` found next to arca. Not with `-p`, `--hide-names`, `-v`, `--solid` or `--recovery`. See [self-extracting programs](creating-archives.md#self-extracting-programs). |
 | `--console` | off | With `--sfx`: the program asks for the folder and reports in the console instead of in windows. |
 
 ## list · l
