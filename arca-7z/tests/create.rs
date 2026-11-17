@@ -338,3 +338,23 @@ fn ppmd_memory_stays_within_what_the_reader_accepts() {
     assert_eq!(properties, [32, 0, 0, 0, 12]);
     reads_back(&bytes, &set, None);
 }
+
+// Looking at the files before the first block is part of creating the
+// archive: a stop then is a cancellation, with nothing left behind.
+#[test]
+fn a_stop_while_files_are_looked_at_cancels() {
+    let set = set(vec![
+        ("a.dll", pe(0x8664)),
+        ("b.dll", pe(0xAA64)),
+        ("c.txt", text(1000)),
+    ]);
+    let out = set.room.path().join("stopped.7z");
+    let mut named = 0;
+    let result = create_7z(&out, &set.sources, &CreateOptions::default(), &mut |p| {
+        named += usize::from(!p.name.is_empty());
+        assert_eq!(p.bytes_done, 0, "stopped after compression began");
+        named < 2
+    });
+    assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
+    assert!(!out.exists());
+}

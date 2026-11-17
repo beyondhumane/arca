@@ -256,7 +256,8 @@ pub(crate) fn push_files<W: Write + Seek>(
 ) -> Result<()> {
     let workers = workers(options.level);
     let main = options.compression.stage();
-    for block in solid_blocks(sources, metadata, full, main != Stage::Copy) {
+    let filter = main != Stage::Copy && options.level != Level::STORE;
+    for block in solid_blocks(sources, metadata, full, filter.then_some(tracker))? {
         let mut chain = vec![main];
         chain.extend(block.filter.map(Stage::Filter));
         writer.set_content_methods(methods(
@@ -532,13 +533,14 @@ struct Block {
 /// Groups the files with data into solid blocks, one group for each filter
 /// so that a filter only goes over the files it is for, each group sorted
 /// by extension and then by name so that similar files sit next to each
-/// other in the stream. Without `filter`, nothing is looked at.
+/// other in the stream. Without a `tracker` to tell how far looking has got,
+/// nothing is looked at.
 fn solid_blocks(
     sources: &[Source],
     metadata: &[fs::Metadata],
     files: &[usize],
-    filter: bool,
-) -> Vec<Block> {
+    tracker: Option<&std::cell::RefCell<Tracker<'_>>>,
+) -> Result<Vec<Block>> {
     let extension = |i: usize| {
         Path::new(&sources[i].name)
             .extension()
@@ -547,10 +549,22 @@ fn solid_blocks(
     };
     let mut groups: Vec<(Option<Filter>, Vec<usize>)> = Vec::new();
     for &i in files {
-        let kind = if filter {
-            filter_of(&sources[i].path, &sources[i].name, metadata[i].len())
-        } else {
-            None
+        let kind = match tracker {
+            Some(tracker) => {
+                let mut tracker = tracker.borrow_mut();
+                let progress = Progress {
+                    phase: Phase::Create,
+                    entries_done: tracker.done,
+                    entries_total: tracker.total,
+                    bytes_done: tracker.bytes,
+                    name: &sources[i].name,
+                };
+                if !(tracker.notify)(progress) {
+                    return Err(Error::Cancelled);
+                }
+                filter_of(&sources[i].path, &sources[i].name, metadata[i].len())
+            }
+            None => None,
         };
         match groups.iter_mut().find(|(k, _)| *k == kind) {
             Some((_, group)) => group.push(i),
@@ -583,7 +597,7 @@ fn solid_blocks(
             });
         }
     }
-    blocks
+    Ok(blocks)
 }
 
 /// LZMA2 threads for `level`, as many cores as fit in the same memory budget
