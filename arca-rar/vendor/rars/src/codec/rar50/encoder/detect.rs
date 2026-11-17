@@ -878,6 +878,68 @@ mod tests {
         }
     }
 
+    /// Every filter the format has, and every delta width, applied to a run
+    /// that starts past a history at an offset no multiple of four, with
+    /// records in two blocks.
+    #[test]
+    fn every_filter_and_width_decodes_after_history() {
+        let allowance = Allowance::default();
+        let options = EncodeOptions::new(8).with_max_match_distance(1 << 20);
+        let history = pcm(100_003, false);
+        let run = x86(200 * 1024, true);
+        let blocks = [(128 * 1024, false), (run.len(), true)];
+        let regions = [4096..68 * 1024, 130 * 1024..190 * 1024 + 7];
+        let head = filtered_streaming_blocks_with_allowance(
+            &history,
+            &[],
+            &[(history.len(), false)],
+            0,
+            options,
+            &[],
+            None,
+            &allowance,
+        )
+        .unwrap();
+        let mut expected = history.clone();
+        expected.extend_from_slice(&run);
+        let filters = [FilterType::E8, FilterType::E8E9, FilterType::Arm]
+            .map(|filter_type| (filter_type, 0))
+            .into_iter()
+            .chain((1..=MAX_DELTA_CHANNELS).map(|channels| (FilterType::Delta, channels)));
+        for (filter_type, channels) in filters {
+            let mut data = run.clone();
+            let mut records = Vec::new();
+            for region in regions.clone() {
+                let file_offset = (history.len() + region.start) as u64;
+                apply(
+                    &mut data[region.clone()],
+                    filter_type,
+                    channels,
+                    file_offset,
+                    &allowance,
+                )
+                .unwrap();
+                records.push(EncodeFilter {
+                    offset: region.start,
+                    length: region.len(),
+                    filter_type,
+                    channels,
+                });
+            }
+            assert_ne!(data, run, "{filter_type:?} {channels}");
+            let tail = filtered_streaming_blocks_with_allowance(
+                &data, &history, &blocks, 0, options, &records, None, &allowance,
+            )
+            .unwrap();
+            let mut packed = Vec::new();
+            for block in head.iter().chain(tail.iter()) {
+                packed.extend_from_slice(block);
+            }
+            let decoded = crate::codec::rar50::decode_lz(&packed, 0, expected.len()).unwrap();
+            assert!(decoded == expected, "{filter_type:?} {channels}");
+        }
+    }
+
     #[test]
     fn truncated_and_corrupted_filtered_members_never_panic() {
         let mut data = x86(160 * 1024, true);

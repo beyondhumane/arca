@@ -203,7 +203,9 @@ fn rar(program: &Path, dir: &Path, args: &[&str]) {
 #[ignore = "needs WinRAR's console Rar.exe (ARCA_RAR or C:\\Program Files\\WinRAR\\Rar.exe)"]
 fn winrar_tests_and_extracts_filtered_archives() {
     let program = winrar().expect("Rar.exe not found");
-    let input = input(members());
+    let mut members = members();
+    members.push(("long.pcm", corpus::pcm(512, 5 * MIB + 3)));
+    let input = input(members);
     let mut archives = Vec::new();
     for level in [5, 6, 7, 9] {
         archives.push(create(&input, &format!("l{level}.rar"), &at_level(level)));
