@@ -45,9 +45,9 @@ pub fn repair<R: Read + Seek, W: Write + Seek>(mut source: R, out: W) -> Result<
     let mut report = Repaired::default();
     let mut index: Option<Index> = None;
     // A candidate that fails is passed by one byte, so a hostile file can
-    // offer one header per byte, each claiming the rest of the file. What the
-    // checks may read and inflate is capped at a few times the file itself,
-    // which a sound archive never comes near.
+    // offer one header per byte, each claiming the rest of the file. What
+    // failed checks may read and inflate is capped at a few times the file
+    // itself, which a sound archive never comes near.
     let mut budget = Budget {
         read: 0,
         read_cap: total.saturating_mul(4).saturating_add(64 << 20),
@@ -226,18 +226,25 @@ fn check<R: Read + Seek>(
         }
         return Ok(false);
     }
-    budget.read = budget.read.saturating_add(e.compressed_size);
-    budget.inflated = budget.inflated.saturating_add(e.size);
+    // Accepted entries never overlap, so what they cost is bounded by the file;
+    // only the work spent on candidates that fail is counted.
     if budget.read > budget.read_cap || budget.inflated > budget.inflated_cap {
         return Err("not checked: the scan has already read too much of this file".into());
     }
-    extract_entry_with(src, e, io::sink(), None).map_err(|e| e.to_string())?;
+    extract_entry_with(src, e, io::sink(), None).map_err(|err| {
+        budget.read = budget.read.saturating_add(e.compressed_size);
+        budget.inflated = budget.inflated.saturating_add(e.size);
+        err.to_string()
+    })?;
     Ok(true)
 }
 
+// The next header is nearly always right where the last entry ended, so the
+// window starts small and only grows while nothing turns up: reading a whole
+// chunk per entry would read the file once for every megabyte of entries.
 fn next_header<R: Read + Seek>(src: &mut R, from: u64, total: u64) -> Result<Option<u64>> {
     let mut found = None;
-    scan(src, from, total, &[SIG_LFH], |p, _| {
+    scan(src, from, total, &[SIG_LFH], 64, |p, _| {
         found = Some(p);
         Ok(false)
     })?;
@@ -249,12 +256,18 @@ fn scan<R: Read + Seek>(
     from: u64,
     total: u64,
     signatures: &[u32],
+    first_window: usize,
     mut hit: impl FnMut(u64, u32) -> Result<bool>,
 ) -> Result<()> {
-    let mut buf = vec![0u8; CHUNK + 3];
+    let mut window = first_window.clamp(4, CHUNK + 3);
+    let mut buf = vec![0u8; window];
     let mut at = from;
     while total.saturating_sub(at) >= 4 {
-        let want = ((total - at) as usize).min(buf.len());
+        if buf.len() < window {
+            buf.resize(window, 0);
+        }
+        let want = ((total - at) as usize).min(window);
+        window = (window * 2).min(CHUNK + 3);
         src.seek(SeekFrom::Start(at))?;
         src.read_exact(&mut buf[..want])?;
         for (i, w) in buf[..want].windows(4).enumerate() {
@@ -287,6 +300,7 @@ fn descriptor_index<R: Read + Seek>(
         0,
         total,
         &[SIG_DESCRIPTOR, SIG_LFH, SIG_CD, SIG_EOCD],
+        CHUNK + 3,
         |p, s| {
             if hits.len() >= MAX_HITS {
                 return Err(Error::Limit(format!(
@@ -647,26 +661,70 @@ mod tests {
     }
 
     #[test]
-    fn checks_stop_once_the_budget_is_spent() {
+    fn only_failed_checks_spend_the_budget() {
         let buf = made_by_arca(&[("a.txt", b"abc", Codec::Store)]);
         let e = ZipArchive::open(IoCursor::new(buf.clone()))
             .unwrap()
             .entries()[0]
             .clone();
         let mut src = IoCursor::new(buf);
-        let mut spent = Budget {
-            read: 0,
-            read_cap: 2,
-            inflated: 0,
-            inflated_cap: 100,
-        };
-        assert!(check(&mut src, &e, &mut spent).is_err());
-        let mut room = Budget {
+        let mut budget = Budget {
             read: 0,
             read_cap: 100,
             inflated: 0,
             inflated_cap: 100,
         };
-        assert_eq!(check(&mut src, &e, &mut room), Ok(true));
+        assert_eq!(check(&mut src, &e, &mut budget), Ok(true));
+        assert_eq!((budget.read, budget.inflated), (0, 0));
+
+        let mut lying = e.clone();
+        lying.crc32 = Some(0);
+        assert!(check(&mut src, &lying, &mut budget).is_err());
+        assert_eq!((budget.read, budget.inflated), (3, 3));
+
+        budget.read = 101;
+        assert!(check(&mut src, &e, &mut budget).is_err());
+    }
+
+    struct Counted {
+        inner: IoCursor<Vec<u8>>,
+        read: std::rc::Rc<std::cell::Cell<u64>>,
+    }
+
+    impl Read for Counted {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.read.set(self.read.get() + n as u64);
+            Ok(n)
+        }
+    }
+
+    impl Seek for Counted {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn many_small_entries_are_read_about_once() {
+        let names: Vec<String> = (0..3000).map(|i| format!("f{i}.txt")).collect();
+        let files: Vec<(&str, &[u8], Codec)> = names
+            .iter()
+            .map(|n| (n.as_str(), &b"small"[..], Codec::Store))
+            .collect();
+        let buf = without_directory(&made_by_arca(&files));
+        let read = std::rc::Rc::new(std::cell::Cell::new(0));
+        let source = Counted {
+            inner: IoCursor::new(buf.clone()),
+            read: read.clone(),
+        };
+        let (_, report) = repair(source, IoCursor::new(Vec::new())).unwrap();
+        assert_eq!(report.recovered.len(), 3000);
+        assert!(
+            read.get() < buf.len() as u64 * 6,
+            "{} bytes read for a {} byte file",
+            read.get(),
+            buf.len()
+        );
     }
 }
