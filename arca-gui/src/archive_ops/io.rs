@@ -95,8 +95,8 @@ fn unpack(
 }
 
 pub(crate) fn open_source(archive: &Path, format: Format) -> arca_core::Result<Box<dyn Read>> {
-    if format == Format::TarXz {
-        return Ok(Box::new(arca_xz::open(archive)?));
+    if arca_stream::handles(format) {
+        return Ok(arca_stream::open(archive, format)?);
     }
     let f = BufReader::with_capacity(BUF, File::open(archive)?);
     Ok(match format {
@@ -210,8 +210,14 @@ pub(crate) fn list_entries(
                 .to_vec(),
             Vec::new(),
         )),
-        Container::Xz => Ok((vec![arca_xz::entry(archive)?], Vec::new())),
-        Container::Tar | Container::TarGz | Container::TarXz => {
+        Container::Xz | Container::Bz2 | Container::Zst => {
+            Ok((vec![arca_stream::entry(archive, format)?], Vec::new()))
+        }
+        Container::Tar
+        | Container::TarGz
+        | Container::TarXz
+        | Container::TarBz2
+        | Container::TarZst => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let mut v = Vec::new();
             while let Some(e) = r.next_entry()? {
@@ -332,19 +338,23 @@ pub(crate) fn read_entry(
             let mut a = ZipArchive::open(File::open(archive)?)?;
             a.extract_to_with(index, out, password)?;
         }
-        Container::Xz => {
+        Container::Xz | Container::Bz2 | Container::Zst => {
             if index != 0 {
                 return Err(arca_core::Error::Format(
                     "that entry is not in the archive any more".into(),
                 ));
             }
-            let name = arca_xz::output_name(archive);
-            let mut source = Paced::new(arca_xz::open(archive)?, &name, notify);
+            let name = arca_stream::output_name(archive);
+            let mut source = Paced::new(arca_stream::open(archive, format)?, &name, notify);
             out.clear();
             let result = std::io::copy(&mut source, out).map_err(Into::into);
             source.check(result)?;
         }
-        Container::Tar | Container::TarGz | Container::TarXz => {
+        Container::Tar
+        | Container::TarGz
+        | Container::TarXz
+        | Container::TarBz2
+        | Container::TarZst => {
             // A tar has no index, so the only way to one entry is through all
             // the ones before it.
             let mut r = TarReader::new(open_source(archive, format)?);
@@ -436,9 +446,10 @@ pub(crate) fn extract_one_into(
             )?;
             Ok(path)
         }
-        Container::Xz => {
+        Container::Xz | Container::Bz2 | Container::Zst => {
             let path = room.join(arca_core::safe_name(&entry.name)?);
-            let mut source = Paced::new(arca_xz::open(archive)?, &entry.name, notify);
+            let source = arca_stream::open(archive, format)?;
+            let mut source = Paced::new(source, &entry.name, notify);
             let result = arca_core::extraction::Destination::new(room).write_entry(
                 &entry.name,
                 false,
@@ -464,7 +475,11 @@ pub(crate) fn extract_one_into(
             )?;
             Ok(path)
         }
-        Container::Tar | Container::TarGz | Container::TarXz => {
+        Container::Tar
+        | Container::TarGz
+        | Container::TarXz
+        | Container::TarBz2
+        | Container::TarZst => {
             let path = room.join(arca_core::safe_name(&entry.name)?);
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
@@ -803,10 +818,11 @@ pub(crate) fn extract(
             bytes = written.iter().sum();
             let _ = notify(total, total, "");
         }
-        Container::Xz => {
+        Container::Xz | Container::Bz2 | Container::Zst => {
             if wanted.first().copied().unwrap_or(true) {
-                let name = arca_xz::output_name(archive);
-                let mut source = Paced::new(arca_xz::open(archive)?, &name, notify);
+                let name = arca_stream::output_name(archive);
+                let source = arca_stream::open(archive, format)?;
+                let mut source = Paced::new(source, &name, notify);
                 let mut destination = arca_core::extraction::Destination::new(dest);
                 let result = write_entry(&mut destination, &name, false, None, &mut source, ask);
                 bytes = source.check(result)?;
@@ -816,7 +832,11 @@ pub(crate) fn extract(
         // Each file goes in under a temporary name and is renamed only once
         // its data has been read to the end, so a corrupt or truncated archive
         // never leaves a short file under the real name.
-        Container::Tar | Container::TarGz | Container::TarXz => {
+        Container::Tar
+        | Container::TarGz
+        | Container::TarXz
+        | Container::TarBz2
+        | Container::TarZst => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let total = wanted.len();
             let mut i = 0usize;
@@ -840,7 +860,7 @@ pub(crate) fn extract(
                 }
                 i += 1;
             }
-            arca_xz::drain(&mut r.into_inner())?;
+            arca_stream::drain(&mut r.into_inner())?;
             let _ = notify(i, i, "");
         }
     }
@@ -917,11 +937,12 @@ pub(crate) fn test_archive(
             }
             let _ = notify(total, total, "");
         }
-        Container::Xz => {
-            let name = arca_xz::output_name(archive);
+        Container::Xz | Container::Bz2 | Container::Zst => {
+            let name = arca_stream::output_name(archive);
             if only.is_none_or(|set| set.contains(&name)) {
-                let mut source = Paced::new(arca_xz::open(archive)?, &name, notify);
-                let result = arca_xz::drain(&mut source);
+                let source = arca_stream::open(archive, format)?;
+                let mut source = Paced::new(source, &name, notify);
+                let result = arca_stream::drain(&mut source);
                 match source.check(result) {
                     Ok(_) => good = 1,
                     Err(arca_core::Error::Cancelled) => return Err(arca_core::Error::Cancelled),
@@ -930,7 +951,11 @@ pub(crate) fn test_archive(
             }
             let _ = notify(1, 1, "");
         }
-        Container::Tar | Container::TarGz | Container::TarXz => {
+        Container::Tar
+        | Container::TarGz
+        | Container::TarXz
+        | Container::TarBz2
+        | Container::TarZst => {
             let mut r = TarReader::new(open_source(archive, format)?);
             let mut i = 0usize;
             while let Some(e) = r.next_entry()? {
@@ -947,7 +972,7 @@ pub(crate) fn test_archive(
                 }
                 i += 1;
             }
-            arca_xz::drain(&mut r.into_inner())?;
+            arca_stream::drain(&mut r.into_inner())?;
             let _ = notify(i, i, "");
         }
     }
@@ -1206,10 +1231,14 @@ pub(crate) fn compress(
     let own = arca_core::extraction::OwnOutput::new(out);
     let mut files = collect_sources(inputs, format == Format::SevenZ)?;
     files.retain(|(path, name)| name.ends_with('/') || !own.is_own(path));
-    if format == Format::Xz && !(inputs.len() == 1 && files.len() == 1 && inputs[0].is_file()) {
-        return Err(arca_core::Error::Unsupported(
-            "an .xz holds exactly one file; make a .tar.xz to keep several".into(),
-        ));
+    if let Some(tar) = format.stream_tar() {
+        if !(inputs.len() == 1 && files.len() == 1 && inputs[0].is_file()) {
+            return Err(arca_core::Error::Unsupported(format!(
+                "{} holds exactly one file; make a .{} to keep several",
+                format.label(),
+                tar.extension()
+            )));
+        }
     }
     let total = files.len();
     let mut source_bytes = 0u64;
@@ -1300,8 +1329,8 @@ pub(crate) fn compress(
                 Ok(())
             })?;
         }
-        Container::TarXz => staged(out, |f| {
-            let mut w = TarWriter::new(arca_xz::encoder(f, level, 0)?);
+        Container::TarXz | Container::TarBz2 | Container::TarZst => staged(out, |f| {
+            let mut w = TarWriter::new(arca_stream::encoder(f, format, level, 0, None)?);
             for (i, (path, name)) in files.iter().enumerate() {
                 if !notify(i, total, name) {
                     return Err(arca_core::Error::Cancelled);
@@ -1328,9 +1357,10 @@ pub(crate) fn compress(
             w.finish()?.finish()?.flush()?;
             Ok(())
         })?,
-        Container::Xz => staged(out, |f| {
+        Container::Xz | Container::Bz2 | Container::Zst => staged(out, |f| {
             let (path, name) = &files[0];
-            let mut e = arca_xz::encoder(f, level, 0)?;
+            let size = fs::metadata(path)?.len();
+            let mut e = arca_stream::encoder(f, format, level, 0, Some(size))?;
             let mut f = Paced::new(
                 BufReader::with_capacity(BUF, File::open(path)?),
                 name,

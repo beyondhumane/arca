@@ -434,19 +434,23 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
                 .extract_to_with(request.index, &mut out, request.password.as_deref())
                 .map(|_| ())
         }
-        Container::Xz => {
+        Container::Xz | Container::Bz2 | Container::Zst => {
             if request.index != 0 {
                 return Err(Error::Format("entry missing".into()));
             }
             let mut source = CancellableRead {
-                inner: arca_xz::open(&request.archive)?,
+                inner: arca_stream::open(&request.archive, format)?,
                 request,
             };
             std::io::copy(&mut source, &mut out)
                 .map(|_| ())
                 .map_err(Error::from)
         }
-        Container::Tar | Container::TarGz | Container::TarXz => {
+        Container::Tar
+        | Container::TarGz
+        | Container::TarXz
+        | Container::TarBz2
+        | Container::TarZst => {
             let mut archive = arca_tar::TarReader::new(CancellableRead {
                 inner: open_source(&request.archive, format)?,
                 request,

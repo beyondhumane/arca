@@ -31,7 +31,9 @@ struct Cli {
 enum Cmd {
     #[command(visible_alias = "c", about = "Create an archive")]
     Create {
-        #[arg(help = "Output archive (.zip, .7z, .rar, .tar, .tar.gz, .tar.xz, .xz)")]
+        #[arg(
+            help = "Output archive (.zip, .7z, .rar, .tar, .tar.gz, .tar.xz, .xz, .tar.bz2, .bz2, .tar.zst, .zst)"
+        )]
         out: PathBuf,
         #[arg(required = true, help = "Files or directories to include")]
         inputs: Vec<PathBuf>,
@@ -45,7 +47,7 @@ enum Cmd {
             short = 'j',
             long,
             default_value_t = 0,
-            help = "Threads to use. 0 means every core. .xz and .tar.xz use as many as fit in 2 GiB; .7z and .rar always use every core their memory budget allows"
+            help = "Threads to use. 0 means every core. .xz and .tar.xz use as many as fit in 2 GiB; .zst and .tar.zst use as many as asked; .bz2 and .tar.bz2 use one; .7z and .rar always use every core their memory budget allows"
         )]
         threads: usize,
         #[arg(
@@ -148,10 +150,10 @@ fn detect(p: &Path) -> Result<Format> {
     Format::detect(p).ok_or_else(|| unrecognized(p))
 }
 
-// For reading: an XZ file is looked inside, so a TAR in a `.xz`, or one with no
-// suffix, still opens as TAR.XZ.
+// For reading: an XZ, bzip2 or Zstandard file is looked inside, so a TAR in a
+// `.xz`, or one with no suffix, still opens as TAR.XZ.
 fn detect_archive(p: &Path) -> Result<Format> {
-    arca_xz::identify(p).ok_or_else(|| unrecognized(p))
+    arca_stream::identify(p).ok_or_else(|| unrecognized(p))
 }
 
 fn unrecognized(p: &Path) -> Error {
@@ -170,7 +172,7 @@ fn unrecognized(p: &Path) -> Error {
 
 fn tar_source(archive: &Path, format_kind: Format) -> Result<Box<dyn Read>> {
     Ok(match format_kind {
-        Format::TarXz => Box::new(arca_xz::open(archive)?),
+        f if arca_stream::handles(f) => arca_stream::open(archive, f)?,
         _ => {
             let f = BufReader::with_capacity(BUF, File::open(archive)?);
             if format_kind == Format::TarGz {
@@ -180,6 +182,15 @@ fn tar_source(archive: &Path, format_kind: Format) -> Result<Box<dyn Read>> {
             }
         }
     })
+}
+
+fn stream_codec(format_kind: Format) -> Option<(CodecArg, &'static str)> {
+    match format_kind.container() {
+        Container::Xz | Container::TarXz => Some((CodecArg::Lzma2, "LZMA2")),
+        Container::Bz2 | Container::TarBz2 => Some((CodecArg::Auto, "bzip2")),
+        Container::Zst | Container::TarZst => Some((CodecArg::Zstd, "Zstandard")),
+        _ => None,
+    }
 }
 
 fn conflict(policy: OnConflict) -> Conflict {
@@ -355,32 +366,36 @@ fn create(
         ));
     }
     if password.is_some() && format_kind != Format::Zip {
-        return Err(Error::Unsupported(
-            "encryption requires .zip or .7z; .tar, .tar.gz, .tar.xz and .xz have no place to put it"
-                .into(),
-        ));
+        return Err(Error::Unsupported(format!(
+            "encryption requires .zip or .7z; {} has no place to put it",
+            format_kind.label()
+        )));
     }
-    let xz = matches!(format_kind, Format::Xz | Format::TarXz);
-    if xz && !matches!(codec_arg, CodecArg::Auto | CodecArg::Lzma2) {
-        return Err(Error::Unsupported(
-            ".xz and .tar.xz always compress with LZMA2".into(),
-        ));
+    let stream = arca_stream::handles(format_kind);
+    if let Some((accepted, name)) = stream_codec(format_kind) {
+        if codec_arg != CodecArg::Auto && codec_arg != accepted {
+            return Err(Error::Unsupported(format!(
+                ".{} always compresses with {name}",
+                format_kind.extension()
+            )));
+        }
     }
-    if format_kind == Format::Xz {
+    if let Some(tar) = format_kind.stream_tar() {
+        let (label, tar) = (format_kind.label(), tar.extension());
         if inputs.len() != 1 {
             return Err(Error::Unsupported(format!(
-                "an .xz holds exactly one file, and {} were given; make a .tar.xz to keep several",
+                "{label} holds exactly one file, and {} were given; make a .{tar} to keep several",
                 inputs.len()
             )));
         }
         if !fs::metadata(&inputs[0])?.is_file() {
             return Err(Error::Unsupported(format!(
-                "an .xz holds exactly one file, and '{}' is not a regular file; make a .tar.xz for a folder",
+                "{label} holds exactly one file, and '{}' is not a regular file; make a .{tar} for a folder",
                 inputs[0].display()
             )));
         }
     }
-    let codec = resolve_codec(if xz { CodecArg::Auto } else { codec_arg }, format_kind)?;
+    let codec = resolve_codec(if stream { CodecArg::Auto } else { codec_arg }, format_kind)?;
     let mut threads = resolve_threads(requested_threads);
     let own = arca_core::extraction::OwnOutput::new(out);
     let mut raw_list = collect_files(inputs)?;
@@ -437,9 +452,9 @@ fn create(
             w.finish()?.flush()?;
             Ok(())
         })?,
-        Container::TarXz => {
+        Container::TarXz | Container::TarBz2 | Container::TarZst => {
             threads = staged(out, |f| {
-                let e = arca_xz::encoder(f, level, requested_threads)?;
+                let e = arca_stream::encoder(f, format_kind, level, requested_threads, None)?;
                 let used = e.workers();
                 let mut w = TarWriter::new(e);
                 for s in &files {
@@ -452,9 +467,15 @@ fn create(
                 Ok(used)
             })?;
         }
-        Container::Xz => {
+        Container::Xz | Container::Bz2 | Container::Zst => {
             threads = staged(out, |f| {
-                let mut e = arca_xz::encoder(f, level, requested_threads)?;
+                let mut e = arca_stream::encoder(
+                    f,
+                    format_kind,
+                    level,
+                    requested_threads,
+                    Some(files[0].size),
+                )?;
                 let used = e.workers();
                 io::copy(
                     &mut BufReader::with_capacity(BUF, File::open(&files[0].path)?),
@@ -560,8 +581,8 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
                 bytes += e.size;
             }
         }
-        Container::Xz => {
-            let e = arca_xz::entry(archive)?;
+        Container::Xz | Container::Bz2 | Container::Zst => {
+            let e = arca_stream::entry(archive, format_kind)?;
             writeln!(
                 out,
                 "{:>12}  {:>7}  {:>5.1}%  {}",
@@ -573,7 +594,11 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
             n = 1;
             bytes = e.size;
         }
-        Container::Tar | Container::TarGz | Container::TarXz => {
+        Container::Tar
+        | Container::TarGz
+        | Container::TarXz
+        | Container::TarBz2
+        | Container::TarZst => {
             let mut r = TarReader::new(tar_source(archive, format_kind)?);
             while let Some(e) = r.next_entry()? {
                 writeln!(
@@ -823,9 +848,9 @@ fn extract(
             n = jobs.len() as u64;
             bytes = written.iter().sum();
         }
-        Container::Xz => {
-            let mut source = arca_xz::open(archive)?;
-            let name = arca_xz::output_name(archive);
+        Container::Xz | Container::Bz2 | Container::Zst => {
+            let mut source = arca_stream::open(archive, format_kind)?;
+            let name = arca_stream::output_name(archive);
             let written =
                 Destination::new(dest)
                     .write_entry(&name, false, None, &mut source, &mut |_| conflict(policy))?;
@@ -837,7 +862,11 @@ fn extract(
         // Each file is written under a temporary name and renamed only once its
         // data has been read to the end, so a corrupt or truncated archive does
         // not leave a short file under the real name.
-        Container::Tar | Container::TarGz | Container::TarXz => {
+        Container::Tar
+        | Container::TarGz
+        | Container::TarXz
+        | Container::TarBz2
+        | Container::TarZst => {
             let mut r = TarReader::new(tar_source(archive, format_kind)?);
             let mut destination = Destination::new(dest);
             while let Some(e) = r.next_entry()? {
@@ -862,7 +891,7 @@ fn extract(
                     n += 1;
                 }
             }
-            arca_xz::drain(&mut r.into_inner())?;
+            arca_stream::drain(&mut r.into_inner())?;
         }
     }
 
@@ -1003,17 +1032,21 @@ fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
                 }
             }
         }
-        Container::Xz => {
-            arca_xz::drain(&mut arca_xz::open(archive)?)?;
+        Container::Xz | Container::Bz2 | Container::Zst => {
+            arca_stream::drain(&mut arca_stream::open(archive, format_kind)?)?;
             n = 1;
         }
-        Container::Tar | Container::TarGz | Container::TarXz => {
+        Container::Tar
+        | Container::TarGz
+        | Container::TarXz
+        | Container::TarBz2
+        | Container::TarZst => {
             let mut r = TarReader::new(tar_source(archive, format_kind)?);
             while let Some(e) = r.next_entry()? {
                 r.with_data(&e, |data| Ok(io::copy(data, &mut io::sink())?))?;
                 n += 1;
             }
-            arca_xz::drain(&mut r.into_inner())?;
+            arca_stream::drain(&mut r.into_inner())?;
         }
     }
 

@@ -14,7 +14,7 @@ pub enum ThemePreference {
 pub(crate) use arca_core::{Container, Format};
 
 pub(crate) fn detect(p: &Path) -> Option<Format> {
-    arca_xz::identify(p)
+    arca_stream::identify(p)
 }
 
 pub(crate) fn container_of(p: &Path) -> Option<Container> {
@@ -51,7 +51,11 @@ pub(crate) fn read_only_suffix(format: Option<Format>) -> String {
 pub(crate) fn whole_stream(format: Format) -> bool {
     matches!(
         format.container(),
-        arca_core::Container::Tar | arca_core::Container::TarGz | arca_core::Container::TarXz
+        arca_core::Container::Tar
+            | arca_core::Container::TarGz
+            | arca_core::Container::TarXz
+            | arca_core::Container::TarBz2
+            | arca_core::Container::TarZst
     )
 }
 

@@ -18,7 +18,7 @@ arca-brand.workspace = true
 arca-core.workspace = true
 arca-zip.workspace = true
 arca-tar.workspace = true
-arca-xz.workspace = true
+arca-stream.workspace = true
 arca-7z.workspace = true
 arca-icons.workspace = true
 rayon.workspace = true
@@ -87,4 +87,4 @@ path = "../arca-net"
 [features]
 rar = ["arca-rar/rar"]
 default = ["codecs-native", "rar"]
-codecs-native = ["arca-zip/codecs-native", "arca-7z/codecs-native"]
+codecs-native = ["arca-zip/codecs-native", "arca-7z/codecs-native", "arca-stream/codecs-native"]

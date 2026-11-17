@@ -532,12 +532,16 @@ impl AppController {
     }
 
     /// The formats the new-archive selector offers, in selector order. RAR
-    /// is creatable only in a build with the `rar` feature; the selector maps
-    /// by value, so leaving it out shifts nothing.
+    /// is creatable only in a build with the `rar` feature, and Zstandard
+    /// only with `codecs-native`; the selector maps by value, so leaving one
+    /// out shifts nothing.
     pub(crate) fn create_formats() -> Vec<Format> {
         Format::CREATABLE
             .into_iter()
             .filter(|format| *format != Format::Rar || cfg!(feature = "rar"))
+            .filter(|format| {
+                !matches!(format, Format::Zst | Format::TarZst) || cfg!(feature = "codecs-native")
+            })
             .collect()
     }
 
@@ -594,6 +598,8 @@ impl AppController {
     pub(crate) fn compressor_for(format: Format, codec: Codec) -> Compressor {
         match format {
             Format::SevenZ | Format::TarXz | Format::Xz => Compressor::Fixed("LZMA2"),
+            Format::TarBz2 | Format::Bz2 => Compressor::Fixed("bzip2"),
+            Format::TarZst | Format::Zst => Compressor::Fixed("Zstandard"),
             Format::Rar => Compressor::Fixed("RAR"),
             Format::Zip => Compressor::Codec {
                 codec,
@@ -3270,6 +3276,8 @@ mod compressor_tests {
             (Format::SevenZ, Compressor::Fixed("LZMA2")),
             (Format::TarXz, Compressor::Fixed("LZMA2")),
             (Format::Xz, Compressor::Fixed("LZMA2")),
+            (Format::TarBz2, Compressor::Fixed("bzip2")),
+            (Format::Zst, Compressor::Fixed("Zstandard")),
             (Format::Rar, Compressor::Fixed("RAR")),
             (
                 Format::Zip,
