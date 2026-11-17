@@ -2303,6 +2303,30 @@ fn price_optimal_paths(
         if index < committed_through {
             continue;
         }
+        // Arca: the distance memory a position is reached with is worked out
+        // once, when the parse gets there, from the arrival that won, rather
+        // than copied into every target each time a cheaper arrival lands on
+        // it. Only priced positions make arrivals, and each comes before this
+        // one and had its own memory settled when the parse passed it, so the
+        // tokens are the same and the inner loop stores three words, not eight.
+        if index > 0 {
+            let length = arrive_length[index] as usize;
+            if length == 0 {
+                // A literal emits no distance, so it leaves the remembered
+                // ones exactly as it found them.
+                arrive_reps[index] = arrive_reps[index - 1];
+                arrive_last_length[index] = arrive_last_length[index - 1];
+            } else {
+                let from = index - length;
+                let mut arrived = EncoderMatchState {
+                    reps: arrive_reps[from].map(|distance| distance as usize),
+                    last_length: arrive_last_length[from] as usize,
+                };
+                arrived.remember(length, arrive_distance[index] as usize);
+                arrive_reps[index] = arrived.reps.map(|distance| distance as u32);
+                arrive_last_length[index] = arrived.last_length as u32;
+            }
+        }
         // Every priced position extends a literal path to its successor;
         // a committed match skips only to an already priced endpoint. Blocks
         // are at most 1 MiB, so even all 15-bit literals stay below u32::MAX.
@@ -2315,10 +2339,6 @@ fn price_optimal_paths(
             price[index + 1] = literal;
             arrive_length[index + 1] = 0;
             arrive_distance[index + 1] = 0;
-            // A literal emits no distance, so it leaves the remembered ones
-            // exactly as it found them.
-            arrive_reps[index + 1] = arrive_reps[index];
-            arrive_last_length[index + 1] = arrive_last_length[index];
         }
 
         let max_distance = pos.min(options.max_match_distance);
@@ -2395,10 +2415,6 @@ fn price_optimal_paths(
                         price[target] = reached;
                         arrive_length[target] = reach as u32;
                         arrive_distance[target] = distance as u32;
-                        let mut next = state;
-                        next.remember(reach, distance);
-                        arrive_reps[target] = next.reps.map(|distance| distance as u32);
-                        arrive_last_length[target] = next.last_length as u32;
                     }
                 }
                 length = reach + 1;

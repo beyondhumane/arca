@@ -50,6 +50,14 @@ source was consulted for any of it.
   arm of the collector is gone. `parallel_streaming_blocks_are_byte_identical_to_serial_blocks`
   lets the writer's stream come out up to a thousandth larger than the
   reference's, which reaches all its history through chains.
+- **Remembered distances settled once per position.** The optimal parse
+  copied the four remembered distances and the last length into every
+  target a cheaper arrival landed on; it now works them out once, when it
+  reaches a position, from the arrival that won (`price_optimal_paths`).
+  The tokens are the same. The two pricing tests that compared the whole
+  workspace with the reference implementation compare the arrivals (price,
+  length, distance), since the remembered distances are now only settled at
+  positions the parse prices.
 
 Measured with `arca create out.rar <dir> -l <level>` on 144 MiB of source and
 executables (1,382 files), Windows 11, 16 threads, together with the

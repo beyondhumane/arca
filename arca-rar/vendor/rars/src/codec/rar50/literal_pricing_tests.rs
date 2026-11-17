@@ -397,7 +397,13 @@ fn real_no_match_collections_use_the_shortcut_and_later_matches_reset_poison() {
             if matches.runs.is_empty() {
                 assert_eq!(workspace_state(&workspace), before);
             } else {
-                assert_eq!(workspace_state(&workspace), workspace_state(&old));
+                // Arca: the remembered distances are settled only at the
+                // positions the parse prices; the arrivals must match.
+                let (new, reference) = (workspace_state(&workspace), workspace_state(&old));
+                assert_eq!(
+                    (new.price, new.length, new.distance),
+                    (reference.price, reference.length, reference.distance)
+                );
             }
         }
     }
