@@ -734,6 +734,9 @@ impl Shell {
             {
                 self.controller.state.show_shortcuts = true;
             }
+            if ui.button(s.bench_menu).clicked() {
+                self.controller.open_bench();
+            }
         })
         .response
         .named_menu(s.more_word);

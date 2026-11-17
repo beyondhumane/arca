@@ -26,7 +26,7 @@ Commands:
   password  Add, change or remove the password of an existing archive
   repair    Rebuild a damaged ZIP from the entries that can still be read
   diff      Compare two archives, or an archive and a folder
-  bench     Measure the R1 and R2 performance requirements
+  bench     Measure every codec on generated data (--codecs), or the R1 and R2 requirements on an archive
 
 Options:
   -h, --help     Print help
@@ -169,11 +169,24 @@ arca repair broken.zip -o fixed.zip
 
 ## bench
 
-Measure the R1 and R2 performance requirements against an archive.
+Two benchmarks. With `--codecs`, every codec Arca writes is measured on data generated in memory, on one thread and on `--threads`; see [Measure your own machine](benchmarks.md#measure-your-own-machine) for the method and the rating. With an archive instead, the R1 and R2 performance requirements are measured against it.
+
+```sh
+arca bench --codecs
+arca bench --codecs --threads 4 --seconds 2 --json
+arca bench big.zip
+```
 
 | Argument / option | Default | Description |
 | --- | --- | --- |
-| `<ARCHIVE>` | required | Archive to measure against. |
+| `<ARCHIVE>` | required without `--codecs` | Archive to measure R1 and R2 against. Not with `--codecs`. |
+| `--codecs` | off | Measure compression and decompression speed and ratio of Store, Deflate, Zstandard, LZMA2, bzip2 and RAR5, and print a rating. Nothing is read from or written to the disk. |
+| `-j, --threads <N>` | `0` | Threads for the second measurement; `0` means every core. With `1` only one thread is measured. |
+| `--seconds <S>` | `1` | Seconds each measurement keeps repeating its runs, from 0 to 3600. At least one run is always made. |
+| `--size <MIB>` | `16` | MiB of generated data, from 1 to 4096; raised to 1 MiB per thread. |
+| `--json` | off | Print one JSON object instead of the table: speeds in MB/s, ratios as compressed over original size, and `null` for whatever was not measured. |
+
+The table and the JSON end with the command that reproduces them. Progress goes to standard error, and only when it is a terminal. Ctrl+C stops between runs, prints what was measured and exits with status 130.
 
 ## Exit status
 
@@ -182,3 +195,4 @@ Measure the R1 and R2 performance requirements against an archive.
 | `0` | Success. |
 | `1` | Archive/I/O error, including wrong password or corrupted encrypted data. Printed to standard error as `arca: <message>`. Also a `hash` that couldn’t read a file or found a checksum that didn’t match, and a `diff` that found differences. |
 | `2` | Invalid command-line syntax/options, reported by the argument parser. Also a `diff` that couldn’t read one of its sides: for `diff`, 1 only ever means the two differ. |
+| `130` | `bench --codecs` stopped by Ctrl+C, after printing what it measured. Only in builds with RAR, which install the handler; elsewhere Ctrl+C ends the process as usual. |

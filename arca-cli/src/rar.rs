@@ -126,8 +126,9 @@ fn options(
 /// Turns Ctrl-C (SIGINT) and SIGTERM into a flag that the walk and the
 /// writer's progress callback read, so an interrupted creation ends with
 /// `Error::Cancelled`, drops its staged file and never publishes. Installed
-/// before any input is read. SIGKILL and power loss are not covered.
-fn interruption() -> Result<Arc<AtomicBool>> {
+/// before any input is read. The codec benchmark reads the same flag between
+/// runs. SIGKILL and power loss are not covered.
+pub(crate) fn interruption() -> Result<Arc<AtomicBool>> {
     let cancelled = Arc::new(AtomicBool::new(false));
     #[cfg(all(feature = "rar", unix))]
     for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
@@ -140,7 +141,7 @@ fn interruption() -> Result<Arc<AtomicBool>> {
     })
     .map_err(|e| {
         Error::Io(io::Error::other(format!(
-            "cannot watch for interruption during RAR creation: {e}"
+            "cannot watch for interruption: {e}"
         )))
     })?;
     Ok(cancelled)

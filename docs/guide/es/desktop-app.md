@@ -37,7 +37,7 @@ El botón de la barra lateral la muestra u oculta; cuando la ventana deja poco s
 - **Propiedades** muestra tamaño, fechas, tipo, permisos y el contenido de una carpeta.
 - **Sumas de comprobación** (menú de la fila) calcula CRC32, SHA-1 y SHA-256 de los ficheros elegidos en el disco, carpetas incluidas, o de las entradas elegidas dentro del archivo abierto, todas si no hay ninguna elegida; las entradas se leen directamente del archivo y nunca se escriben en disco. Se ejecuta en **Operaciones** con progreso, pausa y cancelación, y el resultado se abre en un cuadro: elige el algoritmo y **Copiar** deja las líneas en el portapapeles en el formato de `sha256sum`, listas para `arca hash --check` o `sha256sum -c`. Un fichero que no se puede leer muestra su error en su fila, mientras que una carpeta que no se puede listar detiene la tarea; en TAR, 7z y RAR una entrada dañada detiene toda la pasada, porque cada entrada se decodifica a partir del flujo anterior.
 - **Comparar con un archivo…** y **Comparar con una carpeta…** (menú de la fila) comparan el archivo abierto con otro archivo o con una carpeta que eliges. En el disco hacen lo mismo con el elemento elegido, y con dos elementos elegidos los comparan entre sí. La comparación se ejecuta en **Operaciones** con progreso, pausa y cancelación, y lee las entradas directamente de los archivos, como [`arca diff`](cli-reference.md#diff). El resultado se abre en un cuadro: fíltralo por **Todas**, **Solo en el primero**, **Solo en el segundo** o **Cambiadas**, y **Copiar** deja en el portapapeles las líneas que se ven, en el formato de `arca diff`. La contraseña del archivo abierto se prueba también en el otro lado; un archivo que necesita otra hace fallar la tarea con el error de contraseña.
-- **Más** incluye herramientas de selección, cambio de contraseña, comprobación, ajustes, la lista de atajos y **Buscar actualizaciones**; una versión nueva abre un cuadro con sus notas y se instala desde la propia aplicación.
+- **Más** incluye herramientas de selección, cambio de contraseña, comprobación, ajustes, la lista de atajos, la [prueba de rendimiento](#prueba-de-rendimiento) y **Buscar actualizaciones**; una versión nueva abre un cuadro con sus notas y se instala desde la propia aplicación.
 
 ## Vista previa integrada
 
@@ -126,6 +126,10 @@ leerlo.
 Arrastrar ficheros virtuales fuera de un 7z está
 desactivado para no descodificar repetidamente bloques sólidos: usa Copiar o
 Extraer. El portapapeles de ficheros depende de la plataforma.
+
+## Prueba de rendimiento
+
+**Más > Prueba de rendimiento…** abre la misma prueba que [`arca bench --codecs`](benchmarks.md#mide-tu-propia-máquina): cada códec con el que Arca escribe, sobre datos generados en memoria, con un hilo y con los hilos elegidos arriba (todos los núcleos por defecto). **Iniciar** la ejecuta en segundo plano y la tabla se va llenando a medida que se mide cada códec, con una barra para el progreso; **Detener**, **Cerrar**, Escape o salir de la aplicación la detienen entre pasadas. Al terminar la ventana muestra la puntuación, y **Copiar** deja en el portapapeles el mismo texto que imprime la línea de comandos, terminado con la orden que lo reproduce. La prueba usa los valores predeterminados de la orden: 16 MiB y 1 segundo por medición.
 
 ## Operaciones y teclado
 

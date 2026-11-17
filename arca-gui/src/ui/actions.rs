@@ -344,6 +344,7 @@ pub(crate) enum ModalKind {
     Compare,
     Label,
     Format,
+    Benchmark,
 }
 
 pub(crate) fn column_text(

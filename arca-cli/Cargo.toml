@@ -19,6 +19,7 @@ arca-zip.workspace = true
 arca-tar.workspace = true
 arca-stream.workspace = true
 arca-compare.workspace = true
+arca-bench.workspace = true
 arca-7z.workspace = true
 flate2.workspace = true
 clap.workspace = true

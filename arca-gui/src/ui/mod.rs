@@ -1,4 +1,5 @@
 mod actions;
+mod bench;
 mod browser;
 mod compare;
 mod dialogs;
@@ -429,6 +430,7 @@ impl Shell {
         self.notice_new_tasks();
         let state = &self.controller.state;
         let waiting = self.dialog.is_some()
+            || self.controller.bench().running()
             || state.busy
             || state.listing
             || state.channel.is_some()
@@ -576,6 +578,8 @@ impl Shell {
             Some(ModalKind::Checksums)
         } else if self.controller.comparison().is_some() {
             Some(ModalKind::Compare)
+        } else if self.controller.bench().open {
+            Some(ModalKind::Benchmark)
         } else if state.show_update && state.update.is_some() {
             Some(ModalKind::Update)
         } else if state.show_settings {
@@ -610,6 +614,7 @@ impl Shell {
             ModalKind::Properties => self.properties = None,
             ModalKind::Checksums => self.controller.close_checksums(),
             ModalKind::Compare => self.controller.close_comparison(),
+            ModalKind::Benchmark => self.controller.close_bench(),
             ModalKind::Update => self.controller.state.show_update = false,
         }
     }
@@ -2209,6 +2214,7 @@ impl eframe::App for Shell {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.controller.close_bench();
         self.controller.drop_undo();
         self.controller.state.saved.keyring.close();
     }

@@ -55,6 +55,8 @@ Performance requirements (design document, section 05)
 
 Las cifras publicadas de R1, R2 y R3, y el script que las reproduce, están en la página de [benchmarks](benchmarks.md).
 
+`arca bench --codecs` no necesita ningún archivo: mide cada códec sobre datos que genera en memoria e imprime una puntuación para comparar máquinas. Consulta [Mide tu propia máquina](benchmarks.md#mide-tu-propia-máquina).
+
 ## Benchmarks reproducibles
 
 - Reporta el mejor de varias ejecuciones, y borra el directorio de salida antes de cada pasada.

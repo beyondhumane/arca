@@ -10,6 +10,7 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+mod bench;
 mod diff;
 mod hash;
 mod rar;
@@ -198,10 +199,48 @@ enum Cmd {
         #[arg(long, value_name = "PASSWORD", help = "Password of the second archive")]
         password_b: Option<String>,
     },
-    #[command(about = "Measure the R1 and R2 performance requirements")]
+    #[command(
+        about = "Measure every codec on generated data (--codecs), or the R1 and R2 requirements on an archive"
+    )]
     Bench {
-        #[arg(help = "Archive to measure against")]
-        archive: PathBuf,
+        #[arg(
+            required_unless_present = "codecs",
+            conflicts_with = "codecs",
+            help = "Archive to measure the R1 and R2 requirements against"
+        )]
+        archive: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Compress and decompress data generated in memory with every codec, on one thread and on --threads, and print the speeds, the ratios and a rating. Nothing is read from or written to the disk"
+        )]
+        codecs: bool,
+        #[arg(
+            short = 'j',
+            long,
+            default_value_t = 0,
+            requires = "codecs",
+            help = "Threads for the second measurement. 0 means every core"
+        )]
+        threads: usize,
+        #[arg(
+            long,
+            default_value_t = arca_bench::Options::SECONDS,
+            value_parser = bench::parse_seconds,
+            requires = "codecs",
+            help = "Seconds each measurement keeps repeating its runs; at least one run is always made"
+        )]
+        seconds: f64,
+        #[arg(
+            long,
+            value_name = "MIB",
+            default_value_t = arca_bench::Options::SIZE_MIB,
+            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=4096),
+            requires = "codecs",
+            help = "Size of the generated data in MiB; raised to 1 MiB per thread"
+        )]
+        size: usize,
+        #[arg(long, requires = "codecs", help = "Print the result as JSON")]
+        json: bool,
     },
 }
 
@@ -401,7 +440,17 @@ fn run(cli: Cli) -> Result<()> {
             password.as_deref(),
             password_b.as_deref().or(password.as_deref()),
         )),
-        Cmd::Bench { archive } => bench(&archive),
+        Cmd::Bench {
+            archive,
+            codecs,
+            threads,
+            seconds,
+            size,
+            json,
+        } => match archive {
+            Some(archive) if !codecs => bench(&archive),
+            _ => bench::codecs(threads, seconds, size, json),
+        },
     }
 }
 

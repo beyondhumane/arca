@@ -1,0 +1,23 @@
+[package]
+name = "arca-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Benchmark of the codecs Arca writes, on data it generates in memory"
+
+# No features of its own, as in arca-compare: the binaries turn on `rar` in
+# arca-rar and the native codecs in arca-zip and arca-stream, and cargo hands
+# those to this crate as well. A codec a build lacks shows up as not available.
+[dependencies]
+arca-core.workspace = true
+arca-zip.workspace = true
+arca-stream.workspace = true
+arca-xz.workspace = true
+arca-rar.workspace = true
+bzip2.workspace = true
+rayon.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"

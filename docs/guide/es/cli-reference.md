@@ -26,7 +26,7 @@ Commands:
   password  Add, change or remove the password of an existing archive
   repair    Rebuild a damaged ZIP from the entries that can still be read
   diff      Compare two archives, or an archive and a folder
-  bench     Measure the R1 and R2 performance requirements
+  bench     Measure every codec on generated data (--codecs), or the R1 and R2 requirements on an archive
 
 Options:
   -h, --help     Print help
@@ -169,11 +169,24 @@ arca repair roto.zip -o reparado.zip
 
 ## bench
 
-Mide los requisitos de rendimiento R1 y R2 contra un archivo.
+Dos pruebas. Con `--codecs` se mide cada códec con el que Arca escribe sobre datos generados en memoria, con un hilo y con `--threads`; el método y la puntuación están en [Mide tu propia máquina](benchmarks.md#mide-tu-propia-máquina). Con un archivo en su lugar, se miden contra él los requisitos de rendimiento R1 y R2.
+
+```sh
+arca bench --codecs
+arca bench --codecs --threads 4 --seconds 2 --json
+arca bench big.zip
+```
 
 | Argumento / opción | Por defecto | Descripción |
 | --- | --- | --- |
-| `<ARCHIVE>` | obligatorio | Archivo contra el que medir. |
+| `<ARCHIVE>` | obligatorio sin `--codecs` | Archivo contra el que medir R1 y R2. No va con `--codecs`. |
+| `--codecs` | desactivado | Mide la velocidad de compresión y de descompresión y la relación de Store, Deflate, Zstandard, LZMA2, bzip2 y RAR5, e imprime una puntuación. No se lee ni se escribe nada en el disco. |
+| `-j, --threads <N>` | `0` | Hilos de la segunda medición; `0` significa todos los núcleos. Con `1` solo se mide un hilo. |
+| `--seconds <S>` | `1` | Segundos que cada medición repite sus pasadas, de 0 a 3600. Siempre se hace al menos una. |
+| `--size <MIB>` | `16` | MiB de datos generados, de 1 a 4096; se suben a 1 MiB por hilo. |
+| `--json` | desactivado | Imprime un objeto JSON en lugar de la tabla: velocidades en MB/s, relaciones como tamaño comprimido entre original y `null` para lo que no se midió. |
+
+La tabla y el JSON terminan con la orden que los reproduce. El progreso va a la salida de error estándar, y solo cuando es un terminal. Ctrl+C detiene la prueba entre pasadas, imprime lo medido y sale con el estado 130.
 
 ## Estado de salida
 
@@ -182,4 +195,5 @@ Mide los requisitos de rendimiento R1 y R2 contra un archivo.
 | `0` | Éxito. |
 | `1` | Error de archivo/E/S, incluida contraseña incorrecta o datos cifrados corruptos. Se imprime como `arca: <message>` en la salida de error. También un `hash` que no pudo leer un fichero o encontró una suma que no coincide, y un `diff` que encontró diferencias. |
 | `2` | Sintaxis u opciones CLI inválidas, indicadas por el analizador de argumentos. También un `diff` que no pudo leer uno de sus lados: en `diff`, 1 solo significa que difieren. |
+| `130` | `bench --codecs` detenido con Ctrl+C, después de imprimir lo medido. Solo en compilaciones con RAR, que instalan el manejador; en las demás Ctrl+C termina el proceso como siempre. |
 </content>

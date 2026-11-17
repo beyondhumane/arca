@@ -55,6 +55,8 @@ Performance requirements (design document, section 05)
 
 The published figures for R1, R2 and R3, and the script that reproduces them, are on the [benchmarks](benchmarks.md) page.
 
+`arca bench --codecs` needs no archive: it measures every codec on data it generates in memory and prints a rating to compare machines by. See [Measure your own machine](benchmarks.md#measure-your-own-machine).
+
 ## Reproducible benchmarks
 
 - Report the best of several runs, and delete the output directory before every pass.
