@@ -91,3 +91,147 @@ results; report their observed state and this limitation.
 
 No generated corpora, binaries or raw machine-specific results belong in git.
 Attach those to the experiment report along with exact commands and revisions.
+
+# Comparison with other archivers on Windows
+
+`compare.ps1` measures Arca against WinRAR, 7-Zip, NanaZip and xz in a single
+unattended command. It builds the corpora, runs every row, checks every output,
+and writes tables ready for `docs/guide/benchmarks.md`. Run it once on a quiet
+machine: close builds, browsers, games and sync clients, and leave the machine
+alone until the script finishes.
+
+```powershell
+cargo build --release -p arca-cli
+powershell -NoProfile -ExecutionPolicy Bypass -File benchmarks\compare.ps1
+```
+
+## What it needs
+
+- Windows PowerShell 5.1 or later. Admin rights and downloads are not needed.
+- This repository. The script builds the corpus generators with cargo, runs
+  `git archive` on a pinned commit, and uses Windows' own `tar.exe`.
+- Arca at `target\release\arca.exe`, or another build given with `-Arca`.
+- Optional tools. Each one is found where it is usually installed, or can be
+  given with `-WinRar`, `-Rar`, `-SevenZip`, `-NanaZip` or `-Xz`:
+  - WinRAR: `C:\Program Files\WinRAR\WinRAR.exe` for ZIP and `Rar.exe` for RAR.
+  - 7-Zip: `7z.exe` in Program Files or on PATH.
+  - NanaZip: the `NanaZipC.exe` app alias.
+  - xz from Git for Windows: `mingw64\bin\xz.exe`.
+
+  A tool that is not installed is skipped with a note in the log and in the
+  report. The run still succeeds.
+- About 2 GB free in `%TEMP%`, or in the folder given with `-Work`.
+
+## How long it takes
+
+Budget about an hour. That is an estimate: no full run has been timed end to
+end. Building the corpora comes first and takes a few minutes; they are kept
+if the run stops. Most of the measuring time goes to LZMA at `best`, which
+Arca's 7z runs on one thread, and which a .tar.xz of this size also gets on
+one thread, from Arca and from xz alike. 7-Zip and NanaZip add their own rows
+to ZIP, 7z and .tar.xz, and `-SingleThread` adds a second pass at one thread.
+The log prints a rough estimate of the time left after every group.
+
+## What it measures
+
+The script builds five corpora once, with fixed seeds, and records the file
+count, the bytes and a SHA-256 of each corpus's file list:
+
+| Corpus | Contents |
+| --- | --- |
+| `small` | 50,000 files of 0 to 16 KiB, from `small_files` |
+| `source` | This repository at a pinned commit, from `git archive` |
+| `text` | 4 prose-like text files of up to 8 MiB each |
+| `mixed` | The `exe` and `media` kinds of `rar-corpus` |
+| `compressed` | Random bytes from `rar-corpus`, standing in for data that is already compressed |
+
+Each format is measured at three levels:
+
+| Format | fast | normal | best |
+| --- | --- | --- | --- |
+| ZIP | Arca `-l 1`, 7-Zip and NanaZip `-mx1`, WinRAR `-afzip -m1` | `-l 6`, `-mx5`, `-m3` | `-l 9`, `-mx9`, `-m5` |
+| 7z (LZMA2) | Arca `-l 1`, 7-Zip and NanaZip `-mx1` | `-l 6`, `-mx5` | `-l 9`, `-mx9` |
+| .tar.xz | Arca `-l 1`, xz `-1`, 7-Zip and NanaZip `-txz -mx1` | `-l 6`, `-6`, `-mx5` | `-l 9`, `-9`, `-mx9` |
+| RAR | Arca `-l 1`, `Rar.exe -m1` | `-l 6`, `-m3` | `-l 9`, `-m5` |
+
+Every tool gets the same thread count: all logical processors, through `-j`,
+`-mmt`, `-mt` or `-T`. Arca's 7z and RAR writers ignore `-j`, and the report
+marks those rows.
+
+Not every format runs on every corpus, to keep the run near an hour:
+
+- ZIP runs on all five corpora.
+- 7z runs on `source`, `text` and `mixed`.
+- .tar.xz runs on `source` and `text`.
+- RAR runs on every corpus except `small`.
+
+Pass `-Corpora` to choose the corpora yourself.
+
+Each tool's normal-level archive is extracted and tested by every tool that
+reads the format. Arca's archive is always included. So is one third-party
+archive per format, from 7-Zip, NanaZip or WinRAR for ZIP, from 7-Zip for 7z,
+from xz for .tar.xz, and from `Rar.exe` for RAR.
+
+Arca writes the TAR itself when it creates a .tar.xz. xz and 7-Zip instead
+compress a TAR made beforehand, untimed. When extracting a .tar.xz, only Arca
+writes the files; the other tools write the `.tar`.
+
+## How the runs are done
+
+- **Order and repeats.** The tools in a group run interleaved, A B C then
+  C B A, `-Runs` times (3 by default).
+- **What each run records.** The wall time, including process start. The CPU
+  time, user plus kernel, of the whole process tree, measured through a job
+  object. The peak working set. The exact output size.
+- **Before and between runs.** Every corpus is read in full before the first
+  run, so the cache is warm. Outputs are deleted between runs, outside the
+  timed part.
+- **Checks.** Every archive is tested by its own tool and by a second one:
+  7-Zip, NanaZip, WinRAR or xz for Arca's archives, and Arca for the others'.
+  `arca diff` also compares every archive with the corpus. Every extraction is
+  compared with the corpus.
+- **Failures.** A failed run or check marks its row as failed, and the script
+  goes on.
+- **A quiet machine.** At the start, the processor load is sampled for 10 s.
+  If the average is over 15%, the script names the busiest processes and
+  stops. The check runs again after the corpora are built; that time the
+  script waits up to five minutes for the load to settle, because the
+  antivirus scans the new files, and then stops if it is still over 15%.
+  `-Force` skips both checks.
+- **Interruptions.** Run the same command again to resume. Rows already in
+  `results.csv` are skipped, unless their command, tool binary or corpus has
+  changed.
+- **Cleanup.** The script writes nothing outside its work folder, apart from
+  the corpus generators in `target`. When it finishes, it deletes its
+  archives, its extractions and, unless you pass `-KeepCorpora`, the corpora.
+
+## Results
+
+The script writes these files to `<work>\results`:
+
+- `samples.csv`: every run.
+- `results.csv`: one line per row, with the median and range of each measure,
+  the verification and the exact command.
+- `results.json`: the rows, plus the machine, the tools and the corpora.
+- `results.md`: one section per format, with tables for creating, extracting
+  and testing.
+- `compare.log`: the log of the run.
+
+The report records the CPU, the cores, the RAM, the OS and the disk model
+(from `Get-PhysicalDisk`). It also records whether Defender's real-time
+protection was on, the power plan, the Arca commit, and every tool's version
+and SHA-256.
+
+In `results.md`, the commands use `<work>` in place of the absolute path, so
+the user name does not end up in the docs.
+
+## Dry run
+
+`-Quick` runs on tiny corpora, once per tool, in its own folder
+(`%TEMP%\arca-compare-quick`). It takes a few minutes and proves that every
+row works on the machine. It does not stop on a busy machine. Never publish
+its numbers.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File benchmarks\compare.ps1 -Quick
+```
