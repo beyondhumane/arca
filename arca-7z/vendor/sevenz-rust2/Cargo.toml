@@ -177,7 +177,7 @@ version = "0.15"
 optional = true
 
 [dependencies.ppmd-rust]
-version = "1"
+version = "=1.5.2"
 optional = true
 
 [dependencies.sha2]

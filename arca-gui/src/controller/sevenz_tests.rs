@@ -241,6 +241,7 @@ fn sevenz_creation_conflicts_preserve_the_original_and_open_the_renamed_output()
             inputs: vec![input],
             format: Format::SevenZ,
             codec: Codec::Deflate,
+            sevenz: arca_7z::Compression::Lzma2,
             level: Level::NORMAL,
             password: None,
             hide_names: false,

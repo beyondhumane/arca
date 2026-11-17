@@ -19,8 +19,10 @@ use sevenz_rust2::{
     ArchiveEntry, ArchiveWriter, BlockDecoder, EncoderMethod as M, Password, SourceReader,
 };
 
-use crate::write::{methods, new_entry, push_files, workers, Tracker};
-use crate::{entry_path, upstream, CreateOptions, Phase, Progress, SevenZArchive, Source};
+use crate::write::{header_methods, methods, new_entry, push_files, workers, Stage, Tracker};
+use crate::{
+    entry_path, upstream, Compression, CreateOptions, Phase, Progress, SevenZArchive, Source,
+};
 
 /// Something to put in: a file read from `source`, or with no source a
 /// folder.
@@ -35,24 +37,38 @@ pub struct Change<'a> {
     /// in a slash stays as it was: 7-Zip writes folders without one, Arca with.
     pub name: &'a dyn Fn(&Entry) -> Option<String>,
     /// New entries. One whose name is already in the archive replaces the
-    /// entry that had it.
+    /// entry that had it. They are compressed the way the archive's first
+    /// block was, when that is a method a new 7z can have, and with LZMA2
+    /// otherwise.
     pub add: &'a [Addition],
-    /// The level everything that is encoded again is compressed at, but for
-    /// blocks that were stored, which stay stored.
+    /// The level everything that is encoded again is compressed at. Each
+    /// block keeps its method and filters, stored blocks stay stored, and
+    /// [`Level::STORE`] stores everything.
     pub level: Level,
+}
+
+/// A block with coders this build cannot write again, written with the ones
+/// it could keep and LZMA2 for the method it lost.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Recoded {
+    /// Its entries, by the names they have now.
+    pub entries: Vec<String>,
+    /// The coders it lost, as 7z names them.
+    pub lost: Vec<String>,
 }
 
 /// Writes `input` again at `output` with `change` applied, then reads all of
 /// `output` back. An encrypted archive needs its password and keeps it, with
 /// its names hidden again if they were; a partly encrypted one comes out
-/// encrypted throughout. Every entry keeps its times and attributes.
+/// encrypted throughout. Every entry keeps its times and attributes. Returns
+/// the blocks that could not keep their coders.
 pub fn rewrite_7z(
     input: &Path,
     output: &Path,
     password: Option<&str>,
     change: &Change<'_>,
     notify: &mut dyn FnMut(Progress<'_>) -> bool,
-) -> Result<()> {
+) -> Result<Vec<Recoded>> {
     let mut source = SevenZArchive::open(io::BufReader::new(fs::File::open(input)?), password)?;
     let password = password.filter(|p| !p.is_empty());
     if source.encrypted && password.is_none() {
@@ -62,6 +78,7 @@ pub fn rewrite_7z(
         level: change.level,
         password: password.filter(|_| source.encrypted),
         hide_names: source.archive.header_encrypted,
+        compression: compression_of(&source.archive),
     };
     let plan = plan(&source, change)?;
     let data = |i: usize| {
@@ -95,12 +112,13 @@ pub fn rewrite_7z(
         done: 0,
         bytes: 0,
     };
+    let mut recoded = Vec::new();
     let mut copied = vec![false; source.archive.blocks.len()];
     for i in 0..plan.len() {
         match source.archive.stream_map.file_block_index[i] {
             Some(block) if !copied[block] => {
                 copied[block] = true;
-                copy_block(
+                recoded.extend(copy_block(
                     &mut source,
                     block,
                     &plan,
@@ -108,7 +126,7 @@ pub fn rewrite_7z(
                     &mut writer,
                     &mut progress,
                     &mut expected,
-                )?;
+                )?);
             }
             Some(_) => {}
             None => {
@@ -159,8 +177,7 @@ pub fn rewrite_7z(
     push_files(&mut writer, &sources, &metadata, &full, &options, &tracker)?;
     expected.extend(sources.iter().map(|s| s.name.clone()));
 
-    // A header must never reuse the last block's AES salt and IV.
-    writer.set_content_methods(methods(&options, false, 1)?);
+    writer.set_content_methods(header_methods(options.password)?);
     let file = writer
         .finish()?
         .into_inner()
@@ -168,7 +185,56 @@ pub fn rewrite_7z(
     file.sync_all()?;
     drop(file);
 
-    verify(output, password, expected, notify)
+    verify(output, password, expected, notify)?;
+    Ok(recoded)
+}
+
+/// What additions are compressed with: the method of the first block, if a
+/// new 7z can have it, so that what goes into a stored archive is stored.
+fn compression_of(archive: &sevenz_rust2::Archive) -> Compression {
+    archive
+        .blocks
+        .iter()
+        .flat_map(|block| block.coders.iter())
+        .find_map(
+            |coder| match Stage::of(coder.encoder_method_id(), coder.properties())? {
+                Stage::Filter(_) => None,
+                stage => Some(
+                    Compression::ALL
+                        .into_iter()
+                        .find(|c| c.stage() == stage)
+                        .unwrap_or_default(),
+                ),
+            },
+        )
+        .unwrap_or_default()
+}
+
+/// The coders to write `block` again with, in the order they are undone,
+/// and the names of those that cannot be written: a method is replaced with
+/// LZMA2, a filter left out.
+fn chain_of(block: &sevenz_rust2::Block) -> (Vec<Stage>, Vec<String>) {
+    let mut chain = Vec::new();
+    let mut lost = Vec::new();
+    for (_, coder) in block.ordered_coder_iter() {
+        let id = coder.encoder_method_id();
+        if id == M::ID_AES256_SHA256 {
+            continue;
+        }
+        match Stage::of(id, coder.properties()) {
+            Some(stage) => chain.push(stage),
+            None => {
+                lost.push(
+                    M::by_id(id)
+                        .map_or_else(|| format!("method {id:02X?}"), |m| m.name().to_string()),
+                );
+            }
+        }
+    }
+    if !lost.is_empty() && !chain.iter().any(|s| !matches!(s, Stage::Filter(_))) {
+        chain.insert(0, Stage::Lzma2);
+    }
+    (chain, lost)
 }
 
 /// The name each entry of `source` keeps, checked the way the reader will
@@ -278,7 +344,7 @@ fn copy_block<R: Read + io::Seek, W: Write + io::Seek>(
     writer: &mut ArchiveWriter<W>,
     progress: &mut Counter<'_>,
     expected: &mut Vec<String>,
-) -> Result<()> {
+) -> Result<Option<Recoded>> {
     let archive = &source.archive;
     let first = archive.stream_map.block_first_file_index[block];
     let mut pieces = Vec::new();
@@ -299,22 +365,21 @@ fn copy_block<R: Read + io::Seek, W: Write + io::Seek>(
         }
     }
     if pieces.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
-    let coders = &archive.blocks[block].coders;
-    let has = |id: &[u8]| coders.iter().any(|c| c.encoder_method_id() == id);
-    let encrypted = has(M::ID_AES256_SHA256);
-    let stored = coders.iter().all(|c| {
-        let id = c.encoder_method_id();
-        id == M::ID_COPY || id == M::ID_AES256_SHA256
-    });
-    let level = if stored { Level::STORE } else { options.level };
-    let block_options = CreateOptions {
-        level,
-        password: options.password,
-        hide_names: options.hide_names,
-    };
-    writer.set_content_methods(methods(&block_options, has(M::ID_BCJ_X86), workers(level))?);
+    let encrypted = archive.blocks[block]
+        .coders
+        .iter()
+        .any(|c| c.encoder_method_id() == M::ID_AES256_SHA256);
+    let (chain, lost) = chain_of(&archive.blocks[block]);
+    let size = archive.blocks[block].get_unpack_size();
+    writer.set_content_methods(methods(
+        options.password,
+        &chain,
+        options.level,
+        size,
+        workers(options.level),
+    )?);
     let no_password = Password::empty();
     let password = if encrypted {
         &source.password
@@ -369,12 +434,15 @@ fn copy_block<R: Read + io::Seek, W: Write + io::Seek>(
     if pieces.iter().any(|&(i, _)| !archive.files[i].has_crc) {
         io::copy(&mut reader, &mut io::sink()).map_err(|e| broken(e, encrypted))?;
     }
-    expected.extend(
-        pieces
-            .iter()
-            .map(|&(i, _)| plan[i].clone().unwrap_or_default()),
-    );
-    Ok(())
+    let names: Vec<String> = pieces
+        .iter()
+        .map(|&(i, _)| plan[i].clone().unwrap_or_default())
+        .collect();
+    expected.extend(names.iter().cloned());
+    Ok((!lost.is_empty()).then_some(Recoded {
+        entries: names,
+        lost,
+    }))
 }
 
 fn broken(error: io::Error, encrypted: bool) -> Error {

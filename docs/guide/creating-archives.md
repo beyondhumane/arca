@@ -2,7 +2,7 @@
 description: Levels, codecs, threads and formats for arca create, including new RAR5 archives.
 group: Using Arca
 order: 4
-keywords: create compress level codec zstd deflate store threads tar gzip xz txz lzma2 bzip2 bz2 tbz2 zst tzst rar rar5 split volume 001 sfx self-extracting exe -l -c -j -v
+keywords: create compress level codec zstd deflate store threads tar gzip xz txz lzma2 lzma ppmd bcj arm64 delta filter bzip2 bz2 tbz2 zst tzst rar rar5 split volume 001 sfx self-extracting exe -l -c -j -v
 ---
 
 # Creating archives
@@ -14,8 +14,8 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
 | `-l, --level` | store · fast · normal · best | normal | Compression level. |
-| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, bzip2 in .bz2 and .tar.bz2, Zstandard in .zst and .tar.zst, the RAR compressor in .rar (auto or store only). |
-| `-j, --threads` | a number | 0 | ZIP, XZ, Zstandard and RAR thread limit. 0 means every core; bzip2 always uses one; 7z uses every core its memory budget allows. |
+| `-c, --codec` | auto · store · deflate · zstd · lzma2 · lzma · ppmd · bzip2 | auto | Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, bzip2 in .bz2 and .tar.bz2, Zstandard in .zst and .tar.zst, the RAR compressor in .rar (auto or store only). .7z also takes lzma, ppmd, bzip2, deflate and store, see [7z](#7z). |
+| `-j, --threads` | a number | 0 | ZIP, XZ, Zstandard and RAR thread limit. 0 means every core; bzip2 always uses one; 7z with LZMA2 uses every core its memory budget allows, and one with any other method. |
 | `-p, --password` | text | none | Encrypt ZIP or 7z with AES-256. Refused for .rar. |
 | `--hide-names` | flag | off | Encrypt 7z headers too; requires a nonempty password. |
 | `-v, --volume` | a size: bytes, or k, m, g | none | Split the archive into parts of that size, `out.zip.001`, `out.zip.002`… Not for .rar. |
@@ -60,19 +60,49 @@ Scaling measured 1.79× on two threads, 90% efficiency, against a design require
 ```sh
 arca create copy.7z my-files/ -l normal
 arca create stored.7z my-files/ -c store
+arca create notes.7z logs/ -c ppmd -l best
 arca create secret.7z my-files/ -c lzma2 -p "a password" --hide-names
 ```
 
-The levels `store`, `fast`, `normal` and `best` select Copy or LZMA2 levels 1, 6
-and 9. `-c store` overrides the level. Only `auto`, `store` and `lzma2` are
-accepted for 7z; explicit Deflate/Zstandard codec selection applies to ZIP,
-not 7z. TAR ignores those codec choices and `.tar.gz` always uses gzip;
-`lzma2` is rejected outside 7z.
-Files are compressed together in solid blocks of up to 256 MiB, grouped by
-extension the way 7-Zip does; x86 executables (`.exe`, `.dll` and the like) go
-in blocks of their own behind the BCJ filter, which makes machine code smaller.
-LZMA2 runs on as many cores as fit in 2 GiB (every core at `fast` and `normal`,
-one at `best`), and entries are listed in that grouped order.
+`-c` picks the method; the level sets its parameters the way 7-Zip does, and
+`-l store` or `-c store` stores whatever else is asked:
+
+| `-c` | Method | Best for | Parameters by level 1 · 5 · 6 · 9 |
+| --- | --- | --- | --- |
+| `auto`, `lzma2` | LZMA2 (default) | anything; the only one on several cores | dictionary 1 · 8 · 8 · 64 MiB |
+| `lzma` | LZMA | readers that predate LZMA2 | dictionary 1 · 8 · 8 · 64 MiB |
+| `ppmd` | PPMd | text: logs, source code, documents | order 4 · 6 · 8 · 32, model 1 · 16 · 32 · 192 MiB |
+| `bzip2` | BZip2 | speed with a fair ratio | blocks of 100 · 500 · 600 · 900 kB |
+| `deflate` | Deflate | the fastest to unpack | zlib level 1 · 5 · 6 · 9 |
+| `store` | Copy | data that is already compressed | none |
+
+BZip2 needs a build with the default `codecs-native` feature. Zstandard is not
+offered for 7z because 7-Zip itself cannot read it there; `-c zstd` applies to
+ZIP only, TAR ignores codec choices and `.tar.gz` always uses gzip.
+
+Memory is bounded the way the LZMA2 threads are. LZMA2 runs on as many cores as
+fit in 2 GiB (every core at `fast` and `normal`, one at `best`); every other
+method runs on one. LZMA dictionaries and PPMd models are cut down to the size
+of the block they compress, so a small archive never asks a decoder for 64 MiB.
+The PPMd model never exceeds 192 MiB, 7-Zip's own maximum level, which is below
+the 256 MiB per coder that Arca's reader accepts, so every archive Arca writes
+it can also read.
+
+Files are compressed together in solid blocks of up to 256 MiB, one group per
+filter, sorted by extension the way 7-Zip does. Each file's first bytes pick
+its filter, as in 7-Zip: Windows (PE), Linux (ELF) and macOS (Mach-O) programs
+get the branch filter of their machine, x86/x64 (BCJ), ARM, ARM-Thumb, ARM64,
+PowerPC, SPARC or IA-64, and PCM WAV audio gets Delta at its sample-frame size.
+A program whose header says nothing goes by its extension (`.exe`, `.dll` and
+the like get BCJ). RISC-V code gets no filter. The ARM64 filter needs 7-Zip
+23.01 or later to unpack; older 7-Zip and p7zip 16.02 cannot. Entries are
+listed in that grouped order.
+
+Editing a 7z in the window (deleting, renaming or adding entries) writes every
+block that keeps something again with its own method and filters, at the
+level in use; stored blocks stay stored. Files added to an archive take the
+method of its first block. A coder Arca cannot write again is left out, and
+LZMA2 replaces a method that is lost.
 
 7z includes empty files and directories and rejects symlink/reparse-point and
 special-file inputs rather than following them. Creation writes a temporary

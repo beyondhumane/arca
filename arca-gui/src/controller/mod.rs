@@ -654,6 +654,9 @@ impl AppController {
         [Level::STORE, Level::FAST, Level::NORMAL, Level::BEST];
 
     pub(crate) fn compressor(&self) -> Compressor {
+        if self.state.format == Format::SevenZ {
+            return Compressor::SevenZ(self.state.sevenz);
+        }
         Self::compressor_for(self.state.format, self.state.codec)
     }
 
@@ -676,6 +679,24 @@ impl AppController {
 
     pub(crate) fn set_codec(&mut self, codec: Codec) {
         self.state.codec = codec;
+    }
+
+    pub(crate) fn set_sevenz(&mut self, compression: arca_7z::Compression) {
+        self.state.sevenz = compression;
+    }
+
+    /// The 7z methods this build writes.
+    pub(crate) fn sevenz_methods() -> impl Iterator<Item = arca_7z::Compression> {
+        arca_7z::Compression::ALL
+            .into_iter()
+            .filter(|c| c.available())
+    }
+
+    pub(crate) fn sevenz_name(&self, compression: arca_7z::Compression) -> &'static str {
+        match compression {
+            arca_7z::Compression::Store => self.s().codec_store,
+            other => other.name(),
+        }
     }
 
     pub(crate) fn set_level(&mut self, level: Level) {
@@ -780,6 +801,7 @@ impl AppController {
             inputs: self.state.pending_inputs.clone(),
             format,
             codec: self.state.codec,
+            sevenz: self.state.sevenz,
             level: self.state.level,
             password,
             hide_names: format == Format::SevenZ && self.state.hide_names,
@@ -872,6 +894,7 @@ impl AppController {
                 started: None,
                 format,
                 codec,
+                sevenz: arca_7z::Compression::Lzma2,
                 level,
                 into_subfolder,
                 pending_inputs: Vec::new(),
@@ -3146,6 +3169,7 @@ mod compress_tests {
             inputs: vec![std::env::temp_dir().join("arca-close-test-input")],
             format: Format::Zip,
             codec: Codec::Deflate,
+            sevenz: arca_7z::Compression::Lzma2,
             level: Level::NORMAL,
             password,
             hide_names: false,
@@ -3386,7 +3410,10 @@ mod compressor_tests {
     fn only_zip_lets_the_codec_be_picked() {
         let mut controller = AppController::new(Settings::default());
         for (format, expected) in [
-            (Format::SevenZ, Compressor::Fixed("LZMA2")),
+            (
+                Format::SevenZ,
+                Compressor::SevenZ(arca_7z::Compression::Lzma2),
+            ),
             (Format::TarXz, Compressor::Fixed("LZMA2")),
             (Format::Xz, Compressor::Fixed("LZMA2")),
             (Format::TarBz2, Compressor::Fixed("bzip2")),

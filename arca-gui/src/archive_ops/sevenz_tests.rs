@@ -623,3 +623,31 @@ fn external_encrypted_solid_selection_supports_both_header_modes() {
         assert_eq!(fs::read(dest.join("c")).unwrap(), vec![b'c'; 100_000]);
     }
 }
+
+#[test]
+fn the_picked_sevenz_method_reaches_the_archive() {
+    let room = Room::new();
+    let input = room.path("a.txt");
+    fs::write(&input, b"example contents ".repeat(200)).unwrap();
+    let out = room.path("picked.7z");
+    for (compression, method) in [
+        (arca_7z::Compression::Ppmd, arca_core::Method::Ppmd),
+        (arca_7z::Compression::Lzma, arca_core::Method::Lzma),
+        (arca_7z::Compression::Deflate, arca_core::Method::Deflate),
+        (arca_7z::Compression::Store, arca_core::Method::Store),
+    ] {
+        compress_with(
+            &out,
+            None,
+            std::slice::from_ref(&input),
+            Format::SevenZ,
+            (Codec::Zstd, compression),
+            Level::NORMAL,
+            &|_, _, _| true,
+            (None, false),
+        )
+        .unwrap();
+        let entries = list_entries(&out, None, &|_, _, _| true).unwrap().0;
+        assert_eq!(entries[0].method, method);
+    }
+}

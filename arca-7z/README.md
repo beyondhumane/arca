@@ -82,8 +82,14 @@ Phase::{Validate, Extract, Test, Create}
 
 ## Creation
 
-`Level::Store` uses Copy, and Fast/Normal/Best use LZMA2 levels 1/6/9. Each regular
-file is a separate block; creation is non-solid. Directories and empty files are
+`CreateOptions::compression` picks LZMA2 (default), LZMA, PPMd, BZip2 (with
+`codecs-native`), Deflate or Copy; `Level::Store` always uses Copy, and the level
+sets each method's parameters as 7-Zip does. PPMd models stay at or below
+`PPMD_MEMORY_MAX` (192 MiB) and every dictionary or model shrinks to its block.
+Files go in solid blocks of up to 256 MiB, one group per filter: each file's
+PE/ELF/Mach-O machine type picks BCJ, ARM, ARMT, ARM64, PPC, SPARC or IA-64, and
+PCM WAV gets Delta. `rewrite_7z` keeps each block's coders and reports the ones
+it could not keep. Directories and empty files are
 explicit `Source` entries, not recursively enumerated. Symlinks/special sources
 are rejected. Inputs must not change during creation.
 
@@ -105,14 +111,14 @@ calling. This is not a crash-durable directory-fsync guarantee.
 See [vendor/PATCHES.md](vendor/PATCHES.md) for exact versions and local changes.
 Encoded and decoded headers are limited to 16 MiB; file/block/stream counts to
 100,000; coder chains to four single-input/output stages. LZMA/LZMA2 dictionary
-memory is limited to 256 MiB per stage; Zstd's window is capped at 256 MiB.
+and PPMd model memory is limited to 256 MiB per stage; Zstd's window is capped at 256 MiB.
 Work is sequential and cancellation is cooperative, not a CPU-time quota.
 There is no fixed total extracted-byte cap; callers can cancel using progress.
 
-Supported baseline decoders are Copy, LZMA, LZMA2, DEFLATE, AES and upstream's
-single-stream BCJ/Delta filters. Default `codecs-native` adds Bzip2 and Zstd.
+Supported baseline decoders are Copy, LZMA, LZMA2, PPMd, DEFLATE, AES and
+upstream's single-stream BCJ/Delta filters. Default `codecs-native` adds Bzip2 and Zstd.
 `--no-default-features` disables both optional codecs and ZIP native codecs when
-used through the CLI/GUI. PPMd, Brotli, LZ4, BCJ2/multi-input blocks and archives
+used through the CLI/GUI. Brotli, LZ4, BCJ2/multi-input blocks and archives
 above the policy bounds are unsupported. Large resources are rejected rather
 than silently allocated. No password change, append, rename, or deletion API.
 

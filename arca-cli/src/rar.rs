@@ -112,7 +112,12 @@ fn options(
     let level = match codec {
         CodecArg::Auto => level,
         CodecArg::Store => Level::STORE,
-        CodecArg::Deflate | CodecArg::Zstd | CodecArg::Lzma2 => {
+        CodecArg::Deflate
+        | CodecArg::Zstd
+        | CodecArg::Lzma2
+        | CodecArg::Lzma
+        | CodecArg::Ppmd
+        | CodecArg::Bzip2 => {
             return Err(Error::Unsupported(
                 ".rar creation uses the RAR compressor; --codec accepts only auto or store, \
                  pick the strength with --level"

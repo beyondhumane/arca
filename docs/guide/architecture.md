@@ -17,7 +17,7 @@ Arca is a Cargo workspace. Each crate has one job and a declared stance on unsaf
 | `arca-zip` | ZIP with Zip64; store, Deflate over zlib-rs, Zstandard, AES-256 | forbidden |
 | `arca-tar` | ustar TAR with checksum verification | forbidden |
 | `arca-stream` | XZ (through `arca-xz`), bzip2 and Zstandard streams, alone or around a TAR, told apart by their contents | forbidden |
-| `arca-7z` | Bounded 7z parsing, solid extraction, Store/LZMA2 creation and AES | forbidden |
+| `arca-7z` | Bounded 7z parsing, solid extraction, creation (LZMA2, LZMA, PPMd, BZip2, Deflate, Store) with branch/Delta filters, and AES | forbidden |
 | `arca-rar` | RAR/CBR reading and single-volume RAR5 creation, enabled by default in CLI/GUI | forbidden |
 | `arca-cli` | The arca binary | allowed, unused |
 | `arca-gui` | The arca-gui window | forbidden |
@@ -72,10 +72,10 @@ match ZipArchive::open(file) {
 
 - Encoded/decoded headers: 16 MiB each; entries, blocks and streams: 100,000.
 - At most four single-input/output coders per block; multi-input BCJ2 is unsupported.
-- LZMA dictionaries: 256 MiB per stage; Zstd window: 256 MiB. These are not a
-  global memory quota. There is no total extracted-byte or CPU-time quota.
-- Baseline decoding: Copy, LZMA, LZMA2, DEFLATE, AES, single-stream BCJ/Delta.
-  Default `codecs-native` adds Bzip2 and Zstd. PPMd, Brotli and LZ4 are unsupported.
+- LZMA dictionaries and PPMd models: 256 MiB per stage; Zstd window: 256 MiB.
+  These are not a global memory quota. There is no total extracted-byte or CPU-time quota.
+- Baseline decoding: Copy, LZMA, LZMA2, PPMd, DEFLATE, AES, single-stream
+  BCJ/Delta. Default `codecs-native` adds Bzip2 and Zstd. Brotli and LZ4 are unsupported.
 - Encrypted extraction validates the entire stable source before destination
   callbacks, then streams selected blocks. CRC-32 is not authentication.
 - Progress/cancellation is cooperative; bounded header parsing and KDF setup

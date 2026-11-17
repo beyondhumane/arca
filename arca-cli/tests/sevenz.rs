@@ -177,11 +177,36 @@ fn create_list_test_extract_all_levels_and_password_modes() {
 fn explicit_store_and_lzma2_and_current_directory_inputs() {
     let temp = Temp::new();
     fs::write(temp.0.join("data"), b"data").unwrap();
-    for (codec, method) in [("store", Method::Store), ("lzma2", Method::Lzma2)] {
-        temp.ok(&["create", "archive.7z", "data", "-c", codec]);
-        let archive =
+    let mut codecs = vec![
+        ("store", Method::Store),
+        ("lzma2", Method::Lzma2),
+        ("lzma", Method::Lzma),
+        ("ppmd", Method::Ppmd),
+        ("deflate", Method::Deflate),
+    ];
+    if cfg!(feature = "codecs-native") {
+        codecs.push(("bzip2", Method::Bzip2));
+    } else {
+        assert!(temp
+            .fail(&["create", "archive.7z", "data", "-c", "bzip2"])
+            .contains("codecs-native"));
+    }
+    for (codec, method) in codecs {
+        let summary = temp.ok(&["create", "archive.7z", "data", "-c", codec]);
+        if codec != "lzma2" {
+            assert!(summary.contains(" 1 threads"), "{summary}");
+        }
+        let mut archive =
             SevenZArchive::open(File::open(temp.0.join("archive.7z")).unwrap(), None).unwrap();
         assert_eq!(archive.entries()[0].method, method);
+        archive.test(&mut |_| true).unwrap();
+    }
+    assert!(temp
+        .fail(&["create", "archive.7z", "data", "-c", "zstd"])
+        .contains("7-Zip cannot read it"));
+    if cfg!(feature = "codecs-native") {
+        temp.ok(&["create", "data.tar.bz2", "data", "-c", "bzip2"]);
+        temp.ok(&["test", "data.tar.bz2"]);
     }
     fs::create_dir(temp.0.join("here")).unwrap();
     fs::write(temp.0.join("here/file"), b"here").unwrap();
@@ -342,7 +367,9 @@ fn invalid_options_preserve_existing_output() {
         ("7z", vec!["--hide-names"]),
         ("7z", vec!["--hide-names", "-p", ""]),
         ("7z", vec!["-p", ""]),
-        ("7z", vec!["-c", "deflate"]),
+        ("7z", vec!["-c", "zstd"]),
+        ("zip", vec!["-c", "ppmd"]),
+        ("tar", vec!["-c", "bzip2"]),
         ("7z", vec!["-c", "zstd", "-l", "store"]),
         ("zip", vec!["--hide-names", "-p", "secret"]),
         ("tar", vec!["--hide-names", "-p", "secret"]),

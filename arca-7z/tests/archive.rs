@@ -208,6 +208,7 @@ fn empty_and_unicode_roundtrip_all_levels_and_password_modes() {
                 level,
                 password,
                 hide_names,
+                ..Default::default()
             },
             &mut |_| true,
         )
@@ -749,6 +750,7 @@ fn solid_blocks_with_executables_and_many_files_round_trip() {
                 level,
                 password,
                 hide_names: false,
+                ..Default::default()
             },
             &mut |_| true,
         )

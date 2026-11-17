@@ -1315,8 +1315,8 @@ pub(crate) fn compress(
     compress_split(out, None, inputs, format, codec, level, notify, encryption)
 }
 
-/// Creates `out` from `inputs`, cut into parts of `volume` bytes named
-/// `out.001`, `out.002` and so on when there is a volume size.
+/// [`compress_with`] for a 7z compressed with LZMA2.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compress_split(
     out: &Path,
@@ -1324,6 +1324,26 @@ pub(crate) fn compress_split(
     inputs: &[PathBuf],
     format: Format,
     codec: Codec,
+    level: Level,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+    encryption: (Option<&str>, bool),
+) -> arca_core::Result<(u64, u64)> {
+    let codecs = (codec, arca_7z::Compression::Lzma2);
+    compress_with(
+        out, volume, inputs, format, codecs, level, notify, encryption,
+    )
+}
+
+/// Creates `out` from `inputs`, cut into parts of `volume` bytes named
+/// `out.001`, `out.002` and so on when there is a volume size. A ZIP is
+/// compressed with the first codec, a 7z with the second.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compress_with(
+    out: &Path,
+    volume: Option<u64>,
+    inputs: &[PathBuf],
+    format: Format,
+    (codec, sevenz): (Codec, arca_7z::Compression),
     level: Level,
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     encryption: (Option<&str>, bool),
@@ -1398,6 +1418,7 @@ pub(crate) fn compress_split(
                 level,
                 password,
                 hide_names,
+                compression: sevenz,
             };
             staged_parts(out, volume, |w| {
                 arca_7z::create_7z_into(w, &sources, &options, &mut |p| {

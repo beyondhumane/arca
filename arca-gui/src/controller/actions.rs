@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 pub(crate) enum Compressor {
     Fixed(&'static str),
     Codec { codec: Codec, editable: bool },
+    SevenZ(arca_7z::Compression),
 }
 
 pub(crate) enum Message {

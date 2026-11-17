@@ -3148,6 +3148,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ppmd-rust"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd4acc8d264ea385db64ccfdcdfd5909ee9eda0975666723d59f3bfec80b3611"
+
+[[package]]
 name = "proc-macro-crate"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3522,6 +3528,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "lzma-rust2 0.21.0",
+ "ppmd-rust",
  "sha2",
  "wasm-bindgen",
  "zstd",

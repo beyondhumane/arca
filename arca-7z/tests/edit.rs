@@ -65,6 +65,7 @@ fn made(room: &Room, password: Option<&str>, hide_names: bool) -> PathBuf {
             level: Level::FAST,
             password,
             hide_names,
+            ..Default::default()
         },
         &mut |_| true,
     )
@@ -110,7 +111,9 @@ fn rewrite(
         add,
         level: Level::FAST,
     };
-    rewrite_7z(input, output, password, &change, &mut |_| true)
+    let recoded = rewrite_7z(input, output, password, &change, &mut |_| true)?;
+    assert!(recoded.is_empty(), "{recoded:?}");
+    Ok(())
 }
 
 fn keep(e: &Entry) -> Option<String> {

@@ -44,8 +44,8 @@ Crea un archivo. El formato se toma de la extensión del archivo de salida.
 | `<OUT>` | obligatorio | Archivo de salida: .zip, .7z, .rar, .tar, .tar.gz (o .tgz), .tar.xz (o .txz), .xz, .tar.bz2 (o .tbz2, .tbz), .bz2, .tar.zst (o .tzst), .zst. Un .xz, .bz2 o .zst admite un único fichero. |
 | `<INPUTS>...` | obligatorio | Archivos o directorios a incluir. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
-| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto usa Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz, bzip2 en .bz2 y .tar.bz2, Zstandard en .zst y .tar.zst y el compresor RAR en .rar (solo auto o store). |
-| `-j, --threads <N>` | 0 | Hilos ZIP y XZ; 0 usa todos los núcleos. XZ usa tantos como quepan en 2 GiB, Zstandard tantos como se pidan y bzip2 uno; 7z y RAR usan todos los núcleos que permite su presupuesto de memoria, diga lo que diga esta opción. |
+| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2 · lzma · ppmd · bzip2. auto usa Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz, bzip2 en .bz2 y .tar.bz2, Zstandard en .zst y .tar.zst y el compresor RAR en .rar (solo auto o store). .7z admite lzma2, lzma, ppmd, bzip2 (con codecs-native), deflate o store, nunca zstd, que 7-Zip no lee dentro de un 7z. |
+| `-j, --threads <N>` | 0 | Hilos ZIP y XZ; 0 usa todos los núcleos. XZ usa tantos como quepan en 2 GiB, Zstandard tantos como se pidan y bzip2 uno; 7z con LZMA2 y RAR usan todos los núcleos que permite su presupuesto de memoria, diga lo que diga esta opción, y 7z con otro método, uno. |
 | `-p, --password <PASSWORD>` | ninguna | Cifra con AES-256 (.zip, .7z). Otras herramientas la pedirán para abrir el archivo. Se rechaza en .rar. |
 | `--hide-names` | desactivado | Solo 7z: cifra cabeceras; exige una contraseña no vacía. |
 | `-v, --volume <SIZE>` | ninguno | Divide en partes de SIZE bytes, o con k, m o g para KiB, MiB, GiB: `salida.zip.001`, `salida.zip.002`… como hace 7-Zip. Se niega a sustituir un `.001` existente. No en .rar. Véase [dividir en partes](creating-archives.md#dividir-en-partes). |
@@ -140,7 +140,7 @@ arca diff --quick -p secreto a.7z b.zip
 
 Reescribe un `.zip` con otra contraseña, o sin ninguna. Las entradas no se vuelven a comprimir, porque el cifrado WinZip AES cifra los bytes ya comprimidos.
 
-No se admite cambiar contraseñas ni modificar archivos 7z existentes. Consulta las restricciones de códecs y el cifrado de entradas vacías en [Crear archivos](creating-archives.md#7z).
+No se admite cambiar contraseñas ni modificar archivos 7z existentes. Consulta los métodos, sus parámetros y filtros, y el cifrado de entradas vacías en [Crear archivos](creating-archives.md#7z).
 
 | Argumento / opción | Por defecto | Descripción |
 | --- | --- | --- |

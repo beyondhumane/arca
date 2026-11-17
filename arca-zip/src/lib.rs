@@ -617,7 +617,7 @@ fn decompress_into<Rd: Read, W: Write>(
 ) -> Result<Rd> {
     let limit = declared.saturating_add(1);
     match method_code {
-        Method::Lzma | Method::Lzma2 | Method::Other7z => {
+        Method::Lzma | Method::Lzma2 | Method::Ppmd | Method::Other7z => {
             Err(Error::Unsupported(format!("{} in ZIP", method_code.name())))
         }
         Method::Rar => Err(Error::Unsupported(
@@ -1639,7 +1639,7 @@ fn compress_stream<R: Read, S: Write>(
     let mut buf = vec![0u8; STREAM_BUF];
 
     match method_code {
-        Method::Lzma | Method::Lzma2 | Method::Bzip2 | Method::Other7z => {
+        Method::Lzma | Method::Lzma2 | Method::Bzip2 | Method::Ppmd | Method::Other7z => {
             return Err(Error::Unsupported(format!("{} in ZIP", method_code.name())));
         }
         Method::Rar => {

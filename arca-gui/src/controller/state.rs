@@ -31,6 +31,7 @@ pub(crate) struct AppState {
     pub(crate) started: Option<Instant>,
     pub(crate) format: Format,
     pub(crate) codec: Codec,
+    pub(crate) sevenz: arca_7z::Compression,
     pub(crate) level: Level,
     pub(crate) into_subfolder: bool,
     pub(crate) pending_inputs: Vec<PathBuf>,

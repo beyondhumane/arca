@@ -17,7 +17,7 @@ Arca es un workspace de Cargo. Cada crate tiene una sola tarea y una postura dec
 | `arca-zip` | ZIP con Zip64; store, Deflate sobre zlib-rs, Zstandard, AES-256 | prohibido |
 | `arca-tar` | TAR ustar con verificación de suma de comprobación | prohibido |
 | `arca-stream` | Flujos XZ (a través de `arca-xz`), bzip2 y Zstandard, sueltos o alrededor de un TAR, distinguidos por su contenido | prohibido |
-| `arca-7z` | Análisis 7z acotado, extracción sólida, creación Store/LZMA2 y AES | prohibido |
+| `arca-7z` | Análisis 7z acotado, extracción sólida, creación (LZMA2, LZMA, PPMd, BZip2, Deflate, Store) con filtros de saltos y Delta, y AES | prohibido |
 | `arca-rar` | Lectura RAR/CBR y creación RAR5 de un solo volumen, activo por defecto en CLI/GUI | prohibido |
 | `arca-cli` | El binario arca | permitido, sin usar |
 | `arca-gui` | La ventana arca-gui | prohibido |
@@ -72,10 +72,10 @@ match ZipArchive::open(file) {
 
 - Cabeceras codificadas/descodificadas: 16 MiB cada una; entradas, bloques y flujos: 100.000.
 - Hasta cuatro codificadores de una entrada/salida por bloque; BCJ2 multientrada no se admite.
-- Diccionarios LZMA: 256 MiB por etapa; ventana Zstd: 256 MiB. No es una cuota
-  global de memoria. No hay límite total de bytes extraídos ni de tiempo de CPU.
-- Lectura básica: Copy, LZMA, LZMA2, DEFLATE, AES, BCJ/Delta de un flujo.
-  `codecs-native` añade Bzip2 y Zstd. PPMd, Brotli y LZ4 no se admiten.
+- Diccionarios LZMA y modelos PPMd: 256 MiB por etapa; ventana Zstd: 256 MiB.
+  No es una cuota global de memoria. No hay límite total de bytes extraídos ni de tiempo de CPU.
+- Lectura básica: Copy, LZMA, LZMA2, PPMd, DEFLATE, AES, BCJ/Delta de un flujo.
+  `codecs-native` añade Bzip2 y Zstd. Brotli y LZ4 no se admiten.
 - La extracción cifrada valida todo el origen estable antes de escribir y luego
   procesa los bloques seleccionados. CRC-32 no es autenticación.
 - La cancelación es cooperativa; el análisis de cabeceras y la KDF están acotados

@@ -37,6 +37,12 @@ Local changes:
   by the existing decode stack, so that rewriting an archive can feed a block
   straight into the encoder without buffering it. It adds no decoding; the
   caller checks each entry's CRC.
+- Pin `ppmd-rust =1.5.2` (CC0-1.0 OR MIT-0, itself `forbid(unsafe_code)`) for
+  the `ppmd` feature, which Arca enables to read and write PPMd. PPMd crate
+  SHA-256: `cd4acc8d264ea385db64ccfdcdfd5909ee9eda0975666723d59f3bfec80b3611`.
+- Arca: bound the PPMd decoder to its coder's unpack size (`decoder.rs`). A 7z
+  PPMd stream has no end marker, so without the bound a block read to its end
+  went on producing bytes from whatever followed the last symbol.
 
 No new compression or cryptography is implemented. Upstream's existing bounded
 AES work factor (max power 24) and single-entry KDF cache are unchanged. Arca
@@ -54,4 +60,4 @@ The resolved LZMA features must remain `std` and `encoder`, never `optimization`
 Native codec feature forwarding is explicit; upstream default features and its
 filesystem `util` helpers are not enabled or re-exported. Native Zstd remains
 outside the safe-Rust parser boundary. Re-audit the resolved source and run the
-adversarial/truncation/interop tests before updating either pinned crate.
+adversarial/truncation/interop tests before updating any pinned crate.

@@ -394,6 +394,7 @@ fn method(block: &sevenz_rust2::Block) -> Method {
             M::ID_LZMA2 => Some(Method::Lzma2),
             M::ID_DEFLATE => Some(Method::Deflate),
             M::ID_BZIP2 => Some(Method::Bzip2),
+            M::ID_PPMD => Some(Method::Ppmd),
             M::ID_ZSTD => Some(Method::Zstd),
             M::ID_COPY => Some(Method::Store),
             _ => None,
