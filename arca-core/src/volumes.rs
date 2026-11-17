@@ -8,11 +8,14 @@ use crate::{Error, Result};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 /// The most parts a set may have, which is also as far as four digits go.
 pub const MAX_PARTS: u32 = 9999;
 
 const STAGED: &str = ".arca-new";
+const ASIDE: &str = ".arca-old";
 
 /// The path of part `index` (counting from 1) of the set made from `base`.
 pub fn part_path(base: &Path, index: u32) -> PathBuf {
@@ -66,6 +69,35 @@ pub fn whole_name(path: &Path) -> PathBuf {
 
 fn broken(message: String) -> Error {
     Error::Format(message)
+}
+
+/// The files beside `base` named like its parts with `suffix` after the
+/// number, `base.NNN` or `base.NNN.arca-new`, as numbers and paths, in order.
+fn numbered(base: &Path, suffix: &str) -> io::Result<Vec<(u32, PathBuf)>> {
+    let name = base
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    let dir = match base.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let mut found = Vec::new();
+    for entry in fs::read_dir(&dir)? {
+        let file_name = entry?.file_name();
+        let Some(index) = file_name
+            .to_str()
+            .and_then(|n| n.strip_prefix(name))
+            .and_then(|n| n.strip_prefix('.'))
+            .and_then(|n| n.strip_suffix(suffix))
+            .and_then(part_number)
+        else {
+            continue;
+        };
+        found.push((index, base.with_file_name(file_name)));
+    }
+    found.sort();
+    Ok(found)
 }
 
 /// Every part of the set `path` belongs to, in order, with its size. All of
@@ -298,17 +330,19 @@ pub struct SplitWriter {
     limit: u32,
     pos: u64,
     parts: u32,
+    made: Arc<AtomicU32>,
     open: Option<(u32, File, u64)>,
 }
 
 impl SplitWriter {
-    fn new(base: &Path, size: u64, limit: u32) -> Self {
+    fn new(base: &Path, size: u64, limit: u32, made: Arc<AtomicU32>) -> Self {
         Self {
             base: base.to_path_buf(),
             size,
             limit,
             pos: 0,
             parts: 0,
+            made,
             open: None,
         }
     }
@@ -333,6 +367,7 @@ impl SplitWriter {
                 }
                 File::create(staged_part(&self.base, self.parts + 1))?;
                 self.parts += 1;
+                self.made.store(self.parts, Ordering::Relaxed);
             }
             let file = OpenOptions::new()
                 .write(true)
@@ -422,11 +457,10 @@ impl Seek for Output {
     }
 }
 
-fn staged_parts(base: &Path) -> Vec<PathBuf> {
-    (1..)
-        .map(|i| staged_part(base, i))
-        .take_while(|p| p.exists())
-        .collect()
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(suffix);
+    PathBuf::from(name)
 }
 
 fn discard(out: &Path, volume: Option<u64>) {
@@ -435,44 +469,113 @@ fn discard(out: &Path, volume: Option<u64>) {
             let _ = fs::remove_file(staged_single(out));
         }
         Some(_) => {
-            for part in staged_parts(out) {
+            for (_, part) in numbered(out, STAGED).unwrap_or_default() {
                 let _ = fs::remove_file(part);
             }
         }
     }
 }
 
-fn commit(out: &Path, volume: Option<u64>) -> Result<u64> {
+/// A part moved aside by a replacement that never finished may be the only
+/// copy of an older set, so it is never written over.
+fn refuse_leftovers(out: &Path) -> Result<()> {
+    match numbered(out, ASIDE)?.first() {
+        Some((_, left)) => Err(Error::Io(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "'{}' was left by an earlier run that did not finish and may hold the only copy \
+                 of the old parts; move it away or delete it first",
+                left.display()
+            ),
+        ))),
+        None => Ok(()),
+    }
+}
+
+fn commit(out: &Path, volume: Option<u64>, made: u32) -> Result<u64> {
     if volume.is_none() {
         let temp = staged_single(out);
         let len = fs::metadata(&temp)?.len();
         fs::rename(&temp, out)?;
         return Ok(len);
     }
-    let staged = staged_parts(out);
-    if staged.is_empty() {
+    commit_parts(out, made, &mut |from, to| fs::rename(from, to))
+}
+
+/// Puts staged parts `1..=made` in place of the set at `out`. The old parts
+/// are moved aside first and removed only once every new one is in place;
+/// if anything fails on the way, the new parts go and the old ones come
+/// back under their names.
+fn commit_parts(
+    out: &Path,
+    made: u32,
+    rename: &mut dyn FnMut(&Path, &Path) -> io::Result<()>,
+) -> Result<u64> {
+    if made == 0 {
         File::create(staged_part(out, 1))?;
-        return commit(out, volume);
+        return commit_parts(out, 1, rename);
     }
+    refuse_leftovers(out)?;
     let mut len = 0;
-    for part in &staged {
-        len += fs::metadata(part)?.len();
+    for index in 1..=made {
+        len += fs::metadata(staged_part(out, index))?.len();
     }
-    for (at, temp) in staged.iter().enumerate() {
-        let index = at as u32 + 1;
-        if let Err(e) = fs::rename(temp, part_path(out, index)) {
-            for done in 1..index {
-                let _ = fs::remove_file(part_path(out, done));
+    let old: Vec<PathBuf> = numbered(out, "")?
+        .into_iter()
+        .enumerate()
+        .take_while(|(at, (index, _))| *index == *at as u32 + 1)
+        .map(|(_, (_, path))| path)
+        .collect();
+    let mut aside = Vec::with_capacity(old.len());
+    let mut placed = Vec::with_capacity(made as usize);
+    let mut failed = None;
+    for path in &old {
+        let moved = with_suffix(path, ASIDE);
+        match rename(path, &moved) {
+            Ok(()) => aside.push((path, moved)),
+            Err(e) => {
+                failed = Some(e);
+                break;
             }
-            return Err(e.into());
         }
     }
-    let mut stale = staged.len() as u32 + 1;
-    while stale <= MAX_PARTS && part_path(out, stale).exists() {
-        let _ = fs::remove_file(part_path(out, stale));
-        stale += 1;
+    if failed.is_none() {
+        for index in 1..=made {
+            let target = part_path(out, index);
+            match rename(&staged_part(out, index), &target) {
+                Ok(()) => placed.push(target),
+                Err(e) => {
+                    failed = Some(e);
+                    break;
+                }
+            }
+        }
     }
-    Ok(len)
+    let Some(error) = failed else {
+        for (_, moved) in aside {
+            let _ = fs::remove_file(moved);
+        }
+        return Ok(len);
+    };
+    for path in placed {
+        let _ = fs::remove_file(path);
+    }
+    let mut kept = None;
+    for (path, moved) in aside {
+        if fs::rename(&moved, path).is_err() {
+            kept = Some(moved);
+        }
+    }
+    Err(match kept {
+        None => error.into(),
+        Some(moved) => Error::Io(io::Error::new(
+            error.kind(),
+            format!(
+                "{error}; the old parts could not all be put back and are kept as '{}' and the like",
+                moved.display()
+            ),
+        )),
+    })
 }
 
 /// Where a new archive at `out` ends up: `out` itself, or with a volume
@@ -496,6 +599,7 @@ pub fn staged<T>(
     replace: bool,
     write: impl FnOnce(Output) -> Result<T>,
 ) -> Result<(T, u64)> {
+    let made = Arc::new(AtomicU32::new(0));
     let output = match volume {
         None => Output::Single(File::create(staged_single(out))?),
         Some(0) => {
@@ -513,11 +617,13 @@ pub fn staged<T>(
                     ),
                 )));
             }
+            refuse_leftovers(out)?;
             discard(out, volume);
-            Output::Split(SplitWriter::new(out, size, MAX_PARTS))
+            Output::Split(SplitWriter::new(out, size, MAX_PARTS, made.clone()))
         }
     };
-    let result = write(output).and_then(|v| commit(out, volume).map(|len| (v, len)));
+    let result = write(output)
+        .and_then(|v| commit(out, volume, made.load(Ordering::Relaxed)).map(|len| (v, len)));
     if result.is_err() {
         discard(out, volume);
     }
@@ -816,7 +922,7 @@ mod tests {
     fn running_past_the_part_limit_fails_and_cleans_up() {
         let dir = room();
         let out = dir.path().join("a.bin");
-        let mut w = SplitWriter::new(&out, 2, 3);
+        let mut w = SplitWriter::new(&out, 2, 3, Arc::default());
         assert!(w.write_all(b"abcdef").is_ok());
         assert!(w.write_all(b"g").is_err());
         drop(w);
@@ -853,6 +959,106 @@ mod tests {
         assert_eq!(read_all(&part_path(&out, 1)).unwrap(), b"abc");
         assert!(!part_path(&out, 3).exists());
         assert!(!staged_part(&out, 3).exists());
+    }
+
+    #[test]
+    fn a_staged_part_past_a_gap_is_never_committed() {
+        let dir = room();
+        let out = dir.path().join("a.bin");
+        fs::write(staged_part(&out, 3), b"stale").unwrap();
+        build(&out, 2, b"abcd").unwrap();
+        assert_eq!(read_all(&part_path(&out, 1)).unwrap(), b"abcd");
+        assert!(!part_path(&out, 3).exists());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn a_rename_that_fails_at_any_step_puts_the_old_set_back() {
+        for fail_at in 0..6 {
+            let dir = room();
+            let out = dir.path().join("a.bin");
+            build(&out, 2, b"abcdef").unwrap();
+            for (i, data) in [&b"wx"[..], b"yz"].iter().enumerate() {
+                fs::write(staged_part(&out, i as u32 + 1), data).unwrap();
+            }
+            let mut calls = 0;
+            let result = commit_parts(&out, 2, &mut |from, to| {
+                calls += 1;
+                if calls == fail_at {
+                    return Err(io::Error::other("held open"));
+                }
+                fs::rename(from, to)
+            });
+            if fail_at == 0 {
+                assert_eq!(result.unwrap(), 4);
+                assert_eq!(read_all(&part_path(&out, 1)).unwrap(), b"wxyz");
+                assert_eq!(names(dir.path()), ["a.bin.001", "a.bin.002"]);
+                continue;
+            }
+            assert!(result.is_err(), "{fail_at}");
+            discard(&out, Some(2));
+            assert_eq!(read_all(&part_path(&out, 1)).unwrap(), b"abcdef");
+            assert_eq!(
+                names(dir.path()),
+                ["a.bin.001", "a.bin.002", "a.bin.003"],
+                "{fail_at}"
+            );
+        }
+    }
+
+    #[test]
+    fn parts_left_aside_by_an_unfinished_run_are_never_overwritten() {
+        let dir = room();
+        let out = dir.path().join("a.bin");
+        build(&out, 2, b"abcd").unwrap();
+        fs::write(with_suffix(&part_path(&out, 2), ASIDE), b"only copy").unwrap();
+        let error = staged(&out, Some(2), true, |mut w| {
+            w.write_all(b"new")?;
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("a.bin.002.arca-old"), "{error}");
+        assert_eq!(
+            fs::read(with_suffix(&part_path(&out, 2), ASIDE)).unwrap(),
+            b"only copy"
+        );
+        assert_eq!(read_all(&part_path(&out, 1)).unwrap(), b"abcd");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_part_held_open_keeps_the_old_set_whole() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = room();
+        let out = dir.path().join("a.bin");
+        build(&out, 2, b"abcdef").unwrap();
+        let replace = |data: &[u8]| {
+            staged(&out, Some(2), true, |mut w| {
+                w.write_all(data)?;
+                Ok(())
+            })
+        };
+        let held = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(part_path(&out, 2))
+            .unwrap();
+        assert!(replace(b"wxyz").is_err());
+        drop(held);
+        assert_eq!(read_all(&part_path(&out, 1)).unwrap(), b"abcdef");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 3);
+        replace(b"wxyz").unwrap();
+        assert_eq!(read_all(&part_path(&out, 1)).unwrap(), b"wxyz");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
     }
 
     #[test]
