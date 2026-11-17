@@ -240,6 +240,37 @@ pub(super) fn validate_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn read_entries_to(
+    archive: &RarArchive,
+    password: Option<&str>,
+    progress: &Progress<'_>,
+    open: &mut dyn FnMut(usize) -> Option<Box<dyn io::Write>>,
+) -> Result<()> {
+    controlled(progress, |token| {
+        let mut index = 0;
+        rars::extract_volumes_to_with_options(
+            &archive.inner.archives,
+            options(password, token),
+            |member| {
+                let current = index;
+                index += 1;
+                let entry = archive
+                    .entries
+                    .get(current)
+                    .ok_or(rars::Error::InvalidHeader("RAR member order changed"))?;
+                if !progress(current, archive.entries.len(), &entry.name) {
+                    return Err(rars::Error::Cancelled);
+                }
+                if member.is_directory {
+                    return Ok(Box::new(io::sink()) as Box<dyn io::Write>);
+                }
+                Ok(open(current).unwrap_or_else(|| Box::new(io::sink())))
+            },
+        )
+        .map_err(|e| archive.inner.error(e))
+    })
+}
+
 pub(super) fn test(
     archive: &RarArchive,
     password: Option<&str>,

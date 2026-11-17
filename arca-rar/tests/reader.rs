@@ -266,3 +266,69 @@ fn extracted_files_get_the_usual_permissions() {
         assert_eq!(mode & 0o666, usual, "{}", entry.name);
     }
 }
+
+#[derive(Clone, Default)]
+struct Shared(std::rc::Rc<std::cell::RefCell<Vec<u8>>>);
+
+impl std::io::Write for Shared {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.borrow_mut().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn picked_entries_stream_into_writers_without_touching_the_disk() {
+    for name in [
+        "plain.rar",
+        "solid.rar",
+        "encrypted.rar",
+        "volume.part1.rar",
+    ] {
+        let password = name.contains("encrypted").then_some("arca-test-only");
+        let a = RarArchive::open(&fixture(name), password).unwrap();
+        let second = a
+            .entries()
+            .iter()
+            .position(|e| e.name == "folder/second.txt")
+            .unwrap();
+        let out = Shared::default();
+        let mut asked = Vec::new();
+        a.read_entries_to(password, &|_, _, _| true, &mut |i| {
+            asked.push(i);
+            (i == second).then(|| Box::new(out.clone()) as Box<dyn std::io::Write>)
+        })
+        .unwrap();
+        assert!(asked.contains(&second), "{name}");
+        assert_eq!(
+            *out.0.borrow(),
+            b"Arca RAR fixture beta\n".repeat(64),
+            "{name}"
+        );
+    }
+    let a = RarArchive::open(&fixture("plain.rar"), None).unwrap();
+    assert!(matches!(
+        a.read_entries_to(None, &|_, _, _| false, &mut |_| None),
+        Err(Error::Cancelled)
+    ));
+    let a = RarArchive::open(&fixture("encrypted.rar"), None).unwrap();
+    assert!(a
+        .read_entries_to(Some("wrong"), &|_, _, _| true, &mut |_| None)
+        .is_err());
+}
+
+#[test]
+fn every_truncation_streams_to_an_error_not_a_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("truncated.rar");
+    let data = fs::read(fixture("plain.rar")).unwrap();
+    for length in 0..data.len() {
+        fs::write(&path, &data[..length]).unwrap();
+        let result = RarArchive::open(&path, None)
+            .and_then(|a| a.read_entries_to(None, &|_, _, _| true, &mut |_| None));
+        assert!(result.is_err(), "accepted prefix {length}");
+    }
+}
