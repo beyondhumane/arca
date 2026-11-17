@@ -2215,13 +2215,27 @@ fn write_zip(
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
 ) -> Result<()> {
     let f = std::fs::File::create(out)?;
-    let mut w = ZipWriter::new(io::BufWriter::with_capacity(STREAM_BUF, f));
+    let w = io::BufWriter::with_capacity(STREAM_BUF, f);
+    create_zip_into(w, files, threads, password, notify)?.flush()?;
+    Ok(())
+}
+
+/// [`create_zip`] into any seekable writer, which it hands back once the
+/// archive is complete. Cleaning up after a failure is left to the caller.
+pub fn create_zip_into<W: Write + Seek>(
+    out: W,
+    files: &[Source],
+    threads: usize,
+    password: Option<&str>,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+) -> Result<W> {
+    let mut w = ZipWriter::new(out);
     let total = files.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
     write_in_parallel(&mut w, files, threads, password, &done, total, notify)?;
-    w.finish()?;
+    let out = w.finish()?;
     let _ = notify(total, total, "");
-    Ok(())
+    Ok(out)
 }
 
 /// Compresses `files` on every core and writes them into `w` in order.
