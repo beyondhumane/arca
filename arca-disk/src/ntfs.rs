@@ -186,17 +186,33 @@ impl Map {
     }
 
     fn read(&self, vol: &mut Volume<'_>, pos: u64, buf: &mut [u8]) -> Result<()> {
-        if pos.saturating_add(buf.len() as u64) > self.len {
+        if pos
+            .checked_add(buf.len() as u64)
+            .is_none_or(|end| end > self.len)
+        {
             return Err(Error::Format("a read past the end of the NTFS MFT".into()));
         }
         let mut done = 0usize;
         while done < buf.len() {
             let at = pos + done as u64;
-            let i = self.parts.partition_point(|(start, _, _)| *start <= at) - 1;
+            let broken = || Error::Format("the map of the NTFS MFT is damaged".into());
+            let i = self
+                .parts
+                .partition_point(|(start, _, _)| *start <= at)
+                .checked_sub(1)
+                .ok_or_else(broken)?;
             let (start, place, len) = self.parts[i];
-            let n = ((start + len - at) as usize).min(buf.len() - done);
+            let left = len.saturating_sub(at - start);
+            if left == 0 {
+                return Err(broken());
+            }
+            let n = usize::try_from(left)
+                .unwrap_or(usize::MAX)
+                .min(buf.len() - done);
             match place {
-                Some(base) => vol.read(base + (at - start), &mut buf[done..done + n])?,
+                Some(base) => {
+                    vol.read(base.saturating_add(at - start), &mut buf[done..done + n])?
+                }
                 None => buf[done..done + n].fill(0),
             }
             done += n;
@@ -587,6 +603,56 @@ fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device::Device;
+
+    struct Zeros(u64);
+
+    impl Device for Zeros {
+        fn len(&self) -> u64 {
+            self.0
+        }
+
+        fn read_at(&mut self, _: u64, buf: &mut [u8]) -> Result<()> {
+            buf.fill(0x5a);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_map_with_a_huge_sparse_run_reads_without_overflow() {
+        let geo = Geometry {
+            cluster: 512,
+            clusters: 64,
+            record: 1024,
+        };
+        let extents = vec![
+            Extent {
+                lcn: Some(0),
+                clusters: 8,
+            },
+            Extent {
+                lcn: None,
+                clusters: u64::MAX,
+            },
+        ];
+        let map = Map::new(&mut [(0, extents)], &geo, u64::MAX);
+        assert_eq!(map.len, u64::MAX);
+        let mut dev = Zeros(64 * 512);
+        let mut vol = Volume {
+            dev: &mut dev,
+            base: 0,
+            len: 64 * 512,
+        };
+        let mut buf = [1u8; 1024];
+        map.read(&mut vol, 1 << 40, &mut buf).unwrap();
+        assert!(buf.iter().all(|&b| b == 0));
+        map.read(&mut vol, 4096 - 512, &mut buf).unwrap();
+        assert!(buf[..512].iter().all(|&b| b == 0x5a));
+        assert!(buf[512..].iter().all(|&b| b == 0));
+        assert!(map.read(&mut vol, u64::MAX - 10, &mut buf).is_err());
+        let empty = Map::new(&mut [], &geo, 4096);
+        assert!(empty.read(&mut vol, 0, &mut buf).is_err());
+    }
 
     fn folder(parent: u64, name: &str) -> Record {
         Record {

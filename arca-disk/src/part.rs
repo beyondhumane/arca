@@ -203,7 +203,7 @@ fn gpt_at(
             continue;
         }
         let start = lo.saturating_mul(sector);
-        let len = (hi - lo + 1).saturating_mul(sector);
+        let len = (hi - lo).saturating_add(1).saturating_mul(sector);
         push(dev, &mut found, start, len, notices);
     }
     Ok(Some(found))

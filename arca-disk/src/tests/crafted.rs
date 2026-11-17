@@ -270,3 +270,22 @@ fn a_huge_hfs_plus_catalog_is_read_a_node_at_a_time() {
         a.err()
     );
 }
+
+#[test]
+fn a_gpt_entry_that_spans_every_sector_is_cut_at_the_disk_end() {
+    let mut image = gpt(&[&sample_fat(12)]);
+    image[1024 + 32..1024 + 40].copy_from_slice(&0u64.to_le_bytes());
+    image[1024 + 40..1024 + 48].copy_from_slice(&u64::MAX.to_le_bytes());
+    let crc = crc32fast::hash(&image[1024..1024 + 128 * 128]);
+    image[512 + 88..512 + 92].copy_from_slice(&crc.to_le_bytes());
+    image[512 + 16..512 + 20].fill(0);
+    let header = crc32fast::hash(&image[512..512 + 92]);
+    image[512 + 16..512 + 20].copy_from_slice(&header.to_le_bytes());
+    let (_dir, a) = open(Format::Img, &image);
+    let a = a.unwrap();
+    assert!(
+        a.notices().iter().any(|n| n.contains("runs past the end")),
+        "{:?}",
+        a.notices()
+    );
+}
