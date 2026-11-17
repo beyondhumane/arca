@@ -139,13 +139,13 @@ fn check_options(options: &CreateOptions<'_>, sources: &[Source]) -> Result<()> 
     Ok(())
 }
 
-/// The writer's settings for `options`. No filter policy is set: the
-/// automatic filter search plans every member as a whole and, in rars 0.10.0,
-/// reserves 0 bytes of the managed-memory ledger for a zero-length member, so
-/// its spool charge fails. Without one every member takes the streaming block
-/// path, whose workspace is priced per batch, and the hard ledger holds for
-/// empty files and directories too. The trade is that no data filter is tried
-/// for any level, and a solid archive, which refuses filters, is accepted.
+/// The writer's settings for `options`. The filter policy is never
+/// `FilterPolicy::Auto`: that search plans every member as a whole and, in
+/// rars 0.10.0, reserves 0 bytes of the managed-memory ledger for a
+/// zero-length member, so its spool charge fails. `FilterPolicy::Detect`
+/// keeps every member on the streaming block path, whose workspace is priced
+/// per batch, and stops at the size the reader decodes a filtered member in
+/// memory, so Arca can always open what it writes.
 fn settings<'a>(options: &CreateOptions<'a>) -> (WriterOptions, ArchiveExtras<'a>) {
     let mut features = FeatureSet::store_only();
     features.solid = options.solid;
@@ -153,7 +153,7 @@ fn settings<'a>(options: &CreateOptions<'a>) -> (WriterOptions, ArchiveExtras<'a
     let writer_options = WriterOptions::new(ArchiveVersion::Rar50, features)
         .with_compression_level(rar_level(options.level));
     let mut extras = ArchiveExtras::default()
-        .with_filter_policy(FilterPolicy::None)
+        .with_filter_policy(filter_policy(options.level))
         .with_recovery_percent(options.recovery.map(u64::from));
     if options.hide_names {
         extras.header_password = options.password.map(str::as_bytes);
@@ -611,6 +611,16 @@ fn open_regular(path: &Path) -> io::Result<File> {
 // RAR has six levels where Arca has ten.
 pub(super) fn rar_level(level: arca_core::Level) -> u8 {
     [0, 1, 1, 2, 2, 3, 3, 4, 4, 5][usize::from(level.get())]
+}
+
+fn filter_policy(level: arca_core::Level) -> FilterPolicy {
+    if rar_level(level) >= 3 {
+        FilterPolicy::Detect {
+            max_member: limits::MAX_FILTERED_MEMBER_BYTES,
+        }
+    } else {
+        FilterPolicy::None
+    }
 }
 
 pub(super) fn write_error(error: rars::Error) -> Error {

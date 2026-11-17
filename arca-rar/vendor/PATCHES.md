@@ -15,9 +15,10 @@ an empty `[workspace]` so its own tests run with
 a lockfile of its own and still builds the crates.io copy: the reader it
 exercises is unchanged here.
 
-Every change is in the RAR 5 writer and is marked `Arca:` in the source. The
-reader, the format and the integrity checks are as published, and no RARLAB
-source was consulted for any of it.
+Every change is in the writers and is marked `Arca:` in the source: the RAR 5
+writer, and four match arms of the RAR 1.5 to 4.0 writer that treat
+`FilterPolicy::Detect` as `None`. The reader, the format and the integrity
+checks are as published, and no RARLAB source was consulted for any of it.
 
 - **Tree search for a whole member.** The optimal parse searched the first
   block of a member with the binary-tree finder and then switched to hash
@@ -71,6 +72,22 @@ source was consulted for any of it.
   and prices each block twice; level 5 searches 128 out to 256 and prices
   three times (`rar50/write/filter_policy.rs`). They used to search 256 and
   512 out to 512 bytes.
+- **Filters chosen per region on the streaming path.** `FilterPolicy` gains
+  `Detect { max_member }` (`filter.rs`). `Auto` plans each member whole and
+  encodes it several times to compare candidates; `Detect` keeps members on
+  the streaming block path. The thread that reads a run cuts it into 64 KiB
+  regions that never cross a block, picks E8, E8E9, ARM or delta (1 to 32
+  channels) for each from its byte statistics, transforms the run in place
+  and records the ranges, before the run becomes the next run's history,
+  since the decoder matches against filtered bytes
+  (`codec/rar50/encoder/detect.rs`, `compress_independent_members` in
+  `rar50/write/compress.rs`). Each block carries the records that start in it
+  (`filtered_streaming_blocks_with_allowance` in `codec/rar50/encoder.rs`);
+  one that would leave its block is refused. Text, members larger than
+  `max_member` and solid archives are not filtered, and the RAR 1.5 to 4.0
+  writers treat `Detect` as `None` (`rar15_40/write.rs`). The solid and plan
+  checks ask `FilterPolicy::filters_whole_members`, which is true only for
+  `Auto` and `Explicit` (`rar50/write/mod.rs`, `rar50/write/plan.rs`).
 
 Measured with `arca create out.rar <dir> -l <level>` on 144 MiB of source and
 executables (1,382 files), Windows 11, 16 threads, together with the

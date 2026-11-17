@@ -1,4 +1,4 @@
-use super::{Conflict, Progress, RarArchive};
+use super::{create_limits, Conflict, Progress, RarArchive};
 use arca_core::{Entry, Error, Method, Result};
 use rars::{ArchiveMemberDetail, ArchiveReadOptions, ReadCancellation};
 use std::cell::RefCell;
@@ -24,7 +24,7 @@ pub(super) fn options<'a>(
         .with_max_header_count(100_000)
         .with_max_header_bytes(64 * MIB)
         .with_rar50_dictionary_size_limit(256 * MIB)
-        .with_rar50_buffered_decode_limit(64 * MIB)
+        .with_rar50_buffered_decode_limit(create_limits::MAX_FILTERED_MEMBER_BYTES)
         .with_max_reader_workspace_bytes(512 * MIB)
         .with_max_member_output_bytes(MAX_MEMBER)
         .with_max_total_output_bytes(MAX_TOTAL)

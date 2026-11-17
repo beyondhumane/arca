@@ -407,10 +407,30 @@ powershell -ExecutionPolicy Bypass -File arca-rar\tests\rar-bench.ps1 `
 
 La fila de «antes» es la misma orden con `-Arca` apuntando a una compilación de `17769b4` y `-Tools arca`.
 
+### Filtros de datos
+
+A partir de `-l 5` Arca aplica los filtros E8, E8E9, ARM y delta de RAR 5, elegidos para cada tramo de 64 KiB de un archivo, como hace WinRAR desde `-m3` (véase `arca-rar/vendor/PATCHES.md`). Las tablas anteriores son de antes de los filtros. Se midió de la misma forma, `-Runs 3`, con `-Levels "3,4,5" -Kinds "exe,media,all"`; «Antes» es Arca en el commit `17769b4`, el último sin filtros, ejecutado el mismo día. La máquina volvía a estar ocupada (carga del 40 al 99%), así que los tiempos de CPU son aproximados; los tamaños son exactos.
+
+| Tipo, nivel | Antes: CPU | tamaño | **Filtros: CPU** | tamaño | WinRAR: CPU | tamaño |
+| --- | --- | --- | --- | --- | --- | --- |
+| `all`, `-l 6` / `-m3` | 88.1 s | 43,419,805 | **85.1 s** | 39,186,348 | 23.1 s | 42,537,059 |
+| `all`, `-l 7` / `-m4` | 87.9 s | 43,353,431 | **81.1 s** | 39,145,842 | 35.2 s | 42,258,443 |
+| `all`, `-l 9` / `-m5` | 99.9 s | 43,240,314 | **112.4 s** | 39,039,838 | 35.6 s | 42,206,709 |
+| `media`, `-l 6` / `-m3` | 2.23 s | 8,023,086 | **8.14 s** | 4,172,707 | 2.28 s | 6,056,962 |
+| `media`, `-l 9` / `-m5` | 2.63 s | 7,995,463 | **9.75 s** | 4,159,438 | 2.45 s | 6,052,582 |
+| `exe`, `-l 6` / `-m3` | 18.84 s | 7,255,835 | **15.20 s** | 6,874,309 | 4.23 s | 7,711,395 |
+| `exe`, `-l 9` / `-m5` | 18.14 s | 7,227,594 | **17.77 s** | 6,864,731 | 8.08 s | 7,647,659 |
+| `arca.exe`, `-l 6` / `-m3` | 5.03 s | 2,776,474 | **4.89 s** | 2,630,061 | 1.63 s | 2,625,050 |
+| `arca.exe`, `-l 9` / `-m5` | 6.39 s | 2,718,248 | **7.27 s** | 2,569,717 | 2.70 s | 2,612,567 |
+
+El corpus entero sale ahora un 7.9%, un 7.4% y un 7.5% más pequeño que con WinRAR con `-l 6`, `-l 7` y `-l 9`, donde antes salía un 2.1%, un 2.6% y un 2.4% más grande. `media` queda un tercio por debajo de WinRAR y cuesta entre tres y cuatro veces la CPU de antes, porque el audio y los píxeles filtrados merecen la búsqueda que antes se saltaba con los bytes en bruto, así que `media` ya no es más rápido que en WinRAR. Los datos aleatorios sí lo siguen siendo: decidir que un tramo no lleva filtro es una pasada por sus bytes en el hilo que lee, y con el tipo `random` y `-l 6` Arca tardó entre 0.91 y 1.05 s de CPU, igual antes que después. `exe` gana un 5%; los propios filtros de WinRAR hacen ese código sintético más grande que su salida con `-mc-`. El texto, los registros, el código fuente y los datos aleatorios no se tocan y salen byte a byte iguales; `repo` sale 1,449 bytes más pequeño (7,774,847) y `small` 103 bytes más pequeño (3,668,518), por unos pocos archivos binarios que sí se filtran.
+
+`arca.exe` es un ejecutable real: la compilación de release de 7,475,200 bytes del propio `17769b4` (`cargo build --release -p arca-cli`, SHA-256 `a1f29ea94bc3ac117c89df4634bb083941f68148a6212e3cb70842be5c82cc09`), solo en un directorio y medido con `-Kinds arcaexe -Levels "3,5"`. Otra compilación del mismo commit da otros bytes, así que las cifras valen para ese archivo. Arca queda un 0.2% por encima de WinRAR con `-l 6` y un 1.6% por debajo con `-l 9`.
+
 ### Dónde sigue perdiendo Arca
 
 - **Tiempo de CPU.** El análisis óptimo busca en un árbol binario en cada posición y pone precio a cada longitud de coincidencia. Comprime más que WinRAR texto, registros y código fuente, pero de `-l 3` en adelante sigue costando entre tres y seis veces el tiempo de CPU de WinRAR.
-- **Audio, imágenes y ejecutables.** El escritor de Arca no aplica ningún filtro de datos (`FilterPolicy::None` en `arca-rar/src/writer.rs`), así que falta el filtro delta que WinRAR usa con el PCM y el mapa de bits del tipo `media`: ahí sale un 32% más grande con `-l 6`. Los ejecutables reales pierden del mismo modo el filtro E8/E9, cosa que el tipo sintético `exe` no refleja.
+- **Filtros que WinRAR aplica y Arca no.** Los archivos sólidos y los ficheros de más de 64 MiB se escriben sin filtros de datos, que WinRAR aplica en los dos casos; además, los filtros ven cada tramo de 64 KiB entero, mientras que WinRAR ciñe un rango delta a unos pocos cientos de bytes dentro de uno.
 - **Muchos archivos pequeños.** Sigue siendo más lento que WinRAR, aunque ya no veinte veces: 2.05 s frente a 1.21 s con `-l 6`, y casi toda la diferencia es tiempo de CPU del compresor. Cada origen se sigue consultando para leer sus metadatos al planificar el archivo y se vuelve a abrir para leerlo, y un miembro guardado sin comprimir se lee dos veces.
 - **Archivos cifrados con muchos miembros.** Cada miembro cifrado lleva su propia sal, así que el escritor repite la derivación de la clave de 2^15 rondas, unos 15 ms, una vez por miembro y uno tras otro, y la comprobación posterior la vuelve a hacer con cada miembro que descifra.
 - **Cabeceras.** Arca guarda un hash BLAKE2sp de cada archivo donde WinRAR guarda un CRC32: 28 bytes más por archivo, unos 84 KB en el tipo `small`.

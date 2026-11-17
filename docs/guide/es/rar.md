@@ -80,6 +80,16 @@ ficheros y directorios vacíos, se conservan las fechas de modificación y los
 directorios se recorren en orden. Sin contraseña, la misma entrada produce
 siempre los mismos bytes; con ella, las sales son aleatorias.
 
+A partir del nivel 5, incluido el predeterminado `normal`, Arca aplica los
+filtros de datos de RAR5 donde compensan, como hace WinRAR desde `-m3`: E8 o
+E8E9 en código x86, ARM en código ARM de 32 bits y delta, de 1 a 32 canales,
+en audio, imágenes y tablas. Cada tramo de 64 KiB de un fichero se juzga por
+separado, así que un ejecutable recibe el filtro de código en su código y
+delta en sus tablas. El texto y los datos ya comprimidos se dejan como están.
+Los ficheros de más de 64 MiB, que el lector de Arca tendría que descodificar
+enteros, y los archivos sólidos se escriben sin filtros. El código ARM64 no
+tiene filtro en RAR5.
+
 | Opción | WinRAR | Qué escribe |
 | --- | --- | --- |
 | `--solid` | `-s` | Un solo flujo de compresión para todos los ficheros, en el orden dado. Más pequeño con muchos ficheros parecidos; un daño alcanza a todos los ficheros posteriores, y extraer uno descodifica los anteriores. |
@@ -124,8 +134,7 @@ ignorado, SIGKILL o un corte de corriente pueden dejar temporales
 `.arca-*.rar.part` y `.rars-spool-*`, que no son archivos publicados.
 
 No se admite, y se rechaza en lugar de aproximarse: volúmenes de recuperación
-(`.rev`), filtros de datos RAR, comentarios de archivo y de fichero, salida
-RAR4, creación de CBR, y añadir, borrar o renombrar dentro de un archivo
+(`.rev`), comentarios de archivo y de fichero, salida RAR4, creación de CBR, y añadir, borrar o renombrar dentro de un archivo
 existente. Un archivo dañado de un solo volumen que tenga registro de
 recuperación se reconstruye en un archivo nuevo con
 [`arca repair`](cli-reference.md#repair); un volumen dañado de un conjunto lo

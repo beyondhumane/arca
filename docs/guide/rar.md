@@ -80,6 +80,15 @@ stored; modification times are preserved; directories are walked in sorted
 order. Without a password the same input produces the same bytes; with one,
 the salts are random.
 
+From level 5 on, the default `normal` included, Arca applies RAR5's data
+filters where they pay, as WinRAR does from `-m3`: E8 or E8E9 on x86 code, ARM
+on 32-bit ARM code and delta, with 1 to 32 channels, on audio, images and
+tables. Each 64 KiB stretch of a file is judged on its own, so an executable
+gets the code filter on its code and delta on its tables. Text and compressed
+data are left as they are. Files over 64 MiB, which Arca's reader would have
+to decode whole, and solid archives are written without filters. ARM64 code
+has no RAR5 filter.
+
 | Option | WinRAR | What it writes |
 | --- | --- | --- |
 | `--solid` | `-s` | One compression stream across all files, in the order given. Smaller for many similar files; damage reaches every later file, and extracting one file decodes those before it. |
@@ -121,7 +130,7 @@ An unhandled SIGHUP, SIGKILL or power loss can leave `.arca-*.rar.part` and
 `.rars-spool-*` temporary files; these are not published archives.
 
 Not supported, and refused rather than approximated: recovery volumes
-(`.rev`), RAR data filters, archive and file comments, RAR4 output, CBR
+(`.rev`), archive and file comments, RAR4 output, CBR
 creation, and adding to, removing from or renaming inside an existing archive.
 A damaged single-volume archive that has a recovery record is rebuilt into a
 new file by [`arca repair`](cli-reference.md#repair); a damaged volume of a set

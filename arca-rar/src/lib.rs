@@ -48,6 +48,9 @@ pub mod create_limits {
     pub const MIN_VOLUME_BYTES: u64 = 64 * 1024;
     /// The largest recovery record, as a percentage of the archive.
     pub const MAX_RECOVERY_PERCENT: u8 = 100;
+    /// The largest member the writer applies a data filter to. The reader
+    /// decodes a filtered member whole, up to this many bytes.
+    pub const MAX_FILTERED_MEMBER_BYTES: u64 = 64 * MIB;
 }
 
 pub type Progress<'a> = dyn Fn(usize, usize, &str) -> bool + Sync + 'a;

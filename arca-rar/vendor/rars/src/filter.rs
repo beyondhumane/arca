@@ -91,12 +91,27 @@ pub enum FilterPolicy {
     Auto,
     /// Apply this filter whether or not it pays off.
     Explicit(FilterSpec),
+    /// Arca: decide region by region while the streaming RAR 5 writer reads
+    /// each member, from the bytes' own statistics and no trial encode, and
+    /// filter the regions where that estimate says it pays. Members longer
+    /// than `max_member` bytes are left alone, so a reader that has to buffer
+    /// a filtered member can bound what it buffers. Solid archives are written
+    /// unfiltered, and the RAR 1.5 to 4.0 writers treat this as
+    /// [`FilterPolicy::None`].
+    Detect { max_member: u64 },
 }
 
 impl FilterPolicy {
     /// The common case: one filter over the whole member.
     pub const fn explicit(kind: FilterKind) -> Self {
         Self::Explicit(FilterSpec::whole(kind))
+    }
+
+    /// Arca: whether this policy needs each member whole, which is what the
+    /// writers' solid and plan checks are about. [`FilterPolicy::Detect`]
+    /// works on the streaming blocks instead.
+    pub(crate) const fn filters_whole_members(&self) -> bool {
+        matches!(self, Self::Auto | Self::Explicit(_))
     }
 }
 

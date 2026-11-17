@@ -12,8 +12,9 @@ pub(crate) use encoder::{
 };
 #[cfg(feature = "write")]
 pub(crate) use encoder::{
-    encode_owned_member, filtered_owned_member, streaming_blocks_with_allowance, BlockSplitter,
-    LZ_BLOCK_SIZE, MAX_DELTA_CHANNELS, MAX_LZ_BLOCK_SIZE,
+    detect_filters, encode_owned_member, filtered_owned_member,
+    filtered_streaming_blocks_with_allowance, BlockSplitter, EncodeFilter, LZ_BLOCK_SIZE,
+    MAX_DELTA_CHANNELS, MAX_LZ_BLOCK_SIZE,
 };
 
 use super::filters::{self, DeltaErrorMessages};
