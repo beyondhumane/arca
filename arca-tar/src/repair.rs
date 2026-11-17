@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
 const MAX_REPORTED: usize = 10_000;
+const STEP: u64 = 4 << 20;
 
 /// A stretch of the archive that was given up on.
 pub struct Lost {
@@ -118,6 +119,9 @@ pub fn salvage<R: Read, W: Write, S: Read + Write + Seek>(
                         return Err(Error::Cancelled);
                     }
                     n += got as u64;
+                    if n % STEP < got as u64 && !progress(&name, n) {
+                        return Err(Error::Cancelled);
+                    }
                 }
             });
             if let Some(error) = stuck {

@@ -170,3 +170,21 @@ fn cut_or_garbled_input_does_not_panic_and_always_reads_back() {
     let (out, report) = salvaged(&noise);
     assert!(listed(&out).len() <= report.kept.len());
 }
+
+#[test]
+fn a_salvage_can_be_stopped_inside_a_large_entry() {
+    let big = vec![9u8; 9 << 20];
+    let mut w = TarWriter::new(Vec::new());
+    w.add("big.bin", big.len() as u64, 0, 0o644, &big[..])
+        .unwrap();
+    let tar = w.finish().unwrap();
+    let mut heard = Vec::new();
+    let mut to = TarWriter::new(Vec::new());
+    let mut spool = Cursor::new(Vec::new());
+    let stopped = salvage(&tar[..], &mut to, &mut spool, &mut |_, at| {
+        heard.push(at);
+        at == 0
+    });
+    assert!(matches!(stopped, Err(Error::Cancelled)));
+    assert_eq!(heard, [0, 4 << 20]);
+}
