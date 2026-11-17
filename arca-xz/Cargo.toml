@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Flujos XZ y deteccion de TAR.XZ en safe Rust"
+description = "Flujos XZ en safe Rust"
 
 [dependencies]
 arca-core.workspace = true
