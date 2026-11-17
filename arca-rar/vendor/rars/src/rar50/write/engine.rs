@@ -1242,6 +1242,25 @@ struct VolumeMember<'a> {
     source: FragmentSource,
     /// Encryption record for the file header, when the payload is encrypted.
     encryption: Option<([u8; 16], [u8; 16], [u8; 12])>,
+    /// Arca: the keys whose hash key tweaks the checksums an encrypted
+    /// member's fragments report, as the encryption record says they are.
+    checksum_keys: Option<Rar50Keys>,
+}
+
+impl VolumeMember<'_> {
+    /// Arca: the checksums a fragment's header carries for the bytes it
+    /// stores. The encryption record sets the tweaked-checksum flag, which
+    /// covers every fragment and not only the last, so WinRAR checks a
+    /// fragment of an encrypted member against the HMAC-converted values.
+    fn reported(&self, fragment: FragmentChecksums) -> Result<FragmentChecksums> {
+        match &self.checksum_keys {
+            Some(keys) => Ok(FragmentChecksums {
+                crc32: keys.checked_crc_mac(fragment.crc32)?,
+                hash: keys.checked_hash_mac(fragment.hash)?,
+            }),
+            None => Ok(fragment),
+        }
+    }
 }
 
 struct MemberProgress<'a, 'p> {
@@ -1480,6 +1499,7 @@ fn prepare_volume_member<'a>(
                 payload_len,
                 source: FragmentSource::Packed(encrypted),
                 encryption: Some((salt, iv, keys.checked_password_record()?)),
+                checksum_keys: Some(keys),
             })
         }
         None => Ok(VolumeMember {
@@ -1504,6 +1524,7 @@ fn prepare_volume_member<'a>(
                 FragmentSource::Packed(member.packed)
             },
             encryption: None,
+            checksum_keys: None,
         }),
     }
 }
@@ -1860,8 +1881,10 @@ impl VolumeWriter<'_> {
 /// Every fragment repeats the member's metadata. The last one carries the
 /// member's own checksum and hash; the rest carry `fragment` over the bytes
 /// they store, which is what WinRAR puts there and lets one volume be checked
-/// on its own. Encrypted fragments checksum the ciphertext, so that check needs
-/// no password.
+/// on its own. Encrypted fragments checksum the ciphertext. Arca: and, like the
+/// last fragment's values, those checksums go through the hash key (see
+/// [`VolumeMember::reported`]), so checking an encrypted fragment needs the
+/// password.
 ///
 /// Both a CRC32 and a hash record go on every fragment. A reader takes the hash
 /// record as the member's checksum type when it has one, and unrar picks that
@@ -1877,6 +1900,8 @@ fn fragment_header(
     resources: &WriterResources,
 ) -> Result<Bytes> {
     let split_after = fragment.is_some();
+    // Arca: the header reports tweaked checksums for an encrypted member.
+    let fragment = fragment.map(|f| member.reported(f)).transpose()?;
     let mut extra = Bytes::new(resources);
     if let Some((salt, iv, check_value)) = member.encryption {
         write_file_encryption_record(&mut extra, salt, iv, check_value)?;
@@ -2824,6 +2849,65 @@ mod emission_ledger_tests {
             Error::InvalidArgument("source changed").at_entry(b"file".to_vec(), "reading");
         let error = member_error(original, b"file", "writing");
         assert_eq!(error.entry_context(), Some((b"file".as_slice(), "reading")));
+    }
+
+    /// Arca: WinRAR checks every fragment of an encrypted member against
+    /// checksums converted through the hash key, not only the last one.
+    #[test]
+    #[cfg(feature = "encryption")]
+    fn encrypted_fragments_report_tweaked_checksums() {
+        let mut state = 0x9e37_79b9u32;
+        let data: Vec<u8> = (0..20_000)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                b'a' + (state % 16) as u8
+            })
+            .collect();
+        for (method, hidden) in [(0, false), (3, false), (3, true)] {
+            let entries = [ArchiveEntry::new(
+                b"payload".to_vec(),
+                crate::EntrySource::from_bytes(data.clone()),
+            )
+            .with_password(b"secret")];
+            let mut settings = plan(hidden);
+            settings.compress.method = method;
+            settings.recovery_percent = None;
+            let mut sink = super::super::CollectedVolumes::new();
+            write_volumes(
+                &entries,
+                settings,
+                4096,
+                &mut sink,
+                &WriterResources::default(),
+            )
+            .unwrap();
+            let volumes = sink.take();
+            assert!(volumes.len() > 2, "method {method}");
+            let mut fragments = 0;
+            for volume in &volumes {
+                let archive =
+                    crate::rar50::Archive::parse_with_password(volume, Some(b"secret")).unwrap();
+                let file = archive.files().next().unwrap();
+                if !file.is_split_after() {
+                    continue;
+                }
+                let encryption = file.encryption.as_ref().unwrap();
+                assert_ne!(encryption.flags & 0x0002, 0);
+                let keys =
+                    Rar50Keys::derive(b"secret", encryption.salt, encryption.kdf_count).unwrap();
+                let stored = file.packed_data(&archive).unwrap();
+                let raw_crc = crate::crc32::crc32(&stored);
+                let raw_hash = crate::rar50::blake2sp::hash(&stored);
+                assert_eq!(file.data_crc32, Some(keys.mac_crc32(raw_crc)));
+                assert_ne!(file.data_crc32, Some(raw_crc));
+                let hash = file.hash.as_ref().unwrap();
+                assert_eq!(hash.data, keys.mac_hash32(raw_hash));
+                fragments += 1;
+            }
+            assert_eq!(fragments, volumes.len() - 1, "method {method}");
+        }
     }
 
     #[test]

@@ -124,6 +124,16 @@ Container fixes, which do not touch the encoder:
   `recovery_service_header`; the bytes are the same. The payload-limited
   `write_streaming_volumes_with_progress` behaves as before
   (`rar50/write/engine.rs`).
+- **Tweaked checksums on every encrypted fragment.** A fragment that is not
+  a member's last reports the CRC32 and BLAKE2sp of the ciphertext it
+  stores. Only the last fragment's values went through the hash key, while
+  the encryption record sets the tweaked-checksum flag for the whole member,
+  so WinRAR 7.23 printed "packed data checksum error" for every other
+  fragment of every encrypted member of a set, and still exited 0. The
+  volume member now keeps its keys and `fragment_header` converts what it
+  reports (`VolumeMember::reported`, with
+  `encrypted_fragments_report_tweaked_checksums`). The reader checks only the
+  last fragment's checksum, so sets written either way read the same.
 
 Spool plumbing, which does not touch the encoder or the archive bytes:
 
