@@ -457,9 +457,7 @@ fn checksum(data: &[u8], seed: u32) -> u32 {
     for word in words {
         sum ^= u32::from_le_bytes(*word);
     }
-    let tail = rest
-        .iter()
-        .fold(0u32, |acc, &b| (acc << 8) | u32::from(b));
+    let tail = rest.iter().fold(0u32, |acc, &b| (acc << 8) | u32::from(b));
     sum ^ tail
 }
 
