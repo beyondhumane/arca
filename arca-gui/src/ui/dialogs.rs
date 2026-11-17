@@ -970,7 +970,7 @@ impl Shell {
             self.controller.set_level(Level::new(at as u8));
         }
 
-        if matches!(format, Format::Zip | Format::SevenZ) {
+        if matches!(format, Format::Zip | Format::SevenZ | Format::Rar) {
             let show = self.add_show_password;
             let mut toggle = false;
             let mut hide_names = self.controller.state.hide_names;
@@ -993,7 +993,7 @@ impl Shell {
                             super::widgets::named(&field, s.password_word);
                         });
                     });
-                    if format == Format::SevenZ {
+                    if crate::controller::hides_names(format) {
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             hide_changed = switch(ui, &mut hide_names, s.hide_names).changed();
@@ -1009,35 +1009,59 @@ impl Shell {
                 self.controller.state.hide_names = hide_names;
             }
         }
-        if format != Format::Rar {
-            let mut choice = self.controller.state.volume;
-            let custom = choice == crate::model::VolumeChoice::Custom;
-            card(ui, s.split_word, None, true, |ui| {
-                egui::ComboBox::from_id_salt("compress-volume")
-                    .selected_text(choice.label(s))
-                    .width(160.0)
-                    .show_ui(ui, |ui| {
-                        for candidate in crate::model::VolumeChoice::ALL {
-                            ui.selectable_value(&mut choice, candidate, candidate.label(s));
-                        }
-                    });
-                if custom {
-                    let size = ui.add(
-                        super::widgets::field(ui, &mut self.controller.state.volume_text)
-                            .hint_text("250m")
-                            .desired_width(90.0),
-                    );
-                    super::widgets::named(&size, s.volume_custom);
-                }
-            });
-            self.controller.state.volume = choice;
-            if custom {
-                let bad = !self.controller.state.volume_text.trim().is_empty()
-                    && self.controller.volume_size().is_err();
-                let color = if bad { p.warning } else { p.muted };
-                ui.label(RichText::new(s.volume_hint).small().color(hex(color)));
+        if format == Format::Rar {
+            let mut rar = self.controller.state.rar;
+            card(ui, s.rar_options, None, false, |ui| {
+                ui.horizontal(|ui| {
+                    switch(ui, &mut rar.solid, s.solid_archive);
+                    ui.label(s.solid_archive);
+                });
                 ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let mut on = rar.recovery.is_some();
+                    if switch(ui, &mut on, s.recovery_record).changed() {
+                        rar.recovery = on.then_some(3);
+                    }
+                    ui.label(s.recovery_record);
+                    if let Some(percent) = rar.recovery.as_mut() {
+                        let max = arca_rar::create_limits::MAX_RECOVERY_PERCENT;
+                        ui.add(egui::DragValue::new(percent).range(1..=max).suffix(" %"));
+                    }
+                });
+            });
+            self.controller.state.rar = rar;
+        }
+        let mut choice = self.controller.state.volume;
+        let custom = choice == crate::model::VolumeChoice::Custom;
+        card(ui, s.split_word, None, true, |ui| {
+            egui::ComboBox::from_id_salt("compress-volume")
+                .selected_text(choice.label(s))
+                .width(160.0)
+                .show_ui(ui, |ui| {
+                    for candidate in crate::model::VolumeChoice::ALL {
+                        ui.selectable_value(&mut choice, candidate, candidate.label(s));
+                    }
+                });
+            if custom {
+                let size = ui.add(
+                    super::widgets::field(ui, &mut self.controller.state.volume_text)
+                        .hint_text("250m")
+                        .desired_width(90.0),
+                );
+                super::widgets::named(&size, s.volume_custom);
             }
+        });
+        self.controller.state.volume = choice;
+        if custom {
+            let bad = !self.controller.state.volume_text.trim().is_empty()
+                && self.controller.volume_size().is_err();
+            let color = if bad { p.warning } else { p.muted };
+            let hint = match format {
+                Format::Rar => s.rar_volume_hint,
+                _ => s.volume_hint,
+            };
+            ui.label(RichText::new(hint).small().color(hex(color)));
+            ui.add_space(6.0);
         }
         if let Some(note) = self.controller.create_policy_note() {
             ui.label(RichText::new(note).small().color(hex(p.warning)));

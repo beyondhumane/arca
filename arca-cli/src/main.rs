@@ -58,12 +58,12 @@ enum Cmd {
         #[arg(
             short = 'p',
             long,
-            help = "Encrypt with AES-256 (.zip and .7z). Other tools will ask for it to open the archive"
+            help = "Encrypt with AES-256 (.zip, .7z and .rar). Other tools will ask for it to open the archive"
         )]
         password: Option<String>,
         #[arg(
             long,
-            help = "Encrypt file names too (.7z only; requires a nonempty password)"
+            help = "Encrypt file names too (.7z and .rar; requires a nonempty password)"
         )]
         hide_names: bool,
         #[arg(
@@ -71,12 +71,24 @@ enum Cmd {
             long,
             value_name = "SIZE",
             value_parser = arca_core::volumes::parse_size,
-            help = "Split the archive into parts of SIZE bytes, or k, m or g (KiB, MiB, GiB): out.zip.001, out.zip.002, ... as 7-Zip does. Not for .rar"
+            help = "Split the archive into parts of SIZE bytes, or k, m or g (KiB, MiB, GiB): out.zip.001, out.zip.002, ... as 7-Zip does. A .rar becomes a RAR volume set instead, out.part1.rar, out.part2.rar, ... as WinRAR makes, each at most SIZE (at least 64k)"
         )]
         volume: Option<u64>,
         #[arg(
             long,
-            conflicts_with_all = ["volume", "password", "hide_names"],
+            help = "Compress the files as one stream, each against those before it (.rar only). Smaller, but damage to one file reaches every file after it"
+        )]
+        solid: bool,
+        #[arg(
+            long,
+            value_name = "PERCENT",
+            value_parser = parse_percent,
+            help = "Add a recovery record of PERCENT (1 to 100) of the archive, or of each volume (.rar only), that arca repair and WinRAR use to rebuild damaged data"
+        )]
+        recovery: Option<u8>,
+        #[arg(
+            long,
+            conflicts_with_all = ["volume", "password", "hide_names", "solid", "recovery"],
             help = "Make a self-extracting program (out.exe) instead: the arca-sfx program found next to arca, followed by a ZIP. Run it to choose a folder and extract there"
         )]
         sfx: bool,
@@ -433,6 +445,8 @@ fn run(cli: Cli) -> Result<()> {
             password,
             hide_names,
             volume,
+            solid,
+            recovery,
             sfx,
             console,
         } => create(
@@ -441,7 +455,12 @@ fn run(cli: Cli) -> Result<()> {
             level,
             codec,
             threads,
-            (password.as_deref(), hide_names),
+            Extras {
+                password: password.as_deref(),
+                hide_names,
+                solid,
+                recovery,
+            },
             match (volume, sfx) {
                 (_, true) => Shape::Sfx { console },
                 (Some(size), false) => Shape::Split(size),
@@ -623,6 +642,27 @@ enum Shape {
     Sfx { console: bool },
 }
 
+/// What `create` is asked for beyond the inputs, the compression and the shape.
+#[derive(Clone, Copy)]
+struct Extras<'a> {
+    password: Option<&'a str>,
+    hide_names: bool,
+    solid: bool,
+    recovery: Option<u8>,
+}
+
+/// A recovery record size: a whole percentage, with or without `%`.
+fn parse_percent(text: &str) -> std::result::Result<u8, String> {
+    let digits = text.trim().trim_end_matches('%').trim();
+    match digits.parse::<u8>() {
+        Ok(n) if (1..=arca_rar::create_limits::MAX_RECOVERY_PERCENT).contains(&n) => Ok(n),
+        _ => Err(format!(
+            "'{text}' is not a recovery record size: write a percentage from 1 to {}, like 3 or 3%",
+            arca_rar::create_limits::MAX_RECOVERY_PERCENT
+        )),
+    }
+}
+
 /// The self-extractor program and the flags for its trailer. It is the
 /// arca-sfx built alongside arca and installed next to it; ARCA_SFX_STUB
 /// names another one. With `console` a Windows program is made a console
@@ -662,9 +702,15 @@ fn create(
     level: Level,
     codec_arg: CodecArg,
     requested_threads: usize,
-    (password, hide_names): (Option<&str>, bool),
+    extras: Extras<'_>,
     shape: Shape,
 ) -> Result<()> {
+    let Extras {
+        password,
+        hide_names,
+        solid,
+        recovery,
+    } = extras;
     let volume = match shape {
         Shape::Split(size) => Some(size),
         _ => None,
@@ -693,6 +739,12 @@ fn create(
     if !format_kind.can_create() {
         return Err(format_kind.read_only());
     }
+    if format_kind != Format::Rar && (solid || recovery.is_some()) {
+        return Err(Error::Unsupported(format!(
+            "--solid and --recovery are for .rar archives; {} has no place for them",
+            format_kind.label()
+        )));
+    }
     if format_kind == Format::SevenZ {
         return sevenz::create(
             out,
@@ -703,30 +755,30 @@ fn create(
             volume,
         );
     }
-    if format_kind == Format::Rar && volume.is_some() {
-        return Err(Error::Unsupported(
-            "-v does not split .rar archives; RAR has volumes of its own that Arca does not write yet. Split a .zip or .7z instead".into(),
-        ));
-    }
     if format_kind == Format::Rar {
         return rar::create(
             out,
             inputs,
-            level,
-            codec_arg,
+            (level, codec_arg),
             requested_threads,
-            password,
-            hide_names,
+            arca_rar::CreateOptions {
+                level,
+                solid,
+                password,
+                hide_names,
+                volume,
+                recovery,
+            },
         );
     }
     if hide_names {
         return Err(Error::Unsupported(
-            "--hide-names requires .7z and a nonempty password".into(),
+            "--hide-names requires .7z or .rar and a nonempty password".into(),
         ));
     }
     if password.is_some() && format_kind != Format::Zip {
         return Err(Error::Unsupported(format!(
-            "encryption requires .zip or .7z; {} has no place to put it",
+            "encryption requires .zip, .7z or .rar; {} has no place to put it",
             format_kind.label()
         )));
     }

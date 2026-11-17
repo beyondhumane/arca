@@ -561,8 +561,10 @@ class Harness:
         if existing.read_bytes() != original:
             raise Failure("existing output was modified")
         refused("cbr output", ["create", str(area / "out.cbr"), str(src)], "")
-        refused("password", ["create", str(area / "p.rar"), str(src), "-p", "secret"], "encryption")
-        refused("hide names", ["create", str(area / "h.rar"), str(src), "-p", "secret", "--hide-names"], "")
+        refused("empty password", ["create", str(area / "p.rar"), str(src), "-p", ""], "nonempty password")
+        refused("hide names without a password", ["create", str(area / "h.rar"), str(src), "--hide-names"], "nonempty password")
+        refused("volume too small", ["create", str(area / "v.rar"), str(src), "-v", "1k"], "at least 65536 bytes")
+        refused("recovery out of range", ["create", str(area / "r.rar"), str(src), "--recovery", "0"], "recovery record")
         for codec in ("zstd", "deflate", "lzma2"):
             refused(f"codec {codec}", ["create", str(area / f"{codec}.rar"), str(src), "-c", codec], "auto or store")
         # -j picks the size of the pool the writer runs on; it is honored,

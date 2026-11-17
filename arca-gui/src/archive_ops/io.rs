@@ -1388,22 +1388,37 @@ pub(crate) fn compress_split(
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     encryption: (Option<&str>, bool),
 ) -> arca_core::Result<(u64, u64)> {
-    let codecs = (codec, arca_7z::Compression::Lzma2);
+    let codecs = (
+        codec,
+        arca_7z::Compression::Lzma2,
+        super::RarExtras::default(),
+    );
     compress_with(
         out, volume, inputs, format, codecs, level, notify, encryption,
     )
 }
 
+/// The first file a finished creation of `out` left: `out` itself, its first
+/// split part, or the first volume of a RAR set, whose name depends on how
+/// many volumes it took.
+pub(crate) fn created_first(out: &Path, format: Format, volume: Option<u64>) -> PathBuf {
+    match (format, volume) {
+        (Format::Rar, Some(_)) => arca_rar::first_volume(out),
+        _ => arca_core::volumes::first_output(out, volume),
+    }
+}
+
 /// Creates `out` from `inputs`, cut into parts of `volume` bytes named
-/// `out.001`, `out.002` and so on when there is a volume size. A ZIP is
-/// compressed with the first codec, a 7z with the second.
+/// `out.001`, `out.002` and so on when there is a volume size, or into RAR
+/// volumes `out.part1.rar`, `out.part2.rar` for a RAR. A ZIP is compressed
+/// with the first codec, a 7z with the second, and a RAR takes the extras.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compress_with(
     out: &Path,
     volume: Option<u64>,
     inputs: &[PathBuf],
     format: Format,
-    (codec, sevenz): (Codec, arca_7z::Compression),
+    (codec, sevenz, rar): (Codec, arca_7z::Compression, super::RarExtras),
     level: Level,
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
     encryption: (Option<&str>, bool),
@@ -1418,22 +1433,26 @@ pub(crate) fn compress_with(
     if let Some(named) = detect(out).filter(|named| !named.can_create()) {
         return Err(named.read_only());
     }
-    if password.is_some() && !matches!(format, Format::Zip | Format::SevenZ) {
+    if password.is_some() && !matches!(format, Format::Zip | Format::SevenZ | Format::Rar) {
         return Err(arca_core::Error::Unsupported(
-            "encryption requires ZIP or 7z".into(),
+            "encryption requires ZIP, 7z or RAR".into(),
         ));
     }
-    if hide_names && format != Format::SevenZ {
+    if hide_names && !matches!(format, Format::SevenZ | Format::Rar) {
         return Err(arca_core::Error::Unsupported(
-            "hidden names require 7z".into(),
-        ));
-    }
-    if format == Format::Rar && volume.is_some() {
-        return Err(arca_core::Error::Unsupported(
-            "RAR archives are not split into volumes; choose ZIP or 7z to split".into(),
+            "hidden names require 7z or RAR".into(),
         ));
     }
     if format == Format::Rar {
+        let options = arca_rar::CreateOptions {
+            level,
+            solid: rar.solid,
+            password,
+            hide_names,
+            volume,
+            recovery: rar.recovery,
+        };
+        options.check()?;
         let sources = collect_rar_sources(inputs, &RarSourceLimits::WRITER, notify)?;
         let source_bytes = sources
             .iter()
@@ -1441,8 +1460,11 @@ pub(crate) fn compress_with(
             .filter(|meta| meta.is_file())
             .map(|meta| meta.len())
             .sum();
-        arca_rar::create_rar(out, &sources, &arca_rar::CreateOptions { level }, notify)?;
-        let final_size = fs::metadata(out).map(|m| m.len()).unwrap_or(0);
+        let final_size = arca_rar::create_rar(out, &sources, &options, notify)?
+            .iter()
+            .filter_map(|path| fs::metadata(path).ok())
+            .map(|meta| meta.len())
+            .sum();
         return Ok((source_bytes, final_size));
     }
     let own = arca_core::extraction::OwnOutput::new(out);

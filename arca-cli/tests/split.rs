@@ -159,8 +159,9 @@ fn sizes_formats_and_changes_that_cannot_work_are_refused() {
     assert!(error.contains("9999"), "{error}");
     nothing_staged(dir);
     assert!(parts(dir, "a.zip").is_empty());
-    let error = fail(dir, &["create", "a.rar", "src", "-v", "1m"]);
-    assert!(error.contains(".rar"), "{error}");
+    let error = fail(dir, &["create", "a.rar", "src", "-v", "1k"]);
+    assert!(error.contains("RAR"), "{error}");
+    assert!(!dir.join("a.rar").exists());
     ok(dir, &["create", "b.zip.001", "src", "-v", "1m"]);
     assert_eq!(parts(dir, "b.zip").len(), 1);
     let error = fail(dir, &["password", "b.zip.001", "--new", "x"]);

@@ -18,7 +18,7 @@ Arca es un workspace de Cargo. Cada crate tiene una sola tarea y una postura dec
 | `arca-tar` | TAR ustar con verificación de suma de comprobación | prohibido |
 | `arca-stream` | Flujos XZ (a través de `arca-xz`), bzip2 y Zstandard, sueltos o alrededor de un TAR, distinguidos por su contenido | prohibido |
 | `arca-7z` | Análisis 7z acotado, extracción sólida, creación (LZMA2, LZMA, PPMd, BZip2, Deflate, Store) con filtros de saltos y Delta, y AES | prohibido |
-| `arca-rar` | Lectura RAR/CBR y creación RAR5 de un solo volumen, activo por defecto en CLI/GUI | prohibido |
+| `arca-rar` | Lectura RAR/CBR y creación RAR5 (sólida, cifrada, en volúmenes, con registro de recuperación), activo por defecto en CLI/GUI | prohibido |
 | `arca-extra` | Lectura de CPIO, AR, DEB, RPM, CAB (MSZIP, LZX) y LZH | prohibido |
 | `arca-disk` | Lectura de imágenes de disco VHD, VHDX, VMDK, DMG y en bruto: particiones MBR y GPT, FAT, exFAT, NTFS y HFS+ (ISO 9660 con `arca-iso`) | prohibido |
 | `arca-cli` | El binario arca | permitido, sin usar |

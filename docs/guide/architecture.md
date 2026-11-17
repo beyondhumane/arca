@@ -18,7 +18,7 @@ Arca is a Cargo workspace. Each crate has one job and a declared stance on unsaf
 | `arca-tar` | ustar TAR with checksum verification | forbidden |
 | `arca-stream` | XZ (through `arca-xz`), bzip2 and Zstandard streams, alone or around a TAR, told apart by their contents | forbidden |
 | `arca-7z` | Bounded 7z parsing, solid extraction, creation (LZMA2, LZMA, PPMd, BZip2, Deflate, Store) with branch/Delta filters, and AES | forbidden |
-| `arca-rar` | RAR/CBR reading and single-volume RAR5 creation, enabled by default in CLI/GUI | forbidden |
+| `arca-rar` | RAR/CBR reading and RAR5 creation (solid, encrypted, volumes, recovery record), enabled by default in CLI/GUI | forbidden |
 | `arca-extra` | Read-only CPIO, AR, DEB, RPM, CAB (MSZIP, LZX) and LZH | forbidden |
 | `arca-disk` | Read-only VHD, VHDX, VMDK, DMG and raw disk images: MBR and GPT partitions, FAT, exFAT, NTFS and HFS+ (ISO 9660 through `arca-iso`) | forbidden |
 | `arca-cli` | The arca binary | allowed, unused |

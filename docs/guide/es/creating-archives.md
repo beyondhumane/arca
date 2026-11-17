@@ -2,13 +2,13 @@
 description: Niveles, códecs, hilos y formatos para arca create, incluidos los nuevos archivos RAR5.
 group: Uso de Arca
 order: 4
-keywords: crear comprimir nivel códec zstd deflate store hilos tar gzip xz txz lzma2 lzma ppmd bcj arm64 delta filtro bzip2 bz2 tbz2 zst tzst rar rar5 dividir partes volumen 001 sfx autoextraíble exe -l -c -j -v create compress level codec zstd deflate store threads tar gzip xz txz lzma2 rar rar5 -l -c -j
+keywords: crear comprimir nivel códec zstd deflate store hilos tar gzip xz txz lzma2 lzma ppmd bcj arm64 delta filtro bzip2 bz2 tbz2 zst tzst rar rar5 sólido recuperación part1 dividir partes volumen 001 sfx autoextraíble exe -l -c -j -v create compress level codec zstd deflate store threads tar gzip xz txz lzma2 rar rar5 -l -c -j
 ---
 
 # Crear archivos
 
 ```text
-arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [--hide-names] [-v SIZE] [--sfx [--console]]
+arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [--hide-names] [-v SIZE] [--solid] [--recovery PERCENT] [--sfx [--console]]
 ```
 
 | Opción | Valores | Por defecto | Descripción |
@@ -16,9 +16,11 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | `-l, --level` | store · fast · normal · best | normal | Nivel de compresión. |
 | `-c, --codec` | auto · store · deflate · zstd · lzma2 · lzma · ppmd · bzip2 | auto | Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz, bzip2 en .bz2 y .tar.bz2, Zstandard en .zst y .tar.zst, el compresor RAR en .rar (solo auto o store). .7z admite además lzma, ppmd, bzip2, deflate y store, véase [7z](#7z). |
 | `-j, --threads` | un número | 0 | Límite de hilos ZIP, XZ y Zstandard. 0 usa todos los núcleos; bzip2 usa siempre uno; 7z con LZMA2 y RAR usan todos los núcleos que permite su presupuesto de memoria, y 7z con otro método, uno. |
-| `-p, --password` | texto | ninguna | Cifra ZIP o 7z con AES-256. Se rechaza en .rar. |
-| `--hide-names` | indicador | desactivado | Cifra también las cabeceras 7z; exige una contraseña no vacía. |
-| `-v, --volume` | un tamaño: bytes, o k, m, g | ninguno | Divide el archivo en partes de ese tamaño, `salida.zip.001`, `salida.zip.002`… No en .rar. |
+| `-p, --password` | texto | ninguna | Cifra ZIP, 7z o RAR con AES-256. |
+| `--hide-names` | indicador | desactivado | Cifra también las cabeceras 7z o RAR, para ocultar los nombres; exige una contraseña no vacía. |
+| `-v, --volume` | un tamaño: bytes, o k, m, g | ninguno | Divide el archivo en partes de ese tamaño, `salida.zip.001`, `salida.zip.002`…; un .rar se escribe en cambio en volúmenes RAR `salida.part1.rar`, `salida.part2.rar`… |
+| `--solid` | indicador | desactivado | Solo RAR: comprime los ficheros como un único flujo. |
+| `--recovery` | de 1 a 100, con o sin `%` | ninguno | Solo RAR: añade un registro de recuperación de ese porcentaje. |
 | `--sfx` | indicador | desactivado | Escribe un programa de Windows que se extrae solo en lugar de un archivo. |
 | `--console` | indicador | desactivado | Con `--sfx`: el programa pregunta e informa en la consola. |
 
@@ -117,20 +119,39 @@ cifrado 7z exige `--hide-names` para que se pueda comprobar la contraseña.
 ```sh
 arca create backup.rar documents/ notes.txt -l best
 arca create stored.rar big.iso -c store
+arca create privado.rar documents/ -p secreto --hide-names
+arca create fotos.rar fotos/ --solid -v 700m --recovery 3
 ```
 
-Crea un archivo RAR5 nuevo, de un solo volumen, no sólido y sin cifrar, que
-UnRAR y 7-Zip oficiales abren. Los cuatro niveles eligen la fuerza del compresor
-RAR; `-c store` equivale a `-l store` y cualquier otro códec explícito se
-rechaza. La creación usa todos los núcleos que permite su presupuesto de memoria, diga lo que diga `-j`, guarda
+Crea un archivo RAR5 nuevo que WinRAR, UnRAR y 7-Zip oficiales abren. Los
+cuatro niveles eligen la fuerza del compresor RAR; `-c store` equivale a
+`-l store` y cualquier otro códec explícito se rechaza. La creación usa todos
+los núcleos que permite su presupuesto de memoria, diga lo que diga `-j`, guarda
 ficheros y directorios vacíos y rechaza enlaces simbólicos y ficheros especiales
 en lugar de seguirlos.
 
-La salida RAR nunca se cifra (`-p` y `--hide-names` se rechazan), nunca es un
-`.cbr`, nunca es sólida ni multivolumen y nunca reemplaza un fichero existente:
-el archivo se prepara junto al destino, se verifica con el lector de Arca y solo
-se publica si el nombre sigue libre. Los RAR/CBR existentes siguen siendo de
-solo lectura. Los límites y la lista completa de rechazos están en la
+El resto es lo que ofrece WinRAR al crear un archivo:
+
+- `--solid` comprime los ficheros como un único flujo, como `-s` de WinRAR.
+- `-p` cifra cada fichero con AES-256, como `-p` de WinRAR; `--hide-names`
+  cifra además las cabeceras, como `-hp`, de modo que sin la contraseña ni
+  siquiera se pueden listar los nombres.
+- `-v TAMAÑO` escribe un conjunto de volúmenes RAR, como `-v`:
+  `fotos.part1.rar`, `fotos.part2.rar`… (`part01` a partir de diez), cada uno
+  de como mucho TAMAÑO bytes, con el registro de recuperación y las cabeceras
+  incluidos, y de al menos 64 KiB. Un conjunto que cabe en un volumen conserva
+  el nombre indicado. Son los volúmenes propios de RAR, no partes `.001`.
+- `--recovery PORCENTAJE` añade un registro de recuperación de entre el 1 y el
+  100 %, en cada volumen de un conjunto, como `-rr`.
+  [`arca repair`](cli-reference.md#repair) y WinRAR reconstruyen con él los
+  datos dañados. No se escriben volúmenes de recuperación (`.rev`).
+
+Se combinan libremente. La salida RAR nunca es un `.cbr`, nunca reemplaza un
+fichero existente ni se mezcla con volúmenes del mismo nombre: el archivo, o el
+conjunto entero, se prepara junto al destino, se abre y se descodifica con el
+lector de Arca (con la contraseña) y solo se publica si todos los nombres
+siguen libres. Los RAR/CBR existentes siguen siendo de solo lectura. Los
+límites y la lista completa de rechazos están en la
 [guía de RAR](rar.md#crear-archivos-rar5).
 
 ## TAR y gzip
@@ -210,8 +231,8 @@ que el `-v` de 7-Zip: todas las partes menos la última tienen exactamente ese
 tamaño y no se les añade nada, así que 7-Zip y NanaZip también abren el
 conjunto. El tamaño es un número de bytes, o uno terminado en `k`, `m` o `g`
 para KiB, MiB y GiB. Funciona con ZIP, 7z, todas las variantes de TAR y los
-flujos de un solo fichero; `.rar` se rechaza, porque RAR tiene volúmenes
-propios que Arca no escribe. Un conjunto tiene como mucho 9999 partes: un
+flujos de un solo fichero; un `.rar` no se corta así, sino que se escribe en
+volúmenes RAR (véase [RAR](#rar)). Un conjunto tiene como mucho 9999 partes: un
 tamaño demasiado pequeño para eso es un error y no deja nada detrás.
 
 Las partes se escriben directamente en su carpeta final, una tras otra, así que

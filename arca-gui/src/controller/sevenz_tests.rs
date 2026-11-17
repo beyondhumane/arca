@@ -245,6 +245,7 @@ fn sevenz_creation_conflicts_preserve_the_original_and_open_the_renamed_output()
             level: Level::NORMAL,
             password: None,
             hide_names: false,
+            rar: Default::default(),
             volume: None,
         });
         let end = Instant::now() + std::time::Duration::from_secs(30);

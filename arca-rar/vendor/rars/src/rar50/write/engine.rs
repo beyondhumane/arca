@@ -20,7 +20,7 @@ use super::headers::{
     write_hash_record_with_value, write_head_crypt, write_main_header, HeaderEncryptionKeys,
     PreparedHeader,
 };
-use super::layout::{resolve_layout, LayoutInputs};
+use super::layout::{resolve_layout, LayoutInputs, ResolvedLayout};
 use super::{encrypt_reader_to, ArchiveEntry};
 use crate::crypto::rar50::{Rar50Keys, WRITE_KDF_COUNT_LOG};
 use crate::detect::RAR50_SIGNATURE;
@@ -442,7 +442,7 @@ pub(super) fn write_archive(
         debug_assert_eq!(layout.recovery_prefix_len, Some(mirror.len()));
         debug_assert_eq!(
             layout.recovery_offset,
-            Some(mirror.len() - RAR50_SIGNATURE.len() as u64),
+            Some(mirror.len() - RAR50_SIGNATURE.len() as u64 - head_crypt.len() as u64),
             "recovery record is not where the locator points"
         );
         write_recovery_service(
@@ -989,42 +989,77 @@ fn recovery_service_with_allowance<B: crate::codec::workspace::Budget>(
 
     debug_assert_eq!(built.plan.payload_size(), Ok(built.payload_len));
 
+    let header = recovery_service_header(
+        recovery_percent,
+        built.payload_len,
+        built.payload_crc32,
+        header_keys,
+        resources,
+    )?;
+    output.write_all(&header)?;
+    payload.copy_to(output)?;
+    Ok(header.len() as u64 + built.payload_len)
+}
+
+/// Arca: the recovery record's service header, shared by the writer and
+/// `recovery_service_len`, so the size it prices is the size it writes.
+#[cfg(feature = "recovery")]
+fn recovery_service_header(
+    recovery_percent: u64,
+    payload_len: u64,
+    payload_crc32: u32,
+    header_keys: Option<&HeaderEncryptionKeys>,
+    resources: &WriterResources,
+) -> Result<Bytes> {
     let mut service_data = Bytes::new(resources);
     service_data.vint(recovery_percent)?;
     let mut extra = Bytes::new(resources);
     write_extra_record(&mut extra, FHEXTRA_SUBDATA, &service_data)?;
-    let specific = stored_file_specific(
-        b"RR",
-        built.payload_len,
-        built.payload_crc32,
-        0,
-        None,
-        0,
-        resources,
-    )?;
-    let header = match header_keys {
+    let specific = stored_file_specific(b"RR", payload_len, payload_crc32, 0, None, 0, resources)?;
+    match header_keys {
         Some(keys) => encrypted_header_block(
             &keys.keys,
             HEAD_SERVICE,
             HFL_EXTRA | HFL_DATA,
-            Some(built.payload_len),
+            Some(payload_len),
             &specific,
             &extra,
             &[],
             resources,
-        )?,
+        ),
         None => block_header_image(
             HEAD_SERVICE,
             HFL_EXTRA | HFL_DATA,
-            Some(built.payload_len),
+            Some(payload_len),
             &specific,
             &extra,
             resources,
-        )?,
-    };
-    output.write_all(&header)?;
-    payload.copy_to(output)?;
-    Ok(header.len() as u64 + built.payload_len)
+        ),
+    }
+}
+
+/// Arca: bytes the recovery service block over `prefix_len` bytes takes,
+/// header included, without computing the record.
+fn recovery_service_len(
+    recovery_percent: u64,
+    prefix_len: u64,
+    header_keys: Option<&HeaderEncryptionKeys>,
+    resources: &WriterResources,
+) -> Result<u64> {
+    #[cfg(not(feature = "recovery"))]
+    {
+        let _ = (recovery_percent, prefix_len, header_keys, resources);
+        Err(Error::FeatureDisabled {
+            feature: "recovery",
+        })
+    }
+    #[cfg(feature = "recovery")]
+    {
+        let payload_len = plan_inline_recovery(prefix_len, recovery_percent)?.payload_size()?;
+        let header =
+            recovery_service_header(recovery_percent, payload_len, 0, header_keys, resources)?;
+        Ok(header.len() as u64 + payload_len)
+    }
 }
 
 /// Writes to the archive and, when a recovery record is coming, keeps a copy
@@ -1230,8 +1265,18 @@ impl compress::CompressionProgress for MemberProgress<'_, '_> {
     }
 }
 
+/// Arca: what bounds one volume of a set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum VolumeLimit {
+    /// Member data bytes per volume; headers come on top.
+    Payload(u64),
+    /// Bytes of the whole volume file, everything included.
+    Total(u64),
+}
+
 /// Writes a multi-volume archive, handing each volume to `sink` as it is
 /// finished rather than keeping the set in memory.
+#[cfg(test)]
 pub(super) fn write_volumes(
     entries: &[ArchiveEntry],
     plan: EnginePlan<'_>,
@@ -1239,7 +1284,24 @@ pub(super) fn write_volumes(
     sink: &mut dyn super::VolumeSink,
     resources: &WriterResources,
 ) -> Result<()> {
-    if max_payload_per_volume == 0 {
+    write_limited_volumes(
+        entries,
+        plan,
+        VolumeLimit::Payload(max_payload_per_volume),
+        sink,
+        resources,
+    )
+}
+
+/// Arca: [`write_volumes`] under either kind of limit.
+pub(super) fn write_limited_volumes(
+    entries: &[ArchiveEntry],
+    plan: EnginePlan<'_>,
+    limit: VolumeLimit,
+    sink: &mut dyn super::VolumeSink,
+    resources: &WriterResources,
+) -> Result<()> {
+    if matches!(limit, VolumeLimit::Payload(0) | VolumeLimit::Total(0)) {
         return Err(Error::InvalidArgument("RAR 5 volume payload size is zero"));
     }
     for entry in entries {
@@ -1309,7 +1371,8 @@ pub(super) fn write_volumes(
 
     report_emission(plan.progress, true);
     let mut writer = VolumeWriter {
-        max_payload_per_volume,
+        limit,
+        max_body: 0,
         solid: plan.compress.solid,
         recovery_percent: plan.recovery_percent,
         header_keys: header_keys.as_ref(),
@@ -1446,7 +1509,10 @@ fn prepare_volume_member<'a>(
 }
 
 struct VolumeWriter<'a> {
-    max_payload_per_volume: u64,
+    limit: VolumeLimit,
+    /// Arca: under a total limit, the most body bytes the volume being filled
+    /// can take and still fit, worked out when it is started.
+    max_body: u64,
     solid: bool,
     recovery_percent: Option<u64>,
     header_keys: Option<&'a HeaderEncryptionKeys>,
@@ -1467,18 +1533,8 @@ impl VolumeWriter<'_> {
         let mut split_before = false;
         // Zero-length members still need a header of their own.
         loop {
-            // A volume that filled exactly is left open until something asks
-            // for room, because until then we cannot say whether it is the last
-            // one, and its end-of-archive block has to say which.
-            if self.body.is_some() && self.payload_in_volume == self.max_payload_per_volume {
-                self.finish_volume(true)?;
-            }
-            if self.body.is_none() {
-                self.start_volume()?;
-            }
-            let room = self.max_payload_per_volume - self.payload_in_volume;
             let remaining = member.payload_len - start;
-            let fragment_len = room.min(remaining);
+            let fragment_len = self.next_fragment(member, remaining)?;
             let split_after = start + fragment_len < member.payload_len;
             // A fragment that is not the last one has no whole-member checksum
             // to report, so the field carries the CRC32 of the bytes this
@@ -1524,6 +1580,45 @@ impl VolumeWriter<'_> {
         }
     }
 
+    /// Arca: how many of the `remaining` payload bytes the next fragment
+    /// takes, closing the current volume first when it has no room for one.
+    ///
+    /// Under a total limit the fragment needs room for its header and at
+    /// least one byte of data, or only its header when the member is empty;
+    /// the header is priced for the largest fragment, which a smaller one never
+    /// outgrows.
+    fn next_fragment(&mut self, member: &VolumeMember, remaining: u64) -> Result<u64> {
+        // A volume that filled exactly is left open until something asks for
+        // room, because until then we cannot say whether it is the last one,
+        // and its end-of-archive block has to say which.
+        if let VolumeLimit::Payload(max_payload_per_volume) = self.limit {
+            if self.body.is_some() && self.payload_in_volume == max_payload_per_volume {
+                self.finish_volume(true)?;
+            }
+        }
+        for _ in 0..2 {
+            if self.body.is_none() {
+                self.start_volume()?;
+            }
+            let room = match self.limit {
+                VolumeLimit::Payload(max_payload_per_volume) => {
+                    Some(max_payload_per_volume - self.payload_in_volume)
+                }
+                VolumeLimit::Total(_) => self.body_room(member, remaining)?,
+            };
+            match room.map(|room| room.min(remaining)) {
+                Some(len) if len > 0 || remaining == 0 => return Ok(len),
+                _ if self.body.as_ref().is_some_and(|body| body.len() > 0) => {
+                    self.finish_volume(true)?;
+                }
+                _ => break,
+            }
+        }
+        Err(Error::InvalidArgument(
+            "RAR 5 volume size is too small to hold a member fragment",
+        ))
+    }
+
     fn finish(mut self) -> Result<()> {
         // The public volume entry point rejects empty member lists; each
         // nonempty member starts a volume, even when its payload is empty.
@@ -1531,9 +1626,146 @@ impl VolumeWriter<'_> {
     }
 
     fn start_volume(&mut self) -> Result<()> {
+        if let VolumeLimit::Total(max_volume_bytes) = self.limit {
+            self.max_body = self.max_body(max_volume_bytes)?;
+        }
         self.body = Some(Spool::create(self.resources)?);
         self.payload_in_volume = 0;
         Ok(())
+    }
+
+    /// Arca: the largest body the volume about to start can hold and still
+    /// come to no more than `max_volume_bytes` in all. The volume grows with
+    /// its body, so a binary search over the layout finds it; `finish_volume`
+    /// checks the result against what was really written.
+    fn max_body(&self, max_volume_bytes: u64) -> Result<u64> {
+        let head_crypt_len = self.head_crypt()?.len() as u64;
+        let end_len = self.end_block(true)?.len() as u64;
+        let volume_len = |body_len: u64| -> Result<u64> {
+            let layout = self.layout(head_crypt_len, self.volume_index, body_len)?;
+            let mut len = (RAR50_SIGNATURE.len() as u64 + head_crypt_len + end_len)
+                .saturating_add(layout.main_header_len)
+                .saturating_add(body_len);
+            if let (Some(percent), Some(prefix)) =
+                (self.recovery_percent, layout.recovery_prefix_len)
+            {
+                len = len.saturating_add(recovery_service_len(
+                    percent,
+                    prefix,
+                    self.header_keys,
+                    self.resources,
+                )?);
+            }
+            Ok(len)
+        };
+        let empty = volume_len(0)?;
+        if empty >= max_volume_bytes {
+            return Err(Error::InvalidArgument(
+                "RAR 5 volume size is too small to hold the volume headers",
+            ));
+        }
+        let (mut low, mut high) = (0, max_volume_bytes - empty);
+        while low < high {
+            let middle = low + (high - low).div_ceil(2);
+            if volume_len(middle)? <= max_volume_bytes {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        Ok(low)
+    }
+
+    /// Arca: body bytes left for the data of a fragment of up to `len` bytes
+    /// once its header is in, or `None` when not even the header fits.
+    fn body_room(&self, member: &VolumeMember, len: u64) -> Result<Option<u64>> {
+        let probe = FragmentChecksums {
+            crc32: 0,
+            hash: [0; 32],
+        };
+        let header = fragment_header(
+            member,
+            len,
+            true,
+            Some(probe),
+            self.header_keys,
+            self.resources,
+        )?;
+        let used = self.body.as_ref().map_or(0, Spool::len);
+        Ok(self
+            .max_body
+            .checked_sub(used)
+            .and_then(|free| free.checked_sub(header.len() as u64)))
+    }
+
+    /// Arca: the HEAD_CRYPT block, empty when headers are not encrypted.
+    fn head_crypt(&self) -> Result<Bytes> {
+        let mut block = Bytes::new(self.resources);
+        if let Some(keys) = self.header_keys {
+            write_head_crypt(&mut block, keys, self.resources)?;
+        }
+        Ok(block)
+    }
+
+    /// Arca: the layout of volume `volume_number` around a body of `body_len`.
+    fn layout(
+        &self,
+        head_crypt_len: u64,
+        volume_number: u64,
+        body_len: u64,
+    ) -> Result<ResolvedLayout> {
+        resolve_layout(
+            &LayoutInputs {
+                header_encrypted: self.header_keys.is_some(),
+                head_crypt_len,
+                main_flags: self.main_flags(),
+                volume_number: Some(volume_number),
+                archive_metadata: None,
+                metadata_record: None,
+                body_len,
+                quick_open_payload_len: None,
+                recovery_percent: self.recovery_percent,
+            },
+            self.resources,
+        )
+    }
+
+    /// Arca: the main header flags every volume of the set carries.
+    fn main_flags(&self) -> u64 {
+        let mut main_flags = crate::rar50::MHFL_VOLUME | crate::rar50::MHFL_VOLUME_NUMBER;
+        if self.solid {
+            main_flags |= MHFL_SOLID;
+        }
+        if self.recovery_percent.is_some() {
+            main_flags |= MHFL_RECOVERY;
+        }
+        main_flags
+    }
+
+    /// Arca: the end block, saying whether another volume follows.
+    fn end_block(&self, more_volumes_follow: bool) -> Result<Bytes> {
+        let end_flags = if more_volumes_follow {
+            crate::rar50::EFL_NEXT_VOLUME
+        } else {
+            0
+        };
+        match self.header_keys {
+            Some(keys) => encrypted_header_block(
+                &keys.keys,
+                HEAD_END,
+                0,
+                None,
+                &super::end_header_specific(end_flags),
+                &[],
+                &[],
+                self.resources,
+            ),
+            None => {
+                let mut end = Bytes::new(self.resources);
+                write_end_header(&mut end, end_flags, self.resources)?;
+                Ok(end)
+            }
+        }
     }
 
     fn finish_volume(&mut self, more_volumes_follow: bool) -> Result<()> {
@@ -1542,37 +1774,9 @@ impl VolumeWriter<'_> {
         self.volume_index += 1;
         self.payload_in_volume = 0;
 
-        let head_crypt = match self.header_keys {
-            Some(keys) => {
-                let mut block = Bytes::new(self.resources);
-                write_head_crypt(&mut block, keys, self.resources)?;
-                block
-            }
-            None => Bytes::new(self.resources),
-        };
-
-        let mut main_flags = crate::rar50::MHFL_VOLUME | crate::rar50::MHFL_VOLUME_NUMBER;
-        if self.solid {
-            main_flags |= MHFL_SOLID;
-        }
-        if self.recovery_percent.is_some() {
-            main_flags |= MHFL_RECOVERY;
-        }
-
-        let layout = resolve_layout(
-            &LayoutInputs {
-                header_encrypted: self.header_keys.is_some(),
-                head_crypt_len: head_crypt.len() as u64,
-                main_flags,
-                volume_number: Some(volume_number),
-                archive_metadata: None,
-                metadata_record: None,
-                body_len: body.len(),
-                quick_open_payload_len: None,
-                recovery_percent: self.recovery_percent,
-            },
-            self.resources,
-        )?;
+        let head_crypt = self.head_crypt()?;
+        let main_flags = self.main_flags();
+        let layout = self.layout(head_crypt.len() as u64, volume_number, body.len())?;
 
         check_cancelled(self.progress)?;
         let raw_output = self.sink.start_volume(volume_number)?;
@@ -1636,33 +1840,17 @@ impl VolumeWriter<'_> {
             )?;
         }
 
-        let end_flags = if more_volumes_follow {
-            crate::rar50::EFL_NEXT_VOLUME
-        } else {
-            0
-        };
-        let end = match self.header_keys {
-            Some(keys) => encrypted_header_block(
-                &keys.keys,
-                HEAD_END,
-                0,
-                None,
-                &super::end_header_specific(end_flags),
-                &[],
-                &[],
-                self.resources,
-            )?,
-            None => {
-                let mut end = Bytes::new(self.resources);
-                write_end_header(&mut end, end_flags, self.resources)?;
-                end
-            }
-        };
+        let end = self.end_block(more_volumes_follow)?;
         output.write_all(&end)?;
         written += end.len() as u64;
         output.flush()?;
         drop(output);
 
+        if matches!(self.limit, VolumeLimit::Total(max) if written > max) {
+            return Err(Error::WriterFailure(
+                "RAR 5 volume came out larger than its size limit",
+            ));
+        }
         self.sink.finish_volume(volume_number, written)
     }
 }

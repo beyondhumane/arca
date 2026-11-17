@@ -1,7 +1,10 @@
-use super::{create_limits as limits, reader, CreateOptions, Progress, RarArchive, Source};
+use super::{
+    create_limits as limits, reader, volume_stem, CreateOptions, Progress, RarArchive, Source,
+};
 use arca_core::{Error, Format, Result};
 use rars::rar50::{
-    write_streaming_archive_with_progress, ArchiveEntry, ArchiveExtras, FilterPolicy, WriterOptions,
+    write_streaming_archive_with_progress, write_streaming_volumes_sized_with_progress,
+    ArchiveEntry, ArchiveExtras, FilterPolicy, VolumeSink, WriterOptions,
 };
 use rars::{
     ArchiveVersion, EntrySource, ErrorKind, FeatureSet, WriteCancellation, WriteProgress,
@@ -9,7 +12,7 @@ use rars::{
 };
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -71,16 +74,13 @@ struct Planned {
 pub(super) fn create(
     output: &Path,
     sources: &[Source],
-    options: &CreateOptions,
+    options: &CreateOptions<'_>,
     progress: &Progress<'_>,
-) -> Result<()> {
+) -> Result<Vec<PathBuf>> {
+    check_options(options, sources)?;
     let parent = parent_dir(output)?;
-    let planned = plan(output, &parent, sources, progress)?;
+    let planned = plan(output, &parent, sources, options.volume.is_some(), progress)?;
     let total = planned.len();
-    let mut staging = tempfile::Builder::new()
-        .prefix(".arca-")
-        .suffix(".rar.part")
-        .tempfile_in(&parent)?;
     let reporter = Reporter::new(progress, total);
     let resources = WriterResources::new(limits::WRITER_MEMORY_BYTES)
         .with_max_memory_bytes(limits::WRITER_MEMORY_BYTES)
@@ -89,11 +89,20 @@ pub(super) fn create(
         .with_max_preparation_bytes(limits::MAX_HEADER_BYTES)
         .with_temp_dir(&parent)
         .with_cancellation(reporter.token.clone());
-    let entries = entries(&planned)?;
+    let entries = entries(&planned, options.password)?;
     reporter.poll();
     if reporter.is_cancelled() {
         return Err(Error::Cancelled);
     }
+    if let Some(size) = options.volume {
+        return create_set(
+            output, &parent, &planned, &entries, options, size, &resources, &reporter,
+        );
+    }
+    let mut staging = tempfile::Builder::new()
+        .prefix(".arca-")
+        .suffix(".rar.part")
+        .tempfile_in(&parent)?;
     write(
         staging.as_file_mut(),
         &entries,
@@ -106,31 +115,58 @@ pub(super) fn create(
         return Err(Error::Cancelled);
     }
     let staging = staging.into_temp_path();
-    verify(&staging, &planned, progress)?;
+    verify(&staging, &planned, options.password, progress)?;
     if !progress(total, total, "") {
         return Err(Error::Cancelled);
     }
-    publish(staging, output)
+    publish(staging, output)?;
+    Ok(vec![output.to_path_buf()])
+}
+
+/// Every option is checked before any input is read.
+fn check_options(options: &CreateOptions<'_>, sources: &[Source]) -> Result<()> {
+    options.check()?;
+    if options.volume.is_some() && sources.is_empty() {
+        return Err(Error::Format(
+            "a RAR volume set needs at least one member".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The writer's settings for `options`. No filter policy is set: the
+/// automatic filter search plans every member as a whole and, in rars 0.10.0,
+/// reserves 0 bytes of the managed-memory ledger for a zero-length member, so
+/// its spool charge fails. Without one every member takes the streaming block
+/// path, whose workspace is priced per batch, and the hard ledger holds for
+/// empty files and directories too. The trade is that no data filter is tried
+/// for any level, and a solid archive, which refuses filters, is accepted.
+fn settings<'a>(options: &CreateOptions<'a>) -> (WriterOptions, ArchiveExtras<'a>) {
+    let mut features = FeatureSet::store_only();
+    features.solid = options.solid;
+    features.header_encryption = options.hide_names;
+    let writer_options = WriterOptions::new(ArchiveVersion::Rar50, features)
+        .with_compression_level(rar_level(options.level));
+    let mut extras = ArchiveExtras::default()
+        .with_filter_policy(FilterPolicy::None)
+        .with_recovery_percent(options.recovery.map(u64::from));
+    if options.hide_names {
+        extras.header_password = options.password.map(str::as_bytes);
+    }
+    (writer_options, extras)
 }
 
 /// Streams the members into `file` through the RAR 5 writer's public
 /// streaming entry point rather than `Builder`, which forces an automatic
-/// filter search for non-solid archives. That search plans every member as a
-/// whole and, in rars 0.10.0, reserves 0 bytes of the managed-memory ledger
-/// for a zero-length member, so its spool charge fails. Without a filter
-/// policy every member takes the streaming block path, whose workspace is
-/// priced per batch, and the hard ledger holds for empty files and
-/// directories too. The trade is that no data filter is tried for any level.
+/// filter search for non-solid archives.
 fn write(
     file: &mut File,
     entries: &[ArchiveEntry],
-    options: &CreateOptions,
+    options: &CreateOptions<'_>,
     resources: &WriterResources,
     reporter: &Reporter<'_>,
 ) -> rars::Result<()> {
-    let writer_options = WriterOptions::new(ArchiveVersion::Rar50, FeatureSet::store_only())
-        .with_compression_level(rar_level(options.level));
-    let extras = ArchiveExtras::default().with_filter_policy(FilterPolicy::None);
+    let (writer_options, extras) = settings(options);
     write_streaming_archive_with_progress(
         entries,
         writer_options,
@@ -140,6 +176,162 @@ fn write(
         file,
     )?;
     file.sync_all()?;
+    Ok(())
+}
+
+/// Writes, verifies and publishes a volume set. The volumes are written into
+/// a private directory beside the output under their index, given their
+/// final names there once the count is known, verified as a set from the
+/// first one and only then published.
+#[allow(clippy::too_many_arguments)]
+fn create_set(
+    output: &Path,
+    parent: &Path,
+    planned: &[Planned],
+    entries: &[ArchiveEntry],
+    options: &CreateOptions<'_>,
+    size: u64,
+    resources: &WriterResources,
+    reporter: &Reporter<'_>,
+) -> Result<Vec<PathBuf>> {
+    let room = tempfile::Builder::new()
+        .prefix(".arca-")
+        .suffix(".rar.parts")
+        .tempdir_in(parent)?;
+    let mut sink = Parts {
+        dir: room.path().to_path_buf(),
+        files: Vec::new(),
+        open: None,
+        too_many: false,
+    };
+    let (writer_options, extras) = settings(options);
+    let written = write_streaming_volumes_sized_with_progress(
+        entries,
+        writer_options,
+        extras,
+        size,
+        &mut sink,
+        resources,
+        Some(reporter),
+    );
+    if sink.too_many {
+        return Err(Error::Limit(format!(
+            "the RAR set would need more than {} volumes of {size} bytes; choose a larger volume size",
+            limits::MAX_VOLUMES
+        )));
+    }
+    written.map_err(|error| reporter.finish(error))?;
+    if reporter.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
+    let names = volume_names(output, sink.files.len());
+    let mut staged = Vec::with_capacity(names.len());
+    for (file, name) in sink.files.iter().zip(&names) {
+        let path = room.path().join(name.file_name().unwrap_or_default());
+        fs::rename(file, &path)?;
+        staged.push(path);
+    }
+    let first = staged
+        .first()
+        .ok_or_else(|| Error::Format("the RAR writer produced no volume".into()))?;
+    verify(first, planned, options.password, reporter.progress)?;
+    if !(reporter.progress)(reporter.total, reporter.total, "") {
+        return Err(Error::Cancelled);
+    }
+    publish_set(&staged, &names)?;
+    Ok(names)
+}
+
+/// The names WinRAR gives a set of `count` volumes for `output`. One volume
+/// keeps the name asked for.
+fn volume_names(output: &Path, count: usize) -> Vec<PathBuf> {
+    if count == 1 {
+        return vec![output.to_path_buf()];
+    }
+    let name = output
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let stem = volume_stem(&name);
+    let width = count.to_string().len();
+    (1..=count)
+        .map(|index| output.with_file_name(format!("{stem}.part{index:0width$}.rar")))
+        .collect()
+}
+
+/// Whether `name` is a volume of the set whose stem is `stem`, in any width
+/// or case, so a new set can never be mixed with the volumes of an old one.
+fn is_volume_of(name: &str, stem: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let Some((prefix, digits)) = lower
+        .strip_suffix(".rar")
+        .and_then(|rest| rest.rsplit_once(".part"))
+    else {
+        return false;
+    };
+    prefix.eq_ignore_ascii_case(stem)
+        && !digits.is_empty()
+        && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Receives the volumes of a set as the writer finishes them, each in a new
+/// file of the staging directory, flushed and synced before the next starts.
+struct Parts {
+    dir: PathBuf,
+    files: Vec<PathBuf>,
+    open: Option<File>,
+    too_many: bool,
+}
+
+impl VolumeSink for Parts {
+    fn start_volume(&mut self, index: u64) -> rars::Result<Box<dyn Write + Send>> {
+        if index >= limits::MAX_VOLUMES as u64 {
+            self.too_many = true;
+            return Err(rars::Error::InvalidArgument("too many RAR volumes"));
+        }
+        let path = self.dir.join(format!("{index}.vol"));
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        self.open = Some(file.try_clone()?);
+        self.files.push(path);
+        Ok(Box::new(io::BufWriter::new(file)))
+    }
+
+    fn finish_volume(&mut self, _index: u64, len: u64) -> rars::Result<()> {
+        let file = self
+            .open
+            .take()
+            .ok_or(rars::Error::WriterFailure("RAR volume finished twice"))?;
+        file.sync_all()?;
+        if file.metadata()?.len() != len {
+            return Err(rars::Error::WriterFailure(
+                "RAR volume length does not match what was written",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Publishes every volume of a set without replacing anything, the first one
+/// last so a set cannot be opened before it is complete. If one cannot be
+/// published, the ones already published are removed again.
+fn publish_set(staged: &[PathBuf], names: &[PathBuf]) -> Result<()> {
+    let order = (1..staged.len()).chain(std::iter::once(0));
+    let mut published = Vec::with_capacity(names.len());
+    for index in order {
+        let result = tempfile::TempPath::try_from_path(&staged[index])
+            .map_err(Error::Io)
+            .and_then(|staging| publish(staging, &names[index]));
+        if let Err(error) = result {
+            for name in published {
+                let _ = fs::remove_file(name);
+            }
+            return Err(error);
+        }
+        published.push(&names[index]);
+    }
     Ok(())
 }
 
@@ -181,6 +373,7 @@ fn plan(
     output: &Path,
     parent: &Path,
     sources: &[Source],
+    volumes: bool,
     progress: &Progress<'_>,
 ) -> Result<Vec<Planned>> {
     if sources.len() > limits::MAX_ENTRIES {
@@ -197,6 +390,19 @@ fn plan(
     }
     if fs::symlink_metadata(output).is_ok() {
         return Err(exists(output));
+    }
+    if volumes {
+        let name = output
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let stem = volume_stem(&name);
+        for found in fs::read_dir(parent)? {
+            let found = found?;
+            if is_volume_of(&found.file_name().to_string_lossy(), stem) {
+                return Err(exists(&found.path()));
+            }
+        }
     }
     let parent_identity = identity(&fs::metadata(parent)?);
     let parent_real = fs::canonicalize(parent).ok();
@@ -304,7 +510,7 @@ fn validate_name(name: &str) -> Result<String> {
     Ok(parts.join("/"))
 }
 
-fn entries(planned: &[Planned]) -> Result<Vec<ArchiveEntry>> {
+fn entries(planned: &[Planned], password: Option<&str>) -> Result<Vec<ArchiveEntry>> {
     planned
         .iter()
         .map(|plan| {
@@ -324,11 +530,15 @@ fn entries(planned: &[Planned]) -> Result<Vec<ArchiveEntry>> {
             } else {
                 source(plan)
             };
-            Ok(ArchiveEntry::new(name, source)
+            let entry = ArchiveEntry::new(name, source)
                 .with_directory(plan.is_dir)
                 .with_mtime(mtime)
                 .with_attributes(attributes)
-                .with_host_os(host_os))
+                .with_host_os(host_os);
+            Ok(match password {
+                Some(password) => entry.with_password(password.as_bytes()),
+                None => entry,
+            })
         })
         .collect()
 }
@@ -413,15 +623,20 @@ pub(super) fn write_error(error: rars::Error) -> Error {
 
 /// Reopens the staged archive with the reader and decodes every member,
 /// then checks the listing against what was asked for.
-fn verify(staging: &Path, planned: &[Planned], progress: &Progress<'_>) -> Result<()> {
+fn verify(
+    staging: &Path,
+    planned: &[Planned],
+    password: Option<&str>,
+    progress: &Progress<'_>,
+) -> Result<()> {
     let total = planned.len();
     let verifying = |_: usize, _: usize, _: &str| progress(total, total, "");
     let failed = |e: Error| match e {
         Error::Cancelled => Error::Cancelled,
         e => Error::Format(format!("the new RAR archive failed verification: {e}")),
     };
-    let archive = RarArchive::open_with_progress(staging, None, &verifying).map_err(failed)?;
-    archive.test(None, &verifying).map_err(failed)?;
+    let archive = RarArchive::open_with_progress(staging, password, &verifying).map_err(failed)?;
+    archive.test(password, &verifying).map_err(failed)?;
     let entries = archive.entries();
     if entries.len() != planned.len() {
         return Err(failed(Error::Format(format!(

@@ -1,14 +1,15 @@
 ---
-description: Lee archivos RAR/CBR, con multivolumen, contraseñas y extracción verificada, y crea nuevos archivos RAR5 de un solo volumen.
+description: Lee archivos RAR/CBR, con multivolumen, contraseñas y extracción verificada, y crea nuevos archivos RAR5, sólidos, cifrados, en volúmenes o con registro de recuperación.
 group: Reference
 order: 20
-keywords: rar cbr solo lectura crear rar5 cifrado sólido multivolumen part1 r00
+keywords: rar cbr solo lectura crear rar5 cifrado ocultar nombres sólido multivolumen volúmenes part1 r00 registro de recuperación
 ---
 
 # RAR
 
-Arca lee todas las familias RAR y **crea nuevos archivos RAR5 de un solo
-volumen**. Los archivos RAR y CBR existentes nunca se modifican. RAR está activo
+Arca lee todas las familias RAR y **crea nuevos archivos RAR5**: sólidos o no,
+cifrados con o sin nombres ocultos, enteros o en volúmenes, con o sin registro
+de recuperación. Los archivos RAR y CBR existentes nunca se modifican. RAR está activo
 por defecto en la CLI y la ventana de escritorio; las compilaciones normales y
 los paquetes creados con ellas lo incluyen:
 
@@ -64,25 +65,41 @@ no modifica su contenido.
 arca create backup.rar documents/ notes.txt
 arca create photos.rar photos/ -l best
 arca create plain.rar big.iso -c store      # equivale a -l store
+arca create solido.rar src/ --solid
+arca create privado.rar documents/ -p 'contraseña' --hide-names
+arca create dvd.rar videos/ -v 4092m --recovery 3%
 ```
 
-La salida es un archivo RAR5 nuevo, de un solo volumen, no sólido y sin cifrar,
-que UnRAR y 7-Zip oficiales abren. `-l store|fast|normal|best` elige la fuerza
-del compresor RAR; `-c` solo admite `auto` o `store`. El diálogo **Crear** del
-escritorio ofrece RAR junto a ZIP y 7z con los mismos niveles. Se guardan los
+La salida es un archivo RAR5 nuevo que WinRAR, UnRAR y 7-Zip oficiales abren.
+`-l store|fast|normal|best` elige la fuerza del compresor RAR; `-c` solo admite
+`auto` o `store`. El diálogo **Crear** del escritorio ofrece RAR junto a ZIP y
+7z con los mismos niveles, la contraseña y **Ocultar nombres**, una tarjeta
+**Opciones de RAR** con **Archivo sólido** y **Registro de recuperación**, y los
+tamaños de volumen con que se dividen los demás formatos. Se guardan los
 ficheros y directorios vacíos, se conservan las fechas de modificación y los
-directorios se recorren en orden, así que la misma entrada produce siempre los
-mismos bytes.
+directorios se recorren en orden. Sin contraseña, la misma entrada produce
+siempre los mismos bytes; con ella, las sales son aleatorias.
+
+| Opción | WinRAR | Qué escribe |
+| --- | --- | --- |
+| `--solid` | `-s` | Un solo flujo de compresión para todos los ficheros, en el orden dado. Más pequeño con muchos ficheros parecidos; un daño alcanza a todos los ficheros posteriores, y extraer uno descodifica los anteriores. |
+| `-p CONTRASEÑA` | `-p` | Cada fichero cifrado con AES-256 bajo una clave derivada con PBKDF2-HMAC-SHA256 (2^15 rondas), con un valor de comprobación de la contraseña y sumas de verificación ligadas a ella. Los nombres siguen siendo legibles. |
+| `--hide-names` | `-hp` | También las cabeceras cifradas: sin la contraseña ni siquiera se pueden listar los nombres. Exige `-p`. |
+| `-v TAMAÑO` | `-v` | Un conjunto de volúmenes `nombre.part1.rar`, `nombre.part2.rar`… (`part01`… a partir de diez), cada uno de como mucho TAMAÑO bytes con todo incluido, de al menos 64 KiB y no más de 256 volúmenes. Un fichero puede quedar cortado entre volúmenes. Un conjunto que cabe en un volumen conserva el nombre indicado, pero sigue siendo un conjunto de un volumen, que `arca repair` rechaza y WinRAR repara. |
+| `--recovery PORCENTAJE` | `-rr` | Un registro de recuperación Reed–Solomon de entre el 1 y el 100 %, en el archivo o en cada volumen, que usan `arca repair` y **Reparar** de WinRAR. No se escriben volúmenes de recuperación (`.rev`). |
 
 La creación rechaza, antes de leer ninguna entrada o escribir ningún fichero:
 
-- Una contraseña u **Ocultar nombres**: la salida RAR nunca se cifra. Usa ZIP o
-  7z para eso.
+- Una contraseña vacía, **Ocultar nombres** sin contraseña, un registro de
+  recuperación fuera del 1 al 100 %, un tamaño de volumen menor de 64 KiB y un
+  conjunto de volúmenes sin miembros.
 - `-c deflate|zstd|lzma2`, un
   destino `.cbr` o cualquier otro sufijo distinto de `.rar`.
-- Un destino que ya exista, incluso como enlace roto. Arca solo crea archivos
-  RAR nuevos y nunca reemplaza un fichero, tampoco uno que aparezca mientras se
-  escribe. La carpeta padre del destino debe existir.
+- Un destino que ya exista, incluso como enlace roto, o, para un conjunto de
+  volúmenes, cualquier `nombre.partN.rar` del mismo nombre, en cualquier
+  mayúscula o número de cifras. Arca solo crea archivos RAR nuevos y nunca
+  reemplaza un fichero, tampoco uno que aparezca mientras se escribe. La
+  carpeta padre del destino debe existir.
 - Entradas que sean enlaces simbólicos, puntos de reanálisis o ficheros
   especiales (no se siguen), entradas que coincidan con el destino o su carpeta,
   y nombres no válidos, duplicados o que solo difieran en mayúsculas.
@@ -91,8 +108,14 @@ La creación rechaza, antes de leer ninguna entrada o escribir ningún fichero:
 
 El escritor prepara un fichero `.arca-*.rar.part` junto al destino, lo reabre
 con el propio lector de Arca para listar y decodificar por completo cada
-miembro y después lo publica sin sobrescribir nada. Cualquier fallo o la
-cancelación no deja nada en la ruta de destino. En la CLI, Ctrl+C (SIGINT) o
+miembro (con la contraseña) y después lo publica sin sobrescribir nada. Un
+conjunto de volúmenes se prepara entero en una carpeta privada
+`.arca-*.rar.parts` junto al destino, se verifica desde su primer volumen y
+sus volúmenes se publican después uno a uno sin sobrescribir nada, el primero
+en último lugar; si uno no puede publicarse, los ya publicados se vuelven a
+borrar. Los miembros comprimidos y el volumen que se está llenando se vuelcan a
+disco, no se guardan en memoria. Cualquier fallo o la cancelación no deja nada
+en la ruta de destino. En la CLI, Ctrl+C (SIGINT) o
 SIGTERM durante una creación RAR se atiende de forma cooperativa: el recorrido o
 el escritor se detienen en su siguiente comprobación, informan `cancelled` con
 estado de salida distinto de cero y el fichero preparado se elimina. En Unix se
@@ -100,13 +123,32 @@ conserva el tratamiento heredado de SIGHUP para respetar `nohup`. Un SIGHUP no
 ignorado, SIGKILL o un corte de corriente pueden dejar temporales
 `.arca-*.rar.part` y `.rars-spool-*`, que no son archivos publicados.
 
-No se admite en este incremento, y se rechaza en lugar de aproximarse: archivos
-sólidos, salida multivolumen, cifrado, registros de recuperación, filtros de
-datos RAR, salida RAR4, creación de CBR, y añadir, borrar o renombrar dentro de
-un archivo existente. Un archivo dañado que tenga registro de recuperación se
-reconstruye en un archivo nuevo con [`arca repair`](cli-reference.md#repair); el
-comentario del archivo lo muestran `arca list`, `arca comment` y la barra de
-estado de la ventana.
+No se admite, y se rechaza en lugar de aproximarse: volúmenes de recuperación
+(`.rev`), filtros de datos RAR, comentarios de archivo y de fichero, salida
+RAR4, creación de CBR, y añadir, borrar o renombrar dentro de un archivo
+existente. Un archivo dañado de un solo volumen que tenga registro de
+recuperación se reconstruye en un archivo nuevo con
+[`arca repair`](cli-reference.md#repair); un volumen dañado de un conjunto lo
+repara WinRAR (`Rar r` sobre ese volumen) con el registro de recuperación que
+lleva. Arca aún no abre un conjunto cuyo volumen haya reconstruido WinRAR sin
+cabeceras cifradas: el bloque final reconstruido ya no dice que sigue otro
+volumen, y el lector de Arca lo exige a un volumen que corta un fichero. El comentario del
+archivo lo muestran `arca list`, `arca comment` y la barra de estado de la
+ventana.
+
+Cada opción se comprobó con el `Rar.exe` de consola de WinRAR 7.23: `Rar t` y
+`Rar x` aceptan lo que Arca escribe con cada opción y con todas juntas, entero
+y en volúmenes, y `Rar r` reconstruye con el registro de recuperación de Arca un
+archivo dañado en sus datos. A su vez, Arca lee los archivos sólidos, `-p`,
+`-hp`, `-v` y `-rr` de WinRAR. Las comprobaciones son pruebas ignoradas que
+necesitan `Rar.exe`:
+
+```sh
+cargo test -p arca-rar --features rar --test writer_features -- --ignored
+```
+
+`ARCA_RAR` indica otro `Rar.exe`; por defecto es
+`C:\Program Files\WinRAR\Rar.exe`.
 
 ## Conjuntos multivolumen
 
@@ -185,9 +227,9 @@ de integridad depende de las sumas y autenticadores presentes en el archivo.
 
 ## Exclusiones y notas sobre dependencias
 
-- No se escriben registros de recuperación ni comentarios, ni hay modificación de archivos existentes ni
+- No se escriben comentarios ni volúmenes de recuperación, ni hay modificación de archivos existentes ni
   asociaciones automáticas. Los métodos o metadatos no admitidos devuelven un
-  error. La creación se limita al perfil RAR5 de un solo volumen descrito arriba.
+  error. La creación se limita al perfil RAR5 descrito arriba.
 - Los fixtures independientes, comparaciones con UnRAR y fuzzing acotado
   amplían la cobertura del lector; el harness de creación con semilla compara
   los archivos que Arca escribe con UnRAR y 7-Zip oficiales. No demuestran

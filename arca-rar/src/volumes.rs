@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
-const MAX_VOLUMES: usize = 256;
+const MAX_VOLUMES: usize = super::create_limits::MAX_VOLUMES;
 const MAX_DIRECTORY_ENTRIES: usize = 100_000;
 const MAX_HEADERS: u64 = 100_000;
 const MAX_HEADER_BYTES: u64 = 64 * 1024 * 1024;

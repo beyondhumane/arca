@@ -40,3 +40,31 @@ executables (1,382 files), Windows 11, 16 threads, together with the
 `parallel` feature and the 4 GiB writer budget set in `arca-rar`; every
 archive passes `UnRAR t`. See the commit that brought this copy in for the
 numbers.
+
+Container fixes, which do not touch the encoder:
+
+- **Locator offsets from the main header.** The quick-open and recovery
+  offsets in the main header's locator were measured from the end of the
+  signature. WinRAR measures them from the start of the main header, which
+  follows the HEAD_CRYPT block when headers are encrypted. WinRAR 7.23 then
+  failed sets with encrypted headers, a recovery record and a member split
+  across volumes ("Corrupt header is found", "Recovery record is corrupt").
+  Archives without encrypted headers are unchanged. The reader finds the
+  recovery record by scanning, not by the locator, so it is unaffected
+  (`rar50/write/layout.rs`, with `locator_counts_from_the_main_header_after_head_crypt`).
+- **Volumes bounded by their whole size.** The volume writer counted only
+  member data against its limit, so headers, the recovery record and the end
+  block came on top and a set of many small files, or one with `-rr` or `-hp`,
+  outgrew the size asked for. The new `write_streaming_volumes_sized_with_progress`
+  (`rar50/write/mod.rs`) bounds each volume file as WinRAR's `-v` does. The
+  engine's `VolumeLimit::Total` works out, when a volume starts, the largest
+  body that still fits with its signature, headers, recovery record and end
+  block (`VolumeWriter::max_body`, a binary search over the layout and
+  `recovery_service_len`). It cuts each fragment to what is left after a
+  header priced for the largest fragment (`next_fragment`, `body_room`), and
+  `finish_volume` fails a volume that comes out larger. To share the sizes,
+  `finish_volume` now builds its HEAD_CRYPT, layout, flags and end block
+  through small helpers, and the recovery service header through
+  `recovery_service_header`; the bytes are the same. The payload-limited
+  `write_streaming_volumes_with_progress` behaves as before
+  (`rar50/write/engine.rs`).

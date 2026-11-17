@@ -1,13 +1,15 @@
 ---
-description: Read RAR/CBR archives, including multivolume sets, passwords and verified extraction, and create new single-volume RAR5 archives.
+description: Read RAR/CBR archives, including multivolume sets, passwords and verified extraction, and create new RAR5 archives, solid, encrypted, in volumes or with a recovery record.
 group: Reference
 order: 20
-keywords: rar cbr read-only create rar5 encryption solid archive multivolume part1 r00
+keywords: rar cbr read-only create rar5 encryption hide names solid archive multivolume volumes part1 r00 recovery record
 ---
 
 # RAR
 
-Arca reads every RAR family and **creates new single-volume RAR5 archives**.
+Arca reads every RAR family and **creates new RAR5 archives**: solid or not,
+encrypted with or without hidden names, whole or as a volume set, with or
+without a recovery record.
 Existing RAR and CBR archives are never modified. RAR support is enabled by
 default in the CLI and desktop window; normal builds and the packages built
 from them include it:
@@ -63,24 +65,41 @@ file is not a RAR rewrite.
 arca create backup.rar documents/ notes.txt
 arca create photos.rar photos/ -l best
 arca create plain.rar big.iso -c store      # same as -l store
+arca create solid.rar src/ --solid
+arca create private.rar documents/ -p 'password' --hide-names
+arca create dvd.rar videos/ -v 4092m --recovery 3%
 ```
 
-The output is a new, single-volume, non-solid, unencrypted RAR5 archive that
-official UnRAR and 7-Zip open. `-l store|fast|normal|best` selects the RAR
-compression strength; `-c` accepts only `auto` or `store`. The desktop **Create**
-dialog offers RAR next to ZIP and 7z with the same levels. Empty files and
-empty directories are stored; modification times are preserved; directories
-are walked in sorted order, so the same input always produces the same bytes.
+The output is a new RAR5 archive that WinRAR, official UnRAR and 7-Zip open.
+`-l store|fast|normal|best` selects the RAR compression strength; `-c` accepts
+only `auto` or `store`. The desktop **Create** dialog offers RAR next to ZIP and
+7z with the same levels, the password and **Hide file names**, a **RAR
+options** card with **Solid archive** and **Recovery record**, and the volume
+sizes the other formats are split with. Empty files and empty directories are
+stored; modification times are preserved; directories are walked in sorted
+order. Without a password the same input produces the same bytes; with one,
+the salts are random.
+
+| Option | WinRAR | What it writes |
+| --- | --- | --- |
+| `--solid` | `-s` | One compression stream across all files, in the order given. Smaller for many similar files; damage reaches every later file, and extracting one file decodes those before it. |
+| `-p PASSWORD` | `-p` | Every file encrypted with AES-256 under a key derived with PBKDF2-HMAC-SHA256 (2^15 rounds), with a password check value and checksums keyed to the password. Names stay readable. |
+| `--hide-names` | `-hp` | The headers encrypted too: without the password not even the names can be listed. Requires `-p`. |
+| `-v SIZE` | `-v` | A volume set `name.part1.rar`, `name.part2.rar`… (`part01`… for ten or more), each at most SIZE bytes with everything included, at least 64 KiB and no more than 256 volumes. A file may be cut across volumes. A set that fits in one volume keeps the name given, but is still a one-volume set, which `arca repair` refuses and WinRAR repairs. |
+| `--recovery PERCENT` | `-rr` | A Reed–Solomon recovery record of 1 to 100 percent, in the archive or in each volume, that `arca repair` and WinRAR's **Repair** use. Recovery volumes (`.rev`) are not written. |
 
 What creation refuses, before any input is read or any file is written:
 
-- A password or **Hide file names**: RAR output is never encrypted. Use ZIP or
-  7z for that.
+- An empty password, **Hide file names** without a password, a recovery record
+  outside 1 to 100 percent, a volume size under 64 KiB, and a volume set with
+  no members.
 - `-c deflate|zstd|lzma2`, a `.cbr`
   output name or any other suffix than `.rar`.
-- An output path that already exists, even as a dangling link. Arca creates
-  new RAR archives only and never replaces a file, including one that appears
-  while the archive is being written. The output's parent directory must exist.
+- An output path that already exists, even as a dangling link, or for a volume
+  set any `name.partN.rar` of the same name, in any case or number of digits.
+  Arca creates new RAR archives only and never replaces a file, including one
+  that appears while the archive is being written. The output's parent
+  directory must exist.
 - Inputs that are symbolic links, reparse points or special files (they are
   not followed), inputs that alias the output or its directory, and names that
   are invalid, duplicated or differ only in case.
@@ -88,21 +107,42 @@ What creation refuses, before any input is read or any file is written:
   or more than 16 GiB in total.
 
 The writer stages a `.arca-*.rar.part` file beside the output, reopens it with
-Arca's own reader to list and fully decode every member, then publishes it
-without overwriting. Any failure or cancellation leaves nothing at the output
-path. In the CLI, Ctrl+C (SIGINT) or SIGTERM during a RAR creation is handled
+Arca's own reader to list and fully decode every member (with the password),
+then publishes it without overwriting. A volume set is staged whole in a
+private `.arca-*.rar.parts` directory there, verified from its first volume,
+and its volumes are then published one by one without overwriting, the first
+one last; if one cannot be, the ones already published are removed again.
+Compressed members and each volume being filled are spooled to disk, not held
+in memory. Any failure or cancellation leaves nothing at the output path. In the CLI, Ctrl+C (SIGINT) or SIGTERM during a RAR creation is handled
 cooperatively: the walk or the writer stops at its next check, reports
 `cancelled` with a nonzero exit status and the staged part file is removed.
 On Unix, inherited SIGHUP handling is preserved so `nohup` still works.
 An unhandled SIGHUP, SIGKILL or power loss can leave `.arca-*.rar.part` and
 `.rars-spool-*` temporary files; these are not published archives.
 
-Not supported in this increment, and refused rather than approximated: solid
-archives, multivolume output, encryption, recovery records, RAR data filters,
-RAR4 output, CBR creation, and adding to, removing from or renaming inside an
-existing archive. A damaged archive that has a recovery record is rebuilt into
-a new file by [`arca repair`](cli-reference.md#repair); the archive comment is
-shown by `arca list`, `arca comment` and the desktop window's status line.
+Not supported, and refused rather than approximated: recovery volumes
+(`.rev`), RAR data filters, archive and file comments, RAR4 output, CBR
+creation, and adding to, removing from or renaming inside an existing archive.
+A damaged single-volume archive that has a recovery record is rebuilt into a
+new file by [`arca repair`](cli-reference.md#repair); a damaged volume of a set
+is repaired by WinRAR (`Rar r` on that volume) from the recovery record it
+carries. Arca does not yet open a set whose volume WinRAR rebuilt without
+encrypted headers: the rebuilt end block no longer says another volume
+follows, which Arca's reader requires of a volume that splits a file. The archive comment
+is shown by `arca list`, `arca comment` and the desktop window's status line.
+
+Every option was checked against WinRAR 7.23's console `Rar.exe`: `Rar t` and
+`Rar x` accept what Arca writes with each option and with all of them together,
+whole and as volumes, and `Rar r` rebuilds an archive damaged in its data from
+Arca's recovery record. Arca in turn reads WinRAR's solid, `-p`, `-hp`, `-v`
+and `-rr` archives. The checks are ignored tests that need `Rar.exe`:
+
+```sh
+cargo test -p arca-rar --features rar --test writer_features -- --ignored
+```
+
+`ARCA_RAR` names another `Rar.exe`; the default is
+`C:\Program Files\WinRAR\Rar.exe`.
 
 ## Multivolume sets
 
@@ -182,9 +222,9 @@ Integrity guarantees depend on the checksums/authenticators the archive carries.
 
 ## Deliberate exclusions and dependency notes
 
-- No writing of recovery records or comments, modification of existing archives, automatic OS
+- No writing of comments or recovery volumes, modification of existing archives, automatic OS
   associations or claim of exhaustive RAR compatibility. Unsupported methods/metadata return
-  errors. Creation is limited to the single-volume RAR5 profile above.
+  errors. Creation is limited to the RAR5 profile above.
 - Independent fixtures, multivolume regressions, official UnRAR comparisons and
   bounded mutation fuzzing extend reader coverage; the seeded creation harness
   compares archives Arca writes against official UnRAR and 7-Zip. They do not

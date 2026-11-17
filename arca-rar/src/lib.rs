@@ -1,5 +1,6 @@
-//! RAR support: reading any family, and creating new single-volume RAR5
-//! archives. Existing archives are never modified.
+//! RAR support: reading any family, and creating new RAR5 archives, solid or
+//! not, encrypted or not, whole or as volumes, with or without a recovery
+//! record. Existing archives are never modified.
 
 use arca_core::{Entry, Error, Level, Result};
 use std::path::{Path, PathBuf};
@@ -41,6 +42,12 @@ pub mod create_limits {
     pub const WRITER_MEMORY_BYTES: u64 = 4096 * MIB;
     /// Logical bytes the writer may spool to disk beside the output.
     pub const MAX_SPOOL_BYTES: u64 = 16 * 1024 * MIB;
+    /// Volumes in one set, the same as the reader opens.
+    pub const MAX_VOLUMES: usize = 256;
+    /// The smallest volume size accepted, recovery record and headers included.
+    pub const MIN_VOLUME_BYTES: u64 = 64 * 1024;
+    /// The largest recovery record, as a percentage of the archive.
+    pub const MAX_RECOVERY_PERCENT: u8 = 100;
 }
 
 pub type Progress<'a> = dyn Fn(usize, usize, &str) -> bool + Sync + 'a;
@@ -233,24 +240,85 @@ pub struct Source {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CreateOptions {
+pub struct CreateOptions<'a> {
     pub level: Level,
+    /// Compresses the members as one stream, each against those before it.
+    pub solid: bool,
+    /// Encrypts every member with AES-256, as WinRAR's `-p`. Must not be empty.
+    pub password: Option<&'a str>,
+    /// Encrypts the headers too, so names cannot be listed without the
+    /// password, as WinRAR's `-hp`. Requires `password`.
+    pub hide_names: bool,
+    /// Writes a volume set whose files are each at most this many bytes, as
+    /// WinRAR's `-v`, at least [`create_limits::MIN_VOLUME_BYTES`].
+    pub volume: Option<u64>,
+    /// Adds a recovery record of this percentage, 1 to 100, to the archive or
+    /// to each volume, as WinRAR's `-rr`.
+    pub recovery: Option<u8>,
 }
 
-impl Default for CreateOptions {
+impl CreateOptions<'_> {
+    /// Refuses what no archive can be made with, before any input is read:
+    /// an empty password, hidden names without one, a recovery record outside
+    /// 1 to 100 percent, and volumes smaller than
+    /// [`create_limits::MIN_VOLUME_BYTES`]. [`create_rar`] checks it again.
+    pub fn check(&self) -> Result<()> {
+        if self.hide_names && self.password.is_none_or(str::is_empty) {
+            return Err(Error::Format(
+                "hiding RAR names requires a nonempty password".into(),
+            ));
+        }
+        if self.password.is_some_and(str::is_empty) {
+            return Err(Error::Format(
+                "RAR encryption requires a nonempty password".into(),
+            ));
+        }
+        if let Some(percent) = self.recovery {
+            if percent == 0 || percent > create_limits::MAX_RECOVERY_PERCENT {
+                return Err(Error::Format(format!(
+                    "a RAR recovery record is 1 to {} percent, not {percent}",
+                    create_limits::MAX_RECOVERY_PERCENT
+                )));
+            }
+        }
+        if let Some(size) = self.volume {
+            if size < create_limits::MIN_VOLUME_BYTES {
+                return Err(Error::Limit(format!(
+                    "a RAR volume must hold at least {} bytes, not {size}",
+                    create_limits::MIN_VOLUME_BYTES
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for CreateOptions<'_> {
     fn default() -> Self {
         Self {
             level: Level::NORMAL,
+            solid: false,
+            password: None,
+            hide_names: false,
+            volume: None,
+            recovery: None,
         }
     }
 }
 
-/// Creates a new single-volume, non-solid, unencrypted RAR5 archive at
-/// `output` from `sources`, in the order given.
+/// Creates a new RAR5 archive at `output` from `sources`, in the order given,
+/// and returns the files it published: `output` alone, or the volumes in
+/// order when [`CreateOptions::volume`] asks for a set.
+///
+/// A set is named as WinRAR names one: `name.part1.rar`, `name.part2.rar` and
+/// so on for `name.rar`, with as many digits as the last number needs
+/// (`part01` for a set of ten or more). A set that fits in one volume is
+/// published as `output` itself.
 ///
 /// Policy:
 /// - `output` must not exist, not even as a dangling link; nothing is ever
-///   replaced. Its parent directory must exist. A `.cbr` output is refused.
+///   replaced. For a volume set, no `name.partN.rar` may exist either. Its
+///   parent directory must exist. A `.cbr` output is refused.
 /// - Names use `/` (backslashes are converted), must be relative, free of
 ///   `..`, drive letters, control characters, `:<>"|?*`, Windows device names
 ///   and trailing dots or spaces, and unique without regard to case. A file
@@ -264,8 +332,15 @@ impl Default for CreateOptions {
 ///   reader and fully decoded. Only an archive that passes is published, via a
 ///   hard link so the name appears complete or not at all. On filesystems
 ///   without hard links the name is reserved exclusively and the staged file
-///   is renamed over the reservation. Cancellation, write errors and failed
-///   verification leave no file behind at `output` or in its directory.
+///   is renamed over the reservation. A volume set is staged as a whole in a
+///   private `.arca-*.rar.parts` directory there, opened and decoded from its
+///   first volume with the password, and its volumes are then given their
+///   names one by one without replacing anything, the first one last; if one
+///   cannot be, those already named are removed again. Cancellation, write
+///   errors and failed verification leave no file behind at `output` or in
+///   its directory.
+/// - An encrypted archive encrypts every member, directories included, with
+///   the same password; with `hide_names` the headers are encrypted as well.
 ///
 /// `progress` receives `(members done, members total, member name)` during
 /// the source scan, the write (including compression progress inside large
@@ -276,9 +351,9 @@ impl Default for CreateOptions {
 pub fn create_rar(
     output: &Path,
     sources: &[Source],
-    options: &CreateOptions,
+    options: &CreateOptions<'_>,
     progress: &Progress<'_>,
-) -> Result<()> {
+) -> Result<Vec<PathBuf>> {
     #[cfg(feature = "rar")]
     return writer::create(output, sources, options, progress);
     #[cfg(not(feature = "rar"))]
@@ -287,6 +362,36 @@ pub fn create_rar(
         Err(Error::Unsupported(
             "RAR creation is disabled in this build; rebuild with --features rar".into(),
         ))
+    }
+}
+
+/// The first volume [`create_rar`] published for `output` with a volume size:
+/// `output` itself when the set fitted in one, else `name.part1.rar` with as
+/// many digits as the set needed. Before creation, or when nothing is there,
+/// it is `output`.
+pub fn first_volume(output: &Path) -> PathBuf {
+    if output.exists() {
+        return output.to_path_buf();
+    }
+    let name = output
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let stem = volume_stem(&name);
+    let digits = create_limits::MAX_VOLUMES.to_string().len();
+    (1..=digits)
+        .map(|width| output.with_file_name(format!("{stem}.part{:0width$}.rar", 1)))
+        .find(|path| path.exists())
+        .unwrap_or_else(|| output.to_path_buf())
+}
+
+/// `name` without a final `.rar` in any case: what a volume set is named
+/// after.
+fn volume_stem(name: &str) -> &str {
+    let at = name.len().saturating_sub(4);
+    match name.get(at..) {
+        Some(extension) if extension.eq_ignore_ascii_case(".rar") => &name[..at],
+        _ => name,
     }
 }
 

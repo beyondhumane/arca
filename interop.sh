@@ -572,6 +572,42 @@ if [ "${ARCA_TEST_RAR:-1}" = 1 ]; then
   ARCA="$ARCA" python3 "$ROOT/arca-rar/tests/compare-matrix.py" &&
     ok "RAR independent generation/volume/dictionary matrix" || ko "RAR independent matrix"
   echo
+  echo "RAR) Arca creates solid, encrypted, hidden, volume and recovery RAR5 -> Arca and UnRAR"
+  # Each case is a name and the create options for it; -p means the archive
+  # is read back with the password too.
+  for case in "solid:--solid" "encrypted:-p arca-pw" "hidden:-p arca-pw --hide-names" \
+      "recovery:--recovery 3" "volumes:-v 2m" \
+      "everything:--solid -p arca-pw --hide-names -v 2m --recovery 5"; do
+    name=${case%%:*}; opts=${case#*:}
+    PW=(); case "$opts" in *-p*) PW=(-p arca-pw);; esac
+    rm -rf rar-new; mkdir rar-new
+    # shellcheck disable=SC2086
+    "$ARCA" create "rar-new/$name.rar" src -l fast $opts >/dev/null 2>&1 || { ko "arca create $name .rar"; continue; }
+    first="rar-new/$name.rar"; [ -e "$first" ] || first="rar-new/$name.part1.rar"
+    case "$opts" in
+      *-v*)
+        big=0; for p in rar-new/"$name".part*.rar; do [ "$(stat -c %s "$p")" -le 2097152 ] || big=1; done
+        [ "$(ls rar-new | wc -l)" -gt 1 ] && [ $big = 0 ] &&
+          ok "the $name set has several volumes, none over 2 MiB" || ko "the $name set has the wrong volumes";;
+    esac
+    rm -rf rar-out
+    "$ARCA" extract "$first" -o rar-out "${PW[@]}" >/dev/null 2>&1
+    H=$(cd rar-out/src 2>/dev/null && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+    [ "$H" = "$REF" ] && ok "Arca reads back its $name .rar" || ko "Arca mis-reads its $name .rar"
+    if [ -n "${UNRAR:-}" ]; then
+      "$UNRAR" t -idq -parca-pw "$first" >/dev/null 2>&1 && ok "UnRAR tests Arca's $name .rar" || ko "UnRAR rejects Arca's $name .rar"
+      rm -rf unrar-out; mkdir unrar-out
+      "$UNRAR" x -idq -o+ -parca-pw "$first" unrar-out/ >/dev/null 2>&1
+      H=$(cd unrar-out/src 2>/dev/null && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+      [ "$H" = "$REF" ] && ok "UnRAR extracts Arca's $name .rar identically" || ko "UnRAR mis-extracts Arca's $name .rar"
+      case "$opts" in
+        *-p*) "$UNRAR" t -idq -pwrong "$first" >/dev/null 2>&1 &&
+                ko "UnRAR accepts a wrong password for $name" || ok "UnRAR refuses a wrong password for $name";;
+      esac
+    fi
+  done
+  rm -rf rar-new rar-out unrar-out
+  echo
 fi
 echo "ISO) genisoimage / xorriso images -> Arca, compared with bsdtar and 7z (read-only)"
 if command -v genisoimage >/dev/null && command -v xorriso >/dev/null && command -v bsdtar >/dev/null; then

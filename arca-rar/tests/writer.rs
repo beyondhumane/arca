@@ -18,8 +18,11 @@ fn source(path: impl Into<PathBuf>, name: &str) -> Source {
     }
 }
 
-fn options(level: Level) -> CreateOptions {
-    CreateOptions { level }
+fn options(level: Level) -> CreateOptions<'static> {
+    CreateOptions {
+        level,
+        ..CreateOptions::default()
+    }
 }
 
 fn listing(dir: &Path) -> BTreeSet<String> {

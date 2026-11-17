@@ -46,9 +46,10 @@ pub(super) struct ResolvedLayout {
     /// The extra area to put in the main header, with settled offsets.
     pub(super) main_extra: Bytes,
     pub(super) main_header_len: u64,
-    /// Value stored in the locator: the block's position measured from the end
-    /// of the signature. The quick-open offset is settled the same way but is
-    /// only ever written into `main_extra`, so it is not repeated here.
+    /// Value stored in the locator: the block's position measured from the
+    /// start of the main header (Arca: not from the end of the signature). The
+    /// quick-open offset is settled the same way but is only ever written into
+    /// `main_extra`, so it is not repeated here.
     pub(super) recovery_offset: Option<u64>,
     /// Bytes the recovery record protects, i.e. everything before it.
     pub(super) recovery_prefix_len: Option<u64>,
@@ -101,8 +102,16 @@ pub(super) fn resolve_layout(
             .checked_add(quick_open_block_len)
             .ok_or(Error::InvalidArgument("RAR 5 archive layout overflows"))?;
 
-        let next_quick_open = quick_open_offset.map(|_| quick_open_position - signature_len);
-        let next_recovery = recovery_offset.map(|_| recovery_position - signature_len);
+        // Arca: WinRAR measures both offsets from the start of the main
+        // header, which follows the HEAD_CRYPT block when headers are
+        // encrypted. Measured from the end of the signature instead, the
+        // recovery offset of an archive with encrypted headers fell that
+        // block's length short, and WinRAR 7.23 failed volume sets with
+        // encrypted headers, a recovery record and a member split across
+        // volumes ("Corrupt header", "Recovery record is corrupt").
+        let base = signature_len + inputs.head_crypt_len;
+        let next_quick_open = quick_open_offset.map(|_| quick_open_position - base);
+        let next_recovery = recovery_offset.map(|_| recovery_position - base);
 
         if next_quick_open == quick_open_offset && next_recovery == recovery_offset {
             return Ok(ResolvedLayout {
@@ -230,6 +239,8 @@ mod tests {
     /// the archive is assembled from the sizes it computed.
     fn assert_self_consistent(inputs: &LayoutInputs<'_>, layout: &ResolvedLayout) {
         let signature_len = RAR50_SIGNATURE.len() as u64;
+        // Arca: the locator counts from the start of the main header.
+        let base = signature_len + inputs.head_crypt_len;
         let quick_open_position =
             signature_len + inputs.head_crypt_len + layout.main_header_len + inputs.body_len;
 
@@ -255,7 +266,7 @@ mod tests {
                     locator.quick_open_offset,
                     inputs
                         .quick_open_payload_len
-                        .map(|_| quick_open_position - signature_len)
+                        .map(|_| quick_open_position - base)
                         .or_else(|| inputs.archive_metadata.map(|_| 0))
                 );
                 assert_eq!(locator.recovery_record_offset, layout.recovery_offset);
@@ -274,16 +285,30 @@ mod tests {
                 .unwrap(),
                 None => 0,
             };
-            assert_eq!(
-                offset,
-                quick_open_position + quick_open_block_len - signature_len
-            );
+            assert_eq!(offset, quick_open_position + quick_open_block_len - base);
             assert_eq!(
                 layout.recovery_prefix_len,
-                Some(offset + signature_len),
+                Some(offset + base),
                 "recovery protects everything before its own block"
             );
         }
+    }
+
+    #[test]
+    fn locator_counts_from_the_main_header_after_head_crypt() {
+        // Arca: WinRAR's own archives with encrypted headers put the recovery
+        // block at its locator value plus the signature and HEAD_CRYPT.
+        let inputs = LayoutInputs {
+            header_encrypted: true,
+            head_crypt_len: 38,
+            ..inputs(100_000)
+        };
+        let layout = resolve_layout(&inputs, &crate::WriterResources::default()).unwrap();
+        assert_self_consistent(&inputs, &layout);
+        assert_eq!(
+            layout.recovery_offset.map(|offset| offset + 8 + 38),
+            layout.recovery_prefix_len
+        );
     }
 
     #[test]

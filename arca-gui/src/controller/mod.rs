@@ -62,7 +62,6 @@ use crate::{
     tree,
 };
 #[cfg(windows)]
-use arca_core::volumes::first_output;
 use arca_core::Entry;
 use arca_core::{Codec, Level};
 use std::collections::{HashMap, HashSet};
@@ -608,12 +607,10 @@ impl AppController {
     }
 
     /// The volume size the compress box asks for: none, a preset, or what was
-    /// typed, where a number on its own is taken as MB. RAR is never split.
+    /// typed, where a number on its own is taken as MB. A RAR volume is never
+    /// smaller than the RAR writer accepts.
     pub(crate) fn volume_size(&self) -> Result<Option<u64>, ()> {
-        if self.state.format == Format::Rar {
-            return Ok(None);
-        }
-        match self.state.volume {
+        let size = match self.state.volume {
             VolumeChoice::Custom => {
                 let typed = self.state.volume_text.trim();
                 let typed = if !typed.is_empty() && typed.bytes().all(|b| b.is_ascii_digit()) {
@@ -623,15 +620,24 @@ impl AppController {
                 };
                 arca_core::volumes::parse_size(&typed)
                     .map(Some)
-                    .map_err(|_| ())
+                    .map_err(|_| ())?
             }
-            preset => Ok(preset.bytes()),
+            preset => preset.bytes(),
+        };
+        match size {
+            Some(size)
+                if self.state.format == Format::Rar
+                    && size < arca_rar::create_limits::MIN_VOLUME_BYTES =>
+            {
+                Err(())
+            }
+            size => Ok(size),
         }
     }
 
-    /// Text the create and settings dialogs show instead of the ZIP codec
-    /// picker and the password controls for a format that has its own fixed
-    /// compressor and no encryption, so nothing is accepted and then dropped.
+    /// Text the create and settings dialogs show for a format that has its
+    /// own fixed compressor instead of the ZIP codec picker, so nothing is
+    /// accepted and then dropped.
     pub(crate) fn create_policy_note(&self) -> Option<&'static str> {
         match self.state.format {
             Format::Rar => Some(self.s().rar_create_policy),
@@ -759,7 +765,7 @@ impl AppController {
             if old == self.state.output_name {
                 self.state.output_name = new;
                 self.state.format = format;
-                self.state.hide_names &= format == Format::SevenZ;
+                self.state.hide_names &= hides_names(format);
                 return;
             }
         }
@@ -772,7 +778,7 @@ impl AppController {
                 .to_string();
         }
         self.state.format = format;
-        if format != Format::SevenZ {
+        if !hides_names(format) {
             self.state.hide_names = false;
         }
     }
@@ -799,7 +805,7 @@ impl AppController {
                 .to_string_lossy()
                 .to_string()
         };
-        let password = (matches!(format, Format::Zip | Format::SevenZ)
+        let password = (matches!(format, Format::Zip | Format::SevenZ | Format::Rar)
             && !self.state.add_password.is_empty())
         .then(|| self.state.add_password.clone());
         let volume = self.volume_size().ok()?;
@@ -816,7 +822,11 @@ impl AppController {
             sevenz: self.state.sevenz,
             level: self.state.level,
             password,
-            hide_names: format == Format::SevenZ && self.state.hide_names,
+            hide_names: hides_names(format) && self.state.hide_names,
+            rar: match format {
+                Format::Rar => self.state.rar,
+                _ => Default::default(),
+            },
             volume,
         })
     }
@@ -928,6 +938,7 @@ impl AppController {
                 password_input: String::new(),
                 add_password: String::new(),
                 hide_names: false,
+                rar: Default::default(),
                 volume: VolumeChoice::None,
                 volume_text: String::new(),
                 archive_password: None,
@@ -2747,7 +2758,7 @@ impl AppController {
                             return;
                         }
                     }
-                    Some((first_output(out, *volume), password.clone()))
+                    Some((out.clone(), *format, *volume, password.clone()))
                 } else {
                     None
                 };
@@ -2757,7 +2768,8 @@ impl AppController {
                 };
                 let outcome = run_job_blocking(job, s, &notify, &ask);
                 if outcome.is_ok() {
-                    if let Some((path, password)) = created {
+                    if let Some((out, format, volume, password)) = created {
+                        let path = crate::archive_ops::created_first(&out, format, volume);
                         let _ = tx.send(Message::Created(path, password));
                     }
                 }
@@ -2843,9 +2855,14 @@ fn touched_by(job: &Job) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
         Job::Compress {
             out,
             inputs,
+            format,
             volume,
             ..
-        } => (inputs.clone(), vec![first_output(out, *volume)], Vec::new()),
+        } => (
+            inputs.clone(),
+            vec![crate::archive_ops::created_first(out, *format, *volume)],
+            Vec::new(),
+        ),
         Job::Update { .. } => (Vec::new(), Vec::new(), Vec::new()),
     }
 }
@@ -2901,15 +2918,25 @@ fn reread_target(job: &Job, current_dir: &str) -> Option<(PathBuf, Option<String
         Job::Compress {
             out,
             password,
+            format,
             volume,
             ..
-        } => Some((first_output(out, *volume), password.clone(), String::new())),
+        } => Some((
+            crate::archive_ops::created_first(out, *format, *volume),
+            password.clone(),
+            String::new(),
+        )),
         Job::Extract { .. }
         | Job::Test { .. }
         | Job::CopyTo { .. }
         | Job::Update { .. }
         | Job::Repair { .. } => None,
     }
+}
+
+/// Whether a new archive of `format` can hide its names behind the password.
+pub(crate) fn hides_names(format: Format) -> bool {
+    matches!(format, Format::SevenZ | Format::Rar)
 }
 
 fn renamed_dir(current_dir: &str, from: &str, to: &str, folder: bool) -> String {
@@ -3228,6 +3255,7 @@ mod compress_tests {
             level: Level::NORMAL,
             password,
             hide_names: false,
+            rar: Default::default(),
             volume: None,
         }
     }

@@ -67,6 +67,8 @@ pub(crate) struct AppState {
     pub(crate) password_input: String,
     pub(crate) add_password: String,
     pub(crate) hide_names: bool,
+    // Solid and the recovery record, which only a new RAR takes.
+    pub(crate) rar: crate::archive_ops::RarExtras,
     pub(crate) volume: crate::model::VolumeChoice,
     pub(crate) volume_text: String,
     // Held for the archive currently open in the window, so extracting from it

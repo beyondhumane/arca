@@ -66,11 +66,13 @@ in place. See [saved passwords](encryption.md#saved-passwords) for the details.
 
 ## RAR
 
-**Create** offers RAR next to ZIP and 7z and writes a new single-volume RAR5
-archive at the chosen level. With RAR selected the dialog shows the fixed RAR
-compressor and a note that the output is never encrypted; the password field,
-**Hide file names** and the ZIP codec picker are not shown, and a password typed
-for ZIP or 7z is kept for when you switch back. An existing output name is
+**Create** offers RAR next to ZIP and 7z and writes a new RAR5 archive at the
+chosen level. With RAR selected the dialog shows the fixed RAR compressor
+instead of the ZIP codec picker, and with it the password field, **Hide file names**, a
+**RAR options** card with **Solid archive** and **Recovery record** (a
+percentage, 3 % to start with), and **Split into volumes**, which for RAR writes
+a volume set `name.part1.rar`, `name.part2.rar`… of at least 64 KiB each. Once
+the set is written, the window opens its first volume. An existing output name is
 refused before anything is written, with a message to pick another name; no
 Replace option is offered because RAR creation never replaces a file. The new archive
 opens read-only like any other RAR, and Add, Delete, Rename and password

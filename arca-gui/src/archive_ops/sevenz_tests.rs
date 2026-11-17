@@ -641,7 +641,7 @@ fn the_picked_sevenz_method_reaches_the_archive() {
             None,
             std::slice::from_ref(&input),
             Format::SevenZ,
-            (Codec::Zstd, compression),
+            (Codec::Zstd, compression, Default::default()),
             Level::NORMAL,
             &|_, _, _| true,
             (None, false),
