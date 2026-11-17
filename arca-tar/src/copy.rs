@@ -68,7 +68,12 @@ impl<W: Write> TarWriter<W> {
     /// The headers of `e`, read by a reader keeping them: as they were when
     /// `name` is the entry's own and `link` is `None`, and otherwise with the
     /// new name and, for a hard link, the new target.
-    fn copy_header(&mut self, e: &TarEntry, name: &str, link: Option<&str>) -> Result<()> {
+    pub(crate) fn copy_header(
+        &mut self,
+        e: &TarEntry,
+        name: &str,
+        link: Option<&str>,
+    ) -> Result<()> {
         match &e.headers {
             Some(raw) if name == e.entry.name && link.is_none() => {
                 self.out.write_all(raw)?;
@@ -88,7 +93,7 @@ impl<W: Write> TarWriter<W> {
     }
 
     /// Exactly `size` bytes of data from `data`, then the padding.
-    fn copy_data(
+    pub(crate) fn copy_data(
         &mut self,
         data: &mut dyn Read,
         size: u64,

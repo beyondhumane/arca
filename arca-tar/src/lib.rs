@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
 mod copy;
+mod repair;
 
 pub use copy::copy_entries;
+pub use repair::{salvage, Lost, Salvaged};
 
 use arca_core::{limits, Entry, Error, Method, Result};
 use std::io::{self, Read, Write};
