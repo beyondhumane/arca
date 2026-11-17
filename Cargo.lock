@@ -308,6 +308,7 @@ dependencies = [
  "arca-zip",
  "flate2",
  "rayon",
+ "tempfile",
 ]
 
 [[package]]
