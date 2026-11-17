@@ -1405,7 +1405,11 @@ pub(crate) fn compress_with(
             .filter(|meta| meta.is_file())
             .map(|meta| meta.len())
             .sum();
-        arca_rar::create_rar(out, &sources, &arca_rar::CreateOptions { level }, notify)?;
+        let options = arca_rar::CreateOptions {
+            level,
+            ..Default::default()
+        };
+        arca_rar::create_rar(out, &sources, &options, notify)?;
         let final_size = fs::metadata(out).map(|m| m.len()).unwrap_or(0);
         return Ok((source_bytes, final_size));
     }

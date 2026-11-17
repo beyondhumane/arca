@@ -48,16 +48,18 @@ struct Walk<'a> {
 pub(super) fn create(
     out: &Path,
     inputs: &[PathBuf],
-    level: Level,
-    codec: CodecArg,
+    (level, codec): (Level, CodecArg),
     requested_threads: usize,
-    password: Option<&str>,
-    hide_names: bool,
+    options: CreateOptions<'_>,
 ) -> Result<()> {
     if cfg!(not(feature = "rar")) {
-        return create_rar(out, &[], &CreateOptions::default(), &|_, _, _| true);
+        return create_rar(out, &[], &CreateOptions::default(), &|_, _, _| true).map(drop);
     }
-    let options = options(level, codec, password, hide_names)?;
+    let options = CreateOptions {
+        level: rar_level(level, codec)?,
+        ..options
+    };
+    options.check()?;
     let cancelled = interruption()?;
     let walk = collect(out, inputs, Bounds::WRITER, &cancelled)?;
     let t0 = Instant::now();
@@ -68,47 +70,40 @@ pub(super) fn create(
     };
     // The writer works on whatever rayon pool it runs in, so -j is a pool of
     // that many threads; without it, every core.
-    let threads = if requested_threads > 0 {
-        rayon::ThreadPoolBuilder::new()
+    let (published, threads) = if requested_threads > 0 {
+        let published = rayon::ThreadPoolBuilder::new()
             .num_threads(requested_threads)
             .build()
             .map_err(|e| Error::Format(format!("cannot start the thread pool: {e}")))?
             .install(run)?;
-        requested_threads
+        (published, requested_threads)
     } else {
-        run()?;
-        rayon::current_num_threads()
+        (run()?, rayon::current_num_threads())
+    };
+    let mut written = 0;
+    for path in &published {
+        written += fs::metadata(path)?.len();
+    }
+    let volumes = match published.len() {
+        1 => String::new(),
+        n => format!(" \u{b7} {n} volumes"),
     };
     println!(
-        "{}: {} files, {} -> {} in {:.3} s \u{b7} {} threads",
-        out.display(),
+        "{}: {} files, {} -> {} in {:.3} s \u{b7} {} threads{volumes}",
+        published.first().map_or(out, PathBuf::as_path).display(),
         walk.files,
         human(walk.bytes),
-        human(fs::metadata(out)?.len()),
+        human(written),
         t0.elapsed().as_secs_f64(),
         threads
     );
     Ok(())
 }
 
-/// Every option the RAR writer cannot honor is refused here, before any
-/// input is read, rather than ignored.
-fn options(
-    level: Level,
-    codec: CodecArg,
-    password: Option<&str>,
-    hide_names: bool,
-) -> Result<CreateOptions> {
-    if hide_names {
-        return Err(Error::Unsupported(
-            "--hide-names requires .7z; .rar creation does not encrypt".into(),
-        ));
-    }
-    if password.is_some() {
-        return Err(Error::Unsupported(
-            ".rar creation does not support encryption; use .zip or .7z for a password".into(),
-        ));
-    }
+/// The RAR level for `level` and `codec`, or why `codec` cannot be honored.
+/// Every other option is checked by [`CreateOptions::check`]; both run before
+/// any input is read.
+fn rar_level(level: Level, codec: CodecArg) -> Result<Level> {
     let level = match codec {
         CodecArg::Auto => level,
         CodecArg::Store => Level::STORE,
@@ -125,7 +120,7 @@ fn options(
             ))
         }
     };
-    Ok(CreateOptions { level })
+    Ok(level)
 }
 
 /// Turns Ctrl-C (SIGINT) and SIGTERM into a flag that the walk and the

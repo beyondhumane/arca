@@ -236,10 +236,13 @@ fn unsupported_options_are_refused_before_any_output() {
     std::fs::write(&input, b"text").unwrap();
     let out = dir.path().join("out.rar");
     for (args, needle) in [
-        (vec!["-p", "secret"], "encryption"),
-        (vec!["--password", ""], "encryption"),
-        (vec!["--hide-names"], "--hide-names"),
-        (vec!["--hide-names", "-p", "secret"], "--hide-names"),
+        (vec!["--password", ""], "nonempty password"),
+        (vec!["--hide-names"], "nonempty password"),
+        (vec!["--hide-names", "-p", ""], "nonempty password"),
+        (vec!["--recovery", "0"], "recovery record"),
+        (vec!["--recovery", "101%"], "recovery record"),
+        (vec!["--recovery", "lots"], "recovery record"),
+        (vec!["-v", "1k"], "at least 65536 bytes"),
         (vec!["-c", "deflate"], "--codec"),
         (vec!["--codec", "zstd"], "--codec"),
         (vec!["--codec", "lzma2"], "--codec"),
@@ -250,12 +253,130 @@ fn unsupported_options_are_refused_before_any_output() {
         let result = run(&full);
         assert!(!result.status.success(), "{args:?}");
         let message = stderr(&result);
-        assert!(
-            message.contains(".rar") && message.contains(needle),
-            "{args:?}: {message}"
-        );
+        assert!(message.contains(needle), "{args:?}: {message}");
         assert_eq!(listing(dir.path()), ["text.txt"], "{args:?}");
     }
+}
+
+#[test]
+fn solid_and_recovery_are_refused_outside_rar() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("text.txt");
+    std::fs::write(&input, b"text").unwrap();
+    for (name, args) in [
+        ("out.zip", vec!["--solid"]),
+        ("out.7z", vec!["--recovery", "3"]),
+        ("out.tar", vec!["--solid", "--recovery", "3"]),
+    ] {
+        let out = dir.path().join(name);
+        let mut full: Vec<&std::ffi::OsStr> =
+            vec!["create".as_ref(), out.as_os_str(), input.as_os_str()];
+        full.extend(args.iter().map(|a| -> &std::ffi::OsStr { a.as_ref() }));
+        let result = run(&full);
+        assert!(!result.status.success(), "{name}");
+        assert!(
+            stderr(&result).contains(".rar"),
+            "{name}: {}",
+            stderr(&result)
+        );
+        assert_eq!(listing(dir.path()), ["text.txt"], "{name}");
+    }
+}
+
+#[cfg(feature = "rar")]
+#[test]
+fn solid_encrypted_hidden_volumes_and_recovery_work_from_the_command_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut expected = sample_tree(dir.path());
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let noise: Vec<u8> = (0..300_000)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect();
+    std::fs::write(dir.path().join("in/noise.bin"), &noise).unwrap();
+    let noise: &'static [u8] = noise.leak();
+    expected.push(("in/noise.bin", Some(noise)));
+    let password = "contraseña";
+    let result = run_in(
+        dir.path(),
+        &[
+            "create".as_ref(),
+            "set.rar".as_ref(),
+            "in".as_ref(),
+            "top.txt".as_ref(),
+            "--solid".as_ref(),
+            "-p".as_ref(),
+            password.as_ref(),
+            "--hide-names".as_ref(),
+            "-v".as_ref(),
+            "100k".as_ref(),
+            "--recovery".as_ref(),
+            "5%".as_ref(),
+        ],
+    );
+    assert!(result.status.success(), "{}", stderr(&result));
+    let summary = stdout(&result);
+    assert!(summary.contains("set.part1.rar: 5 files"), "{summary}");
+    assert!(summary.contains("4 volumes"), "{summary}");
+    let parts: Vec<_> = listing(dir.path())
+        .into_iter()
+        .filter(|name| name.starts_with("set.part"))
+        .collect();
+    assert_eq!(
+        parts,
+        [
+            "set.part1.rar",
+            "set.part2.rar",
+            "set.part3.rar",
+            "set.part4.rar"
+        ]
+    );
+    for part in &parts {
+        assert!(std::fs::metadata(dir.path().join(part)).unwrap().len() <= 100 * 1024);
+    }
+    let first = dir.path().join("set.part1.rar");
+    assert!(!run(&["list".as_ref(), first.as_os_str()]).status.success());
+    let result = run(&[
+        "test".as_ref(),
+        first.as_os_str(),
+        "-p".as_ref(),
+        password.as_ref(),
+    ]);
+    assert!(result.status.success(), "{}", stderr(&result));
+    let dest = dir.path().join("dest");
+    let result = run(&[
+        "extract".as_ref(),
+        first.as_os_str(),
+        "-o".as_ref(),
+        dest.as_os_str(),
+        "-p".as_ref(),
+        password.as_ref(),
+    ]);
+    assert!(result.status.success(), "{}", stderr(&result));
+    for (name, data) in &expected {
+        match data {
+            Some(data) => assert_eq!(std::fs::read(dest.join(name)).unwrap(), *data, "{name}"),
+            None => assert!(dest.join(name).is_dir(), "{name}"),
+        }
+    }
+
+    let result = run_in(
+        dir.path(),
+        &[
+            "create".as_ref(),
+            "set.rar".as_ref(),
+            "top.txt".as_ref(),
+            "-v".as_ref(),
+            "100k".as_ref(),
+        ],
+    );
+    assert!(!result.status.success());
+    assert!(stderr(&result).contains("set.part"), "{}", stderr(&result));
+    assert!(!dir.path().join("set.rar").exists());
 }
 
 #[cfg(feature = "rar")]
