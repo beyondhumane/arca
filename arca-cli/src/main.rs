@@ -10,6 +10,7 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+mod comment;
 mod diff;
 mod hash;
 mod rar;
@@ -162,6 +163,49 @@ enum Cmd {
             help = "Write here instead of replacing the archive in place"
         )]
         out: Option<PathBuf>,
+    },
+    #[command(
+        about = "Show or change the comment of an archive or of one entry",
+        long_about = "With no --set, --file or --clear, prints the comment: a ZIP or RAR archive's own,
+or with --entry the one on that entry of a ZIP or a TAR (pax). A TAR has no
+comment of its own, so it lists the entries that carry one.
+
+Only ZIP comments can be changed. The archive is written again beside itself,
+every entry copied unchanged, read back, and then put in place of the old one;
+no password is needed, even for encrypted entries."
+    )]
+    Comment {
+        #[arg(help = "Archive (.zip to change; .zip, .rar or .tar to read)")]
+        archive: PathBuf,
+        #[arg(long, value_name = "TEXT", conflicts_with_all = ["file", "clear"], help = "Set the comment to TEXT")]
+        set: Option<String>,
+        #[arg(
+            long,
+            value_name = "FILE",
+            conflicts_with = "clear",
+            help = "Set the comment to the contents of FILE (- reads standard input)"
+        )]
+        file: Option<PathBuf>,
+        #[arg(long, help = "Remove the comment")]
+        clear: bool,
+        #[arg(
+            long,
+            value_name = "NAME",
+            help = "The entry whose comment to show or change, by its path inside the archive"
+        )]
+        entry: Option<String>,
+        #[arg(
+            short = 'o',
+            long,
+            help = "Write here instead of replacing the archive in place"
+        )]
+        out: Option<PathBuf>,
+        #[arg(
+            short = 'p',
+            long,
+            help = "Password of a RAR archive whose headers are encrypted"
+        )]
+        password: Option<String>,
     },
     #[command(
         about = "Rebuild a damaged ZIP from the entries that can still be read",
@@ -386,6 +430,23 @@ fn run(cli: Cli) -> Result<()> {
             password.as_deref(),
             new.as_deref(),
         ),
+        Cmd::Comment {
+            archive,
+            set,
+            file,
+            clear,
+            entry,
+            out,
+            password,
+        } => comment::run(comment::Request {
+            archive,
+            set,
+            file,
+            clear,
+            entry,
+            out,
+            password,
+        }),
         Cmd::Repair { archive, out } => repair_zip(&archive, &out),
         Cmd::Diff {
             a,
@@ -816,6 +877,7 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
                 n += 1;
                 bytes += e.size;
             }
+            comment::notes_for_rar(&a, password, &mut notes);
         }
         Container::Iso => {
             let a = open_iso(archive)?;
@@ -891,6 +953,7 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
                 )?;
                 n += 1;
                 bytes += e.entry.size;
+                comment::note_for_tar(&e, &mut notes);
                 r.skip_data(&e)?;
             }
         }
