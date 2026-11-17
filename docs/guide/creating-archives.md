@@ -105,6 +105,8 @@ arca create copy.tar.gz my-files/ -l best
 
 The gzip layer honours the chosen level. TAR has nowhere to put encryption, so `-p` is refused for `.tar` and `.tar.gz`.
 
+On Linux and macOS a symbolic link inside the folders being archived goes into a TAR (`.tar`, `.tar.gz`, `.tar.xz`) as a link, after the regular files, holding exactly the target it had. It is never followed, so a link to a folder elsewhere does not pull that folder in. Targets longer than 100 bytes go in a pax `linkpath` record. Whether a link is safe to recreate is decided on extraction (see [Links in TAR archives](listing-extracting.md#links-in-tar-archives)). On Windows links are left out, as before.
+
 ## XZ
 
 ```sh
@@ -135,7 +137,7 @@ output and renames it only on success.
 - Directories are walked recursively in sorted order, so the same input always produces the same entry order.
 - Paths are stored relative to the parent of each input: `arca create a.zip ~/work/site` stores entries as `site/…`.
 - Modification times are preserved.
-- ZIP/TAR add regular files and skip symbolic links. 7z and RAR also preserve empty directories and reject symbolic links (see above).
+- ZIP adds regular files and skips symbolic links. TAR adds regular files and, on Linux and macOS, stores symbolic links as links without following them (see above). 7z and RAR also preserve empty directories and reject symbolic links (see above).
 
 ## Encrypting while you create
 

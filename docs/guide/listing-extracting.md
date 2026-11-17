@@ -94,3 +94,15 @@ entries have been written; there is no whole-directory rollback. See
 ## Safe paths
 
 Every entry name passes through Arca’s Zip Slip defence before it’s joined to the destination. An entry such as `../../etc/passwd` is rejected with an error instead of being written outside the target directory.
+
+## Links in TAR archives
+
+A TAR can hold symbolic links and hard links. `arca list` shows where each one points: `name -> target` for a symbolic link, `name link to target` for a hard link. GNU long link names and pax `linkpath` records are read, so a target of any length up to 4,096 bytes comes through whole.
+
+Extraction recreates links only when they can do no harm:
+
+- **Symbolic links** are made after every other entry has been written, so no file in the archive can be written through a link from the same archive. A link is made only when its target is relative and, read from where the link stands, stays inside the destination: it may climb with `..` only as far as the destination itself, and every folder it goes through must already be a real folder there, not a link. Absolute targets, targets that climb out, and targets that pass through another link or a missing folder are left out. A link is never put where a folder already stands. Existing files in its place follow `--on-conflict`.
+- **Hard links** are made only to a file this same extraction wrote, under the name it was given (after a `rename`, the renamed one). A hard link to anything else is left out. Where the file system has no hard links, such as FAT32 or exFAT, the file is copied instead.
+- **On Windows** symbolic links need privileges most accounts do not have, so they are always left out and reported; their targets are not copied in their place. Hard links work on NTFS without privileges.
+
+Every link left out is reported on standard error with its reason (in the window, as a count after the summary), and the extraction carries on. A destination that already holds a link from earlier is still never written through.
