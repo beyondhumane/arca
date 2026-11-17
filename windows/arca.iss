@@ -78,6 +78,8 @@ spanish.RestartExplorer=El Explorador tiene que reiniciarse para que aparezca el
 [Files]
 Source: "{#BinDir}\arca.exe";            DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\arca-gui.exe";        DestDir: "{app}"; Flags: ignoreversion
+; What arca create --sfx puts in front of the ZIP; arca looks for it beside itself.
+Source: "{#BinDir}\arca-sfx.exe";        DestDir: "{app}"; Flags: ignoreversion
 ; The Explorer loads this DLL and, by design, never unloads it: DllCanUnloadNow
 ; returns S_FALSE on purpose. So it stays locked and neither an upgrade nor an
 ; uninstall can touch it while the Explorer is running. RestartExplorer below

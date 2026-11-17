@@ -38,9 +38,9 @@ if ($Fast) {
 $Version = ((Get-Content (Join-Path $Root "Cargo.toml") |
     Where-Object { $_ -match '^version' } | Select-Object -First 1) -split '"')[1]
 
-Write-Host "==> Building arca.exe and arca-gui.exe" -ForegroundColor Cyan
+Write-Host "==> Building arca.exe, arca-gui.exe and arca-sfx.exe" -ForegroundColor Cyan
 Push-Location $Root
-Invoke-Tool "cargo" @("build", "--release", "-p", "arca-cli", "-p", "arca-gui")
+Invoke-Tool "cargo" @("build", "--release", "-p", "arca-cli", "-p", "arca-gui", "-p", "arca-sfx")
 Pop-Location
 
 Write-Host "==> Building arca_shell.dll" -ForegroundColor Cyan
@@ -51,6 +51,7 @@ if (Test-Path $Stage) { Remove-Item -Recurse -Force $Stage }
 New-Item -ItemType Directory -Force -Path $Stage, "$Stage\Assets" | Out-Null
 Copy-Item "$Root\target\release\arca.exe" $Stage
 Copy-Item "$Root\target\release\arca-gui.exe" $Stage
+Copy-Item "$Root\target\release\arca-sfx.exe" $Stage
 Copy-Item "$PSScriptRoot\arca-shell\target\release\arca_shell.dll" $Stage
 Copy-Item "$PSScriptRoot\AppxManifest.xml" $Stage
 Copy-Item "$Root\LICENSE" $Stage
@@ -63,7 +64,7 @@ Write-Host "==> Packing them with arca" -ForegroundColor Cyan
 $Payload = Join-Path $PSScriptRoot "salida-setup.zip"
 if (Test-Path $Payload) { Remove-Item -Force $Payload }
 Push-Location $Stage
-Invoke-Tool "$Root\target\release\arca.exe" @("create", $Payload, "arca.exe", "arca-gui.exe", "arca_shell.dll", "AppxManifest.xml", "LICENSE", "README.md", "Assets")
+Invoke-Tool "$Root\target\release\arca.exe" @("create", $Payload, "arca.exe", "arca-gui.exe", "arca-sfx.exe", "arca_shell.dll", "AppxManifest.xml", "LICENSE", "README.md", "Assets")
 Pop-Location
 
 Write-Host "==> Building the installer" -ForegroundColor Cyan

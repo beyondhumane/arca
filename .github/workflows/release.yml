@@ -163,6 +163,7 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then
             BIN="target/${{ matrix.target }}/release/arca.exe"
             test -f "target/${{ matrix.target }}/release/arca-gui.exe"
+            test -f "target/${{ matrix.target }}/release/arca-sfx.exe"
           else
             BIN="target/${{ matrix.target }}/release/arca"
             test -f "target/${{ matrix.target }}/release/arca-gui"
@@ -180,6 +181,9 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp "target/${{ matrix.target }}/release/arca.exe" "dist/$NAME/"
             cp "target/${{ matrix.target }}/release/arca-gui.exe" "dist/$NAME/"
+            # What `arca create --sfx` puts in front of the ZIP; arca looks
+            # for it next to itself.
+            cp "target/${{ matrix.target }}/release/arca-sfx.exe" "dist/$NAME/"
           else
             cp "target/${{ matrix.target }}/release/arca" "dist/$NAME/"
             cp "target/${{ matrix.target }}/release/arca-gui" "dist/$NAME/"
