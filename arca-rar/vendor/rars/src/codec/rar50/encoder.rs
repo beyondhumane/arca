@@ -784,25 +784,21 @@ pub(crate) fn streaming_blocks_with_allowance<B: Budget>(
             None => true,
         }
     };
-    // Arca: a member with no history keeps the tree finder for every block,
-    // not only the first. The tree is what makes searching at every position
-    // affordable, and the blocks arrive in order, which is all it asks.
+    // Arca: the optimal parse keeps the tree finder for every block, not only
+    // the first, and for a run that carries history as well as one that does
+    // not. The tree is what makes searching at every position affordable, and
+    // the blocks arrive in order, which is all it asks.
     if blocks.is_empty() {
         return Ok(output);
     }
-    let mut search = if start == 0 && options.optimal_parse {
+    let mut search = if options.optimal_parse {
         SharedMemberSearch::Optimal(OptimalCollector::with_allowance(
-            &combined, 0, options, allowance,
+            &combined, at, options, allowance,
         )?)
     } else {
-        let finder = member_finder_with_allowance(&combined, at, options, allowance)?;
-        if options.optimal_parse {
-            SharedMemberSearch::Optimal(OptimalCollector {
-                finder: CollectorFinder::Chains(finder),
-            })
-        } else {
-            SharedMemberSearch::Lazy(finder)
-        }
+        SharedMemberSearch::Lazy(member_finder_with_allowance(
+            &combined, at, options, allowance,
+        )?)
     };
     for &(end, is_last) in blocks {
         let end = start + end;
@@ -1288,18 +1284,19 @@ struct BlockMatches<B: Budget = Allowance> {
 /// Searching once is also what makes the tree finder affordable, and the tree
 /// is where the speed is: pricing every position means searching at every
 /// position, which is the load a chain walk carries worst and a tree carries
-/// best. A member that starts with no history gets the tree. One that carries
-/// history keeps the chains, because the only way into a tree is a descent per
-/// position, and paying that across a dictionary of history would cost more
-/// than the chains ever did.
+/// best. Arca: every member gets the tree, and one that carries history has
+/// the newest part of it seeded in (see [`HISTORY_SEED_DIVISOR`]).
 struct OptimalCollector<B: Budget = Allowance> {
     finder: CollectorFinder<B>,
 }
 
 enum CollectorFinder<B: Budget = Allowance> {
     Tree(match_finder::TreeMatchFinder<B>),
-    Chains(Rar50MatchFinder<B>),
 }
+
+/// Arca: the share of the dictionary the tree is seeded with when a parse
+/// starts on history, one quarter.
+const HISTORY_SEED_DIVISOR: usize = 4;
 
 impl OptimalCollector {
     #[cfg(test)]
@@ -1316,17 +1313,39 @@ impl<B: Budget> OptimalCollector<B> {
         options: EncodeOptions,
         allowance: &B,
     ) -> Result<Self> {
-        let finder = if start == 0 {
-            CollectorFinder::Tree(match_finder::TreeMatchFinder::with_allowance(
-                finder_window(options, combined.len()),
-                allowance,
-            )?)
-        } else {
-            CollectorFinder::Chains(member_finder_with_allowance(
-                combined, start, options, allowance,
-            )?)
-        };
-        Ok(Self { finder })
+        let mut tree = match_finder::TreeMatchFinder::with_allowance(
+            finder_window(options, combined.len()),
+            allowance,
+        )?;
+        // Arca: history goes into the tree too, rather than sending the parse
+        // to the chain finder, which carried it worst: on a 20 MiB log cut
+        // into the writer's 4 MiB runs, level 3 searched 32 candidates per
+        // position through chains for 45.9 s and 3,309,368 bytes. A tree takes
+        // history one descent per position, so only the newest quarter of a
+        // dictionary is seeded, and older history is out of reach. Seeded
+        // with 1 MiB the same log took 20.2 s for 3,042,817 bytes, seeded with
+        // all 4 MiB 30.6 s for 3,025,106. A descent with no reach reports
+        // nothing, so seeding collects nothing.
+        let seeded = (options.max_match_distance / HISTORY_SEED_DIVISOR).min(start);
+        let mut nothing = Buffer::new(allowance);
+        for pos in start - seeded..start {
+            let avail = combined.len() - pos;
+            if avail < 4 {
+                continue;
+            }
+            tree.matches(
+                combined,
+                pos,
+                avail.min(options.nice_length),
+                0,
+                options.max_match_candidates,
+                &mut nothing,
+            )
+            .map_err(Into::into)?;
+        }
+        Ok(Self {
+            finder: CollectorFinder::Tree(tree),
+        })
     }
 
     /// Finds the matches the parse will price at each position of `block`,
@@ -1347,7 +1366,6 @@ impl<B: Budget> OptimalCollector<B> {
     ) -> Result<BlockMatches<B>> {
         let allowance = match &self.finder {
             CollectorFinder::Tree(finder) => finder.allowance(),
-            CollectorFinder::Chains(finder) => finder.allowance(),
         };
         let span = block.end - block.start;
         let mut matches = BlockMatches {
@@ -1395,49 +1413,6 @@ impl<B: Budget> OptimalCollector<B> {
                         if last.0 as usize == len_limit && len_limit < limit {
                             last.0 = match_length(combined, pos, last.1 as usize, limit) as u32;
                         }
-                    }
-                }
-                CollectorFinder::Chains(finder) => {
-                    // Inserting into a chain is one store, so every position
-                    // goes in whether or not it is searched from. That keeps a
-                    // solid member's candidates exactly what they were.
-                    finder.insert(combined, pos);
-                    let max_length = (block.end - pos).min(MAX_ENCODER_MATCH_LENGTH);
-                    if !searching || max_distance == 0 || max_length < 4 {
-                        continue;
-                    }
-                    // The chain walks nearest first, so the first distance to
-                    // reach a length is the cheapest one that can.
-                    let mut longest = 0usize;
-                    let mut checked = 0usize;
-                    let mut candidate = finder.first(combined, pos);
-                    while candidate != match_finder::NO_POSITION
-                        && longest < max_length
-                        && longest < options.nice_length
-                    {
-                        if candidate >= pos {
-                            candidate = finder.previous(candidate);
-                            continue;
-                        }
-                        let distance = pos - candidate;
-                        if distance > max_distance {
-                            break;
-                        }
-                        checked += 1;
-                        if combined[candidate + longest] == combined[pos + longest] {
-                            let length = match_length(combined, pos, distance, max_length);
-                            if length > longest {
-                                matches
-                                    .runs
-                                    .push((length as u32, distance as u32))
-                                    .map_err(Into::into)?;
-                                longest = length;
-                            }
-                        }
-                        if checked >= options.max_match_candidates {
-                            break;
-                        }
-                        candidate = finder.previous(candidate);
                     }
                 }
             }
@@ -1534,7 +1509,6 @@ fn encode_lz_block_in_window(
         MemberSearch::Lazy(finder) => finder.allowance(),
         MemberSearch::Optimal(collector) => match &collector.finder {
             CollectorFinder::Tree(finder) => finder.allowance(),
-            CollectorFinder::Chains(finder) => finder.allowance(),
         },
     };
     encode_lz_block_with_allowance(
@@ -2578,7 +2552,6 @@ fn encode_tokens_with_progress(
         MemberSearch::Lazy(finder) => finder.allowance().clone(),
         MemberSearch::Optimal(collector) => match &collector.finder {
             CollectorFinder::Tree(finder) => finder.allowance().clone(),
-            CollectorFinder::Chains(finder) => finder.allowance().clone(),
         },
     };
     encode_tokens_with_allowance(

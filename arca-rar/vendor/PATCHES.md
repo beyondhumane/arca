@@ -41,6 +41,15 @@ source was consulted for any of it.
   RAR 2.x and 2.9 encoders keep the fixed tables. The writer's workspace
   estimate charges the two bytes per window byte (`rar50/write/mod.rs`,
   `streaming_lz_workspace`, 17 and 13 become 19 and 15).
+- **Tree search for runs with history.** A run that starts on history (a
+  large member's later runs, or a solid member) searched through hash
+  chains. It now gets the tree too, seeded with the newest quarter of a
+  dictionary of that history (`codec/rar50/encoder.rs`,
+  `OptimalCollector::with_allowance`, `HISTORY_SEED_DIVISOR`); history
+  older than that is out of reach of the run's first matches. The chain
+  arm of the collector is gone. `parallel_streaming_blocks_are_byte_identical_to_serial_blocks`
+  lets the writer's stream come out up to a thousandth larger than the
+  reference's, which reaches all its history through chains.
 
 Measured with `arca create out.rar <dir> -l <level>` on 144 MiB of source and
 executables (1,382 files), Windows 11, 16 threads, together with the

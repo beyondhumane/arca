@@ -154,7 +154,9 @@ impl<const MIN_MATCH: usize, B: Budget> MatchFinder<MIN_MATCH, B> {
         })
     }
 
-    #[cfg(feature = "write")]
+    // Arca: only tests ask a chain finder for its allowance now that the
+    // optimal collector always holds a tree.
+    #[cfg(all(test, feature = "write"))]
     pub(crate) fn allowance(&self) -> B {
         self.head.allowance()
     }
