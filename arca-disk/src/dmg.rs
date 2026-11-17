@@ -9,6 +9,8 @@ const MAX_PLIST: u64 = 64 * 1024 * 1024;
 const MAX_CHUNK: u64 = 64 * 1024 * 1024;
 const MAX_CHUNKS: usize = 4 * 1024 * 1024;
 const CHECK_PIECE: u64 = 1024 * 1024;
+const CACHE: u64 = 128 * 1024 * 1024;
+const REDECODE: u64 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Codec {
@@ -37,6 +39,15 @@ struct Block {
 }
 
 pub(crate) fn open(path: &Path) -> Result<Opened> {
+    let (dmg, partitions, notices) = parse(path)?;
+    Ok(Opened {
+        device: Box::new(dmg),
+        partitions: Some(partitions),
+        notices,
+    })
+}
+
+fn parse(path: &Path) -> Result<(Dmg, Vec<Partition>, Vec<String>)> {
     let mut file = Raw::open(path)?;
     let len = file.len();
     if len >= 8 && file.bytes(0, 8)? == b"encrcdsa" {
@@ -84,6 +95,7 @@ pub(crate) fn open(path: &Path) -> Result<Opened> {
     let mut notices = Vec::new();
     let mut size = be64(&koly, 492).saturating_mul(512);
     let mut lzfse = false;
+    let mut packed = 0u64;
     for (name, data) in blkx(&text)? {
         let block = mish(&data, fork, len, &mut chunks)?;
         if chunks.len() > MAX_CHUNKS {
@@ -101,6 +113,9 @@ pub(crate) fn open(path: &Path) -> Result<Opened> {
     }
     for chunk in &chunks {
         lzfse |= chunk.codec == Codec::Lzfse;
+        if !matches!(chunk.codec, Codec::Zero | Codec::Raw) {
+            packed += chunk.sectors * 512;
+        }
     }
     if lzfse {
         notices.push(
@@ -109,17 +124,17 @@ pub(crate) fn open(path: &Path) -> Result<Opened> {
         );
     }
     chunks.sort_by_key(|c| c.start);
-    Ok(Opened {
-        device: Box::new(Dmg {
-            file,
-            size,
-            chunks,
-            blocks,
-            cached: None,
-        }),
-        partitions: Some(partitions),
-        notices,
-    })
+    let dmg = Dmg {
+        file,
+        size,
+        chunks,
+        blocks,
+        cached: Vec::new(),
+        cache: CACHE,
+        decoded: 0,
+        allowed: 2 * MAX_CHUNK + REDECODE * packed,
+    };
+    Ok((dmg, partitions, notices))
 }
 
 fn encrypted() -> Error {
@@ -310,58 +325,85 @@ struct Dmg {
     size: u64,
     chunks: Vec<Chunk>,
     blocks: Vec<Block>,
-    cached: Option<(usize, Vec<u8>)>,
+    /// Decoded chunks, the one used last at the end, within `cache` bytes.
+    cached: Vec<(usize, Vec<u8>)>,
+    cache: u64,
+    decoded: u64,
+    allowed: u64,
 }
 
 impl Dmg {
     fn unpack(&mut self, index: usize) -> Result<&[u8]> {
-        if self.cached.as_ref().is_none_or(|(i, _)| *i != index) {
-            let c = self.chunks[index];
-            let want = (c.sectors * 512) as usize;
-            let packed = self.file.bytes(c.at, c.len)?;
-            let damaged = |e: std::io::Error| Error::Format(format!("a damaged DMG chunk: {e}"));
-            let mut out = Vec::with_capacity(want);
-            match c.codec {
-                Codec::Adc => out = adc(&packed, want)?,
-                Codec::Zlib => {
-                    flate2::read::ZlibDecoder::new(&packed[..])
-                        .take(want as u64)
-                        .read_to_end(&mut out)
-                        .map_err(damaged)?;
-                }
-                Codec::Bzip2 => {
-                    bzip2::read::BzDecoder::new(&packed[..])
-                        .take(want as u64)
-                        .read_to_end(&mut out)
-                        .map_err(damaged)?;
-                }
-                Codec::Lzma if packed.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0]) => {
-                    arca_xz::Decoder::new(&packed[..])
-                        .take(want as u64)
-                        .read_to_end(&mut out)
-                        .map_err(damaged)?;
-                }
-                Codec::Lzma => {
-                    return Err(Error::Unsupported(
-                        "DMG chunks compressed with raw LZMA".into(),
-                    ))
-                }
-                Codec::Lzfse => {
-                    return Err(Error::Unsupported(
-                        "DMG chunks compressed with LZFSE; Arca has no LZFSE decoder it trusts with untrusted data"
-                            .into(),
-                    ))
-                }
-                Codec::Zero | Codec::Raw => {}
+        match self.cached.iter().position(|(i, _)| *i == index) {
+            Some(k) => {
+                let hit = self.cached.remove(k);
+                self.cached.push(hit);
             }
-            if out.len() != want {
-                return Err(Error::Format(
-                    "a DMG chunk decodes to fewer bytes than it holds".into(),
-                ));
+            None => {
+                let out = self.decode(index)?;
+                let mut held = out.len() as u64;
+                held += self.cached.iter().map(|(_, b)| b.len() as u64).sum::<u64>();
+                while held > self.cache && !self.cached.is_empty() {
+                    held -= self.cached.remove(0).1.len() as u64;
+                }
+                self.cached.push((index, out));
             }
-            self.cached = Some((index, out));
         }
-        Ok(self.cached.as_ref().map_or(&[][..], |(_, b)| b))
+        Ok(self.cached.last().map_or(&[][..], |(_, b)| b))
+    }
+
+    fn decode(&mut self, index: usize) -> Result<Vec<u8>> {
+        let c = self.chunks[index];
+        let want = (c.sectors * 512) as usize;
+        self.decoded = self.decoded.saturating_add(want as u64);
+        if self.decoded > self.allowed {
+            return Err(Error::Limit(
+                "reading this DMG decodes its chunks over and over, more than four times the disk it holds"
+                    .into(),
+            ));
+        }
+        let packed = self.file.bytes(c.at, c.len)?;
+        let damaged = |e: std::io::Error| Error::Format(format!("a damaged DMG chunk: {e}"));
+        let mut out = Vec::with_capacity(want);
+        match c.codec {
+            Codec::Adc => out = adc(&packed, want)?,
+            Codec::Zlib => {
+                flate2::read::ZlibDecoder::new(&packed[..])
+                    .take(want as u64)
+                    .read_to_end(&mut out)
+                    .map_err(damaged)?;
+            }
+            Codec::Bzip2 => {
+                bzip2::read::BzDecoder::new(&packed[..])
+                    .take(want as u64)
+                    .read_to_end(&mut out)
+                    .map_err(damaged)?;
+            }
+            Codec::Lzma if packed.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0]) => {
+                arca_xz::Decoder::new(&packed[..])
+                    .take(want as u64)
+                    .read_to_end(&mut out)
+                    .map_err(damaged)?;
+            }
+            Codec::Lzma => {
+                return Err(Error::Unsupported(
+                    "DMG chunks compressed with raw LZMA".into(),
+                ))
+            }
+            Codec::Lzfse => {
+                return Err(Error::Unsupported(
+                    "DMG chunks compressed with LZFSE; Arca has no LZFSE decoder it trusts with untrusted data"
+                        .into(),
+                ))
+            }
+            Codec::Zero | Codec::Raw => {}
+        }
+        if out.len() != want {
+            return Err(Error::Format(
+                "a DMG chunk decodes to fewer bytes than it holds".into(),
+            ));
+        }
+        Ok(out)
     }
 }
 
@@ -441,5 +483,76 @@ impl Device for Dmg {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CHUNK: u64 = 64 * 512;
+
+    fn disk() -> Vec<u8> {
+        (0..32 * CHUNK as u32)
+            .map(|i| (i / 512 % 251) as u8 ^ (i % 7) as u8 | 1)
+            .collect()
+    }
+
+    fn opened(disk: &[u8]) -> (tempfile::TempDir, Dmg) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("disk.dmg");
+        std::fs::write(&path, crate::tests::containers::dmg(&[("disk", disk)])).unwrap();
+        let (dmg, _, _) = parse(&path).unwrap();
+        (dir, dmg)
+    }
+
+    fn read(dmg: &mut Dmg, at: u64, len: usize) -> Result<Vec<u8>> {
+        let mut buf = vec![0u8; len];
+        dmg.read_at(at, &mut buf)?;
+        Ok(buf)
+    }
+
+    #[test]
+    fn reads_that_alternate_between_chunks_decode_each_once() {
+        let disk = disk();
+        let (_dir, mut dmg) = opened(&disk);
+        for turn in 0..200u64 {
+            let at = (turn % 2) * CHUNK + turn % 50 * 512;
+            let got = read(&mut dmg, at, 512).unwrap();
+            assert_eq!(got, disk[at as usize..at as usize + 512]);
+        }
+        assert_eq!(dmg.decoded, 2 * CHUNK);
+        let mut all = vec![0u8; disk.len()];
+        dmg.read_at(0, &mut all).unwrap();
+        assert_eq!(all, disk);
+        assert_eq!(dmg.decoded, 24 * CHUNK);
+    }
+
+    #[test]
+    fn a_small_cache_still_reads_right_and_evicts_the_oldest() {
+        let disk = disk();
+        let (_dir, mut dmg) = opened(&disk);
+        dmg.cache = 2 * CHUNK;
+        for turn in 0..30u64 {
+            let at = (turn % 3) * CHUNK + 100;
+            assert_eq!(
+                read(&mut dmg, at, 700).unwrap(),
+                disk[at as usize..at as usize + 700]
+            );
+            assert!(dmg.cached.len() <= 2);
+        }
+        assert_eq!(dmg.decoded, 30 * CHUNK);
+    }
+
+    #[test]
+    fn decoding_the_same_chunks_over_and_over_stops() {
+        let disk = disk();
+        let (_dir, mut dmg) = opened(&disk);
+        assert_eq!(dmg.allowed, 2 * MAX_CHUNK + REDECODE * 24 * CHUNK);
+        dmg.cache = 2 * CHUNK;
+        dmg.allowed = 10 * CHUNK;
+        let stopped = (0..100u64).find_map(|turn| read(&mut dmg, (turn % 3) * CHUNK, 512).err());
+        assert!(matches!(stopped, Some(Error::Limit(_))), "{stopped:?}");
+        assert!(dmg.decoded <= 11 * CHUNK);
     }
 }
