@@ -2,7 +2,7 @@
 description: Levels, codecs, threads and formats for arca create, including new RAR5 archives.
 group: Using Arca
 order: 4
-keywords: create compress level codec zstd deflate store threads tar gzip xz txz lzma2 rar rar5 -l -c -j
+keywords: create compress level codec zstd deflate store threads tar gzip xz txz lzma2 bzip2 bz2 tbz2 zst tzst rar rar5 -l -c -j
 ---
 
 # Creating archives
@@ -14,8 +14,8 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
 | `-l, --level` | store · fast · normal · best | normal | Compression level. |
-| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, the RAR compressor in .rar (auto or store only). |
-| `-j, --threads` | a number | 0 | ZIP, XZ and RAR thread limit. 0 means every core; 7z uses every core its memory budget allows. |
+| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, bzip2 in .bz2 and .tar.bz2, Zstandard in .zst and .tar.zst, the RAR compressor in .rar (auto or store only). |
+| `-j, --threads` | a number | 0 | ZIP, XZ, Zstandard and RAR thread limit. 0 means every core; bzip2 always uses one; 7z uses every core its memory budget allows. |
 | `-p, --password` | text | none | Encrypt ZIP or 7z with AES-256. Refused for .rar. |
 | `--hide-names` | flag | off | Encrypt 7z headers too; requires a nonempty password. |
 
@@ -131,6 +131,35 @@ up to 14 at `normal`) and prints the number actually used. With more than one wo
 stream is split into independent blocks, which costs a little ratio. Reading
 is a single sequential stream. Creation writes a temporary file beside the
 output and renames it only on success.
+
+## bzip2 and Zstandard
+
+```sh
+arca create copy.tar.bz2 my-files/          # .tbz2 and .tbz work too
+arca create copy.tar.zst my-files/ -j 8     # .tzst works too
+arca create notes.txt.bz2 notes.txt         # one file, no container
+arca create notes.txt.zst notes.txt
+```
+
+They behave like XZ: a `.bz2` or `.zst` holds exactly one file, and a folder or
+several inputs need the TAR variant. When reading, the signature decides the
+codec and the contents decide whether a TAR is inside, whatever the name says.
+
+bzip2 compresses on one thread. `store` and `fast` both use its 100 kB blocks,
+and `best` its 900 kB ones. Its only accepted codec is `auto`. Every block and
+the whole stream carry a CRC that `bzip2 -t` and `tar -j` verify, and
+concatenated streams, as `pbzip2` writes them, are read as one.
+
+Zstandard uses the same levels as Zstandard inside a ZIP and as many threads as
+`-j` asks for; `auto` and `zstd` are accepted. Arca writes a content checksum
+and, for a single file, its size, so `list` can show it without decoding.
+Reading accepts windows up to 1 GiB, the same ceiling as the XZ dictionary, so
+frames made with `zstd --long=31` are refused. Zstandard needs the default
+`codecs-native` feature.
+
+bzip2 never records the original size, and a Zstandard stream written to a
+pipe may not either, so `list` shows 0 for them. Trailing data that is not
+another stream is an error.
 
 ## What gets stored
 

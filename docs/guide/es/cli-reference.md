@@ -7,7 +7,7 @@ keywords: cli línea de comandos opciones flags referencia ayuda estado de salid
 
 # Referencia de la CLI
 
-ZIP, 7z, TAR (sin comprimir, gzip y XZ), XZ suelto y [RAR](rar.md) están activos por defecto. RAR permite `list`,
+ZIP, 7z, TAR (sin comprimir, gzip, XZ, bzip2 y Zstandard), XZ, bzip2 y Zstandard sueltos y [RAR](rar.md) están activos por defecto. RAR permite `list`,
 `test` y `extract`, con `-p` para datos o cabeceras cifradas, y `create` para
 nuevos archivos RAR5 de un solo volumen. Modificar un RAR o CBR existente, y
 crear CBR, siempre se rechaza.
@@ -40,11 +40,11 @@ Crea un archivo. El formato se toma de la extensión del archivo de salida.
 
 | Argumento / opción | Por defecto | Descripción |
 | --- | --- | --- |
-| `<OUT>` | obligatorio | Archivo de salida: .zip, .7z, .rar, .tar, .tar.gz (o .tgz), .tar.xz (o .txz), .xz. Un .xz admite un único fichero. |
+| `<OUT>` | obligatorio | Archivo de salida: .zip, .7z, .rar, .tar, .tar.gz (o .tgz), .tar.xz (o .txz), .xz, .tar.bz2 (o .tbz2, .tbz), .bz2, .tar.zst (o .tzst), .zst. Un .xz, .bz2 o .zst admite un único fichero. |
 | `<INPUTS>...` | obligatorio | Archivos o directorios a incluir. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
-| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto usa Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz y el compresor RAR en .rar (solo auto o store). |
-| `-j, --threads <N>` | 0 | Hilos ZIP y XZ; 0 usa todos los núcleos. XZ usa tantos como quepan en 2 GiB; 7z y RAR usan todos los núcleos que permite su presupuesto de memoria, diga lo que diga esta opción. |
+| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2. auto usa Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz, bzip2 en .bz2 y .tar.bz2, Zstandard en .zst y .tar.zst y el compresor RAR en .rar (solo auto o store). |
+| `-j, --threads <N>` | 0 | Hilos ZIP y XZ; 0 usa todos los núcleos. XZ usa tantos como quepan en 2 GiB, Zstandard tantos como se pidan y bzip2 uno; 7z y RAR usan todos los núcleos que permite su presupuesto de memoria, diga lo que diga esta opción. |
 | `-p, --password <PASSWORD>` | ninguna | Cifra con AES-256 (.zip, .7z). Otras herramientas la pedirán para abrir el archivo. Se rechaza en .rar. |
 | `--hide-names` | desactivado | Solo 7z: cifra cabeceras; exige una contraseña no vacía. |
 

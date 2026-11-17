@@ -26,7 +26,10 @@ multivolumen, ni creación de CBR.
 `.xz` suelto y `.tar.xz`/`.txz` se pueden crear, listar, probar y extraer en CLI
 y escritorio. Consulta el
 [issue #18](https://github.com/beyondhumane/arca/issues/18) y
-[Crear archivos](creating-archives.md#xz).
+[Crear archivos](creating-archives.md#xz). bzip2 y Zstandard funcionan igual,
+sueltos y alrededor de un TAR; consulta
+[Crear archivos](creating-archives.md#bzip2-y-zstandard). Las entradas ZIP
+comprimidas con bzip2 se leen.
 
 ## Todavía no
 

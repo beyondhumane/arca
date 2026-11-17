@@ -271,64 +271,16 @@ fn workers_fit_the_memory_budget() {
 }
 
 #[test]
-fn output_names_drop_the_suffix() {
-    for (archive, name) in [
-        ("notes.txt.xz", "notes.txt"),
-        ("NOTES.XZ", "NOTES"),
-        ("backup.tar.xz", "backup.tar"),
-        ("backup.txz", "backup.tar"),
-        ("blob", "blob.out"),
-        (".xz", ".xz.out"),
-    ] {
-        assert_eq!(output_name(Path::new(archive)), name);
-    }
-}
-
-#[test]
-fn identify_looks_inside_instead_of_trusting_the_name() {
-    let dir = std::env::temp_dir().join(format!("arca-xz-identify-{}", std::process::id()));
+fn open_reads_a_file_and_checks_it_against_its_index() {
+    let dir = std::env::temp_dir().join(format!("arca-xz-open-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let mut tar = arca_tar::TarWriter::new(Vec::new());
-    tar.add("a.txt", 3, 0, 0o644, &b"abc"[..]).unwrap();
-    let tar = compress(&tar.finish().unwrap(), Level::FAST, 1);
-    let plain = compress(&sample(4_000), Level::FAST, 1);
-    let empty_tar = compress(&[0; 10_240], Level::FAST, 1);
-    let end_marker = compress(&[0; 1_024], Level::FAST, 1);
-    let one_block = compress(&[0; 512], Level::FAST, 1);
-    let ragged = compress(&[0; 1_500], Level::FAST, 1);
-    let past_record = compress(&[0; 10_752], Level::FAST, 1);
-    let zeros = compress(&vec![0; 1 << 20], Level::FAST, 1);
-    for (name, bytes, expected) in [
-        ("a.tar.xz", &tar, Some(Format::TarXz)),
-        ("a.xz", &tar, Some(Format::TarXz)),
-        ("no-suffix", &tar, Some(Format::TarXz)),
-        ("b.xz", &plain, Some(Format::Xz)),
-        ("b.tar.xz", &plain, Some(Format::Xz)),
-        ("b.bin", &plain, Some(Format::Xz)),
-        ("empty.txz", &empty_tar, Some(Format::TarXz)),
-        ("zeros.xz", &empty_tar, Some(Format::Xz)),
-        ("arca-empty.tar.xz", &end_marker, Some(Format::TarXz)),
-        ("one-block.tar.xz", &one_block, Some(Format::Xz)),
-        ("ragged.tar.xz", &ragged, Some(Format::Xz)),
-        ("past-record.tar.xz", &past_record, Some(Format::Xz)),
-        ("zeros.tar.xz", &zeros, Some(Format::Xz)),
-        ("x.zip", &tar, Some(Format::Zip)),
-        ("fake.xz", &b"not xz at all".to_vec(), Some(Format::Xz)),
-        ("plain.bin", &b"not xz at all".to_vec(), None),
-    ] {
-        let path = dir.join(name);
-        std::fs::write(&path, bytes).unwrap();
-        assert_eq!(identify(&path), expected, "{name}");
-    }
-    assert_eq!(identify(&dir.join("missing.txz")), Some(Format::TarXz));
-    assert_eq!(identify(&dir.join("missing")), None);
-
+    let data = sample(4_000);
     let path = dir.join("b.xz");
-    let e = entry(&path).unwrap();
-    assert_eq!((e.name.as_str(), e.size), ("b", 4_000));
-    assert_eq!(e.compressed_size, plain.len() as u64);
+    std::fs::write(&path, compress(&data, Level::FAST, 1)).unwrap();
     let mut out = Vec::new();
     open(&path).unwrap().read_to_end(&mut out).unwrap();
-    assert_eq!(out, sample(4_000));
+    assert_eq!(out, data);
+    std::fs::write(&path, b"not xz at all").unwrap();
+    assert!(open(&path).is_err());
     let _ = std::fs::remove_dir_all(dir);
 }

@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 //! XZ streams for Arca: a decoder with a dictionary limit, an encoder whose
-//! threads fit in a memory budget, the index walk that gives the size without
-//! decoding, and the look inside that tells a TAR.XZ from a plain `.xz`.
+//! threads fit in a memory budget, and the index walk that gives the size without
+//! decoding.
 
-use arca_core::{Entry, Error, Format, Level, Method, Result};
+use arca_core::{Error, Level, Result};
 use lzma_rust2::{LzmaOptions, XzOptions, XzReader, XzWriter, XzWriterMt};
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
@@ -231,104 +231,6 @@ pub fn open(path: &Path) -> Result<Decoder<BufReader<File>>> {
     let mut decoder = Decoder::new(BufReader::with_capacity(BUF, file));
     decoder.expected = Some(size);
     Ok(decoder)
-}
-
-/// What a standalone `.xz` decompresses to. XZ keeps no name, so it comes from
-/// the file: `notes.txt.xz` gives `notes.txt`, `a.txz` gives `a.tar`, and a name
-/// without either suffix gets `.out` appended.
-pub fn output_name(path: &Path) -> String {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    match Format::split_name(&name) {
-        Some((stem, Format::Xz)) if !stem.is_empty() => stem.to_string(),
-        Some((stem, Format::TarXz)) if !stem.is_empty() => format!("{stem}.tar"),
-        _ => format!("{name}.out"),
-    }
-}
-
-/// The single entry of a standalone `.xz`. XZ stores no date, so there is none.
-pub fn entry(path: &Path) -> Result<Entry> {
-    let mut file = File::open(path)?;
-    let size = uncompressed_size(&mut file)?;
-    let name = output_name(path);
-    Ok(Entry {
-        raw_name: name.as_bytes().to_vec(),
-        name,
-        size,
-        compressed_size: file.metadata()?.len(),
-        method: Method::Lzma2,
-        crc32: None,
-        is_dir: false,
-        mtime: None,
-        created: None,
-        accessed: None,
-        attributes: 0,
-        offset: 0,
-        utf8: true,
-        encrypted: false,
-        zipcrypto: false,
-    })
-}
-
-/// The format of a file, looking at its bytes when the name says XZ or says
-/// nothing. A TAR header at the start of the decoded data makes it TAR.XZ
-/// whatever the name; without one it is a standalone `.xz`, even if named
-/// `.tar.xz`. Any other name is trusted as it is.
-pub fn identify(path: &Path) -> Option<Format> {
-    let named = Format::detect(path);
-    if !matches!(named, None | Some(Format::Xz | Format::TarXz)) {
-        return named;
-    }
-    let Ok(mut file) = File::open(path) else {
-        return named;
-    };
-    let mut magic = [0u8; 6];
-    if file.read_exact(&mut magic).is_err() || magic != MAGIC {
-        return named;
-    }
-    if file.seek(SeekFrom::Start(0)).is_err() {
-        return named.or(Some(Format::Xz));
-    }
-    let mut block = [0u8; 512];
-    let mut filled = 0;
-    let mut decoder = Decoder::new(BufReader::new(file));
-    while filled < block.len() {
-        match decoder.read(&mut block[filled..]) {
-            Ok(0) => break,
-            Ok(n) => filled += n,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(_) => return named.or(Some(Format::Xz)),
-        }
-    }
-    let empty_tar = named == Some(Format::TarXz)
-        && filled == block.len()
-        && block.iter().all(|&b| b == 0)
-        && rest_is_empty_tar(&mut decoder);
-    Some(
-        if filled == block.len() && (arca_tar::is_header(&block) || empty_tar) {
-            Format::TarXz
-        } else {
-            Format::Xz
-        },
-    )
-}
-
-// An empty tar is only its end marker: at least two zero blocks, padded with
-// zero blocks up to one 10240-byte record. Any other run of zeros is a file.
-const EMPTY_TAR_MAX: usize = 20 * 512;
-
-fn rest_is_empty_tar(decoder: &mut impl Read) -> bool {
-    let mut rest = Vec::new();
-    let limit = (EMPTY_TAR_MAX - 512 + 1) as u64;
-    if decoder.take(limit).read_to_end(&mut rest).is_err() {
-        return false;
-    }
-    let total = 512 + rest.len();
-    (1024..=EMPTY_TAR_MAX).contains(&total)
-        && total.is_multiple_of(512)
-        && rest.iter().all(|&b| b == 0)
 }
 
 /// The xz preset for an Arca level. Store is preset 0: XZ has no stored mode.

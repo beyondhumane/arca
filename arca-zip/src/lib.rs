@@ -6,6 +6,9 @@ mod reader;
 mod repair;
 pub mod zipcrypto;
 
+#[cfg(test)]
+mod bzip2_tests;
+
 pub use reader::ExtractionReader;
 pub use repair::{repair, Recovered, Repaired, Skipped};
 
@@ -614,7 +617,7 @@ fn decompress_into<Rd: Read, W: Write>(
 ) -> Result<Rd> {
     let limit = declared.saturating_add(1);
     match method_code {
-        Method::Lzma | Method::Lzma2 | Method::Bzip2 | Method::Other7z => {
+        Method::Lzma | Method::Lzma2 | Method::Other7z => {
             Err(Error::Unsupported(format!("{} in ZIP", method_code.name())))
         }
         Method::Rar => Err(Error::Unsupported(
@@ -627,6 +630,11 @@ fn decompress_into<Rd: Read, W: Write>(
         }
         Method::Deflate => {
             let mut dec = flate2::read::DeflateDecoder::new(src);
+            io::copy(&mut (&mut dec).take(limit), cw)?;
+            Ok(dec.into_inner())
+        }
+        Method::Bzip2 => {
+            let mut dec = bzip2::read::BzDecoder::new(src);
             io::copy(&mut (&mut dec).take(limit), cw)?;
             Ok(dec.into_inner())
         }
@@ -892,10 +900,11 @@ fn read_central(c: &mut Cursor<'_>) -> Result<(Entry, Kept)> {
     let method = match real_code {
         0 => Method::Store,
         8 => Method::Deflate,
+        12 => Method::Bzip2,
         93 => Method::Zstd,
         other => {
             return Err(Error::Unsupported(format!(
-                "compression method {other} (store, deflate and zstd are supported)"
+                "compression method {other} (store, deflate, bzip2 and zstd are supported)"
             )))
         }
     };

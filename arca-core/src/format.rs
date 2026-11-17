@@ -9,6 +9,10 @@ pub enum Format {
     TarGz,
     TarXz,
     Xz,
+    TarBz2,
+    Bz2,
+    TarZst,
+    Zst,
     Rar,
     Cbr,
     Apk,
@@ -36,6 +40,10 @@ pub enum Container {
     TarXz,
     /// A single compressed stream. Its one entry is named after the file.
     Xz,
+    TarBz2,
+    Bz2,
+    TarZst,
+    Zst,
     Rar,
     Iso,
 }
@@ -43,13 +51,17 @@ pub enum Container {
 impl Format {
     /// Formats whose existing archives Arca can rewrite: add, remove, rename
     /// and password changes. RAR is not one of them.
-    pub const WRITABLE: [Self; 6] = [
+    pub const WRITABLE: [Self; 10] = [
         Self::Zip,
         Self::Tar,
         Self::TarGz,
         Self::TarXz,
         Self::SevenZ,
         Self::Xz,
+        Self::TarBz2,
+        Self::Bz2,
+        Self::TarZst,
+        Self::Zst,
     ];
 
     /// Formats a new archive can be created in. A superset of [`WRITABLE`]:
@@ -57,18 +69,22 @@ impl Format {
     /// CBR stays a reading format even though it shares the RAR container.
     /// Like the rest of this type it describes the format, not the build;
     /// clients that compile without the `rar` feature filter RAR themselves.
-    pub const CREATABLE: [Self; 7] = [
+    pub const CREATABLE: [Self; 11] = [
         Self::Zip,
         Self::Tar,
         Self::TarGz,
         Self::TarXz,
         Self::SevenZ,
         Self::Xz,
+        Self::TarBz2,
+        Self::Bz2,
+        Self::TarZst,
+        Self::Zst,
         Self::Rar,
     ];
 
     /// Every recognized name suffix, longest first where one ends another.
-    pub const SUFFIXES: [(&'static str, Self); 22] = [
+    pub const SUFFIXES: [(&'static str, Self); 29] = [
         ("zip", Self::Zip),
         ("7z", Self::SevenZ),
         ("tar.gz", Self::TarGz),
@@ -76,6 +92,13 @@ impl Format {
         ("tar.xz", Self::TarXz),
         ("txz", Self::TarXz),
         ("xz", Self::Xz),
+        ("tar.bz2", Self::TarBz2),
+        ("tbz2", Self::TarBz2),
+        ("tbz", Self::TarBz2),
+        ("bz2", Self::Bz2),
+        ("tar.zst", Self::TarZst),
+        ("tzst", Self::TarZst),
+        ("zst", Self::Zst),
         ("tar", Self::Tar),
         ("rar", Self::Rar),
         ("cbr", Self::Cbr),
@@ -101,6 +124,17 @@ impl Format {
         Self::CREATABLE.contains(&self)
     }
 
+    /// For a single compressed file such as `.xz`, the format that compresses
+    /// a TAR the same way. `None` for everything else.
+    pub fn stream_tar(self) -> Option<Self> {
+        match self {
+            Self::Xz => Some(Self::TarXz),
+            Self::Bz2 => Some(Self::TarBz2),
+            Self::Zst => Some(Self::TarZst),
+            _ => None,
+        }
+    }
+
     pub fn container(self) -> Container {
         match self {
             Self::SevenZ => Container::SevenZ,
@@ -108,6 +142,10 @@ impl Format {
             Self::TarGz => Container::TarGz,
             Self::TarXz => Container::TarXz,
             Self::Xz => Container::Xz,
+            Self::TarBz2 => Container::TarBz2,
+            Self::Bz2 => Container::Bz2,
+            Self::TarZst => Container::TarZst,
+            Self::Zst => Container::Zst,
             Self::Rar | Self::Cbr => Container::Rar,
             Self::Iso => Container::Iso,
             Self::Zip
@@ -140,6 +178,10 @@ impl Format {
             Self::TarGz => "TAR.GZ",
             Self::TarXz => "TAR.XZ",
             Self::Xz => "XZ",
+            Self::TarBz2 => "TAR.BZ2",
+            Self::Bz2 => "BZ2",
+            Self::TarZst => "TAR.ZST",
+            Self::Zst => "ZST",
             Self::Rar => "RAR",
             Self::Cbr => "CBR",
             Self::Apk => "APK",
@@ -336,6 +378,38 @@ mod tests {
         assert_eq!(Format::TarXz.container(), Container::TarXz);
         assert_eq!(Format::Xz.container(), Container::Xz);
         assert_eq!(Format::split_name("archive.lzma"), None);
+    }
+
+    #[test]
+    fn bzip2_and_zstd_suffixes_mirror_xz() {
+        for (name, format, stem) in [
+            ("backup.tar.bz2", Format::TarBz2, "backup"),
+            ("backup.TBZ2", Format::TarBz2, "backup"),
+            ("backup.tbz", Format::TarBz2, "backup"),
+            ("notes.txt.bz2", Format::Bz2, "notes.txt"),
+            ("backup.Tar.Zst", Format::TarZst, "backup"),
+            ("backup.tzst", Format::TarZst, "backup"),
+            ("notes.txt.ZST", Format::Zst, "notes.txt"),
+        ] {
+            assert_eq!(Format::split_name(name), Some((stem, format)));
+            assert!(format.can_write() && format.can_create());
+        }
+        for (single, tar, ext, label) in [
+            (Format::Xz, Format::TarXz, "xz", "XZ"),
+            (Format::Bz2, Format::TarBz2, "bz2", "BZ2"),
+            (Format::Zst, Format::TarZst, "zst", "ZST"),
+        ] {
+            assert_eq!(single.stream_tar(), Some(tar));
+            assert_eq!(tar.stream_tar(), None);
+            assert_eq!(single.extension(), ext);
+            assert_eq!(tar.extension(), format!("tar.{ext}"));
+            assert_eq!(single.label(), label);
+            assert_eq!(tar.label(), format!("TAR.{label}"));
+        }
+        assert_eq!(Format::Bz2.container(), Container::Bz2);
+        assert_eq!(Format::TarZst.container(), Container::TarZst);
+        assert_eq!(Format::TarGz.stream_tar(), None);
+        assert_eq!(Format::split_name("archive.bz"), None);
     }
 
     #[test]

@@ -109,11 +109,13 @@ impl Method {
         }
     }
 
-    /// The ZIP method code, only for codecs supported by Arca's ZIP writer.
+    /// The ZIP method code, for the codecs Arca reads in a ZIP. A bzip2 entry
+    /// is only ever copied as it is: the writer never compresses with it.
     pub fn code(self) -> Result<u16> {
         match self {
             Method::Store => Ok(0),
             Method::Deflate => Ok(8),
+            Method::Bzip2 => Ok(12),
             Method::Zstd => Ok(93),
             _ => Err(Error::Unsupported(format!("{} in ZIP", self.name()))),
         }

@@ -19,6 +19,8 @@ getrandom = "0.4"
 arca-core.workspace = true
 flate2.workspace = true
 crc32fast.workspace = true
+# Solo para leer entradas bzip2 (metodo 12). Rust puro, sin bandera.
+bzip2.workspace = true
 # Comprimir cada entrada en un nucleo distinto. Es lo que hace que un zip valga
 # la pena frente a los formatos de un solo flujo, y hasta ahora solo lo tenia la
 # linea de ordenes.

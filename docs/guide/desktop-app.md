@@ -15,7 +15,7 @@ The sidebar lists **Places** (home and the standard user folders), **Pinned** fo
 
 Right-click a file or folder for the full menu: **New folder with selection**, **Open**, **Open with** (the applications that accept that type), **Quick preview**, **Cut**, **Copy**, **Paste**, **Duplicate**, **Rename**, **Move to…**, **Copy to…**, **Compress**, **Copy path**, **Copy name**, **Select all**, **New folder**, **Pin to sidebar**, **Properties**, **Move to Trash** (**Delete**) and **Permanently delete** (**Shift+Delete**, after confirmation). Drag rows onto a folder or onto another pane to move them.
 
-Double-clicking an archive (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.xz`, `.rar`, `.iso` and the ZIP containers) opens it in place. Inside, the menu offers **Extract selection**, **Extract here**, **Extract all** and **Test**, plus **Rename**, **Delete**, **New folder** and **Paste** in a ZIP; a password is asked for when the archive needs one. **Up** or **Backspace** at the root, or **Close archive**, return to the folder with the cursor on the archive. Other files open with the system application.
+Double-clicking an archive (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.xz`, `.tar.bz2`, `.bz2`, `.tar.zst`, `.zst`, `.rar`, `.iso` and the ZIP containers) opens it in place. Inside, the menu offers **Extract selection**, **Extract here**, **Extract all** and **Test**, plus **Rename**, **Delete**, **New folder** and **Paste** in a ZIP; a password is asked for when the archive needs one. **Up** or **Backspace** at the root, or **Close archive**, return to the folder with the cursor on the archive. Other files open with the system application.
 
 ## Panes, details and the sidebar
 
@@ -32,7 +32,7 @@ The sidebar button shows or hides the sidebar; when the window leaves too little
 ## Selection and actions
 
 - Click selects, **Ctrl+click** toggles, **Shift+click** selects a range, **Space** toggles the cursor row and **Ctrl+A** selects the visible rows of the active pane.
-- **Compress** opens the compress box: archive name with automatic extension, destination folder, format (ZIP, TAR, TAR.GZ, TAR.XZ, 7z, XZ or RAR), method, a 0–9 level slider, an optional AES-256 password (with hidden names in 7z) and the list of what goes in.
+- **Compress** opens the compress box: archive name with automatic extension, destination folder, format (ZIP, TAR, TAR.GZ, TAR.XZ, 7z, XZ, TAR.BZ2, BZ2, TAR.ZST, ZST or RAR), method, a 0–9 level slider, an optional AES-256 password (with hidden names in 7z) and the list of what goes in.
 - **Extract…** (**Ctrl+E**) asks where to unpack; **Extract here** (**Alt+W**) unpacks beside the archive.
 - **Properties** shows size, dates, type, permissions and what a folder contains.
 - **Checksums** (row menu) works out CRC32, SHA-1 and SHA-256 of the picked files on the disk, folders included, or of the picked entries inside the open archive, all of them when nothing is picked; entries are read straight out of the archive and never written to disk. It runs in **Operations** with progress, pause and cancel, and the result opens in a dialog: pick the algorithm and **Copy** puts the lines on the clipboard in the `sha256sum` format, ready for `arca hash --check` or `sha256sum -c`. A file that can’t be read shows its error in its row, while a folder that can’t be listed stops the task; in TAR, 7z and RAR a damaged entry stops the whole pass, because each entry is decoded from the stream before it.
@@ -77,6 +77,10 @@ exactly one file; with a folder or several files the dialog asks for TAR.XZ
 instead. A standalone `.xz` opens as a list with one entry named after the
 archive without `.xz`. Test, preview, Copy and Extract read the stream to the end
 and check it, and a stopped or failed creation leaves no half-written archive.
+
+TAR.BZ2, BZ2, TAR.ZST and ZST work the same way, with bzip2 and Zstandard as the
+fixed method. A standalone `.bz2` shows a size of 0, because bzip2 does not
+record it.
 
 ## Format limits
 

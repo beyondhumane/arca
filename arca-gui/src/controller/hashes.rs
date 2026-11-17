@@ -264,16 +264,23 @@ pub(crate) fn hash_entries(
                 rows.push(row(&entry.name, sums)?);
             }
         }
-        Container::Xz => {
+        Container::Xz | Container::Bz2 | Container::Zst => {
             if picked.contains(&0) {
-                let name = arca_xz::output_name(archive);
+                let name = arca_stream::output_name(archive);
                 let sums = hash_with(notify, (0, 1, &name), |out| {
-                    Ok(std::io::copy(&mut arca_xz::open(archive)?, out)?)
+                    Ok(std::io::copy(
+                        &mut arca_stream::open(archive, format)?,
+                        out,
+                    )?)
                 });
                 rows.push(row(&name, sums)?);
             }
         }
-        Container::Tar | Container::TarGz | Container::TarXz => {
+        Container::Tar
+        | Container::TarGz
+        | Container::TarXz
+        | Container::TarBz2
+        | Container::TarZst => {
             let mut r = arca_tar::TarReader::new(open_source(archive, format)?);
             let mut i = 0usize;
             while let Some(e) = r.next_entry()? {
@@ -292,7 +299,7 @@ pub(crate) fn hash_entries(
                 }
                 i += 1;
             }
-            arca_xz::drain(&mut r.into_inner())?;
+            arca_stream::drain(&mut r.into_inner())?;
         }
     }
     let _ = notify(total, total, "");

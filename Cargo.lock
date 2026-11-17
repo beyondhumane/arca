@@ -283,8 +283,8 @@ dependencies = [
  "arca-core",
  "arca-iso",
  "arca-rar",
+ "arca-stream",
  "arca-tar",
- "arca-xz",
  "arca-zip",
  "clap",
  "ctrlc",
@@ -329,8 +329,8 @@ dependencies = [
  "arca-iso",
  "arca-net",
  "arca-rar",
+ "arca-stream",
  "arca-tar",
- "arca-xz",
  "arca-zip",
  "clipboard-win",
  "eframe",
@@ -402,6 +402,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "arca-stream"
+version = "0.10.0"
+dependencies = [
+ "arca-core",
+ "arca-tar",
+ "arca-xz",
+ "bzip2",
+ "zstd",
+]
+
+[[package]]
 name = "arca-tar"
 version = "0.10.0"
 dependencies = [
@@ -413,7 +424,6 @@ name = "arca-xz"
 version = "0.10.0"
 dependencies = [
  "arca-core",
- "arca-tar",
  "crc32fast",
  "lzma-rust2 0.22.0",
 ]
@@ -424,6 +434,7 @@ version = "0.10.0"
 dependencies = [
  "aes",
  "arca-core",
+ "bzip2",
  "crc32fast",
  "ctr",
  "flate2",

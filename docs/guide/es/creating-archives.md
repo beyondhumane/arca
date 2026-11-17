@@ -2,7 +2,7 @@
 description: Niveles, códecs, hilos y formatos para arca create, incluidos los nuevos archivos RAR5.
 group: Uso de Arca
 order: 4
-keywords: crear comprimir nivel códec zstd deflate store hilos tar gzip xz txz lzma2 rar rar5 -l -c -j create compress level codec zstd deflate store threads tar gzip xz txz lzma2 rar rar5 -l -c -j
+keywords: crear comprimir nivel códec zstd deflate store hilos tar gzip xz txz lzma2 bzip2 bz2 tbz2 zst tzst rar rar5 -l -c -j create compress level codec zstd deflate store threads tar gzip xz txz lzma2 rar rar5 -l -c -j
 ---
 
 # Crear archivos
@@ -14,8 +14,8 @@ arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [
 | Opción | Valores | Por defecto | Descripción |
 | --- | --- | --- | --- |
 | `-l, --level` | store · fast · normal · best | normal | Nivel de compresión. |
-| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz, el compresor RAR en .rar (solo auto o store). |
-| `-j, --threads` | un número | 0 | Límite de hilos ZIP y XZ. 0 usa todos los núcleos; 7z y RAR usan todos los núcleos que permite su presupuesto de memoria. |
+| `-c, --codec` | auto · store · deflate · zstd · lzma2 | auto | Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz, bzip2 en .bz2 y .tar.bz2, Zstandard en .zst y .tar.zst, el compresor RAR en .rar (solo auto o store). |
+| `-j, --threads` | un número | 0 | Límite de hilos ZIP, XZ y Zstandard. 0 usa todos los núcleos; bzip2 usa siempre uno; 7z y RAR usan todos los núcleos que permite su presupuesto de memoria. |
 | `-p, --password` | texto | ninguna | Cifra ZIP o 7z con AES-256. Se rechaza en .rar. |
 | `--hide-names` | indicador | desactivado | Cifra también las cabeceras 7z; exige una contraseña no vacía. |
 
@@ -131,6 +131,35 @@ hasta 14 con `normal`) e indica cuántos ha usado. Con más de uno, el flujo se 
 independientes, lo que cuesta un poco de ratio. La lectura es un único flujo
 secuencial. La creación escribe un temporal junto al destino y solo lo renombra
 si termina bien.
+
+## bzip2 y Zstandard
+
+```sh
+arca create copy.tar.bz2 my-files/          # también valen .tbz2 y .tbz
+arca create copy.tar.zst my-files/ -j 8     # también vale .tzst
+arca create notes.txt.bz2 notes.txt         # un fichero, sin contenedor
+arca create notes.txt.zst notes.txt
+```
+
+Funcionan como XZ: un `.bz2` o un `.zst` guarda un único fichero, y una carpeta
+o varias entradas necesitan la variante TAR. Al leer, la firma decide el códec
+y el contenido decide si lleva un TAR dentro, diga lo que diga el nombre.
+
+bzip2 comprime con un solo hilo. `store` y `fast` usan sus bloques de 100 kB, y
+`best` los de 900 kB. Como códec solo admite `auto`. Cada bloque y el flujo
+entero llevan un CRC que `bzip2 -t` y `tar -j` verifican, y los flujos
+concatenados, como los que escribe `pbzip2`, se leen como uno solo.
+
+Zstandard usa los mismos niveles que Zstandard dentro de un ZIP y tantos hilos
+como pida `-j`; admite `auto` y `zstd`. Arca escribe una suma de comprobación
+del contenido y, para un único fichero, su tamaño, así que `list` lo muestra
+sin descomprimir. Al leer acepta ventanas de hasta 1 GiB, el mismo techo que el
+diccionario de XZ, así que las tramas hechas con `zstd --long=31` se rechazan.
+Zstandard necesita la característica `codecs-native`, activa por defecto.
+
+bzip2 nunca guarda el tamaño original, y un flujo Zstandard escrito a una
+tubería puede no guardarlo tampoco, así que `list` muestra 0 para ellos. Los
+datos sobrantes al final que no son otro flujo son un error.
 
 ## Qué se guarda
 

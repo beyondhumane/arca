@@ -26,6 +26,8 @@ y limpieza. El resumen final da el número según la compilación y las herramie
 - `.tar.xz` en los cuatro niveles y con uno o cuatro hilos se abre con `xz -t` y `tar -J`, y Arca lee lo que escribe `tar -cJf`, también con el nombre `.txz`.
 - Un `.xz` suelto va y vuelve con `xz`, con todos los tipos de `--check` y con flujos concatenados. Dos entradas se rechazan.
 - Un TAR dentro de un fichero llamado `.xz` se lista como TAR.XZ; un `.xz` dañado falla sin publicar nada, y un `.tar.xz` truncado falla.
+- `.tar.bz2` y `.tar.zst` con uno o cuatro hilos pasan `bzip2 -t` y `zstd -t` y se extraen idénticos con `tar`; Arca lee lo que escriben `tar -cjf` y `zstd`, también con los nombres `.tbz2` y `.tzst`, y los flujos concatenados. Un `.bz2` y un `.zst` sueltos van y vuelven con `bzip2` y `zstd`; los dañados no publican nada, y `.tar.bz2` y `.tar.zst` truncados fallan.
+- Un ZIP escrito con `zip -Z bzip2` se comprueba y se extrae idéntico.
 
 ```sh
 bash interop.sh
@@ -63,6 +65,8 @@ cargo test -p arca-7z
 cargo test -p arca-cli --test sevenz
 cargo test -p arca-xz
 cargo test -p arca-cli --test xz
+cargo test -p arca-stream
+cargo test -p arca-cli --test streams
 cargo test -p arca-7z --test interop -- --ignored
 cargo test -p arca-gui -- --ignored
 ```

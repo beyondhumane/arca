@@ -7,7 +7,7 @@ keywords: resumen qué por qué estado acerca de overview what why status about
 
 # Introducción
 
-Arca es un explorador de archivos y un archivador en uno, escrito en Rust. Su ventana de escritorio recorre el disco como cualquier explorador y entra en archivos ZIP, 7z, TAR, RAR e ISO como si fueran carpetas; crea archivos ZIP, 7z, TAR y RAR y flujos XZ, comprime con Deflate o Zstandard usando todos los núcleos de tu máquina y cifra con AES-256. El mismo núcleo funciona como un único binario de línea de comandos y como menú contextual del Explorador de Windows.
+Arca es un explorador de archivos y un archivador en uno, escrito en Rust. Su ventana de escritorio recorre el disco como cualquier explorador y entra en archivos ZIP, 7z, TAR, RAR e ISO como si fueran carpetas; crea archivos ZIP, 7z, TAR y RAR y flujos XZ, bzip2 y Zstandard, comprime con Deflate o Zstandard usando todos los núcleos de tu máquina y cifra con AES-256. El mismo núcleo funciona como un único binario de línea de comandos y como menú contextual del Explorador de Windows.
 
 ## ¿Por qué otro archivador?
 
@@ -17,7 +17,7 @@ También es rápido. En la máquina donde se midió, Arca con Zstandard comprimi
 
 ## De un vistazo
 
-- **Formatos:** ZIP con Zip64 (Store/Deflate/Zstandard), 7z (creación Store/LZMA2 y lectura sólida), TAR ustar, `.tar.gz`, `.tar.xz` y `.xz` suelto. Las [imágenes ISO 9660](iso.md) se leen, nunca se escriben.
+- **Formatos:** ZIP con Zip64 (Store/Deflate/Zstandard), 7z (creación Store/LZMA2 y lectura sólida), TAR ustar, `.tar.gz`, `.tar.xz`, `.tar.bz2`, `.tar.zst` y `.xz`, `.bz2` y `.zst` sueltos. Las [imágenes ISO 9660](iso.md) se leen, nunca se escriben.
 - **Velocidad:** compresión multihilo, extracción paralela de `.zip`, y un arranque en frío por debajo del milisegundo.
 - **Seguridad:** analizadores sin código unsafe, lecturas de cabecera acotadas y defensa contra Zip Slip en cada nombre de entrada.
 - **Cifrado:** WinZip AE-2 en ZIP; AES-256 en 7z con cabeceras cifradas opcionales. Consulta los [límites de integridad](encryption.md).

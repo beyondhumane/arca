@@ -1,5 +1,5 @@
 ---
-description: What interop.sh verifies against unzip, tar, xz and 7-Zip.
+description: What interop.sh verifies against unzip, tar, xz, bzip2, zstd and 7-Zip.
 group: Reference
 order: 13
 keywords: interop compatibility 7-zip unzip tar xz winrar nanazip sha-256
@@ -26,6 +26,8 @@ Its final summary reports the count for the selected build and available tools.
 - `.tar.xz` at all four levels and with one or four threads opens in `xz -t` and `tar -J`, and Arca reads what `tar -cJf` writes, also named `.txz`.
 - A standalone `.xz` round-trips with `xz`, including every `--check` type and concatenated streams. Two inputs are refused.
 - A TAR inside a file named `.xz` is listed as TAR.XZ; a corrupt `.xz` fails and publishes nothing, and a truncated `.tar.xz` fails.
+- `.tar.bz2` and `.tar.zst` with one or four threads pass `bzip2 -t` and `zstd -t` and extract identically with `tar`; Arca reads what `tar -cjf` and `zstd` write, also named `.tbz2` and `.tzst`, and concatenated streams. A standalone `.bz2` and `.zst` round-trip with `bzip2` and `zstd`; corrupt ones publish nothing, and truncated `.tar.bz2` and `.tar.zst` fail.
+- A ZIP written with `zip -Z bzip2` tests and extracts identically.
 
 ```sh
 bash interop.sh
@@ -63,6 +65,8 @@ cargo test -p arca-7z
 cargo test -p arca-cli --test sevenz
 cargo test -p arca-xz
 cargo test -p arca-cli --test xz
+cargo test -p arca-stream
+cargo test -p arca-cli --test streams
 cargo test -p arca-7z --test interop -- --ignored
 cargo test -p arca-gui -- --ignored
 ```

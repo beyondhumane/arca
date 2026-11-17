@@ -184,12 +184,18 @@ impl Source {
 
         for (i, item) in self.items.iter().enumerate() {
             let mut fd = FILEDESCRIPTORW {
-                dwFlags: (FD_ATTRIBUTES.0 | FD_FILESIZE.0) as u32,
+                dwFlags: FD_ATTRIBUTES.0 as u32,
                 dwFileAttributes: FILE_ATTRIBUTE_NORMAL.0,
                 nFileSizeHigh: (item.size >> 32) as u32,
                 nFileSizeLow: (item.size & 0xFFFF_FFFF) as u32,
                 ..Default::default()
             };
+            // A size of 0 can mean the archive never recorded one, as in a
+            // bzip2 stream. Declared, it would let the shell stop reading
+            // before the data, so it is only declared when there is one.
+            if item.size > 0 {
+                fd.dwFlags |= FD_FILESIZE.0 as u32;
+            }
             if let Some(t) = item.mtime.filter(|t| *t > 0) {
                 let ticks = to_filetime(t);
                 fd.dwFlags |= FD_WRITESTIME.0 as u32;

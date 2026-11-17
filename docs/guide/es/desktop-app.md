@@ -15,7 +15,7 @@ La barra lateral enumera **Lugares** (la carpeta personal y las carpetas de usua
 
 Clic derecho sobre un archivo o carpeta para el menú completo: **Nueva carpeta con la selección**, **Abrir**, **Abrir con** (las aplicaciones que aceptan ese tipo), **Vista rápida**, **Cortar**, **Copiar**, **Pegar**, **Duplicar**, **Renombrar**, **Mover a…**, **Copiar a…**, **Comprimir**, **Copiar ruta**, **Copiar nombre**, **Seleccionar todo**, **Nueva carpeta**, **Fijar en la barra lateral**, **Propiedades**, **Mover a la papelera** (**Supr**) y **Eliminar permanentemente** (**Mayús+Supr**, con confirmación). Arrastra filas sobre una carpeta o sobre otro panel para moverlas.
 
-Hacer doble clic en un archivo comprimido (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.xz`, `.rar`, `.iso` y los contenedores ZIP) lo abre en el mismo sitio. Dentro, el menú ofrece **Extraer selección**, **Extraer aquí**, **Extraer todo** y **Comprobar**, además de **Renombrar**, **Eliminar**, **Nueva carpeta** y **Pegar** en un ZIP; la contraseña se pide cuando el archivo la necesita. **Arriba** o **Retroceso** en la raíz, o **Cerrar archivo**, vuelven a la carpeta con el cursor sobre el archivo. Los demás archivos se abren con la aplicación del sistema.
+Hacer doble clic en un archivo comprimido (`.zip`, `.7z`, `.tar`, `.tar.gz`, `.tar.xz`, `.xz`, `.tar.bz2`, `.bz2`, `.tar.zst`, `.zst`, `.rar`, `.iso` y los contenedores ZIP) lo abre en el mismo sitio. Dentro, el menú ofrece **Extraer selección**, **Extraer aquí**, **Extraer todo** y **Comprobar**, además de **Renombrar**, **Eliminar**, **Nueva carpeta** y **Pegar** en un ZIP; la contraseña se pide cuando el archivo la necesita. **Arriba** o **Retroceso** en la raíz, o **Cerrar archivo**, vuelven a la carpeta con el cursor sobre el archivo. Los demás archivos se abren con la aplicación del sistema.
 
 ## Paneles, detalles y barra lateral
 
@@ -32,7 +32,7 @@ El botón de la barra lateral la muestra u oculta; cuando la ventana deja poco s
 ## Selección y acciones
 
 - Un clic selecciona, **Ctrl+clic** alterna, **Mayús+clic** selecciona un rango, **Espacio** alterna la fila del cursor y **Ctrl+A** selecciona las filas visibles del panel activo.
-- **Comprimir** abre el cuadro de compresión: nombre del archivo con extensión automática, carpeta de destino, formato (ZIP, TAR, TAR.GZ, TAR.XZ, 7z, XZ o RAR), método, un deslizador de nivel 0–9, contraseña AES-256 opcional (con nombres ocultos en 7z) y la lista de lo que entra.
+- **Comprimir** abre el cuadro de compresión: nombre del archivo con extensión automática, carpeta de destino, formato (ZIP, TAR, TAR.GZ, TAR.XZ, 7z, XZ, TAR.BZ2, BZ2, TAR.ZST, ZST o RAR), método, un deslizador de nivel 0–9, contraseña AES-256 opcional (con nombres ocultos en 7z) y la lista de lo que entra.
 - **Extraer…** (**Ctrl+E**) pregunta dónde; **Extraer aquí** (**Alt+W**) descomprime junto al archivo.
 - **Propiedades** muestra tamaño, fechas, tipo, permisos y el contenido de una carpeta.
 - **Sumas de comprobación** (menú de la fila) calcula CRC32, SHA-1 y SHA-256 de los ficheros elegidos en el disco, carpetas incluidas, o de las entradas elegidas dentro del archivo abierto, todas si no hay ninguna elegida; las entradas se leen directamente del archivo y nunca se escriben en disco. Se ejecuta en **Operaciones** con progreso, pausa y cancelación, y el resultado se abre en un cuadro: elige el algoritmo y **Copiar** deja las líneas en el portapapeles en el formato de `sha256sum`, listas para `arca hash --check` o `sha256sum -c`. Un fichero que no se puede leer muestra su error en su fila, mientras que una carpeta que no se puede listar detiene la tarea; en TAR, 7z y RAR una entrada dañada detiene toda la pasada, porque cada entrada se decodifica a partir del flujo anterior.
@@ -79,6 +79,9 @@ TAR.XZ. Un `.xz` suelto se abre como una lista con una entrada que se llama como
 el archivo sin `.xz`. Probar, la vista previa, Copiar y Extraer leen el flujo
 hasta el final y lo comprueban, y una creación detenida o fallida no deja un
 archivo a medias.
+
+TAR.BZ2, BZ2, TAR.ZST y ZST funcionan igual, con bzip2 y Zstandard como método
+fijo. Un `.bz2` suelto muestra un tamaño de 0, porque bzip2 no lo guarda.
 
 ## Límites por formato
 
