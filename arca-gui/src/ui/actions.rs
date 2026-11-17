@@ -11,6 +11,7 @@ pub(crate) enum RowAction {
     ExtractSelection,
     ExtractHere,
     TestSelection,
+    Checksums,
     View,
     Cut,
     Copy,
@@ -33,7 +34,7 @@ pub(crate) enum RowAction {
 }
 
 impl RowAction {
-    pub(crate) const ALL: [RowAction; 26] = [
+    pub(crate) const ALL: [RowAction; 27] = [
         RowAction::NewFolderWith,
         RowAction::Open,
         RowAction::OpenInPane,
@@ -41,6 +42,7 @@ impl RowAction {
         RowAction::ExtractSelection,
         RowAction::ExtractHere,
         RowAction::TestSelection,
+        RowAction::Checksums,
         RowAction::View,
         RowAction::Cut,
         RowAction::Copy,
@@ -140,6 +142,7 @@ impl RowAction {
             RowAction::ExtractSelection => (s.extract_selected, ""),
             RowAction::ExtractHere => (s.extract_here, "alt-w"),
             RowAction::TestSelection => (s.test_selection, ""),
+            RowAction::Checksums => (s.checksums_word, ""),
             RowAction::View => (s.view_word, "f3"),
             RowAction::Rename => (s.rename_word, "f2"),
             RowAction::Delete => (s.delete_word, "delete"),
@@ -173,6 +176,7 @@ impl RowAction {
             RowAction::ExtractSelection | RowAction::ExtractAll => icon::EXPORT,
             RowAction::ExtractHere => icon::DOWNLOAD_SIMPLE,
             RowAction::TestSelection | RowAction::TestArchive => icon::CHECK_CIRCLE,
+            RowAction::Checksums => icon::HASH,
             RowAction::View => icon::EYE,
             RowAction::Rename => icon::PENCIL_SIMPLE,
             RowAction::Delete => icon::FILE_X,
@@ -326,6 +330,7 @@ pub(crate) enum ModalKind {
     Search,
     Properties,
     Update,
+    Checksums,
     Label,
     Format,
 }

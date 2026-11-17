@@ -89,6 +89,7 @@ pub(crate) enum AppAction {
     Paste,
     OpenFile(usize),
     Preview(usize),
+    Checksums,
     Navigate(String),
     Back,
     Forward,

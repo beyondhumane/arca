@@ -35,6 +35,7 @@ The sidebar button shows or hides the sidebar; when the window leaves too little
 - **Compress** opens the compress box: archive name with automatic extension, destination folder, format (ZIP, TAR, TAR.GZ, TAR.XZ, 7z, XZ or RAR), method, a 0–9 level slider, an optional AES-256 password (with hidden names in 7z) and the list of what goes in.
 - **Extract…** (**Ctrl+E**) asks where to unpack; **Extract here** (**Alt+W**) unpacks beside the archive.
 - **Properties** shows size, dates, type, permissions and what a folder contains.
+- **Checksums** (row menu) works out CRC32, SHA-1 and SHA-256 of the picked files on the disk, folders included, or of the picked entries inside the open archive, all of them when nothing is picked; entries are read straight out of the archive and never written to disk. It runs in **Operations** with progress, pause and cancel, and the result opens in a dialog: pick the algorithm and **Copy** puts the lines on the clipboard in the `sha256sum` format, ready for `arca hash --check` or `sha256sum -c`. A file that can’t be read shows its error in its row, while a folder that can’t be listed stops the task; in TAR, 7z and RAR a damaged entry stops the whole pass, because each entry is decoded from the stream before it.
 - **More** includes selection tools, password changes, verification, settings, the shortcut list and **Check for updates**; a new version opens a dialog with its release notes and installs itself from inside the app.
 
 ## Integrated preview

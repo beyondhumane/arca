@@ -1,6 +1,7 @@
 mod actions;
 mod browser;
 mod dialogs;
+mod hashes;
 mod header;
 mod highlight;
 mod jobs;
@@ -559,6 +560,8 @@ impl Shell {
             Some(ModalKind::Format)
         } else if self.properties.is_some() {
             Some(ModalKind::Properties)
+        } else if self.controller.checksums().is_some() {
+            Some(ModalKind::Checksums)
         } else if state.show_update && state.update.is_some() {
             Some(ModalKind::Update)
         } else if state.show_settings {
@@ -591,6 +594,7 @@ impl Shell {
             ModalKind::Shortcuts => self.controller.state.show_shortcuts = false,
             ModalKind::Search => self.search = None,
             ModalKind::Properties => self.properties = None,
+            ModalKind::Checksums => self.controller.close_checksums(),
             ModalKind::Update => self.controller.state.show_update = false,
         }
     }
@@ -1314,6 +1318,7 @@ impl Shell {
                 only_checked: false,
             }),
             RowAction::TestArchive => self.shortcut(Shortcut::Test),
+            RowAction::Checksums => self.controller.dispatch(AppAction::Checksums),
             RowAction::OpenInPane => {
                 if let Some(row) = row.filter(|row| row.is_dir && !row.up) {
                     self.controller.open_in_pane(&row.path);

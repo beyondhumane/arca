@@ -10,6 +10,7 @@ pub(crate) use jobs::{Task, TaskId, TaskStatus};
 mod container_tests;
 #[cfg(test)]
 mod disk_tests;
+mod hashes;
 #[cfg(test)]
 mod iso_tests;
 mod jobs;
@@ -58,6 +59,7 @@ pub(crate) struct AppController {
     // are kept until it moves. See `entries_changed`.
     entries_gen: u64,
     rows: std::cell::RefCell<RowCache>,
+    checksums: hashes::ChecksumState,
 }
 
 /// Rows already built, so that drawing a frame does not build them again. A
@@ -313,6 +315,7 @@ impl AppController {
             AppAction::Paste => self.paste_from_clipboard(),
             AppAction::OpenFile(index) => self.open_file(index),
             AppAction::Preview(index) => self.view_entry(index),
+            AppAction::Checksums => self.start_checksums(),
             AppAction::Navigate(path) => self.go_to(path),
             AppAction::Back => self.go_back(),
             AppAction::Forward => self.go_forward(),
@@ -783,6 +786,7 @@ impl AppController {
             survey_job: None,
             entries_gen: 0,
             rows: Default::default(),
+            checksums: Default::default(),
             state: AppState {
                 view: View::Browse,
                 settings,
@@ -2003,6 +2007,7 @@ impl AppController {
             }
         }
         let close_window = self.poll_tasks();
+        self.poll_checksums();
         if let Some((pending, password)) = resume {
             self.resume_access(pending, password);
         }
