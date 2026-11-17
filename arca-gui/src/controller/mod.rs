@@ -24,6 +24,8 @@ mod editing_tests;
 mod extra_tests;
 mod hashes;
 #[cfg(test)]
+mod image_tests;
+#[cfg(test)]
 mod iso_tests;
 mod jobs;
 #[cfg(test)]
