@@ -35,7 +35,6 @@ pub(crate) fn open_filter() -> Vec<String> {
             }
         }
     }
-    // The first part of a split set, which opens the whole set.
     extensions.push("001".into());
     extensions
 }

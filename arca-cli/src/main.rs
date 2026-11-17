@@ -442,8 +442,6 @@ fn resolve_codec(c: CodecArg, format_kind: Format) -> Result<Codec> {
     })
 }
 
-/// What `arca create` writes: one archive, a set of parts, or a program
-/// that extracts itself.
 #[derive(Clone, Copy)]
 enum Shape {
     Plain,
@@ -701,7 +699,10 @@ fn create(
         .map_or(0, |(p, _)| p.len() as u64 + arca_core::sfx::TRAILER_LEN);
     let packed = final_size.saturating_sub(program);
     let note = if program > 0 {
-        format!(" · plus the {} self-extracting program", human(program))
+        format!(
+            " \u{b7} plus the {} self-extracting program",
+            human(program)
+        )
     } else {
         parts_note(final_size, volume)
     };
@@ -716,7 +717,7 @@ fn create(
         0.0
     };
     println!(
-        "{}: {} files, {} -> {} ({:.1}% smaller) in {:.3} s · {:.0} MiB/s · {} threads{}",
+        "{}: {} files, {} -> {} ({:.1}% smaller) in {:.3} s \u{b7} {:.0} MiB/s \u{b7} {} threads{}",
         arca_core::volumes::first_output(out, volume).display(),
         files.len(),
         human(total),
@@ -730,10 +731,9 @@ fn create(
     Ok(())
 }
 
-/// How many parts a split archive came out in, for the summary line.
 fn parts_note(written: u64, volume: Option<u64>) -> String {
     match volume {
-        Some(size) => format!(" · {} parts", written.div_ceil(size).max(1)),
+        Some(size) => format!(" \u{b7} {} parts", written.div_ceil(size).max(1)),
         None => String::new(),
     }
 }

@@ -94,7 +94,6 @@ pub(crate) enum Job {
         level: Level,
         password: Option<String>,
         hide_names: bool,
-        // Parts of this many bytes, or one file when there is none.
         volume: Option<u64>,
     },
     // Putting files in. Same rebuild as Delete, and for the same reason: the
