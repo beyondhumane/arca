@@ -33,6 +33,7 @@ pub(super) fn create(
         },
         password,
         hide_names,
+        ..Default::default()
     };
     let own = arca_core::extraction::OwnOutput::new(out);
     let mut sources = Vec::new();

@@ -6,7 +6,9 @@ use std::{
 
 use arca_core::{Error, Level, Result};
 use sevenz_rust2::{
-    encoder_options::{AesEncoderOptions, Lzma2Options},
+    encoder_options::{
+        AesEncoderOptions, DeflateOptions, DeltaOptions, Lzma2Options, LzmaOptions, PpmdOptions,
+    },
     ArchiveEntry, ArchiveWriter, EncoderConfiguration, EncoderMethod, Password, SourceReader,
 };
 
@@ -17,10 +19,65 @@ pub struct Source {
     pub name: String,
 }
 
+/// What the data of a new 7z is compressed with. Every one of them is a
+/// method 7-Zip itself reads; Zstandard is left out because it does not.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Compression {
+    #[default]
+    Lzma2,
+    Lzma,
+    Ppmd,
+    Bzip2,
+    Deflate,
+    Store,
+}
+
+impl Compression {
+    pub const ALL: [Compression; 6] = [
+        Compression::Lzma2,
+        Compression::Lzma,
+        Compression::Ppmd,
+        Compression::Bzip2,
+        Compression::Deflate,
+        Compression::Store,
+    ];
+
+    pub fn name(self) -> &'static str {
+        self.stage().name()
+    }
+
+    /// Whether this build can write it: BZip2 comes with `codecs-native`.
+    pub fn available(self) -> bool {
+        self != Compression::Bzip2 || cfg!(feature = "codecs-native")
+    }
+
+    /// The threads it compresses on at `level`. Only LZMA2 uses more than one.
+    pub fn threads(self, level: Level) -> usize {
+        if self == Compression::Lzma2 && level != Level::STORE {
+            workers(level)
+        } else {
+            1
+        }
+    }
+
+    pub(crate) fn stage(self) -> Stage {
+        match self {
+            Compression::Lzma2 => Stage::Lzma2,
+            Compression::Lzma => Stage::Lzma,
+            Compression::Ppmd => Stage::Ppmd,
+            Compression::Bzip2 => Stage::Bzip2,
+            Compression::Deflate => Stage::Deflate,
+            Compression::Store => Stage::Copy,
+        }
+    }
+}
+
 pub struct CreateOptions<'a> {
     pub level: Level,
     pub password: Option<&'a str>,
     pub hide_names: bool,
+    /// Ignored at [`Level::STORE`], which always stores.
+    pub compression: Compression,
 }
 
 impl Default for CreateOptions<'_> {
@@ -29,6 +86,7 @@ impl Default for CreateOptions<'_> {
             level: Level::NORMAL,
             password: None,
             hide_names: false,
+            compression: Compression::Lzma2,
         }
     }
 }
@@ -76,6 +134,12 @@ pub fn create_7z_into<W: Write + io::Seek>(
         return Err(Error::Format(
             "7z encryption requires a nonempty password".into(),
         ));
+    }
+    if !options.compression.available() {
+        return Err(Error::Unsupported(format!(
+            "{} in 7z needs a build with codecs-native",
+            options.compression.name()
+        )));
     }
     let mut names = std::collections::HashSet::new();
     let mut metadata = Vec::with_capacity(sources.len());
@@ -147,8 +211,8 @@ pub fn create_7z_into<W: Write + io::Seek>(
     });
     push_files(&mut writer, sources, &metadata, &full, options, &tracker)?;
     let Tracker { notify, bytes, .. } = tracker.into_inner();
-    // A header must never reuse the last file's AES salt and IV.
-    writer.set_content_methods(methods(options, false, 1)?);
+
+    writer.set_content_methods(header_methods(options.password)?);
     let mut out = writer.finish()?;
     out.flush()?;
     if !notify(Progress {
@@ -191,8 +255,17 @@ pub(crate) fn push_files<W: Write + Seek>(
     tracker: &std::cell::RefCell<Tracker<'_>>,
 ) -> Result<()> {
     let workers = workers(options.level);
-    for block in solid_blocks(sources, metadata, full) {
-        writer.set_content_methods(methods(options, block.executables, workers)?);
+    let main = options.compression.stage();
+    for block in solid_blocks(sources, metadata, full, main != Stage::Copy) {
+        let mut chain = vec![main];
+        chain.extend(block.filter.map(Stage::Filter));
+        writer.set_content_methods(methods(
+            options.password,
+            &chain,
+            options.level,
+            block.size,
+            workers,
+        )?);
         let entries = block
             .files
             .iter()
@@ -233,33 +306,230 @@ pub(crate) fn push_files<W: Write + Seek>(
 /// file of a large archive as slow as extracting all of it.
 const SOLID_BYTES: u64 = 256 << 20;
 
-/// Extensions of x86 and x64 machine code, which the BCJ filter makes much
-/// easier to compress by turning relative call targets into absolute ones.
-/// 7-Zip picks them the same way, by name.
+/// Extensions of x86 and x64 programs, which get the x86 filter when their
+/// first bytes say nothing about the machine they are for.
 const EXECUTABLE: [&str; 9] = [
     "exe", "dll", "sys", "ocx", "cpl", "scr", "drv", "efi", "mui",
 ];
 
-struct Block {
-    files: Vec<usize>,
-    executables: bool,
+/// A filter that goes over the data before it is compressed. The branch
+/// filters turn the relative targets of calls and jumps into absolute ones,
+/// which repeat; Delta stores each byte as its difference from the one a
+/// sample earlier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Filter {
+    X86,
+    Arm,
+    ArmThumb,
+    Arm64,
+    Ppc,
+    Sparc,
+    Ia64,
+    Delta(u16),
 }
 
-/// Groups the files with data into solid blocks, executables apart so that
-/// only they go through the filter, each group sorted by extension and then
-/// by name so that similar files sit next to each other in the stream.
-fn solid_blocks(sources: &[Source], metadata: &[fs::Metadata], files: &[usize]) -> Vec<Block> {
+/// One coder of a block, in the order a decoder undoes them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stage {
+    Copy,
+    Lzma,
+    Lzma2,
+    Ppmd,
+    Bzip2,
+    Deflate,
+    Filter(Filter),
+}
+
+impl Stage {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Stage::Copy => "Copy",
+            Stage::Lzma => "LZMA",
+            Stage::Lzma2 => "LZMA2",
+            Stage::Ppmd => "PPMd",
+            Stage::Bzip2 => "BZip2",
+            Stage::Deflate => "Deflate",
+            Stage::Filter(Filter::X86) => "BCJ",
+            Stage::Filter(Filter::Arm) => "ARM",
+            Stage::Filter(Filter::ArmThumb) => "ARMT",
+            Stage::Filter(Filter::Arm64) => "ARM64",
+            Stage::Filter(Filter::Ppc) => "PPC",
+            Stage::Filter(Filter::Sparc) => "SPARC",
+            Stage::Filter(Filter::Ia64) => "IA64",
+            Stage::Filter(Filter::Delta(_)) => "Delta",
+        }
+    }
+}
+
+/// The filter 7-Zip would pick for a file that starts with `head`, out of
+/// the program headers of Windows, Linux and macOS and the format of WAV
+/// audio, or `None` for a head that is none of those. RISC-V code gets no
+/// filter, since 7-Zip has only read that one since version 24.
+pub(crate) fn sniff(head: &[u8]) -> Option<Option<Filter>> {
+    let u16le = |at: usize| Some(u16::from_le_bytes(head.get(at..at + 2)?.try_into().ok()?));
+    let u32le = |at: usize| Some(u32::from_le_bytes(head.get(at..at + 4)?.try_into().ok()?));
+    if head.len() >= 512 && u16le(0)? == 0x5A4D {
+        let pe = usize::try_from(u32le(0x3C)?).ok()?;
+        if pe & 7 != 0 || u32le(pe)? != 0x4550 || u16le(pe + 20)? > 1 << 10 {
+            return None;
+        }
+        if !matches!(u16le(pe + 24)?, 0x10B | 0x20B) {
+            return None;
+        }
+        return Some(match u16le(pe + 4)? {
+            0x014C | 0x8664 => Some(Filter::X86),
+            0xAA64 => Some(Filter::Arm64),
+            0x01C0 | 0x01C2 => Some(Filter::Arm),
+            0x01C4 => Some(Filter::ArmThumb),
+            0x0200 => Some(Filter::Ia64),
+            _ => None,
+        });
+    }
+    if head.len() >= 512 && head.starts_with(b"\x7fELF") {
+        if !matches!(head[4], 1 | 2) || !matches!(head[5], 1 | 2) || head[6] != 1 {
+            return None;
+        }
+        let be = head[5] == 2;
+        let pair = [head[0x12], head[0x13]];
+        let machine = if be {
+            u16::from_be_bytes(pair)
+        } else {
+            u16::from_le_bytes(pair)
+        };
+        return Some(match machine {
+            3 | 6 | 62 => Some(Filter::X86),
+            2 | 18 | 43 => Some(Filter::Sparc),
+            20 | 21 if be => Some(Filter::Ppc),
+            40 if !be => Some(Filter::Arm),
+            183 if !be => Some(Filter::Arm64),
+            _ => None,
+        });
+    }
+    if head.len() >= 512 {
+        let be = match u32le(0)? {
+            0xCEFA_EDFE | 0xCFFA_EDFE => true,
+            0xFEED_FACE | 0xFEED_FACF => false,
+            _ => return sniff_wav(head).map(Some),
+        };
+        let word = |at: usize| {
+            let bytes: [u8; 4] = head.get(at..at + 4)?.try_into().ok()?;
+            Some(if be {
+                u32::from_be_bytes(bytes)
+            } else {
+                u32::from_le_bytes(bytes)
+            })
+        };
+        if word(16)? > 1 << 18 || word(20)? > 1 << 24 {
+            return None;
+        }
+        return Some(match word(4)? {
+            7 | 0x0100_0007 => Some(Filter::X86),
+            12 if !be => Some(Filter::Arm),
+            0x0100_000C if !be => Some(Filter::Arm64),
+            14 if be => Some(Filter::Sparc),
+            18 | 0x0100_0012 if be => Some(Filter::Ppc),
+            _ => None,
+        });
+    }
+    sniff_wav(head).map(Some)
+}
+
+/// Delta at the distance of one sample frame, for PCM audio with a data
+/// chunk among the first few.
+fn sniff_wav(head: &[u8]) -> Option<Filter> {
+    let u16le = |at: usize| Some(u16::from_le_bytes(head.get(at..at + 2)?.try_into().ok()?));
+    let u32le = |at: usize| Some(u32::from_le_bytes(head.get(at..at + 4)?.try_into().ok()?));
+    if head.len() < 0x2C || &head[..4] != b"RIFF" || &head[8..16] != b"WAVEfmt " {
+        return None;
+    }
+    let format = u32le(0x10)?;
+    if !(0x10..=0x12).contains(&format) || u16le(0x14)? != 1 {
+        return None;
+    }
+    let bits = u16le(0x22)?;
+    let delta = u16le(0x16)?.checked_mul(bits >> 3)?;
+    if bits & 7 != 0 || !(1..=256).contains(&delta) {
+        return None;
+    }
+    let mut at = 0x14 + format as usize;
+    for _ in 0..10 {
+        let size = u32le(at + 4)?;
+        if u32le(at)? == u32::from_le_bytes(*b"data") {
+            return Some(Filter::Delta(delta));
+        }
+        if size > 1 << 16 {
+            return None;
+        }
+        at += size as usize + 8;
+    }
+    None
+}
+
+/// The filter for the file at `path`: what its first bytes call for, or
+/// for a program that does not say, x86 by its extension. A file that
+/// cannot be read gets none here and fails where it is compressed.
+fn filter_of(path: &Path, name: &str, len: u64) -> Option<Filter> {
+    let mut head = [0u8; 4096];
+    let mut read = 0;
+    if len >= 0x2C {
+        if let Ok(file) = fs::File::open(path) {
+            let mut file = file.take(head.len() as u64);
+            while read < head.len() {
+                match file.read(&mut head[read..]) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => read += n,
+                }
+            }
+        }
+    }
+    sniff(&head[..read]).unwrap_or_else(|| {
+        let extension = Path::new(name)
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        EXECUTABLE
+            .contains(&extension.as_str())
+            .then_some(Filter::X86)
+    })
+}
+
+struct Block {
+    files: Vec<usize>,
+    filter: Option<Filter>,
+    size: u64,
+}
+
+/// Groups the files with data into solid blocks, one group for each filter
+/// so that a filter only goes over the files it is for, each group sorted
+/// by extension and then by name so that similar files sit next to each
+/// other in the stream. Without `filter`, nothing is looked at.
+fn solid_blocks(
+    sources: &[Source],
+    metadata: &[fs::Metadata],
+    files: &[usize],
+    filter: bool,
+) -> Vec<Block> {
     let extension = |i: usize| {
         Path::new(&sources[i].name)
             .extension()
             .map(|e| e.to_string_lossy().to_ascii_lowercase())
             .unwrap_or_default()
     };
-    let (mut executables, mut rest): (Vec<usize>, Vec<usize>) = files
-        .iter()
-        .partition(|&&i| EXECUTABLE.contains(&extension(i).as_str()));
+    let mut groups: Vec<(Option<Filter>, Vec<usize>)> = Vec::new();
+    for &i in files {
+        let kind = if filter {
+            filter_of(&sources[i].path, &sources[i].name, metadata[i].len())
+        } else {
+            None
+        };
+        match groups.iter_mut().find(|(k, _)| *k == kind) {
+            Some((_, group)) => group.push(i),
+            None => groups.push((kind, vec![i])),
+        }
+    }
+    groups.sort_by_key(|(kind, _)| *kind);
     let mut blocks = Vec::new();
-    for (group, filtered) in [(&mut rest, false), (&mut executables, true)] {
+    for (kind, mut group) in groups {
         group.sort_by_cached_key(|&i| (extension(i), sources[i].name.to_lowercase()));
         let mut block = Vec::new();
         let mut size = 0u64;
@@ -267,7 +537,8 @@ fn solid_blocks(sources: &[Source], metadata: &[fs::Metadata], files: &[usize]) 
             if !block.is_empty() && size + metadata[i].len() > SOLID_BYTES {
                 blocks.push(Block {
                     files: std::mem::take(&mut block),
-                    executables: filtered,
+                    filter: kind,
+                    size,
                 });
                 size = 0;
             }
@@ -277,7 +548,8 @@ fn solid_blocks(sources: &[Source], metadata: &[fs::Metadata], files: &[usize]) 
         if !block.is_empty() {
             blocks.push(Block {
                 files: block,
-                executables: filtered,
+                filter: kind,
+                size,
             });
         }
     }
@@ -290,13 +562,58 @@ pub fn workers(level: Level) -> usize {
     arca_xz::workers(level, 0)
 }
 
+/// The largest PPMd model Arca writes, 7-Zip's at its own level 9. The
+/// reader takes models up to 256 MiB, so whatever Arca writes it can read.
+pub const PPMD_MEMORY_MAX: u32 = 192 << 20;
+
+/// PPMd's model order and memory for `level`, as 7-Zip sets them, with the
+/// memory cut down to what `size` bytes can fill: a model larger than
+/// sixteen times the data costs memory, here and in every decoder, and
+/// gains nothing.
+pub fn ppmd_parameters(level: Level, size: u64) -> (u32, u32) {
+    const ORDERS: [u32; 10] = [3, 4, 4, 5, 5, 6, 8, 16, 24, 32];
+    let level = level.get().min(9);
+    let mut memory = if level >= 9 {
+        PPMD_MEMORY_MAX
+    } else {
+        1 << (level + 19)
+    };
+    if u64::from(memory / 16) > size {
+        if let Some(fit) = (16..=31)
+            .map(|bit| 1u32 << bit)
+            .find(|&m| size <= u64::from(m / 16))
+        {
+            memory = memory.min(fit);
+        }
+    }
+    (ORDERS[usize::from(level)], memory)
+}
+
+/// The LZMA dictionary for `level`, no larger than the smallest power of two
+/// that holds `size` bytes: a dictionary longer than the data finds nothing
+/// more, and the decoder has to allocate all of it.
+fn dictionary(level: Level, size: u64) -> u32 {
+    let full = arca_xz::dictionary(u32::from(level.get()));
+    let fit = size
+        .max(4096)
+        .checked_next_power_of_two()
+        .unwrap_or(u64::MAX);
+    u32::try_from(full.min(fit)).unwrap_or(u32::MAX)
+}
+
+/// The coders of one block: AES first when there is a password, then
+/// `chain` as it is undone when reading. `size` is how much data the block
+/// holds, or at least how much it may. At [`Level::STORE`] everything is
+/// stored, with no filter.
 pub(crate) fn methods(
-    options: &CreateOptions<'_>,
-    executables: bool,
+    password: Option<&str>,
+    chain: &[Stage],
+    level: Level,
+    size: u64,
     workers: usize,
 ) -> Result<Vec<EncoderConfiguration>> {
     let mut methods = Vec::new();
-    if let Some(password) = options.password {
+    if let Some(password) = password {
         let mut iv = [0; 16];
         let mut salt = [0; 16];
         getrandom::fill(&mut iv)
@@ -312,22 +629,65 @@ pub(crate) fn methods(
             .into(),
         );
     }
-    let level = u32::from(options.level.get());
-    if level == 0 {
+    if level == Level::STORE {
         methods.push(EncoderMethod::COPY.into());
         return Ok(methods);
     }
-    let preset = arca_xz::preset(options.level);
-    methods.push(if workers > 1 {
-        Lzma2Options::from_level_mt(level, workers as u32, arca_xz::block_size(preset)).into()
-    } else {
-        Lzma2Options::from_level(level).into()
-    });
-    // The last method is the first applied to the data.
-    if executables {
-        methods.push(EncoderMethod::BCJ_X86_FILTER.into());
+    let preset = u32::from(level.get());
+    for &stage in chain {
+        methods.push(match stage {
+            Stage::Copy => EncoderMethod::COPY.into(),
+            Stage::Lzma2 => {
+                let mut options = if workers > 1 {
+                    Lzma2Options::from_level_mt(
+                        preset,
+                        workers as u32,
+                        arca_xz::block_size(arca_xz::preset(level)),
+                    )
+                } else {
+                    Lzma2Options::from_level(preset)
+                };
+                options.set_dictionary_size(dictionary(level, size));
+                options.into()
+            }
+            Stage::Lzma => {
+                let mut options = LzmaOptions::from_level(preset);
+                options.set_dictionary_size(dictionary(level, size));
+                options.into()
+            }
+            Stage::Ppmd => {
+                let (order, memory) = ppmd_parameters(level, size);
+                PpmdOptions::from_order_memory_size(order, memory).into()
+            }
+            Stage::Deflate => DeflateOptions::from_level(level.to_flate2()).into(),
+            #[cfg(feature = "codecs-native")]
+            Stage::Bzip2 => sevenz_rust2::encoder_options::Bzip2Options::from_level(preset).into(),
+            #[cfg(not(feature = "codecs-native"))]
+            Stage::Bzip2 => {
+                return Err(Error::Unsupported(format!(
+                    "{} in 7z needs a build with codecs-native",
+                    stage.name()
+                )))
+            }
+            Stage::Filter(filter) => match filter {
+                Filter::X86 => EncoderMethod::BCJ_X86_FILTER.into(),
+                Filter::Arm => EncoderMethod::BCJ_ARM_FILTER.into(),
+                Filter::ArmThumb => EncoderMethod::BCJ_ARM_THUMB_FILTER.into(),
+                Filter::Arm64 => EncoderMethod::BCJ_ARM64_FILTER.into(),
+                Filter::Ppc => EncoderMethod::BCJ_PPC_FILTER.into(),
+                Filter::Sparc => EncoderMethod::BCJ_SPARC_FILTER.into(),
+                Filter::Ia64 => EncoderMethod::BCJ_IA64_FILTER.into(),
+                Filter::Delta(distance) => DeltaOptions::from_distance(u32::from(distance)).into(),
+            },
+        });
     }
     Ok(methods)
+}
+
+/// What the header goes with: only a password's AES matters there, and it
+/// must never reuse the last block's salt and IV.
+pub(crate) fn header_methods(password: Option<&str>) -> Result<Vec<EncoderConfiguration>> {
+    methods(password, &[], Level::STORE, 0, 1)
 }
 
 /// What every file of a solid block shares while the block is written: the
@@ -387,5 +747,58 @@ impl Read for Lazy<'_, '_> {
             return Err(io::Error::other("7z source changed size during creation"));
         }
         Ok(size)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sniff, Filter};
+
+    fn heads() -> Vec<Vec<u8>> {
+        let mut pe = vec![0u8; 4096];
+        pe[..2].copy_from_slice(b"MZ");
+        pe[0x3C..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+        pe[0x84..0x86].copy_from_slice(&0xAA64u16.to_le_bytes());
+        pe[0x98..0x9A].copy_from_slice(&0x10Bu16.to_le_bytes());
+        let mut elf = vec![0u8; 600];
+        elf[..7].copy_from_slice(b"\x7fELF\x01\x02\x01");
+        elf[0x12..0x14].copy_from_slice(&20u16.to_be_bytes());
+        let mut macho = vec![0u8; 600];
+        macho[..4].copy_from_slice(&[0xCE, 0xFA, 0xED, 0xFE]);
+        macho[4] = 12;
+        let mut wav = b"RIFF\0\0\0\0WAVEfmt \x10\0\0\0\x01\0\x02\0".to_vec();
+        wav.extend([0; 8]);
+        wav.extend(4u16.to_le_bytes());
+        wav.extend(16u16.to_le_bytes());
+        wav.extend(b"data\0\0\0\0");
+        vec![pe, elf, macho, wav]
+    }
+
+    #[test]
+    fn heads_are_recognized_and_damaged_ones_never_panic() {
+        let expected = [Filter::Arm64, Filter::Ppc, Filter::Arm, Filter::Delta(4)];
+        for (head, filter) in heads().iter().zip(expected) {
+            assert_eq!(sniff(head), Some(Some(filter)));
+            for end in 0..head.len().min(700) {
+                let _ = sniff(&head[..end]);
+            }
+            for at in 0..head.len().min(700) {
+                for byte in [0, 0x7f, 0xff] {
+                    let mut bad = head.clone();
+                    bad[at] = byte;
+                    let _ = sniff(&bad);
+                }
+            }
+        }
+        let mut far = heads()[0].clone();
+        far[0x3C..0x40].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(sniff(&far), None);
+        let mut looping = heads()[3].clone();
+        looping[0x24..0x28].copy_from_slice(b"LIST");
+        looping[0x28..0x2C].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(sniff(&looping), None);
+        assert_eq!(sniff(b""), None);
+        assert_eq!(sniff(&[0xCA, 0xFE, 0xBA, 0xBE].repeat(200)), None);
     }
 }

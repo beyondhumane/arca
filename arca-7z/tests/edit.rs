@@ -65,6 +65,7 @@ fn made(room: &Room, password: Option<&str>, hide_names: bool) -> PathBuf {
             level: Level::FAST,
             password,
             hide_names,
+            ..Default::default()
         },
         &mut |_| true,
     )

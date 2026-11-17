@@ -19,8 +19,12 @@ use sevenz_rust2::{
     ArchiveEntry, ArchiveWriter, BlockDecoder, EncoderMethod as M, Password, SourceReader,
 };
 
-use crate::write::{methods, new_entry, push_files, workers, Tracker};
-use crate::{entry_path, upstream, CreateOptions, Phase, Progress, SevenZArchive, Source};
+use crate::write::{
+    header_methods, methods, new_entry, push_files, workers, Filter, Stage, Tracker,
+};
+use crate::{
+    entry_path, upstream, Compression, CreateOptions, Phase, Progress, SevenZArchive, Source,
+};
 
 /// Something to put in: a file read from `source`, or with no source a
 /// folder.
@@ -62,6 +66,7 @@ pub fn rewrite_7z(
         level: change.level,
         password: password.filter(|_| source.encrypted),
         hide_names: source.archive.header_encrypted,
+        compression: Compression::Lzma2,
     };
     let plan = plan(&source, change)?;
     let data = |i: usize| {
@@ -159,8 +164,7 @@ pub fn rewrite_7z(
     push_files(&mut writer, &sources, &metadata, &full, &options, &tracker)?;
     expected.extend(sources.iter().map(|s| s.name.clone()));
 
-    // A header must never reuse the last block's AES salt and IV.
-    writer.set_content_methods(methods(&options, false, 1)?);
+    writer.set_content_methods(header_methods(options.password)?);
     let file = writer
         .finish()?
         .into_inner()
@@ -309,12 +313,18 @@ fn copy_block<R: Read + io::Seek, W: Write + io::Seek>(
         id == M::ID_COPY || id == M::ID_AES256_SHA256
     });
     let level = if stored { Level::STORE } else { options.level };
-    let block_options = CreateOptions {
+    let mut chain = vec![Stage::Lzma2];
+    if has(M::ID_BCJ_X86) {
+        chain.push(Stage::Filter(Filter::X86));
+    }
+    let size = archive.blocks[block].get_unpack_size();
+    writer.set_content_methods(methods(
+        options.password,
+        &chain,
         level,
-        password: options.password,
-        hide_names: options.hide_names,
-    };
-    writer.set_content_methods(methods(&block_options, has(M::ID_BCJ_X86), workers(level))?);
+        size,
+        workers(level),
+    )?);
     let no_password = Password::empty();
     let password = if encrypted {
         &source.password

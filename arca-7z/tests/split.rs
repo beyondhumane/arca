@@ -39,6 +39,7 @@ fn a_7z_written_into_small_parts_reads_back_from_any_of_them() {
             level: Level::FAST,
             password,
             hide_names: password.is_some(),
+            ..Default::default()
         };
         volumes::staged(&out, Some(10_000), true, |w| {
             create_7z_into(BufWriter::new(w), &sources, &options, &mut |_| true)?;

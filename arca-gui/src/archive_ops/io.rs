@@ -1398,6 +1398,7 @@ pub(crate) fn compress_split(
                 level,
                 password,
                 hide_names,
+                ..Default::default()
             };
             staged_parts(out, volume, |w| {
                 arca_7z::create_7z_into(w, &sources, &options, &mut |p| {

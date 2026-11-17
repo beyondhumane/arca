@@ -238,7 +238,8 @@ pub fn preset(level: Level) -> u32 {
     u32::from(level.get())
 }
 
-fn dictionary(preset: u32) -> u64 {
+/// The LZMA2 dictionary of `preset`, in bytes.
+pub fn dictionary(preset: u32) -> u64 {
     u64::from(LzmaOptions::with_preset(preset).dict_size)
 }
 

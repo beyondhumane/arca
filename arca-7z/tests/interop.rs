@@ -44,6 +44,7 @@ fn seven_zip_reads_arca_and_arca_reads_seven_zip() {
                 level,
                 password,
                 hide_names,
+                ..Default::default()
             },
             &mut |_| true,
         )
