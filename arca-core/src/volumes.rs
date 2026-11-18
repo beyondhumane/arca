@@ -626,6 +626,74 @@ pub fn staged<T>(
     result
 }
 
+/// Refuses `out` as where a repair of `source` writes while anything is
+/// there, even a link that leads nowhere. A repair writes a new file and
+/// never replaces one, least of all the damaged archive: it may be the only
+/// copy of what could not be recovered.
+pub fn refuse_existing(source: &Path, out: &Path) -> Result<()> {
+    if out.symlink_metadata().is_err() {
+        return Ok(());
+    }
+    let same = fs::canonicalize(source)
+        .ok()
+        .zip(fs::canonicalize(out).ok())
+        .is_some_and(|(source, out)| source == out);
+    Err(if same {
+        Error::Format(format!(
+            "'{}' is the damaged archive; a repair writes a new file and never replaces one",
+            out.display()
+        ))
+    } else {
+        already_exists(out)
+    })
+}
+
+/// What a repair says when its output name is taken.
+pub fn already_exists(out: &Path) -> Error {
+    Error::Io(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!(
+            "'{}' already exists; a repair writes a new file and never replaces one",
+            out.display()
+        ),
+    ))
+}
+
+/// Builds a new file at `out` from `source` through `write`, which is handed
+/// a temporary file beside `out` by its path, as [`staged`] does, but never
+/// replaces anything: `out` is refused up front if it is taken, see
+/// [`refuse_existing`], and the move into place refuses a file that took the
+/// name while `write` ran. Anything but success leaves nothing behind.
+pub fn staged_new<T>(
+    source: &Path,
+    out: &Path,
+    write: impl FnOnce(&Path) -> Result<T>,
+) -> Result<T> {
+    refuse_existing(source, out)?;
+    let parent = match out.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    // tempfile's own files are 0600 on Unix and the move keeps that, so the
+    // file is made the way File::create would, with the umask's permissions.
+    let temp = tempfile::Builder::new()
+        .prefix(".arca-")
+        .suffix(".part")
+        .make_in(parent, |path| {
+            OpenOptions::new().write(true).create_new(true).open(path)
+        })?
+        .into_temp_path();
+    let value = write(&temp)?;
+    temp.persist_noclobber(out).map_err(|failure| {
+        if failure.error.kind() == io::ErrorKind::AlreadyExists {
+            already_exists(out)
+        } else {
+            Error::Io(failure.error)
+        }
+    })?;
+    Ok(value)
+}
+
 /// A volume size as 7-Zip's `-v` takes it: a number of bytes, or one ending
 /// in `k`, `m` or `g` for KiB, MiB or GiB.
 pub fn parse_size(text: &str) -> std::result::Result<u64, String> {
@@ -1098,5 +1166,79 @@ mod tests {
         assert_eq!(fs::read(&out).unwrap(), b"new!");
         assert!(!staged_single(&out).exists());
         assert!(staged(&out, Some(0), true, |_| Ok(())).is_err());
+    }
+
+    #[test]
+    fn a_new_output_never_replaces_a_file() {
+        let dir = room();
+        let source = dir.path().join("damaged.zip");
+        fs::write(&source, b"damaged").unwrap();
+        let out = dir.path().join("taken.zip");
+        fs::write(&out, b"old").unwrap();
+
+        let error = staged_new(&source, &out, |_| -> Result<()> { unreachable!() }).unwrap_err();
+        assert!(error.to_string().contains("already exists"), "{error}");
+        let error = staged_new(&source, &source, |_| -> Result<()> { unreachable!() }).unwrap_err();
+        assert!(
+            error.to_string().contains("is the damaged archive"),
+            "{error}"
+        );
+
+        let late = dir.path().join("late.zip");
+        let error = staged_new(&source, &late, |temp| {
+            fs::write(temp, b"repaired")?;
+            fs::write(&late, b"appeared meanwhile")?;
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("already exists"), "{error}");
+        assert_eq!(fs::read(&late).unwrap(), b"appeared meanwhile");
+        assert_eq!(fs::read(&out).unwrap(), b"old");
+        assert_eq!(fs::read(&source).unwrap(), b"damaged");
+
+        let failed = dir.path().join("failed.zip");
+        let error = staged_new(&source, &failed, |temp| -> Result<()> {
+            fs::write(temp, b"half")?;
+            Err(Error::Format("no entry could be recovered".into()))
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("no entry"), "{error}");
+        assert_eq!(names(dir.path()), ["damaged.zip", "late.zip", "taken.zip"]);
+
+        let fresh = dir.path().join("fresh.zip");
+        let n = staged_new(&source, &fresh, |temp| {
+            fs::write(temp, b"repaired")?;
+            Ok(8)
+        })
+        .unwrap();
+        assert_eq!(n, 8);
+        assert_eq!(fs::read(&fresh).unwrap(), b"repaired");
+        assert_eq!(names(dir.path()).len(), 4);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_counts_as_taken() {
+        let dir = room();
+        let source = dir.path().join("damaged.zip");
+        fs::write(&source, b"damaged").unwrap();
+        let out = dir.path().join("link.zip");
+        std::os::unix::fs::symlink(dir.path().join("nowhere"), &out).unwrap();
+        let error = staged_new(&source, &out, |_| -> Result<()> { unreachable!() }).unwrap_err();
+        assert!(error.to_string().contains("already exists"), "{error}");
+        assert!(!dir.path().join("nowhere").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_output_gets_the_permissions_of_a_created_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = room();
+        let source = dir.path().join("damaged.zip");
+        fs::write(&source, b"damaged").unwrap();
+        let out = dir.path().join("fresh.zip");
+        staged_new(&source, &out, |temp| Ok(fs::write(temp, b"repaired")?)).unwrap();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&out), mode(&source));
     }
 }
