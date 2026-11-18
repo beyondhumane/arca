@@ -1152,6 +1152,15 @@ impl AppController {
         }
     }
 
+    fn cannot_run(&self, job: &Job, format: Option<Format>) -> String {
+        let message = self.cannot_change(format);
+        if matches!(job, Job::Comment { .. }) && message == self.s().only_zip_can_change {
+            self.s().comment_only_zip.to_string()
+        } else {
+            message
+        }
+    }
+
     pub(crate) fn s(&self) -> &'static Strings {
         strings(self.state.settings.effective_lang())
     }
@@ -2616,7 +2625,7 @@ impl AppController {
         }
         if !can_edit(&job) {
             self.state.error = true;
-            self.state.notice = self.cannot_change(mutation.and_then(|archive| detect(archive)));
+            self.state.notice = self.cannot_run(&job, mutation.and_then(|archive| detect(archive)));
             return;
         }
         let Some(mut job) = self.with_password(job) else {
@@ -2651,7 +2660,7 @@ impl AppController {
         | Job::Comment { archive, .. } = &job
         {
             if !can_edit(&job) {
-                self.state.notice = self.cannot_change(detect(archive));
+                self.state.notice = self.cannot_run(&job, detect(archive));
                 self.state.error = true;
                 return;
             }
