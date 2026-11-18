@@ -225,7 +225,7 @@ pub(crate) fn list_entries(
                 .to_vec(),
             Vec::new(),
         )),
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             Ok((vec![arca_stream::entry(archive, format)?], Vec::new()))
         }
         Container::Tar
@@ -434,7 +434,7 @@ pub(crate) fn read_entry(
             let mut a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
             a.extract_to_with(index, out, password)?;
         }
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             if index != 0 {
                 return Err(arca_core::Error::Format(
                     "that entry is not in the archive any more".into(),
@@ -563,7 +563,7 @@ pub(crate) fn extract_one_into(
             )?;
             Ok(path)
         }
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             let path = room.join(arca_core::safe_name(&entry.name)?);
             let source = arca_stream::open(archive, format)?;
             let mut source = Paced::new(source, &entry.name, notify);
@@ -1011,7 +1011,7 @@ pub(crate) fn extract_reporting(
             bytes = written.iter().sum();
             let _ = notify(total, total, "");
         }
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             if wanted.first().copied().unwrap_or(true) {
                 let name = arca_stream::output_name(archive);
                 let source = arca_stream::open(archive, format)?;
@@ -1166,7 +1166,7 @@ pub(crate) fn test_archive(
             }
             let _ = notify(total, total, "");
         }
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             let name = arca_stream::output_name(archive);
             if only.is_none_or(|set| set.contains(&name)) {
                 let source = arca_stream::open(archive, format)?;
@@ -1681,7 +1681,7 @@ pub(crate) fn compress_with(
             })?
             .1
         }
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             staged_parts(out, volume, |f| {
                 let (path, name) = &files[0];
                 let size = fs::metadata(path)?.len();

@@ -7,6 +7,7 @@ pub enum Format {
     SevenZ,
     Tar,
     TarGz,
+    Gz,
     TarXz,
     Xz,
     TarBz2,
@@ -48,6 +49,7 @@ pub enum Container {
     SevenZ,
     Tar,
     TarGz,
+    Gz,
     TarXz,
     /// A single compressed stream. Its one entry is named after the file.
     Xz,
@@ -84,10 +86,11 @@ pub enum Association {
 impl Format {
     /// Formats whose existing archives Arca can rewrite: add, remove, rename
     /// and password changes. RAR is not one of them.
-    pub const WRITABLE: [Self; 10] = [
+    pub const WRITABLE: [Self; 11] = [
         Self::Zip,
         Self::Tar,
         Self::TarGz,
+        Self::Gz,
         Self::TarXz,
         Self::SevenZ,
         Self::Xz,
@@ -102,10 +105,11 @@ impl Format {
     /// CBR stays a reading format even though it shares the RAR container.
     /// Like the rest of this type it describes the format, not the build;
     /// clients that compile without the `rar` feature filter RAR themselves.
-    pub const CREATABLE: [Self; 11] = [
+    pub const CREATABLE: [Self; 12] = [
         Self::Zip,
         Self::Tar,
         Self::TarGz,
+        Self::Gz,
         Self::TarXz,
         Self::SevenZ,
         Self::Xz,
@@ -117,11 +121,12 @@ impl Format {
     ];
 
     /// Every recognized name suffix, longest first where one ends another.
-    pub const SUFFIXES: [(&'static str, Self); 43] = [
+    pub const SUFFIXES: [(&'static str, Self); 44] = [
         ("zip", Self::Zip),
         ("7z", Self::SevenZ),
         ("tar.gz", Self::TarGz),
         ("tgz", Self::TarGz),
+        ("gz", Self::Gz),
         ("tar.xz", Self::TarXz),
         ("txz", Self::TarXz),
         ("xz", Self::Xz),
@@ -175,6 +180,7 @@ impl Format {
     /// a TAR the same way. `None` for everything else.
     pub fn stream_tar(self) -> Option<Self> {
         match self {
+            Self::Gz => Some(Self::TarGz),
             Self::Xz => Some(Self::TarXz),
             Self::Bz2 => Some(Self::TarBz2),
             Self::Zst => Some(Self::TarZst),
@@ -188,6 +194,7 @@ impl Format {
             | Self::SevenZ
             | Self::Tar
             | Self::TarGz
+            | Self::Gz
             | Self::TarXz
             | Self::Xz
             | Self::TarBz2
@@ -231,6 +238,7 @@ impl Format {
             Self::SevenZ => &["application/x-7z-compressed"],
             Self::Tar => &["application/x-tar"],
             Self::TarGz => &["application/x-compressed-tar"],
+            Self::Gz => &["application/gzip", "application/x-gzip"],
             Self::TarXz => &["application/x-xz-compressed-tar"],
             Self::Xz => &["application/x-xz"],
             Self::TarBz2 => &[
@@ -276,6 +284,7 @@ impl Format {
             Self::SevenZ => Container::SevenZ,
             Self::Tar => Container::Tar,
             Self::TarGz => Container::TarGz,
+            Self::Gz => Container::Gz,
             Self::TarXz => Container::TarXz,
             Self::Xz => Container::Xz,
             Self::TarBz2 => Container::TarBz2,
@@ -316,6 +325,7 @@ impl Format {
             Self::SevenZ => "7z",
             Self::Tar => "TAR",
             Self::TarGz => "TAR.GZ",
+            Self::Gz => "GZ",
             Self::TarXz => "TAR.XZ",
             Self::Xz => "XZ",
             Self::TarBz2 => "TAR.BZ2",
@@ -569,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn bzip2_and_zstd_suffixes_mirror_xz() {
+    fn bzip2_zstd_and_gzip_suffixes_mirror_xz() {
         for (name, format, stem) in [
             ("backup.tar.bz2", Format::TarBz2, "backup"),
             ("backup.TBZ2", Format::TarBz2, "backup"),
@@ -578,6 +588,10 @@ mod tests {
             ("backup.Tar.Zst", Format::TarZst, "backup"),
             ("backup.tzst", Format::TarZst, "backup"),
             ("notes.txt.ZST", Format::Zst, "notes.txt"),
+            ("backup.tar.gz", Format::TarGz, "backup"),
+            ("backup.TGZ", Format::TarGz, "backup"),
+            ("access.log.gz", Format::Gz, "access.log"),
+            ("NOTES.GZ", Format::Gz, "NOTES"),
         ] {
             assert_eq!(Format::split_name(name), Some((stem, format)));
             assert!(format.can_write() && format.can_create());
@@ -586,6 +600,7 @@ mod tests {
             (Format::Xz, Format::TarXz, "xz", "XZ"),
             (Format::Bz2, Format::TarBz2, "bz2", "BZ2"),
             (Format::Zst, Format::TarZst, "zst", "ZST"),
+            (Format::Gz, Format::TarGz, "gz", "GZ"),
         ] {
             assert_eq!(single.stream_tar(), Some(tar));
             assert_eq!(tar.stream_tar(), None);
@@ -596,6 +611,7 @@ mod tests {
         }
         assert_eq!(Format::Bz2.container(), Container::Bz2);
         assert_eq!(Format::TarZst.container(), Container::TarZst);
+        assert_eq!(Format::Gz.container(), Container::Gz);
         assert_eq!(Format::TarGz.stream_tar(), None);
         assert_eq!(Format::split_name("archive.bz"), None);
     }
@@ -614,7 +630,7 @@ mod tests {
             ]
         );
         let named: Vec<(&str, Format)> = Format::desktop_extensions();
-        assert!(named.contains(&("gz", Format::TarGz)));
+        assert!(named.contains(&("gz", Format::Gz)));
         assert!(named.contains(&("xz", Format::Xz)));
         assert!(named.contains(&("bz2", Format::Bz2)));
         assert!(named.contains(&("zst", Format::Zst)));

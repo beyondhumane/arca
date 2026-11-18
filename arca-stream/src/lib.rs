@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
-//! Single compressed streams for Arca: XZ, bzip2 and Zstandard, holding one
-//! file or a TAR. This picks the codec for a format, looks inside a file to
-//! tell which one it really is, and gives the one entry of a standalone stream.
+//! Single compressed streams for Arca: gzip, XZ, bzip2 and Zstandard, holding
+//! one file or a TAR. This picks the codec for a format, looks inside a file
+//! to tell which one it really is, and gives the one entry of a standalone
+//! stream.
 
 mod bz2;
+mod gz;
 mod zst;
 
 use arca_core::{Container, Entry, Error, Format, Level, Method, Result};
@@ -16,6 +18,7 @@ const BUF: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Codec {
+    Gzip,
     Xz,
     Bzip2,
     Zstd,
@@ -23,6 +26,7 @@ enum Codec {
 
 fn codec(format: Format) -> Option<Codec> {
     match format.container() {
+        Container::Gz => Some(Codec::Gzip),
         Container::Xz | Container::TarXz => Some(Codec::Xz),
         Container::Bz2 | Container::TarBz2 => Some(Codec::Bzip2),
         Container::Zst | Container::TarZst => Some(Codec::Zstd),
@@ -33,6 +37,7 @@ fn codec(format: Format) -> Option<Codec> {
 impl Codec {
     fn single(self) -> Format {
         match self {
+            Codec::Gzip => Format::Gz,
             Codec::Xz => Format::Xz,
             Codec::Bzip2 => Format::Bz2,
             Codec::Zstd => Format::Zst,
@@ -41,6 +46,7 @@ impl Codec {
 
     fn tar(self) -> Format {
         match self {
+            Codec::Gzip => Format::TarGz,
             Codec::Xz => Format::TarXz,
             Codec::Bzip2 => Format::TarBz2,
             Codec::Zstd => Format::TarZst,
@@ -49,6 +55,7 @@ impl Codec {
 
     fn method(self) -> Method {
         match self {
+            Codec::Gzip => Method::Deflate,
             Codec::Xz => Method::Lzma2,
             Codec::Bzip2 => Method::Bzip2,
             Codec::Zstd => Method::Zstd,
@@ -62,6 +69,8 @@ impl Codec {
             Some(Codec::Bzip2)
         } else if zst::is_magic(magic) {
             Some(Codec::Zstd)
+        } else if gz::is_magic(magic) {
+            Some(Codec::Gzip)
         } else {
             None
         }
@@ -69,6 +78,7 @@ impl Codec {
 
     fn decoder(self, file: arca_core::volumes::Source) -> Result<Box<dyn Read + Send>> {
         Ok(match self {
+            Codec::Gzip => Box::new(gz::decoder(BufReader::with_capacity(BUF, file))),
             Codec::Xz => Box::new(arca_xz::Decoder::new(BufReader::new(file))),
             Codec::Bzip2 => Box::new(bz2::decoder(BufReader::new(file))),
             Codec::Zstd => zst::decoder(BufReader::new(file))?,
@@ -87,18 +97,20 @@ pub fn handles(format: Format) -> bool {
 }
 
 /// Opens a file for reading what it decodes to, after checking whatever the
-/// format declares about itself up front: the XZ index, the bzip2 header,
-/// the Zstandard frame headers. A declared size is held against the data.
+/// format declares about itself up front: the XZ index, the bzip2 and gzip
+/// headers, the Zstandard frame headers. A declared size is held against the
+/// data.
 pub fn open(path: &Path, format: Format) -> Result<Box<dyn Read + Send>> {
     match codec(format).ok_or_else(|| not_a_stream(format))? {
         Codec::Xz => Ok(Box::new(arca_xz::open(path)?)),
+        Codec::Gzip => gz::open(path),
         Codec::Bzip2 => bz2::open(path),
         Codec::Zstd => zst::open(path),
     }
 }
 
-/// The standalone stream whose magic number `magic` starts with: XZ, BZ2 or
-/// ZST, or `None` for anything else. Ten bytes are enough to tell.
+/// The standalone stream whose magic number `magic` starts with: GZ, XZ, BZ2
+/// or ZST, or `None` for anything else. Ten bytes are enough to tell.
 pub fn sniff(magic: &[u8]) -> Option<Format> {
     Codec::sniff(magic).map(Codec::single)
 }
@@ -112,6 +124,7 @@ pub fn decoder<R: Read + Send + 'static>(
     let source = BufReader::with_capacity(BUF, source);
     Ok(match codec(format).ok_or_else(|| not_a_stream(format))? {
         Codec::Xz => Box::new(arca_xz::Decoder::new(source)),
+        Codec::Gzip => Box::new(gz::decoder(source)),
         Codec::Bzip2 => Box::new(bz2::decoder(source)),
         Codec::Zstd => zst::decoder(source)?,
     })
@@ -127,8 +140,9 @@ pub fn open_salvage(path: &Path, format: Format) -> Result<Box<dyn Read + Send>>
     codec.decoder(arca_core::volumes::open(path)?)
 }
 
-/// What a standalone stream decompresses to. None of the three keeps a name,
-/// so it comes from the file: `notes.txt.bz2` gives `notes.txt`, `a.tzst`
+/// What a standalone stream decompresses to. XZ, bzip2 and Zstandard keep no
+/// name, and the one a gzip header may carry is not used either, so it comes
+/// from the file: `notes.txt.bz2` gives `notes.txt`, `a.tzst`
 /// gives `a.tar`, and a name without a known suffix gets `.out` appended.
 pub fn output_name(path: &Path) -> String {
     let path = arca_core::volumes::whole_name(path);
@@ -145,10 +159,11 @@ pub fn output_name(path: &Path) -> String {
     }
 }
 
-/// The single entry of a standalone stream. None of them stores a date. XZ
-/// always records the size and Zstandard usually does; bzip2 never does, and
-/// an unknown size is given as 0 rather than decoding the whole file to
-/// count it.
+/// The single entry of a standalone stream. Its date is not used. XZ always
+/// records the size and Zstandard usually does; bzip2 never does, and gzip
+/// keeps only the last member's size modulo 4 GiB, which is not the size of
+/// the file it holds. An unknown size is given as 0 rather than decoding the
+/// whole file to count it.
 pub fn entry(path: &Path, format: Format) -> Result<Entry> {
     let codec = codec(format).ok_or_else(|| not_a_stream(format))?;
     let mut file = arca_core::volumes::open(path)?;
@@ -156,6 +171,10 @@ pub fn entry(path: &Path, format: Format) -> Result<Entry> {
         Codec::Xz => arca_xz::uncompressed_size(&mut file)?,
         Codec::Bzip2 => {
             bz2::check_header(&mut file)?;
+            0
+        }
+        Codec::Gzip => {
+            gz::check_header(&mut file)?;
             0
         }
         Codec::Zstd => zst::declared_size(&mut file)?.unwrap_or(0),
@@ -185,9 +204,10 @@ pub fn entry(path: &Path, format: Format) -> Result<Entry> {
 /// of these streams or says nothing. The magic number picks the codec, and a
 /// TAR header at the start of the decoded data makes it the TAR variant
 /// whatever the name; without one it is a standalone stream, even if named
-/// `.tar.bz2`. Any other name is trusted as it is, and a name that says
-/// nothing at all is also looked at for the read-only formats of
-/// [`Format::sniff`].
+/// `.tar.bz2`. Any other name is trusted as it is, `.tar.gz` and `.tgz`
+/// among them: a gzip file is looked inside only when it is named a bare
+/// `.gz`, another of these streams or nothing. A name that says nothing at
+/// all is also looked at for the read-only formats of [`Format::sniff`].
 pub fn identify(path: &Path) -> Option<Format> {
     let named = Format::detect(path).or_else(|| split_format(path));
     if named.is_some_and(|format| !handles(format)) {
@@ -272,6 +292,7 @@ fn rest_is_empty_tar(decoder: &mut impl Read) -> bool {
 }
 
 enum Kind<W: Write> {
+    Gzip(flate2::write::GzEncoder<W>),
     Xz(arca_xz::Encoder<W>),
     Bzip2(bzip2::write::BzEncoder<W>),
     #[cfg(feature = "codecs-native")]
@@ -287,7 +308,7 @@ pub struct Encoder<W: Write> {
 
 /// An encoder for `format` at `level`. `threads` is what was asked for, 0
 /// meaning every core: XZ fits it in its memory budget, Zstandard uses it as
-/// given and bzip2 always runs on one. `size`, when the input's length is
+/// given and gzip and bzip2 always run on one. `size`, when the input's length is
 /// known up front, is recorded in the stream where the format has room for
 /// it, so that listing does not need to decode.
 pub fn encoder<W: Write>(
@@ -298,6 +319,10 @@ pub fn encoder<W: Write>(
     size: Option<u64>,
 ) -> Result<Encoder<W>> {
     Ok(match codec(format).ok_or_else(|| not_a_stream(format))? {
+        Codec::Gzip => Encoder {
+            kind: Kind::Gzip(gz::encoder(out, level)),
+            workers: 1,
+        },
         Codec::Xz => {
             let e = arca_xz::encoder(out, level, threads)?;
             let workers = e.workers();
@@ -334,6 +359,7 @@ impl<W: Write> Encoder<W> {
     /// Writes the end of the stream and hands back what it was written to.
     pub fn finish(self) -> Result<W> {
         Ok(match self.kind {
+            Kind::Gzip(e) => e.finish()?,
             Kind::Xz(e) => e.finish()?,
             Kind::Bzip2(e) => e.finish()?,
             #[cfg(feature = "codecs-native")]
@@ -345,6 +371,7 @@ impl<W: Write> Encoder<W> {
 impl<W: Write> Write for Encoder<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match &mut self.kind {
+            Kind::Gzip(e) => e.write(buf),
             Kind::Xz(e) => e.write(buf),
             Kind::Bzip2(e) => e.write(buf),
             #[cfg(feature = "codecs-native")]
@@ -354,6 +381,7 @@ impl<W: Write> Write for Encoder<W> {
 
     fn flush(&mut self) -> io::Result<()> {
         match &mut self.kind {
+            Kind::Gzip(e) => e.flush(),
             Kind::Xz(e) => e.flush(),
             Kind::Bzip2(e) => e.flush(),
             #[cfg(feature = "codecs-native")]

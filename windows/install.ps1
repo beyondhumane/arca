@@ -33,7 +33,7 @@ $UninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\Arca"
 $Formats = @{
     ".zip"    = @{ ProgId = "Arca.zip";    Text = "ZIP archive" }
     ".7z"     = @{ ProgId = "Arca.7z";     Text = "7z archive" }
-    ".gz"     = @{ ProgId = "Arca.targz";  Text = "TAR.GZ archive" }
+    ".gz"     = @{ ProgId = "Arca.targz";  Text = "GZ archive" }
     ".tgz"    = @{ ProgId = "Arca.tgz";    Text = "TAR.GZ archive" }
     ".xz"     = @{ ProgId = "Arca.xz";     Text = "XZ archive" }
     ".txz"    = @{ ProgId = "Arca.txz";    Text = "TAR.XZ archive" }

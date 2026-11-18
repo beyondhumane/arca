@@ -140,7 +140,7 @@ impl Side {
                     .collect();
                 a.entries().to_vec()
             }
-            Container::Xz | Container::Bz2 | Container::Zst => {
+            Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
                 vec![arca_stream::entry(path, format)?]
             }
             Container::Tar
@@ -169,7 +169,7 @@ impl Side {
         };
         let stream = matches!(
             format.container(),
-            Container::Xz | Container::Bz2 | Container::Zst
+            Container::Gz | Container::Xz | Container::Bz2 | Container::Zst
         );
         // Hard links last: a CPIO stores the data under the last of a file's
         // names, so the file a link shares it with may come after the link.

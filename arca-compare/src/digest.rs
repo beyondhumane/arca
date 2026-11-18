@@ -262,7 +262,7 @@ pub fn digest_entries(
                 Ok(())
             })?;
         }
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             if picked.contains(&0) {
                 let name = arca_stream::output_name(archive);
                 let sums = hash_with(algorithms, notify, (0, 1, &name), |out| {

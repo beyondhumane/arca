@@ -385,6 +385,7 @@ c76ecf12e8e05b8f4730fb9933450ea121fe1ce3699ab9b7d20b058f872815f4 *arca-setup-0.6
             ("backup.tbz2", "backup"),
             ("backup.tar.zst", "backup"),
             ("notes.txt.zst", "notes.txt"),
+            ("access.log.gz", "access.log"),
             ("plain.tar", "plain"),
             ("UPPER.ZIP", "UPPER"),
             ("dots.in.name.zip", "dots.in.name"),

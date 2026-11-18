@@ -9,7 +9,7 @@ if [ ! -x "$ARCA" ]; then
   echo "binary not found at $ARCA (build it with: cargo build --release)" >&2
   exit 1
 fi
-for tool in zip unzip tar 7z xz bzip2 zstd python3; do
+for tool in zip unzip tar gzip 7z xz bzip2 zstd python3; do
   command -v "$tool" >/dev/null 2>&1 || { echo "required tool not found: $tool" >&2; exit 1; }
 done
 W=$(mktemp -d "${TMPDIR:-/tmp}/arca-interop.XXXXXX") || exit 1
@@ -567,6 +567,37 @@ $ARCA test out/bzip2.zip >/dev/null 2>&1 && ok "Arca tests a ZIP with bzip2 entr
 $ARCA extract out/bzip2.zip -o y >/dev/null 2>&1
 H=$(cd y/src 2>/dev/null && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
 [ "$H" = "$REF" ] && ok "Arca extracts bzip2 ZIP entries without losing a byte" || ko "Arca mis-extracts bzip2 ZIP entries"
+
+echo
+echo "J2) Standalone gzip, both directions"
+$ARCA create out/one.bin.gz src/binary.bin -l best >/dev/null 2>&1 || ko "arca create .gz"
+gzip -tq out/one.bin.gz 2>/dev/null && ok "gzip -t accepts Arca's standalone .gz" || ko "gzip -t rejects Arca's standalone .gz"
+[ "$(gzip -dc out/one.bin.gz 2>/dev/null | sha256sum)" = "$(sha256sum < src/binary.bin)" ] && ok "gzip -d reads Arca's standalone .gz" || ko "gzip -d fails on Arca's standalone .gz"
+$ARCA create out/two.gz src/text.txt src/binary.bin >/dev/null 2>&1 && ko "a standalone .gz accepted two inputs" || ok "a standalone .gz refuses two inputs"
+[ -e out/two.gz ] && ko "the refused .gz was left on disk" || ok "the refused .gz left nothing behind"
+gzip -c src/text.txt > out/text.txt.gz
+rm -rf y; mkdir y
+if $ARCA test out/text.txt.gz >/dev/null 2>&1 && $ARCA extract out/text.txt.gz -o y >/dev/null 2>&1 && cmp -s y/text.txt src/text.txt; then
+  ok "Arca reads gzip's standalone .gz"
+else
+  ko "Arca fails on gzip's standalone .gz"
+fi
+# Several members, as cat a.gz b.gz and gzip -c ... >> write them.
+gzip -c src/text.txt > out/cat.gz; gzip -c src/binary.bin >> out/cat.gz
+rm -rf y; mkdir y
+$ARCA extract out/cat.gz -o y >/dev/null 2>&1 && [ "$(sha256sum < y/cat)" = "$(cat src/text.txt src/binary.bin | sha256sum)" ] && ok "Arca joins the members of a multi-member .gz" || ko "Arca mishandles a multi-member .gz"
+gzip -c out/a.tar > out/bundle.gz
+$ARCA list out/bundle.gz 2>/dev/null | grep -q 'src/a/b/c/deep.dat' && ok "a TAR behind a bare .gz is listed as a TAR" || ko "a TAR behind a bare .gz was not recognised"
+cp out/one.bin.gz out/bad.gz
+printf '\xDE\xAD\xBE\xEF' | dd of=out/bad.gz bs=1 seek=4000 conv=notrunc 2>/dev/null
+rm -rf y; mkdir y
+$ARCA test out/bad.gz >/dev/null 2>&1 && ko "corrupt .gz not detected" || ok "corrupt .gz detected, exits with an error"
+$ARCA extract out/bad.gz -o y >/dev/null 2>&1 && ko "corrupt .gz extracted" || ok "corrupt .gz extraction fails"
+[ -z "$(ls -A y)" ] && ok "a corrupt .gz publishes nothing" || ko "a corrupt .gz left a partial file"
+head -c 100000 out/one.bin.gz > out/cut.gz
+rm -rf y; mkdir y
+$ARCA extract out/cut.gz -o y >/dev/null 2>&1 && ko "truncated .gz extracted" || ok "truncated .gz fails"
+[ -z "$(ls -A y)" ] && ok "a truncated .gz publishes nothing" || ko "a truncated .gz left a partial file"
 
 echo
 if [ "${ARCA_TEST_RAR:-1}" = 1 ]; then

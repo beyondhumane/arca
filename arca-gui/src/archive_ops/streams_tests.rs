@@ -38,7 +38,7 @@ fn leftovers(dir: &Path) -> Vec<String> {
 }
 
 fn singles() -> Vec<Format> {
-    let mut formats = vec![Format::Bz2];
+    let mut formats = vec![Format::Gz, Format::Bz2];
     if cfg!(feature = "codecs-native") {
         formats.push(Format::Zst);
     }
@@ -54,6 +54,8 @@ fn names_aliases_and_contents_are_detected() {
     assert_eq!(detect(Path::new("A/B.TZST")), Some(Format::TarZst));
     assert_eq!(detect(Path::new("A/notes.TXT.BZ2")), Some(Format::Bz2));
     assert_eq!(detect(Path::new("A/notes.txt.zst")), Some(Format::Zst));
+    assert_eq!(detect(Path::new("A/access.LOG.GZ")), Some(Format::Gz));
+    assert_eq!(detect(Path::new("A/B.TGZ")), Some(Format::TarGz));
     let source = sample(&room);
     for single in singles() {
         let tar = single.stream_tar().unwrap();
@@ -66,7 +68,8 @@ fn names_aliases_and_contents_are_detected() {
         make(&plain, &[room.path("source/a.txt")], single).unwrap();
         let misnamed = room.path(&format!("one.{}", tar.extension()));
         fs::copy(&plain, &misnamed).unwrap();
-        assert_eq!(detect(&misnamed), Some(single));
+        let by_name = if single == Format::Gz { tar } else { single };
+        assert_eq!(detect(&misnamed), Some(by_name));
         assert_eq!(archive_stem(&archive), "bundle");
     }
 }
@@ -124,7 +127,11 @@ fn a_standalone_stream_is_one_entry_named_after_the_archive() {
         let (entries, _) = list_entries(&archive, None, GO).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "b.bin");
-        let known = if single == Format::Bz2 { 0 } else { 300_000 };
+        let known = if matches!(single, Format::Bz2 | Format::Gz) {
+            0
+        } else {
+            300_000
+        };
         assert_eq!(entries[0].size, known);
         let mut preview = Vec::new();
         read_entry(&archive, 0, &mut preview, None, GO).unwrap();

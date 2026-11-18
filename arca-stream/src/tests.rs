@@ -52,7 +52,7 @@ fn decode(room: &Room, format: Format, bytes: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn single_formats() -> Vec<Format> {
-    let mut formats = vec![Format::Xz, Format::Bz2];
+    let mut formats = vec![Format::Gz, Format::Xz, Format::Bz2];
     if cfg!(feature = "codecs-native") {
         formats.push(Format::Zst);
     }
@@ -67,7 +67,7 @@ fn every_codec_round_trips_and_reports_its_threads() {
         for threads in [1, 3] {
             let e = encoder(Vec::new(), format, Level::FAST, threads, None).unwrap();
             let expected = match format {
-                Format::Bz2 => 1,
+                Format::Bz2 | Format::Gz => 1,
                 Format::Xz => arca_xz::workers(Level::FAST, threads),
                 _ => threads,
             };
@@ -107,9 +107,12 @@ fn output_names_drop_the_suffix() {
         ("notes.txt.zst", "notes.txt"),
         ("backup.tar.zst", "backup.tar"),
         ("backup.tzst", "backup.tar"),
+        ("notes.txt.gz", "notes.txt"),
+        ("ACCESS.LOG.GZ", "ACCESS.LOG"),
         ("blob", "blob.out"),
         (".xz", ".xz.out"),
         (".bz2", ".bz2.out"),
+        (".gz", ".gz.out"),
     ] {
         assert_eq!(output_name(Path::new(archive)), name);
     }
@@ -159,6 +162,11 @@ fn identify_looks_inside_instead_of_trusting_the_name() {
             ),
             ("plain.bin".to_string(), &b"not compressed".to_vec(), None),
         ] {
+            let expected = if single == Format::Gz && name.ends_with(".tar.gz") {
+                Some(Format::TarGz)
+            } else {
+                expected
+            };
             let path = room.put(&name, bytes);
             assert_eq!(identify(&path), expected, "{name}");
         }
@@ -189,6 +197,7 @@ fn the_entry_of_a_standalone_stream() {
         let (size, method) = match format {
             Format::Xz => (4_000, Method::Lzma2),
             Format::Bz2 => (0, Method::Bzip2),
+            Format::Gz => (0, Method::Deflate),
             _ => (4_000, Method::Zstd),
         };
         assert_eq!((e.size, e.method), (size, method), "{format:?}");
@@ -576,4 +585,145 @@ fn a_zstd_frame_of_many_blocks_is_walked_in_few_reads() {
     assert!(source.1 < len / 1000, "{} reads and seeks", source.1);
     let cut = source.0.into_inner()[..len - 1].to_vec();
     assert!(zst::declared_size(&mut std::io::Cursor::new(cut)).is_err());
+}
+
+mod gzip_tests {
+    use super::*;
+
+    fn in_memory(bytes: &[u8]) -> io::Result<Vec<u8>> {
+        let mut out = Vec::new();
+        gz::decoder(bytes).read_to_end(&mut out)?;
+        Ok(out)
+    }
+
+    #[test]
+    fn members_join_and_anything_else_after_them_is_an_error() {
+        let room = Room::new("gz");
+        let a = compress(Format::Gz, b"first ", 1, None);
+        let b = compress(Format::Gz, b"second", 1, None);
+        let empty = compress(Format::Gz, b"", 1, None);
+        let mut joined = a.clone();
+        joined.extend_from_slice(&empty);
+        joined.extend_from_slice(&b);
+        assert_eq!(decode(&room, Format::Gz, &joined).unwrap(), b"first second");
+        let mut garbage = a.clone();
+        garbage.extend_from_slice(b"junk");
+        assert!(decode(&room, Format::Gz, &garbage).is_err());
+        let mut zeros = a.clone();
+        zeros.extend_from_slice(&[0; 16]);
+        assert!(decode(&room, Format::Gz, &zeros).is_err());
+        let mut half = a;
+        half.extend_from_slice(&b[..b.len() / 2]);
+        assert!(decode(&room, Format::Gz, &half).is_err());
+        for junk in [
+            &b""[..],
+            b"\x1f",
+            b"\x1f\x8b",
+            b"\x1f\x8b\x08\x00\x00\x00",
+            b"\x1f\x8b\x07\x00\x00\x00\x00\x00\x00\x03",
+            b"\x1f\x8b\x08\xe0\x00\x00\x00\x00\x00\x03",
+            b"PK\x03\x04 not gzip",
+        ] {
+            assert!(decode(&room, Format::Gz, junk).is_err(), "{junk:?}");
+            assert!(
+                entry(&room.put("junk.gz", junk), Format::Gz).is_err(),
+                "{junk:?}"
+            );
+        }
+        let cut = decode(&room, Format::Gz, b"\x1f\x8b\x08").unwrap_err();
+        assert!(cut.to_string().contains("truncated"), "{cut}");
+    }
+
+    #[test]
+    fn the_trailer_is_checked() {
+        let room = Room::new("gz-trailer");
+        let data = sample(10_000);
+        let packed = compress(Format::Gz, &data, 1, None);
+        for at in [
+            packed.len() - 8,
+            packed.len() - 5,
+            packed.len() - 4,
+            packed.len() - 1,
+        ] {
+            let mut bad = packed.clone();
+            bad[at] ^= 0x01;
+            let error = decode(&room, Format::Gz, &bad).unwrap_err().to_string();
+            assert!(error.contains("gzip"), "byte {at}: {error}");
+        }
+    }
+
+    #[test]
+    fn truncation_and_damage_fail_without_panicking() {
+        let room = Room::new("gz-damage");
+        let data = sample(20_000);
+        let packed = compress(Format::Gz, &data, 1, None);
+        for cut in 0..packed.len() {
+            let error = in_memory(&packed[..cut]).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof, "cut at {cut}");
+            assert!(error.to_string().contains("truncated"), "cut at {cut}");
+        }
+        for cut in [0, 3, 9, packed.len() / 2, packed.len() - 1] {
+            assert!(
+                decode(&room, Format::Gz, &packed[..cut]).is_err(),
+                "cut at {cut}"
+            );
+        }
+        for at in 0..packed.len() {
+            for bit in [0x01, 0x80] {
+                let mut bad = packed.clone();
+                bad[at] ^= bit;
+                if let Ok(out) = in_memory(&bad) {
+                    assert_eq!(out, data, "byte {at} changed the output silently");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_name_comes_from_the_file_and_header_fields_are_bounded() {
+        let room = Room::new("gz-header");
+        let mut e = flate2::GzBuilder::new()
+            .filename("stored-name.bin")
+            .comment("a comment")
+            .extra(vec![1, 2, 3, 4])
+            .write(Vec::new(), flate2::Compression::fast());
+        e.write_all(b"payload").unwrap();
+        let named = e.finish().unwrap();
+        let path = room.put("report.csv.gz", &named);
+        assert_eq!(identify(&path), Some(Format::Gz));
+        assert_eq!(entry(&path, Format::Gz).unwrap().name, "report.csv");
+        assert_eq!(decode(&room, Format::Gz, &named).unwrap(), b"payload");
+
+        let mut endless = vec![0x1f, 0x8b, 0x08, 0x08, 0, 0, 0, 0, 0, 0x03];
+        endless.extend(std::iter::repeat_n(b'a', 200_000));
+        let error = decode(&room, Format::Gz, &endless).unwrap_err().to_string();
+        assert!(error.contains("gzip"), "{error}");
+    }
+
+    #[test]
+    fn a_tar_inside_is_found_only_behind_a_bare_gz() {
+        let room = Room::new("gz-identify");
+        let mut tar = arca_tar::TarWriter::new(Vec::new());
+        tar.add("a.txt", 3, 0, 0o644, &b"abc"[..]).unwrap();
+        let packed_tar = compress(Format::Gz, &tar.finish().unwrap(), 1, None);
+        let plain = compress(Format::Gz, b"just one file", 1, None);
+        for (name, bytes, expected) in [
+            ("a.gz", &packed_tar, Format::TarGz),
+            ("a", &packed_tar, Format::TarGz),
+            ("a.tar.gz", &packed_tar, Format::TarGz),
+            ("a.tgz", &packed_tar, Format::TarGz),
+            ("a.bz2", &packed_tar, Format::TarGz),
+            ("b.gz", &plain, Format::Gz),
+            ("b", &plain, Format::Gz),
+            ("b.xz", &plain, Format::Gz),
+            ("b.tar.gz", &plain, Format::TarGz),
+            ("b.tgz", &plain, Format::TarGz),
+        ] {
+            assert_eq!(identify(&room.put(name, bytes)), Some(expected), "{name}");
+        }
+        assert_eq!(sniff(&plain[..10]), Some(Format::Gz));
+        assert_eq!(sniff(&plain[..9]), None);
+        assert!(!handles(Format::TarGz));
+        assert!(handles(Format::Gz));
+    }
 }

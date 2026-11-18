@@ -698,6 +698,7 @@ impl AppController {
     pub(crate) fn compressor_for(format: Format, codec: Codec) -> Compressor {
         match format {
             Format::SevenZ | Format::TarXz | Format::Xz => Compressor::Fixed("LZMA2"),
+            Format::Gz => Compressor::Fixed("Deflate"),
             Format::TarBz2 | Format::Bz2 => Compressor::Fixed("bzip2"),
             Format::TarZst | Format::Zst => Compressor::Fixed("Zstandard"),
             Format::Rar => Compressor::Fixed("RAR"),
@@ -3524,6 +3525,7 @@ mod compressor_tests {
             (Format::Xz, Compressor::Fixed("LZMA2")),
             (Format::TarBz2, Compressor::Fixed("bzip2")),
             (Format::Zst, Compressor::Fixed("Zstandard")),
+            (Format::Gz, Compressor::Fixed("Deflate")),
             (Format::Rar, Compressor::Fixed("RAR")),
             (
                 Format::Zip,

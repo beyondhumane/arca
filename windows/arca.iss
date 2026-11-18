@@ -124,7 +124,7 @@ Root: HKCU; Subkey: "Software\Classes\Arca.zip\shell\open\command"; ValueType: s
 Root: HKCU; Subkey: "Software\Classes\Arca.7z"; ValueType: string; ValueName: ""; ValueData: "7z archive"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.7z\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.7z\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
-Root: HKCU; Subkey: "Software\Classes\Arca.targz"; ValueType: string; ValueName: ""; ValueData: "TAR.GZ archive"; Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKCU; Subkey: "Software\Classes\Arca.targz"; ValueType: string; ValueName: ""; ValueData: "GZ archive"; Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.targz\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\arca-gui.exe,0"; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.targz\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\arca-gui.exe"" ""%1"""; Tasks: fileassoc
 Root: HKCU; Subkey: "Software\Classes\Arca.tgz"; ValueType: string; ValueName: ""; ValueData: "TAR.GZ archive"; Flags: uninsdeletekey; Tasks: fileassoc

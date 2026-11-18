@@ -101,8 +101,8 @@ fn quick_output_name(paths: &[PathBuf]) -> String {
 // workspace and cannot depend on it. The installer's tests read this array and
 // fail when the two differ. Order matters, as there: tar.xz before xz, or the
 // label for backup.tar.xz would promise a folder called backup.tar.
-const SUFFIXES: [&str; 43] = [
-    "zip", "7z", "tar.gz", "tgz", "tar.xz", "txz", "xz", "tar.bz2", "tbz2", "tbz", "bz2",
+const SUFFIXES: [&str; 44] = [
+    "zip", "7z", "tar.gz", "tgz", "gz", "tar.xz", "txz", "xz", "tar.bz2", "tbz2", "tbz", "bz2",
     "tar.zst", "tzst", "zst", "tar", "rar", "cbr", "apk", "aar", "jar", "war", "ear", "epub",
     "cbz", "xpi", "whl", "nupkg", "ipa", "iso", "cpio", "ar", "a", "deb", "udeb", "rpm", "cab",
     "lzh", "lha", "vhd", "vhdx", "vmdk", "dmg", "img",
@@ -669,6 +669,7 @@ mod tests {
             (r"C:\x\notes.txt.xz", "notes.txt"),
             (r"C:\x\backup.TBZ2", "backup"),
             (r"C:\x\notes.txt.bz2", "notes.txt"),
+            (r"C:\x\access.log.gz", "access.log"),
             (r"C:\x\backup.tar.zst", "backup"),
             (r"C:\x\backup.tzst", "backup"),
             (r"C:\x\notes.txt.ZST", "notes.txt"),
@@ -805,11 +806,12 @@ mod tests {
     fn every_format_arca_reads_gets_the_archive_actions() {
         for name in [
             "a.zip", "a.7z", "a.tar", "a.tgz", "a.tar.gz", "a.txz", "a.xz", "a.tbz", "a.bz2",
-            "a.tzst", "a.zst", "a.RAR", "a.r00", "a.z99", "a.cbr", "a.jar", "a.epub", "a.iso",
+            "a.tzst", "a.zst", "a.gz", "a.txt.gz", "a.RAR", "a.r00", "a.z99", "a.cbr", "a.jar",
+            "a.epub", "a.iso",
         ] {
             assert!(is_archive(std::path::Path::new(name)), "{name}");
         }
-        for name in ["a.gz", "a.txt", "a.r0", "a.rev", "zip", "a.q00"] {
+        for name in ["a.txt", "a.r0", "a.rev", "zip", "a.q00"] {
             assert!(!is_archive(std::path::Path::new(name)), "{name}");
         }
     }

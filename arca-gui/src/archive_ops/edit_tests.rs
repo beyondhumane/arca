@@ -432,6 +432,7 @@ fn single_streams_and_zip_containers_still_cannot_change() {
         .unwrap_err()
         .contains("read-only"));
     for format in [
+        Format::Gz,
         Format::Xz,
         Format::Bz2,
         Format::Zst,

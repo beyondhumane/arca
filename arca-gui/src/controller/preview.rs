@@ -435,7 +435,7 @@ fn read_bounded(request: &PreviewRequest) -> arca_core::Result<Vec<u8>> {
                 .extract_to_with(request.index, &mut out, request.password.as_deref())
                 .map(|_| ())
         }
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             if request.index != 0 {
                 return Err(Error::Format("entry missing".into()));
             }

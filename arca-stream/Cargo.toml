@@ -5,13 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Flujos XZ, bzip2 y Zstandard sueltos o con un TAR dentro"
+description = "Flujos gzip, XZ, bzip2 y Zstandard sueltos o con un TAR dentro"
 
 [dependencies]
 arca-core.workspace = true
 arca-tar.workspace = true
 arca-xz.workspace = true
 bzip2.workspace = true
+flate2.workspace = true
 # Zstandard es libzstd, C, y entra con la misma bandera que en arca-zip.
 zstd = { workspace = true, optional = true }
 

@@ -234,3 +234,119 @@ fn zstd_is_refused_when_it_was_left_out() {
     assert!(error.contains("Zstandard"), "{error}");
     assert!(!dir.join("a.tar.zst").exists());
 }
+
+fn gzip(data: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(data).unwrap();
+    e.finish().unwrap()
+}
+
+#[test]
+fn a_standalone_gzip_is_one_file_and_may_have_several_members() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    let big = corpus(dir);
+    let notes = b"line one\nline two\n".repeat(100);
+    fs::write(dir.join("notes.txt.gz"), gzip(&notes)).unwrap();
+    let listing = ok(dir, &["list", "notes.txt.gz"]);
+    assert!(listing.contains("deflate"), "{listing}");
+    assert!(listing.trim_end().ends_with("notes.txt"), "{listing}");
+    assert!(ok(dir, &["test", "notes.txt.gz"]).contains("1 entries verified"));
+    ok(dir, &["extract", "notes.txt.gz", "-o", "out-notes"]);
+    assert_eq!(fs::read(dir.join("out-notes/notes.txt")).unwrap(), notes);
+
+    let mut members = gzip(b"first member\n");
+    members.extend(gzip(&big));
+    members.extend(gzip(b""));
+    members.extend(gzip(b"last member\n"));
+    fs::write(dir.join("access.log.gz"), &members).unwrap();
+    assert!(ok(dir, &["test", "access.log.gz"]).contains("1 entries verified"));
+    ok(dir, &["extract", "access.log.gz", "-o", "out-log"]);
+    let mut joined = b"first member\n".to_vec();
+    joined.extend_from_slice(&big);
+    joined.extend_from_slice(b"last member\n");
+    assert_eq!(fs::read(dir.join("out-log/access.log")).unwrap(), joined);
+
+    ok(dir, &["create", "big.bin.gz", "src/big.bin", "-l", "best"]);
+    let mut decoded = Vec::new();
+    std::io::Read::read_to_end(
+        &mut flate2::read::MultiGzDecoder::new(fs::File::open(dir.join("big.bin.gz")).unwrap()),
+        &mut decoded,
+    )
+    .unwrap();
+    assert_eq!(decoded, big);
+    ok(dir, &["extract", "big.bin.gz", "-o", "out-big"]);
+    assert_eq!(fs::read(dir.join("out-big/big.bin")).unwrap(), big);
+    let error = fail(dir, &["create", "two.gz", "src/big.bin", "src/empty"]);
+    assert!(
+        error.contains("exactly one file") && error.contains("tar.gz"),
+        "{error}"
+    );
+    let error = fail(dir, &["create", "folder.gz", "src"]);
+    assert!(error.contains("not a regular file"), "{error}");
+    let error = fail(dir, &["create", "x.gz", "src/empty", "-c", "lzma2"]);
+    assert!(error.contains("Deflate"), "{error}");
+    let error = fail(dir, &["create", "x.gz", "src/empty", "-p", "secret"]);
+    assert!(error.contains("encryption"), "{error}");
+    assert!(!dir.join("two.gz").exists() && !dir.join("folder.gz").exists());
+    ok(dir, &["create", "x.gz", "src/empty", "-c", "deflate"]);
+}
+
+#[test]
+fn a_tar_behind_a_bare_gz_suffix_is_still_a_tar() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    corpus(dir);
+    ok(dir, &["create", "real.tar.gz", "src"]);
+    for name in ["bundle.gz", "no-suffix-gz", "really-gz.tar.xz", "again.tgz"] {
+        fs::copy(dir.join("real.tar.gz"), dir.join(name)).unwrap();
+        assert!(ok(dir, &["list", name]).contains("src/big.bin"), "{name}");
+        assert!(
+            ok(dir, &["test", name]).contains("3 entries verified"),
+            "{name}"
+        );
+        let out = format!("out-{name}");
+        ok(dir, &["extract", name, "-o", &out]);
+        same_tree(&dir.join("src"), &dir.join(&out).join("src"));
+    }
+}
+
+#[test]
+fn damaged_gzip_fails_and_publishes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    let big = corpus(dir);
+    let good = gzip(&big);
+    let mut bad_crc = good.clone();
+    let crc = good.len() - 8;
+    bad_crc[crc] ^= 0x01;
+    let mut bad_size = good.clone();
+    let size = good.len() - 4;
+    bad_size[size] ^= 0x01;
+    let mut flipped = good.clone();
+    flipped[good.len() / 2] ^= 0x40;
+    let mut trailing = good.clone();
+    trailing.extend_from_slice(b"junk");
+    let mut zeros = good.clone();
+    zeros.extend_from_slice(&[0; 16]);
+    for (case, bytes) in [
+        ("crc", bad_crc),
+        ("isize", bad_size),
+        ("flip", flipped),
+        ("cut", good[..good.len() - 16].to_vec()),
+        ("cut-trailer", good[..good.len() - 3].to_vec()),
+        ("cut-header", good[..5].to_vec()),
+        ("tail", trailing),
+        ("zeros", zeros),
+        ("empty", Vec::new()),
+        ("junk", b"not compressed at all".to_vec()),
+    ] {
+        let bad = format!("bad-{case}.bin.gz");
+        fs::write(dir.join(&bad), bytes).unwrap();
+        fail(dir, &["test", &bad]);
+        let out = format!("out-{case}");
+        fail(dir, &["extract", &bad, "-o", &out]);
+        assert_eq!(files_under(&dir.join(&out)), Vec::<PathBuf>::new(), "{bad}");
+    }
+}

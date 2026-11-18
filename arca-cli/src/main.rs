@@ -335,9 +335,9 @@ fn detect(p: &Path) -> Result<Format> {
     Format::detect(p).ok_or_else(|| unrecognized(p))
 }
 
-// For reading: an XZ, bzip2 or Zstandard file is looked inside, so a TAR in a
-// `.xz`, or one with no suffix, still opens as TAR.XZ, and a self-extracting
-// program Arca made opens as the ZIP it carries.
+// For reading: a gzip, XZ, bzip2 or Zstandard file is looked inside, so a TAR
+// in a `.xz` or a bare `.gz`, or one with no suffix, still opens as a TAR, and
+// a self-extracting program Arca made opens as the ZIP it carries.
 fn detect_archive(p: &Path) -> Result<Format> {
     arca_stream::identify(p)
         .or_else(|| {
@@ -399,6 +399,7 @@ fn tar_source(archive: &Path, format_kind: Format) -> Result<Box<dyn Read>> {
 
 fn stream_codec(format_kind: Format) -> Option<(CodecArg, &'static str)> {
     match format_kind.container() {
+        Container::Gz => Some((CodecArg::Deflate, "Deflate")),
         Container::Xz | Container::TarXz => Some((CodecArg::Lzma2, "LZMA2")),
         Container::Bz2 | Container::TarBz2 => Some((CodecArg::Bzip2, "bzip2")),
         Container::Zst | Container::TarZst => Some((CodecArg::Zstd, "Zstandard")),
@@ -921,7 +922,7 @@ fn create(
             threads = used;
             written
         }
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             let (used, written) = staged(out, volume, |f| {
                 let mut e = arca_stream::encoder(
                     f,
@@ -1109,7 +1110,7 @@ fn list(archive: &Path, time: bool, password: Option<&str>) -> Result<()> {
                 notes.extend(printable(&comment).lines().map(|l| format!("  {l}")));
             }
         }
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             let e = arca_stream::entry(archive, format_kind)?;
             writeln!(
                 out,
@@ -1413,7 +1414,7 @@ fn extract(
             n = jobs.len() as u64;
             bytes = written.iter().sum();
         }
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             let mut source = arca_stream::open(archive, format_kind)?;
             let name = arca_stream::output_name(archive);
             let written =
@@ -1657,7 +1658,7 @@ fn test_archive(archive: &Path, password: Option<&str>) -> Result<()> {
                 }
             }
         }
-        Container::Xz | Container::Bz2 | Container::Zst => {
+        Container::Gz | Container::Xz | Container::Bz2 | Container::Zst => {
             arca_stream::drain(&mut arca_stream::open(archive, format_kind)?)?;
             n = 1;
         }
