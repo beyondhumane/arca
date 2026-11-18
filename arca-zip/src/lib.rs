@@ -81,10 +81,142 @@ fn read_tail<R: Read + Seek>(source: &mut R) -> Result<(Vec<u8>, usize, u64)> {
     let mut tail = vec![0u8; tail_len];
     source.read_exact(&mut tail)?;
 
-    let pos_eocd = find_backwards(&tail, SIG_EOCD).ok_or_else(|| {
+    let last = find_backwards(&tail, SIG_EOCD).ok_or_else(|| {
         Error::Format("end of central directory not found (is this a ZIP?)".into())
     })?;
+    let pos_eocd = best_end_record(source, &tail, tail_start, total).unwrap_or(last);
     Ok((tail, pos_eocd, total))
+}
+
+// The archive comment is free text and may hold bytes that look like an end
+// record, so the last signature in the file is not necessarily the real one:
+// taking a fake one would open the archive empty and the next rewrite would
+// drop every entry. Each candidate is ranked by how well the directory it
+// describes fits the file, and only when none fits does the last one win.
+fn best_end_record<R: Read + Seek>(
+    source: &mut R,
+    tail: &[u8],
+    tail_start: u64,
+    total: u64,
+) -> Option<usize> {
+    let mut best: Option<(u8, usize)> = None;
+    let mut end = tail.len();
+    while let Some(pos) = find_backwards(&tail[..end], SIG_EOCD) {
+        end = pos + 3;
+        let rank = rank_end_record(source, tail, pos, tail_start, total).unwrap_or(0);
+        if rank > best.map_or(0, |(r, _)| r) {
+            best = Some((rank, pos));
+        }
+        if rank == RANK_ADJACENT {
+            break;
+        }
+    }
+    best.map(|(_, pos)| pos)
+}
+
+// A directory that holds entries outranks an empty one: picking an empty
+// record over the real one is what loses entries on the next rewrite.
+const RANK_EMPTY: u8 = 1;
+const RANK_GAP: u8 = 2;
+const RANK_ADJACENT: u8 = 3;
+
+// The Zip64 locator only counts when it sits right before the candidate: one
+// found further back would lend a fake record in the comment the real
+// archive's directory.
+fn rank_end_record<R: Read + Seek>(
+    source: &mut R,
+    tail: &[u8],
+    pos: usize,
+    tail_start: u64,
+    total: u64,
+) -> Result<u8> {
+    let at = tail_start + pos as u64;
+    let locator = pos
+        .checked_sub(20)
+        .filter(|&p| tail.get(p..p + 4) == Some(&SIG_LOC64.to_le_bytes()[..]));
+    let d = directory(source, tail, pos, locator, total, at)?;
+    let Some(cd_end) = d.offset.checked_add(d.size) else {
+        return Ok(0);
+    };
+    if d.end_at > at || cd_end > d.end_at {
+        return Ok(0);
+    }
+    if d.size == 0 {
+        return Ok(if d.entries == 0 && d.offset == d.end_at {
+            RANK_EMPTY
+        } else {
+            0
+        });
+    }
+    let mut sig = [0u8; 4];
+    if d.size < sig.len() as u64 {
+        return Ok(0);
+    }
+    source.seek(SeekFrom::Start(d.offset))?;
+    source.read_exact(&mut sig)?;
+    if u32::from_le_bytes(sig) != SIG_CD {
+        return Ok(0);
+    }
+    Ok(if cd_end == d.end_at {
+        RANK_ADJACENT
+    } else {
+        RANK_GAP
+    })
+}
+
+struct Directory {
+    entries: u64,
+    size: u64,
+    offset: u64,
+    end_at: u64,
+}
+
+fn directory<R: Read + Seek>(
+    source: &mut R,
+    tail: &[u8],
+    pos_eocd: usize,
+    locator: Option<usize>,
+    total: u64,
+    at: u64,
+) -> Result<Directory> {
+    let mut c = Cursor::at(tail, pos_eocd)?;
+    c.skip(4, "EOCD signature")?;
+    c.skip(4, "disk numbers")?;
+    let _ent_disco = c.u16le("entries on this disk")?;
+    let mut d = Directory {
+        entries: c.u16le("total entries")? as u64,
+        size: c.u32le("central directory size")? as u64,
+        offset: c.u32le("central directory offset")? as u64,
+        end_at: at,
+    };
+
+    if d.entries == 0xFFFF || d.size == 0xFFFF_FFFF || d.offset == 0xFFFF_FFFF {
+        if let Some(p) = locator {
+            let mut l = Cursor::at(tail, p)?;
+            l.skip(4, "Zip64 locator signature")?;
+            l.skip(4, "EOCD64 disk")?;
+            let off64 = l.u64le("EOCD64 offset")?;
+            if off64 >= total {
+                return Err(Error::Format(
+                    "the Zip64 locator points past the end of the archive".into(),
+                ));
+            }
+            source.seek(SeekFrom::Start(off64))?;
+            let mut r64 = [0u8; 56];
+            source.read_exact(&mut r64)?;
+            let mut z = Cursor::new(&r64);
+            if z.u32le("EOCD64 signature")? != SIG_EOCD64 {
+                return Err(Error::Format("invalid Zip64 signature".into()));
+            }
+            z.skip(20, "EOCD64 header")?;
+            z.skip(8, "entries on this disk")?;
+            d.entries = z.u64le("total entries (Zip64)")?;
+            d.size = z.u64le("central directory size (Zip64)")?;
+            d.offset = z.u64le("central directory offset (Zip64)")?;
+            d.end_at = off64;
+        }
+    }
+    Ok(d)
 }
 
 // A comment whose length runs past the end of the file keeps what is there:
@@ -167,39 +299,16 @@ impl<R: Read + Seek> ZipArchive<R> {
         let (tail, pos_eocd, total) = read_tail(&mut source)?;
         let comment = eocd_comment(&tail, pos_eocd).to_vec();
 
-        let mut c = Cursor::at(&tail, pos_eocd)?;
-        c.skip(4, "EOCD signature")?;
-        c.skip(4, "disk numbers")?;
-        let _ent_disco = c.u16le("entries on this disk")?;
-        let mut n_entries = c.u16le("total entries")? as u64;
-        let mut cd_size = c.u32le("central directory size")? as u64;
-        let mut cd_offset = c.u32le("central directory offset")? as u64;
-
-        if n_entries == 0xFFFF || cd_size == 0xFFFF_FFFF || cd_offset == 0xFFFF_FFFF {
-            if let Some(p) = find_backwards(&tail[..pos_eocd], SIG_LOC64) {
-                let mut l = Cursor::at(&tail, p)?;
-                l.skip(4, "Zip64 locator signature")?;
-                l.skip(4, "EOCD64 disk")?;
-                let off64 = l.u64le("EOCD64 offset")?;
-                if off64 >= total {
-                    return Err(Error::Format(
-                        "the Zip64 locator points past the end of the archive".into(),
-                    ));
-                }
-                source.seek(SeekFrom::Start(off64))?;
-                let mut r64 = [0u8; 56];
-                source.read_exact(&mut r64)?;
-                let mut z = Cursor::new(&r64);
-                if z.u32le("EOCD64 signature")? != SIG_EOCD64 {
-                    return Err(Error::Format("invalid Zip64 signature".into()));
-                }
-                z.skip(20, "EOCD64 header")?;
-                z.skip(8, "entries on this disk")?;
-                n_entries = z.u64le("total entries (Zip64)")?;
-                cd_size = z.u64le("central directory size (Zip64)")?;
-                cd_offset = z.u64le("central directory offset (Zip64)")?;
-            }
-        }
+        let locator = tail
+            .get(..pos_eocd)
+            .and_then(|before| find_backwards(before, SIG_LOC64));
+        let at = total - tail.len() as u64 + pos_eocd as u64;
+        let Directory {
+            entries: n_entries,
+            size: cd_size,
+            offset: cd_offset,
+            ..
+        } = directory(&mut source, &tail, pos_eocd, locator, total, at)?;
 
         if n_entries > limits::MAX_ENTRIES {
             return Err(Error::Limit(format!("{n_entries} entries declared")));
@@ -1036,8 +1145,9 @@ impl<W: Write + Seek> ZipWriter<W> {
         })
     }
 
-    // The end record is found by searching backwards for its signature, so a
-    // comment that holds one would make the archive end somewhere else.
+    // Plenty of readers take the last end record signature in the file as the
+    // real one, so a new comment that holds one would make the archive end
+    // somewhere else for them.
     pub fn set_comment(&mut self, comment: &[u8]) -> Result<()> {
         if comment.len() > MAX_COMMENT {
             return Err(Error::Limit(format!(
@@ -2077,7 +2187,13 @@ fn rewrite(
     }
     let total = entries.len() + extra.len();
     let mut w = ZipWriter::new(BufWriter::with_capacity(STREAM_BUF, File::create(out)?));
-    w.set_comment(comments.archive.unwrap_or(&source.comment))?;
+    // The archive's own comment goes through even when it holds an end record
+    // signature: the reader already told the real record from it, and the
+    // rewrite leaves other readers no worse off than the original did.
+    match comments.archive {
+        Some(text) => w.set_comment(text)?,
+        None => w.comment = source.comment,
+    }
     let mut bytes = 0u64;
     let mut src = BufReader::with_capacity(STREAM_BUF, File::open(archive)?);
 
@@ -4819,5 +4935,166 @@ mod tests {
             let _ = read_comment(IoCursor::new(buf[..cut].to_vec()));
             let _ = ZipArchive::open(IoCursor::new(buf[..cut].to_vec()));
         }
+    }
+
+    fn with_raw_comment(comment: &[u8]) -> Vec<u8> {
+        let mut w = ZipWriter::new(IoCursor::new(Vec::new()));
+        w.add("a.txt", &b"uno"[..], Codec::Store, Level::STORE, None)
+            .unwrap();
+        w.add("b.txt", &b"dos"[..], Codec::Deflate, Level::NORMAL, None)
+            .unwrap();
+        w.comment = comment.to_vec();
+        w.finish().unwrap().into_inner()
+    }
+
+    fn empty_end_record() -> Vec<u8> {
+        let mut r = SIG_EOCD.to_le_bytes().to_vec();
+        r.extend_from_slice(&[0; EOCD_MIN - 4]);
+        r
+    }
+
+    fn assert_whole(buf: &[u8], comment: &[u8]) {
+        let mut a = ZipArchive::open(IoCursor::new(buf.to_vec())).unwrap();
+        assert_eq!(a.len(), 2);
+        assert_eq!(a.comment, comment);
+        assert_eq!(
+            read_comment(IoCursor::new(buf.to_vec())).unwrap(),
+            decode_comment(comment, false)
+        );
+        let mut got = Vec::new();
+        a.extract_to(1, &mut got).unwrap();
+        assert_eq!(got, b"dos");
+    }
+
+    #[test]
+    fn an_end_record_inside_the_comment_does_not_hide_the_entries() {
+        let mut comment = b"see below ".to_vec();
+        comment.extend_from_slice(&empty_end_record());
+        assert_whole(&with_raw_comment(&comment), &comment);
+    }
+
+    #[test]
+    fn a_rewrite_keeps_every_entry_behind_an_end_record_in_the_comment() {
+        let mut comment = b"see below ".to_vec();
+        comment.extend_from_slice(&empty_end_record());
+        let buf = with_raw_comment(&comment);
+        let outputs = [
+            through_files("eocd-remove", &buf, |f, t| {
+                remove_entries(f, t, None, &|_| true, &|_, _, _| true)
+            }),
+            through_files("eocd-rename", &buf, |f, t| {
+                rename_entries(f, t, None, &keep_name, &|_, _, _| true)
+            }),
+            through_files("eocd-add", &buf, |f, t| {
+                add_entries(f, t, None, &[], &|_, _, _| true)
+            }),
+            through_files("eocd-password", &buf, |f, t| {
+                rewrite_password(f, t, None, Some("k"), &|_, _, _| true)
+            }),
+            through_files("eocd-entry-comment", &buf, |f, t| {
+                let c = Comments {
+                    archive: None,
+                    entry: Some(("a.txt", b"nota")),
+                };
+                set_comments(f, t, &c, &|_, _, _| true)
+            }),
+        ];
+        for (i, out) in outputs.iter().enumerate() {
+            let a = ZipArchive::open(IoCursor::new(out.clone())).unwrap();
+            assert_eq!(a.len(), 2, "{i}");
+            assert_eq!(a.comment, comment, "{i}");
+        }
+        let mut a = ZipArchive::open(IoCursor::new(outputs[3].clone())).unwrap();
+        let mut got = Vec::new();
+        a.extract_to_with(1, &mut got, Some("k")).unwrap();
+        assert_eq!(got, b"dos");
+        assert_whole(&outputs[0], &comment);
+    }
+
+    #[test]
+    fn a_damaged_tail_behind_an_end_record_in_the_comment_never_panics() {
+        let mut comment = b"x".to_vec();
+        comment.extend_from_slice(&empty_end_record());
+        let buf = with_raw_comment(&comment);
+        let real = buf.len() - EOCD_MIN - comment.len();
+        for cut in 0..=buf.len() {
+            let short = buf[..cut].to_vec();
+            let _ = read_comment(IoCursor::new(short.clone()));
+            let opened = ZipArchive::open(IoCursor::new(short));
+            if cut < real + EOCD_MIN - 2 {
+                assert!(opened.is_err(), "{cut}");
+            } else {
+                assert_eq!(opened.unwrap().len(), 2, "{cut}");
+            }
+        }
+        for at in real.saturating_sub(64)..buf.len() {
+            for value in [0x00, 0x01, 0x50, 0xff] {
+                let mut bad = buf.clone();
+                bad[at] = value;
+                let _ = read_comment(IoCursor::new(bad.clone()));
+                let _ = ZipArchive::open(IoCursor::new(bad));
+            }
+        }
+    }
+
+    #[test]
+    fn a_full_end_record_inside_the_comment_is_not_taken_for_the_real_one() {
+        let plain = with_raw_comment(b"");
+        let mut comment = b"copy: ".to_vec();
+        comment.extend_from_slice(&plain[plain.len() - EOCD_MIN..]);
+        assert_whole(&with_raw_comment(&comment), &comment);
+
+        let mut comment = b"empty, here: ".to_vec();
+        comment.extend_from_slice(&empty_end_record());
+        let mut buf = with_raw_comment(&comment);
+        let fake = buf.len() - EOCD_MIN;
+        buf[fake + 16..fake + 20].copy_from_slice(&(fake as u32).to_le_bytes());
+        let comment = buf[buf.len() - comment.len()..].to_vec();
+        assert_whole(&buf, &comment);
+
+        let real = buf.len() - EOCD_MIN - comment.len();
+        let mut gap = buf[..real].to_vec();
+        gap.extend_from_slice(b"gap!");
+        gap.extend_from_slice(&buf[real..]);
+        let fake = gap.len() - EOCD_MIN;
+        gap[fake + 16..fake + 20].copy_from_slice(&(fake as u32).to_le_bytes());
+        let comment = gap[gap.len() - comment.len()..].to_vec();
+        assert_whole(&gap, &comment);
+    }
+
+    fn as_zip64(plain: &[u8], comment: &[u8]) -> Vec<u8> {
+        let eocd = plain.len() - EOCD_MIN;
+        let mut c = Cursor::at(plain, eocd + 10).unwrap();
+        let n = c.u16le("n").unwrap() as u64;
+        let size = c.u32le("size").unwrap() as u64;
+        let offset = c.u32le("offset").unwrap() as u64;
+        let mut out = plain[..eocd].to_vec();
+        let z_off = out.len() as u64;
+        out.extend_from_slice(&SIG_EOCD64.to_le_bytes());
+        out.extend_from_slice(&44u64.to_le_bytes());
+        out.extend_from_slice(&[0x1E, 0x03, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        for v in [n, n, size, offset] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.extend_from_slice(&SIG_LOC64.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&z_off.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&SIG_EOCD.to_le_bytes());
+        out.extend_from_slice(&[0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]);
+        out.extend_from_slice(&[0xFF; 8]);
+        out.extend_from_slice(&(comment.len() as u16).to_le_bytes());
+        out.extend_from_slice(comment);
+        out
+    }
+
+    #[test]
+    fn a_zip64_end_record_copied_into_the_comment_does_not_borrow_its_locator() {
+        let plain = with_raw_comment(b"");
+        let real = as_zip64(&plain, b"");
+        assert_whole(&real, b"");
+        let mut comment = b"copy: ".to_vec();
+        comment.extend_from_slice(&real[real.len() - EOCD_MIN..]);
+        assert_whole(&as_zip64(&plain, &comment), &comment);
     }
 }
