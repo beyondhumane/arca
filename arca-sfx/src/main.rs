@@ -80,7 +80,14 @@ fn run(args: &Args, words: &Words, console: &mut bool) -> Result<Option<String>>
     let mut file = File::open(&exe)?;
     let trailer = Trailer::read(&mut file)?;
     *console |= trailer.console();
-    let archive = ZipArchive::open(Window::new(file, trailer.offset, trailer.len))?;
+    let (start, len) = (0, trailer.offset + trailer.len);
+    let (archive, start, len) = match ZipArchive::open(Window::new(file, start, len)) {
+        Ok(archive) => (archive, start, len),
+        Err(_) => {
+            let window = Window::new(File::open(&exe)?, trailer.offset, trailer.len);
+            (ZipArchive::open(window)?, trailer.offset, trailer.len)
+        }
+    };
     if archive.has_encrypted() {
         return Err(Error::Unsupported(words.encrypted.into()));
     }
@@ -95,7 +102,7 @@ fn run(args: &Args, words: &Words, console: &mut bool) -> Result<Option<String>>
             None => return Ok(None),
         },
     };
-    let source = Window::new(File::open(&exe)?, trailer.offset, trailer.len);
+    let source = Window::new(File::open(&exe)?, start, len);
     let files = extract(source, &entries, &dest)?;
     Ok(Some(fill(
         words.done,
@@ -163,8 +170,30 @@ impl Read for Piped<'_> {
 }
 
 /// Every entry into `dest`, replacing what is there. Answers with the number
-/// of files written.
+/// of files written. A failure takes back the folders this run made, as long
+/// as nothing is left in them.
 fn extract<R: Read + io::Seek + Send>(source: R, entries: &[Entry], dest: &Path) -> Result<usize> {
+    let made = dest
+        .ancestors()
+        .take_while(|p| !p.as_os_str().is_empty() && std::fs::symlink_metadata(p).is_err())
+        .last()
+        .map(Path::to_path_buf);
+    let result = extract_into(source, entries, dest);
+    if let (Err(_), Some(top)) = (&result, made) {
+        for folder in dest.ancestors() {
+            if std::fs::remove_dir(folder).is_err() || folder == top {
+                break;
+            }
+        }
+    }
+    result
+}
+
+fn extract_into<R: Read + io::Seek + Send>(
+    source: R,
+    entries: &[Entry],
+    dest: &Path,
+) -> Result<usize> {
     std::fs::create_dir_all(dest)?;
     let mut source = BufReader::with_capacity(256 * 1024, source);
     let mut destination = Destination::new(dest);

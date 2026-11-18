@@ -245,9 +245,7 @@ impl Destination {
 
     fn root(&mut self) -> Result<&Dir> {
         if self.directories.is_empty() {
-            let absolute = std::path::absolute(&self.path)?;
-            #[cfg(unix)]
-            let absolute = as_the_disk_has_it(&absolute);
+            let absolute = as_the_disk_has_it(&std::path::absolute(&self.path)?);
             let mut components = absolute.components().peekable();
             let mut anchor = PathBuf::new();
             while let Some(Component::Prefix(_) | Component::RootDir) = components.peek() {
@@ -413,11 +411,11 @@ fn is_plain_file(parent: &Dir, name: &OsStr) -> bool {
 }
 
 /// The folder somebody asked to extract into, with the links on the way to it
-/// followed: on macOS `/tmp` and `/var` are links, and on any Unix a home or
-/// a mount point may be. The folder itself is not resolved, so one that is a
-/// link is still refused when it is opened, and everything under it is still
-/// opened without following links.
-#[cfg(unix)]
+/// followed: on macOS `/tmp` and `/var` are links, on any Unix a home or a
+/// mount point may be, and on Windows a profile folder moved to another drive
+/// is reached through a junction. The folder itself is not resolved, so one
+/// that is a link is still refused when it is opened, and everything under it
+/// is still opened without following links.
 fn as_the_disk_has_it(path: &Path) -> PathBuf {
     let Some(mut existing) = path.parent() else {
         return path.to_path_buf();
@@ -1113,6 +1111,63 @@ mod tests {
         let real = room.path().join("real");
         fs::create_dir(&real).unwrap();
         std::os::unix::fs::symlink(&real, room.path().join("link")).unwrap();
+        let mut dest = Destination::new(&room.path().join("link"));
+        assert!(dest
+            .write_entry(
+                "a.txt",
+                false,
+                None,
+                &mut &b"contents"[..],
+                &mut |_| unreachable!(),
+            )
+            .is_err());
+        assert_eq!(fs::read_dir(&real).unwrap().count(), 0);
+    }
+
+    #[cfg(windows)]
+    fn junction(link: &Path, target: &Path) {
+        let result = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{result:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_destination_below_a_junction_is_used() {
+        let room = room();
+        let real = room.path().join("real");
+        fs::create_dir(&real).unwrap();
+        junction(&room.path().join("link"), &real);
+        let verbatim = room.path().to_string_lossy().into_owned();
+        let plain = PathBuf::from(verbatim.strip_prefix(r"\\?\").unwrap());
+        for (base, folder) in [(plain.as_path(), "plain"), (room.path(), "verbatim")] {
+            let mut dest = Destination::new(&base.join("link").join(folder).join("deeper"));
+            dest.write_entry(
+                "a.txt",
+                false,
+                None,
+                &mut &b"contents"[..],
+                &mut |_| unreachable!(),
+            )
+            .unwrap();
+            assert_eq!(
+                fs::read(real.join(folder).join("deeper").join("a.txt")).unwrap(),
+                b"contents"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_destination_that_is_itself_a_junction_is_refused() {
+        let room = room();
+        let real = room.path().join("real");
+        fs::create_dir(&real).unwrap();
+        junction(&room.path().join("link"), &real);
         let mut dest = Destination::new(&room.path().join("link"));
         assert!(dest
             .write_entry(

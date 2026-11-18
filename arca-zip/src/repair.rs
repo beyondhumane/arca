@@ -37,6 +37,13 @@ struct Budget {
     read_cap: u64,
     inflated: u64,
     inflated_cap: u64,
+    headers: u64,
+}
+
+impl Budget {
+    fn spent(&self) -> bool {
+        self.read > self.read_cap || self.inflated > self.inflated_cap
+    }
 }
 
 pub fn repair<R: Read + Seek, W: Write + Seek>(source: R, out: W) -> Result<(W, Repaired)> {
@@ -45,29 +52,42 @@ pub fn repair<R: Read + Seek, W: Write + Seek>(source: R, out: W) -> Result<(W, 
 
 /// [`repair`], telling `notify` how many MiB of the file it has got through,
 /// of how many, before each header it looks at. False stops it with
-/// [`Error::Cancelled`].
+/// [`Error::Cancelled`]. A file that would cost far more work than its size
+/// is scanned only that far, and what was recovered up to there is kept.
 pub fn repair_with<R: Read + Seek, W: Write + Seek>(
     mut source: R,
     out: W,
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
 ) -> Result<(W, Repaired)> {
     let total = source.seek(SeekFrom::End(0))?;
-    let mib = |bytes: u64| usize::try_from(bytes >> 20).unwrap_or(usize::MAX);
-    let mut w = ZipWriter::new(out);
-    let mut report = Repaired::default();
-    let mut index: Option<Index> = None;
     // A candidate that fails is passed by one byte, so a hostile file can
-    // offer one header per byte, each claiming the rest of the file. What
-    // failed checks may read and inflate is capped at a few times the file
-    // itself, which a sound archive never comes near.
-    let mut budget = Budget {
+    // offer one header per byte, each claiming the rest of the file and the
+    // longest name and extra field there can be. What headers and failed
+    // checks may read and inflate is capped at a few times the file itself,
+    // which a sound archive never comes near.
+    let budget = Budget {
         read: 0,
         read_cap: total.saturating_mul(4).saturating_add(64 << 20),
         inflated: 0,
         inflated_cap: total
             .saturating_mul(limits::MAX_RATIO)
             .saturating_add(1 << 30),
+        headers: limits::MAX_ENTRIES,
     };
+    repair_within(source, out, notify, budget)
+}
+
+fn repair_within<R: Read + Seek, W: Write + Seek>(
+    mut source: R,
+    out: W,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+    mut budget: Budget,
+) -> Result<(W, Repaired)> {
+    let total = source.seek(SeekFrom::End(0))?;
+    let mib = |bytes: u64| usize::try_from(bytes >> 20).unwrap_or(usize::MAX);
+    let mut w = ZipWriter::new(out);
+    let mut report = Repaired::default();
+    let mut index: Option<Index> = None;
     let mut at = 0u64;
     let mut seen = 0u64;
 
@@ -77,11 +97,23 @@ pub fn repair_with<R: Read + Seek, W: Write + Seek>(
             return Err(Error::Cancelled);
         }
         seen += 1;
-        if seen > limits::MAX_ENTRIES {
-            return Err(Error::Limit(format!(
-                "more than {} local headers",
-                limits::MAX_ENTRIES
-            )));
+        let stop = if seen > budget.headers {
+            Some(format!(
+                "the scan stopped here: more than {} local headers",
+                budget.headers
+            ))
+        } else if budget.spent() {
+            Some("the scan stopped here: what failed to check had already read too much of this file".into())
+        } else {
+            None
+        };
+        if let Some(reason) = stop {
+            report.skipped.push(Skipped {
+                offset: pos,
+                name: None,
+                reason,
+            });
+            break;
         }
         match candidate(&mut source, pos, total, &mut index, &mut budget) {
             Ok((e, k, end, verified)) => {
@@ -126,6 +158,7 @@ fn candidate<R: Read + Seek>(
     if total - pos < LFH_FIXED as u64 {
         return Err(fail(None, "local header cut short".into()));
     }
+    budget.read = budget.read.saturating_add(LFH_FIXED as u64);
     src.seek(SeekFrom::Start(pos)).map_err(io_fail)?;
     let mut lfh = [0u8; LFH_FIXED];
     src.read_exact(&mut lfh).map_err(io_fail)?;
@@ -140,6 +173,7 @@ fn candidate<R: Read + Seek>(
     if data_start > total {
         return Err(fail(None, "name and extra field run past the end".into()));
     }
+    budget.read = budget.read.saturating_add((n_len + x_len) as u64);
     let mut tail = vec![0u8; n_len + x_len];
     src.read_exact(&mut tail).map_err(io_fail)?;
     let local_extra = &tail[n_len..];
@@ -242,9 +276,9 @@ fn check<R: Read + Seek>(
         }
         return Ok(false);
     }
-    // Accepted entries never overlap, so what they cost is bounded by the file;
-    // only the work spent on candidates that fail is counted.
-    if budget.read > budget.read_cap || budget.inflated > budget.inflated_cap {
+    // Accepted entries never overlap, so what reading their data costs is
+    // bounded by the file; only the data of checks that fail is counted.
+    if budget.spent() {
         return Err("not checked: the scan has already read too much of this file".into());
     }
     extract_entry_with(src, e, io::sink(), None).map_err(|err| {
@@ -717,6 +751,7 @@ mod tests {
             read_cap: 100,
             inflated: 0,
             inflated_cap: 100,
+            headers: 10,
         };
         assert_eq!(check(&mut src, &e, &mut budget), Ok(true));
         assert_eq!((budget.read, budget.inflated), (0, 0));
@@ -747,6 +782,84 @@ mod tests {
         fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
             self.inner.seek(pos)
         }
+    }
+
+    struct Capped {
+        inner: IoCursor<Vec<u8>>,
+        read: u64,
+        cap: u64,
+    }
+
+    impl Read for Capped {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.read > self.cap {
+                return Err(io::Error::other("read far more than the file"));
+            }
+            let n = self.inner.read(buf)?;
+            self.read += n as u64;
+            Ok(n)
+        }
+    }
+
+    impl Seek for Capped {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    // Every 32 bytes a local header claims the longest name and extra field
+    // there can be and a checksum its empty data cannot have.
+    fn hostile(len: usize) -> Vec<u8> {
+        let mut buf = vec![0u8; len];
+        for at in (0..len - LFH_FIXED).step_by(32) {
+            buf[at..at + 4].copy_from_slice(&SIG_LFH.to_le_bytes());
+            buf[at + 14] = 1;
+            buf[at + 26..at + 30].copy_from_slice(&[0xFF; 4]);
+        }
+        buf
+    }
+
+    #[test]
+    fn headers_that_claim_huge_names_stop_the_scan_and_keep_what_came_before() {
+        let mut buf = without_directory(&made_by_arca(&[("a.txt", b"uno", Codec::Store)]));
+        buf.extend(hostile(1 << 20));
+        let total = buf.len() as u64;
+        let source = Capped {
+            inner: IoCursor::new(buf),
+            read: 0,
+            cap: total * 6 + (72 << 20),
+        };
+        let (_, report) = repair(source, IoCursor::new(Vec::new())).unwrap();
+        assert_eq!(report.recovered.len(), 1);
+        assert_eq!(report.recovered[0].name, "a.txt");
+        let last = report.skipped.last().unwrap();
+        assert!(last.reason.contains("stopped"), "{}", last.reason);
+    }
+
+    #[test]
+    fn too_many_headers_stop_the_scan_and_keep_what_came_before() {
+        let buf = without_directory(&made_by_arca(&[
+            ("a.txt", b"uno", Codec::Store),
+            ("b.txt", b"dos", Codec::Store),
+            ("c.txt", b"tres", Codec::Store),
+        ]));
+        let budget = Budget {
+            read: 0,
+            read_cap: u64::MAX,
+            inflated: 0,
+            inflated_cap: u64::MAX,
+            headers: 2,
+        };
+        let (out, report) = repair_within(
+            IoCursor::new(buf),
+            IoCursor::new(Vec::new()),
+            &|_, _, _| true,
+            budget,
+        )
+        .unwrap();
+        assert_eq!(report.recovered.len(), 2);
+        assert!(report.skipped[0].reason.contains("more than 2"));
+        assert_eq!(contents(&out.into_inner(), None).len(), 2);
     }
 
     #[test]

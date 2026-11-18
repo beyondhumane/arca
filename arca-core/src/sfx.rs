@@ -1,7 +1,9 @@
 //! Self-extracting archives: a small program with a ZIP appended after it
 //! and, at the very end, a fixed trailer that says where that ZIP starts and
 //! how long it is. The program finds its archive by reading its own file
-//! backwards from the end, so nothing about the program has to change.
+//! backwards from the end, so nothing about the program has to change. The
+//! ZIP counts its offsets from the start of the file, as `zip -A` leaves a
+//! self-extractor, so standard ZIP tools read the whole program as one.
 
 use crate::volumes::moved;
 use crate::{Error, Result};
@@ -104,10 +106,12 @@ impl<R: Read + Seek> Window<R> {
         }
     }
 
-    /// The archive a self-extractor carries.
+    /// The archive a self-extractor carries, which is the whole file up to its
+    /// trailer: the program in front is data the archive skips, and its
+    /// offsets count from the start of the file.
     pub fn payload(mut file: R) -> Result<Self> {
         let trailer = Trailer::read(&mut file)?;
-        Ok(Self::new(file, trailer.offset, trailer.len))
+        Ok(Self::new(file, 0, trailer.offset + trailer.len))
     }
 }
 
@@ -145,48 +149,19 @@ impl<R: Read + Seek> Seek for Window<R> {
     }
 }
 
-/// A writer whose positions start `base` bytes into `inner`, so an archive
-/// written after the program sees itself starting at 0.
-pub struct Shifted<W> {
-    inner: W,
-    base: u64,
-}
-
-impl<W: Write> Write for Shifted<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
-
-impl<W: Seek> Seek for Shifted<W> {
-    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
-        let to = match to {
-            SeekFrom::Start(p) => SeekFrom::Start(self.base.checked_add(p).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "position out of range")
-            })?),
-            other => other,
-        };
-        let at = self.inner.seek(to)?;
-        at.checked_sub(self.base).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "seek to before the archive")
-        })
-    }
-}
-
 /// Writes a self-extractor into `out`: the program `stub`, the archive that
-/// `payload` writes after it, and the trailer.
+/// `payload` writes after it, and the trailer. `payload` gets `out` standing
+/// right after the program, and the archive it writes there should count its
+/// offsets from the start of the file, as `zip -A` leaves them, so that
+/// standard tools read the whole program as that archive.
 pub fn build<W, F>(mut out: W, stub: &[u8], flags: u32, payload: F) -> Result<W>
 where
     W: Write + Seek,
-    F: FnOnce(Shifted<W>) -> Result<Shifted<W>>,
+    F: FnOnce(W) -> Result<W>,
 {
     out.write_all(stub)?;
     let base = out.stream_position()?;
-    let mut out = payload(Shifted { inner: out, base })?.inner;
+    let mut out = payload(out)?;
     let end = out.seek(SeekFrom::End(0))?;
     let len = end
         .checked_sub(base)
@@ -264,7 +239,7 @@ mod tests {
         let mut window = Window::payload(cursor).unwrap();
         let mut v = Vec::new();
         window.read_to_end(&mut v).unwrap();
-        assert_eq!(v, b"archive bytes");
+        assert_eq!(v, b"programarchive bytes");
         window.seek(SeekFrom::End(-5)).unwrap();
         v.clear();
         window.read_to_end(&mut v).unwrap();
@@ -272,25 +247,25 @@ mod tests {
         window.seek(SeekFrom::Start(100)).unwrap();
         assert_eq!(window.read(&mut [0u8; 4]).unwrap(), 0);
         assert!(window.seek(SeekFrom::Current(-1000)).is_err());
-        assert!(window.seek(SeekFrom::End(-14)).is_err());
+        assert!(window.seek(SeekFrom::End(-21)).is_err());
     }
 
     #[test]
-    fn a_seek_back_while_writing_stays_inside_the_payload() {
+    fn the_payload_is_written_at_the_positions_of_the_file() {
         let file = build(Cursor::new(Vec::new()), b"stub", 0, |mut w| {
+            assert_eq!(w.stream_position()?, 4);
             w.write_all(b"abcdef")?;
-            assert_eq!(w.seek(SeekFrom::Start(1))?, 1);
+            assert_eq!(w.seek(SeekFrom::Start(5))?, 5);
             w.write_all(b"X")?;
-            assert_eq!(w.seek(SeekFrom::End(0))?, 6);
-            assert_eq!(w.stream_position()?, 6);
-            assert!(w.seek(SeekFrom::Current(-7)).is_err());
+            assert_eq!(w.seek(SeekFrom::End(0))?, 10);
             w.seek(SeekFrom::End(0))?;
             Ok(w)
         })
         .unwrap()
         .into_inner();
         assert_eq!(&file[..10], b"stubaXcdef");
-        assert_eq!(Trailer::read(&mut Cursor::new(file)).unwrap().len, 6);
+        let trailer = Trailer::read(&mut Cursor::new(file)).unwrap();
+        assert_eq!((trailer.offset, trailer.len), (4, 6));
     }
 
     #[test]

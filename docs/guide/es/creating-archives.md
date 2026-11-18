@@ -241,16 +241,27 @@ de 4 GB cabe en una memoria FAT32. Se escriben con nombres temporales y solo
 toman su nombre real cuando el conjunto está completo, de modo que una parada o
 un error no dejan un conjunto a medias. `create` se niega a sustituir un `.001`
 existente: borra antes las partes viejas o elige otro nombre. Dar
-`copia.zip.001` como nombre de salida equivale a dar `copia.zip`.
+`copia.zip.001` como nombre de salida equivale a dar `copia.zip`. Cuando la
+ventana sustituye un conjunto, las partes viejas se renombran primero a
+`.arca-old` y solo se borran cuando todas las nuevas están en su sitio; si una
+no se puede sustituir, por ejemplo porque otro programa la tiene abierta, las
+partes nuevas se quitan y el conjunto viejo vuelve a quedar como estaba. Una
+parte `.arca-old` que deja una ejecución cortada a medias puede ser la única
+copia del conjunto viejo, así que ese conjunto no se vuelve a escribir hasta
+que se aparta.
 
 Para leer un conjunto basta con abrir cualquiera de sus partes:
 `arca list copia.zip.002`, `arca test` y `arca extract` encuentran las demás en
 la misma carpeta y las leen como un solo archivo. Tienen que estar todas,
 numeradas sin huecos, y todas menos la última deben medir lo mismo; el error
-nombra la parte que falta o que es demasiado corta. Un archivo dividido es de
-solo lectura: `arca password` y las órdenes de edición de la ventana lo
-rechazan. Los conjuntos multivolumen de RAR (`.part1.rar`) y las imágenes ISO
-divididas no se unen de esta forma.
+nombra la parte que falta o que es demasiado corta. Los nombres de las partes
+se comparan como los compara el sistema de ficheros, así que en Windows y macOS
+`COPIA.ZIP.001` encuentra `copia.zip.002`. Un fichero numerado sin ninguna otra
+parte de su conjunto al lado, como un `copia.zip.100` guardado por separado, se
+abre como un fichero suelto. Un archivo dividido es de solo lectura:
+`arca password` y las órdenes de edición de la ventana lo rechazan. Los
+conjuntos multivolumen de RAR (`.part1.rar`) y las imágenes ISO divididas no se
+unen de esta forma.
 
 ## Programas que se extraen solos
 
@@ -264,10 +275,11 @@ entradas. Al ejecutarlo muestra un selector de carpeta y extrae en la carpeta
 elegida, con las mismas comprobaciones de rutas que `arca extract`: ninguna
 entrada puede acabar fuera de esa carpeta y un fichero cuya suma de
 comprobación no coincide no se escribe. Los ficheros que ya estén allí se
-sustituyen. Con `--console` el programa pide la carpeta en la consola desde la
-que se lanzó y propone por defecto una carpeta junto a él, con su nombre. Los
-dos tipos aceptan también `-o CARPETA` para extraer ahí sin preguntar, pensado
-para scripts.
+sustituyen. Si la extracción falla, las carpetas que creó y dejó vacías se
+vuelven a quitar. Con `--console` el programa pide la carpeta en la consola
+desde la que se lanzó y propone por defecto una carpeta junto a él, con su
+nombre. Los dos tipos aceptan también `-o CARPETA` para extraer ahí sin
+preguntar, pensado para scripts.
 
 El programa es el `arca-sfx.exe` que viene con Arca, instalado junto a
 `arca.exe`; `arca create` lo copia y le añade el ZIP y una cola corta que dice
@@ -275,8 +287,15 @@ dónde empieza el ZIP. Si no está, `create` dice dónde lo buscó
 (`cargo build -p arca-sfx` lo compila desde el código fuente, y `ARCA_SFX_STUB`
 puede señalar otra copia). El ZIP de dentro usa Deflate o Store, así que
 `-c zstd` y `-c lzma2` se rechazan, y `-p`, `--hide-names` y `-v` no se pueden
-combinar con `--sfx`. Los autoextraíbles se hacen para Windows; los paquetes de
-Linux y macOS no incluyen el programa.
+combinar con `--sfx`. Lo que sale es un programa, así que un nombre con la
+extensión de un archivo comprimido, como `.zip` o `.7z`, se rechaza; usa
+`.exe`. Los autoextraíbles se hacen para Windows; los paquetes de Linux y macOS
+no incluyen el programa.
+
+El ZIP cuenta sus desplazamientos desde el principio del programa, como deja
+`zip -A` un autoextraíble, así que herramientas ZIP como `unzip -t instalar.exe`
+o el `ZipFile.OpenRead` de .NET leen el propio programa como un ZIP, y también
+`arca list`, `arca test` y `arca extract`.
 
 ## Qué se guarda
 

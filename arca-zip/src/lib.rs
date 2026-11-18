@@ -290,7 +290,12 @@ impl<R: Read + Seek> ZipArchive<R> {
             .get(idx)
             .ok_or_else(|| Error::Format(format!("no such entry: {idx}")))?
             .clone();
-        extract_entry_with(&mut self.source, &e, dest, password)
+        let central = self
+            .kept
+            .get(idx)
+            .and_then(|k| aes::parse_extra(&k.extra))
+            .map(|info| info.strength);
+        extract_verified(&mut self.source, &e, dest, password, central)
     }
 
     pub fn has_encrypted(&self) -> bool {
@@ -312,7 +317,17 @@ pub fn extract_entry_with<R: Read + Seek, W: Write>(
     dest: W,
     password: Option<&str>,
 ) -> Result<u64> {
-    let (crc_val, written) = extract_inner(source, e, dest, password)?;
+    extract_verified(source, e, dest, password, None)
+}
+
+fn extract_verified<R: Read + Seek, W: Write>(
+    source: &mut R,
+    e: &Entry,
+    dest: W,
+    password: Option<&str>,
+    central: Option<u8>,
+) -> Result<u64> {
+    let (crc_val, written) = extract_inner(source, e, dest, password, central)?;
 
     // AE-2 stores a zero CRC on purpose, and the HMAC has already spoken for
     // the contents. AE-1 keeps the real one, so a non-zero value still gets
@@ -341,7 +356,7 @@ pub fn checksum_entry<R: Read + Seek>(
     e: &Entry,
     password: Option<&str>,
 ) -> Result<u32> {
-    Ok(extract_inner(source, e, io::sink(), password)?.0)
+    Ok(extract_inner(source, e, io::sink(), password, None)?.0)
 }
 
 // Says whether a password can open the archive, reading only the few bytes at
@@ -429,6 +444,16 @@ fn open_data<'a, R: Read + Seek>(
     source: &'a mut R,
     e: &Entry,
 ) -> Result<(io::Take<&'a mut R>, Crypt)> {
+    open_data_with(source, e, None)
+}
+
+// `central` is the AES strength the central directory gives, used only when
+// the local header has no 0x9901 field of its own.
+fn open_data_with<'a, R: Read + Seek>(
+    source: &'a mut R,
+    e: &Entry,
+    central: Option<u8>,
+) -> Result<(io::Take<&'a mut R>, Crypt)> {
     source.seek(SeekFrom::Start(e.offset))?;
     let mut lfh = [0u8; LFH_FIXED];
     source.read_exact(&mut lfh)?;
@@ -474,14 +499,17 @@ fn open_data<'a, R: Read + Seek>(
     }
 
     // The key size decides how long the salt is, so it is read from the 0x9901
-    // field in this header, the one that travels with the data.
+    // field in this header, the one that travels with the data, then from the
+    // central directory. Only without either is AES-256, the common case,
+    // assumed; a wrong guess fails the verifier and the authentication code.
     if let Crypt::Aes { strength } = &mut crypt {
         source.seek(SeekFrom::Current(n_len as i64))?;
         let mut extra = vec![0u8; x_len as usize];
         source.read_exact(&mut extra)?;
-        if let Some(info) = aes::parse_extra(&extra) {
-            *strength = info.strength;
-        }
+        *strength = aes::parse_extra(&extra)
+            .map(|info| info.strength)
+            .or(central)
+            .unwrap_or(aes::STRENGTH_256);
     }
 
     let data_start = e.offset + LFH_FIXED as u64 + n_len + x_len;
@@ -543,8 +571,9 @@ fn extract_inner<R: Read + Seek, W: Write>(
     e: &Entry,
     dest: W,
     password: Option<&str>,
+    central: Option<u8>,
 ) -> Result<(u32, u64)> {
-    let (mut bounded, crypt) = open_data(source, e)?;
+    let (mut bounded, crypt) = open_data_with(source, e, central)?;
     let mut cw = CrcWriter::new(dest);
 
     if let Crypt::Zip { check } = crypt {
@@ -993,6 +1022,18 @@ impl<W: Write + Seek> ZipWriter<W> {
             stream_threads: 0,
             comment: Vec::new(),
         }
+    }
+
+    /// A writer for an archive that begins where `out` stands now, after
+    /// whatever was written before it, with every offset counted from the
+    /// start of `out`, as `zip -A` leaves a self-extractor: standard tools
+    /// then read the whole file as the archive.
+    pub fn after(mut out: W) -> Result<Self> {
+        let pos = out.stream_position()?;
+        Ok(ZipWriter {
+            pos,
+            ..ZipWriter::new(out)
+        })
     }
 
     // The end record is found by searching backwards for its signature, so a
@@ -2448,7 +2489,8 @@ fn write_zip(
 }
 
 /// [`create_zip`] into any seekable writer, which it hands back once the
-/// archive is complete. Cleaning up after a failure is left to the caller.
+/// archive is complete. The archive begins where the writer stands, see
+/// [`ZipWriter::after`]. Cleaning up after a failure is left to the caller.
 pub fn create_zip_into<W: Write + Seek>(
     out: W,
     files: &[Source],
@@ -2456,7 +2498,7 @@ pub fn create_zip_into<W: Write + Seek>(
     password: Option<&str>,
     notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
 ) -> Result<W> {
-    let mut w = ZipWriter::new(out);
+    let mut w = ZipWriter::after(out)?;
     let total = files.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
     write_in_parallel(&mut w, files, threads, password, &done, total, notify)?;
@@ -4438,6 +4480,35 @@ mod tests {
     }
 
     #[test]
+    fn an_aes_entry_without_its_local_field_takes_the_directory_strength() {
+        let plain = b"la clave corta".repeat(10);
+        let without_local_field = |strength: u8| {
+            let mut buf = aes_archive(strength, &plain, "k", true, 0);
+            let field = LFH_FIXED + "cifrado.txt".len();
+            buf.drain(field..field + 11);
+            buf[28..30].copy_from_slice(&0u16.to_le_bytes());
+            let eocd = buf.len() - EOCD_MIN;
+            let cd_at = u32::from_le_bytes(buf[eocd + 16..eocd + 20].try_into().unwrap()) - 11;
+            buf[eocd + 16..eocd + 20].copy_from_slice(&cd_at.to_le_bytes());
+            buf
+        };
+        let buf = without_local_field(aes::STRENGTH_128);
+        let mut a = ZipArchive::open(IoCursor::new(buf)).unwrap();
+        let mut got = Vec::new();
+        a.extract_to_with(0, &mut got, Some("k")).unwrap();
+        assert_eq!(got, plain);
+
+        let buf = without_local_field(aes::STRENGTH_256);
+        let e = ZipArchive::open(IoCursor::new(buf.clone()))
+            .unwrap()
+            .entries()[0]
+            .clone();
+        let mut got = Vec::new();
+        extract_entry_with(&mut IoCursor::new(buf), &e, &mut got, Some("k")).unwrap();
+        assert_eq!(got, plain);
+    }
+
+    #[test]
     fn a_flipped_bit_in_an_aes_128_or_192_entry_is_caught() {
         let plain = b"0123456789abcdefghij";
         for strength in [aes::STRENGTH_128, aes::STRENGTH_192] {
@@ -4584,6 +4655,21 @@ mod tests {
         let buf = commented_archive(b"caf\x82");
         let a = ZipArchive::open(IoCursor::new(buf)).unwrap();
         assert_eq!(a.comment(), "caf\u{e9}");
+    }
+
+    #[test]
+    fn an_archive_written_after_a_prefix_counts_offsets_from_the_file_start() {
+        let mut out = IoCursor::new(Vec::new());
+        out.write_all(b"a program in front").unwrap();
+        let mut w = ZipWriter::after(out).unwrap();
+        w.add("a.txt", &b"uno"[..], Codec::Deflate, Level::NORMAL, None)
+            .unwrap();
+        let buf = w.finish().unwrap().into_inner();
+        let mut a = ZipArchive::open(IoCursor::new(buf)).unwrap();
+        assert_eq!(a.entries()[0].offset, 18);
+        let mut got = Vec::new();
+        a.extract_to(0, &mut got).unwrap();
+        assert_eq!(got, b"uno");
     }
 
     #[test]

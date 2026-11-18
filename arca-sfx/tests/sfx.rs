@@ -70,6 +70,33 @@ fn a_self_extractor_extracts_what_it_carries() {
 }
 
 #[test]
+fn a_self_extractor_whose_offsets_count_from_the_program_extracts() {
+    let temp = tempfile::tempdir().unwrap();
+    let bytes = sfx::build(Cursor::new(Vec::new()), &stub(), 0, |w| {
+        let mut z = ZipWriter::after(w)?;
+        z.add("a.txt", &b"alpha"[..], Codec::Deflate, Level::NORMAL, None)?;
+        z.finish()
+    })
+    .unwrap()
+    .into_inner();
+    let names: Vec<String> = arca_zip::ZipArchive::open(Cursor::new(bytes.clone()))
+        .unwrap()
+        .entries()
+        .iter()
+        .map(|e| e.name.clone())
+        .collect();
+    assert_eq!(names, ["a.txt"]);
+    let exe = temp
+        .path()
+        .join(format!("whole{}", std::env::consts::EXE_SUFFIX));
+    fs::write(&exe, bytes).unwrap();
+    let dest = temp.path().join("out");
+    let output = run(&exe, &["-o", dest.to_str().unwrap(), "--console"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"alpha");
+}
+
+#[test]
 fn the_console_flag_asks_on_standard_input() {
     let temp = tempfile::tempdir().unwrap();
     let exe = program(temp.path(), "asks", &zip(&[("a.txt", b"a")]), CONSOLE);
@@ -125,12 +152,13 @@ fn damage_is_reported_and_leaves_no_file_behind() {
         .unwrap();
     payload[at] = b'j';
     let exe = program(temp.path(), "crc", &payload, 0);
-    let dest = temp.path().join("out");
+    let dest = temp.path().join("new").join("out");
     failed(&run(&exe, &["-o", dest.to_str().unwrap(), "--console"]));
-    assert!(!dest.join("a.txt").exists());
-    if let Ok(left) = fs::read_dir(&dest) {
-        assert_eq!(left.count(), 0);
-    }
+    assert!(!temp.path().join("new").exists());
+    let dest = temp.path().join("out");
+    fs::create_dir(&dest).unwrap();
+    failed(&run(&exe, &["-o", dest.to_str().unwrap(), "--console"]));
+    assert_eq!(fs::read_dir(&dest).unwrap().count(), 0);
 
     let good = program(temp.path(), "cut", &zip(&[("a.txt", b"hello")]), 0);
     let bytes = fs::read(&good).unwrap();
