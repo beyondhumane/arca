@@ -77,14 +77,28 @@ fn tester(program: &str) -> Option<String> {
         .map(|_| program.to_string())
 }
 
+/// The tool must succeed and say nothing about damage: Rar.exe reports some
+/// damage, such as a bad checksum on a volume's fragment, and still exits 0.
 fn assert_tool_accepts(tool: &str, archive: &Path) {
-    let status = Command::new(tool)
+    let output = Command::new(tool)
         .args(["t", "-idq"])
         .arg(archive)
-        .stdout(Stdio::null())
-        .status()
+        .output()
         .unwrap();
-    assert!(status.success(), "{tool} t {}", archive.display());
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .to_lowercase();
+    for complaint in ["checksum error", "corrupt", "crc failed", "warning"] {
+        assert!(
+            !said.contains(complaint),
+            "{tool} t {}: {said}",
+            archive.display()
+        );
+    }
+    assert!(output.status.success(), "{tool} t {}", archive.display());
 }
 
 fn every_kind_at_every_level(tool: Option<&str>) {

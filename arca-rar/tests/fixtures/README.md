@@ -30,6 +30,17 @@ SHA-256: `45a8f0825901b19df6e3bbe9d18f69d3f044b38d856176698f34ee0dbb52a980`.
 claims from the stored fixture, recomputing header CRCs so the adapter's safety
 checks, rather than an earlier checksum rejection, are exercised.
 
+`untweaked.part1.rar` and `untweaked.part2.rar` were written by Arca 0.10.0
+itself, before the fix, with
+`arca create untweaked.rar split.bin -v 64k -p arca-test-only -l 0`.
+`split.bin` is 66,000 bytes, byte `i` being `(i * 2654435761) >> 11` truncated
+to eight bits. The first fragment's CRC32 and BLAKE2sp have not gone through
+the hash key, so WinRAR 7.23 reports a packed data checksum error in volume
+`untweaked.part1.rar`. They are not independent encoder output: `volumes.rs`
+uses them to keep such sets readable.
+SHA-256: `26d01bf29acf927fa50e3a237dfd69ee0300f5c7ba2d4c7c13a9eb971f1897c7`
+and `a8443f4179e36793aeb1f0c3c2698c2d4419f339d92863e796aa0bcbd27b9405`.
+
 Additional split-stream fixtures are unchanged copies from the pinned
 [`rars 0.10.0` source tree](https://github.com/bitplane/rars/tree/8aa1429cc51ba248d81e32ad5b5eac6e4ec63ba2/crates/rars/tests/fixtures):
 

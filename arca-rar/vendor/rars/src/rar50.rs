@@ -1697,10 +1697,44 @@ fn parse_archive_encryption_header(
     }
 }
 
-fn attach_file_crypto(file: &mut FileHeader, password: Option<&[u8]>) -> Result<()> {
+/// Arca: keys derived during one parse, by salt and iteration count, since the
+/// password is the same throughout. When every member of an archive shares a
+/// salt, as WinRAR and Arca write them, a parse derives once rather than once
+/// per member. Only the last few are kept, so an archive with a salt per
+/// member costs what it did.
+#[derive(Default)]
+#[cfg_attr(not(feature = "encryption"), allow(dead_code))]
+struct DerivedKeys(Vec<([u8; 16], u8, Rar50Keys)>);
+
+#[cfg(feature = "encryption")]
+impl DerivedKeys {
+    const KEPT: usize = 4;
+
+    fn derive(&mut self, password: &[u8], salt: [u8; 16], kdf_count: u8) -> Result<Rar50Keys> {
+        if let Some((.., keys)) = self
+            .0
+            .iter()
+            .find(|(known, count, _)| *known == salt && *count == kdf_count)
+        {
+            return Ok(keys.clone());
+        }
+        let keys = Rar50Keys::derive(password, salt, kdf_count).map_err(map_rar50_crypto_error)?;
+        if self.0.len() == Self::KEPT {
+            self.0.remove(0);
+        }
+        self.0.push((salt, kdf_count, keys.clone()));
+        Ok(keys)
+    }
+}
+
+fn attach_file_crypto(
+    file: &mut FileHeader,
+    password: Option<&[u8]>,
+    derived: &mut DerivedKeys,
+) -> Result<()> {
     #[cfg(not(feature = "encryption"))]
     {
-        let _ = (file, password);
+        let _ = (file, password, derived);
         Ok(())
     }
     #[cfg(feature = "encryption")]
@@ -1725,8 +1759,7 @@ fn attach_file_crypto(file: &mut FileHeader, password: Option<&[u8]>) -> Result<
                 feature: "RAR 5 unknown file encryption version",
             });
         }
-        let keys = Rar50Keys::derive(password, encryption.salt, encryption.kdf_count)
-            .map_err(map_rar50_crypto_error)?;
+        let keys = derived.derive(password, encryption.salt, encryption.kdf_count)?;
         if let Some(check_value) = encryption.check_value {
             keys.check_password(&check_value)
                 .map_err(map_rar50_crypto_error)?;
@@ -1739,7 +1772,11 @@ fn attach_file_crypto(file: &mut FileHeader, password: Option<&[u8]>) -> Result<
     }
 }
 
-fn attach_service_crypto(service: &mut FileHeader, password: Option<&[u8]>) -> Result<()> {
+fn attach_service_crypto(
+    service: &mut FileHeader,
+    password: Option<&[u8]>,
+    derived: &mut DerivedKeys,
+) -> Result<()> {
     // WinRAR can emit encrypted QO metadata whose service-local password
     // check does not validate with the archive password. QuickOpen is an
     // optional cache, so keep archive parsing and file extraction independent
@@ -1747,7 +1784,7 @@ fn attach_service_crypto(service: &mut FileHeader, password: Option<&[u8]>) -> R
     if service.name == b"QO" {
         return Ok(());
     }
-    attach_file_crypto(service, password)
+    attach_file_crypto(service, password, derived)
 }
 
 #[cfg(feature = "encryption")]
@@ -1795,6 +1832,7 @@ where
     };
     let password = options.password;
     let mut budget = crate::parse_budget::ParseBudget::new(options);
+    let mut derived = DerivedKeys::default();
     let mut pos = RAR50_SIGNATURE.len();
     let first = read_block(pos, &mut budget).map_err(|error| at_offset(error, pos))?;
     let (header_keys, header_metadata_complete) = if first.block.header_type == HEAD_CRYPT {
@@ -1834,13 +1872,14 @@ where
             HEAD_FILE => {
                 let mut file =
                     parse_file_header_bytes(&parsed).map_err(|error| at_offset(error, pos))?;
-                attach_file_crypto(&mut file, password).map_err(|error| at_offset(error, pos))?;
+                attach_file_crypto(&mut file, password, &mut derived)
+                    .map_err(|error| at_offset(error, pos))?;
                 blocks.push(Block::File(file));
             }
             HEAD_SERVICE => {
                 let mut service =
                     parse_file_header_bytes(&parsed).map_err(|error| at_offset(error, pos))?;
-                attach_service_crypto(&mut service, password)
+                attach_service_crypto(&mut service, password, &mut derived)
                     .map_err(|error| at_offset(error, pos))?;
                 blocks.push(Block::Service(service));
             }
@@ -2483,7 +2522,7 @@ mod tests {
             let mut file = archive.files().next().unwrap().clone();
             file.encrypted = true;
             file.encryption = Some(plain.clone());
-            attach_file_crypto(&mut file, Some(b"password")).unwrap();
+            attach_file_crypto(&mut file, Some(b"password"), &mut DerivedKeys::default()).unwrap();
             assert!(file.crypto.is_some());
 
             let mut unsupported = archive.files().next().unwrap().clone();
@@ -2493,7 +2532,11 @@ mod tests {
                 ..plain
             });
             assert!(matches!(
-                attach_file_crypto(&mut unsupported, Some(b"password")),
+                attach_file_crypto(
+                    &mut unsupported,
+                    Some(b"password"),
+                    &mut DerivedKeys::default()
+                ),
                 Err(Error::UnsupportedFeature {
                     feature: "RAR 5 unknown file encryption version",
                     ..
@@ -3767,7 +3810,7 @@ mod tests {
         file.encrypted = true;
         file.encryption = None;
         assert!(matches!(
-            attach_file_crypto(&mut file, Some(b"pw")),
+            attach_file_crypto(&mut file, Some(b"pw"), &mut DerivedKeys::default()),
             Err(Error::InvalidHeader(
                 "RAR 5 encrypted file is missing encryption record"
             ))
@@ -3781,7 +3824,7 @@ mod tests {
             check_value: Some([0; 12]),
         });
         assert!(matches!(
-            attach_file_crypto(&mut file, Some(b"pw")),
+            attach_file_crypto(&mut file, Some(b"pw"), &mut DerivedKeys::default()),
             Err(Error::UnsupportedFeature {
                 feature: "RAR 5 KDF count",
                 ..
@@ -3790,13 +3833,30 @@ mod tests {
         file.encryption.as_mut().unwrap().kdf_count = 0;
         // WinRAR 5.21 and earlier wrote an all-zero password check, which
         // deliberately defers verification to the data checksum.
-        attach_file_crypto(&mut file, Some(b"pw")).unwrap();
+        let mut derived = DerivedKeys::default();
+        attach_file_crypto(&mut file, Some(b"pw"), &mut derived).unwrap();
         let mut bad_check = file.clone();
         bad_check.encryption.as_mut().unwrap().check_value = Some([1; 12]);
         assert!(matches!(
-            attach_file_crypto(&mut bad_check, Some(b"pw")),
+            attach_file_crypto(&mut bad_check, Some(b"pw"), &mut derived),
             Err(Error::WrongPasswordOrCorruptData)
         ));
+    }
+
+    #[test]
+    #[cfg(feature = "encryption")]
+    fn a_parse_derives_each_salt_once_and_keeps_only_a_few() {
+        let mut derived = DerivedKeys::default();
+        let first = derived.derive(b"pw", [1; 16], 0).unwrap();
+        assert_eq!(derived.derive(b"pw", [1; 16], 0).unwrap(), first);
+        assert_eq!(derived.0.len(), 1);
+        assert_ne!(derived.derive(b"pw", [1; 16], 1).unwrap(), first);
+        assert_ne!(derived.derive(b"pw", [2; 16], 0).unwrap(), first);
+        for salt in 3..10 {
+            derived.derive(b"pw", [salt; 16], 0).unwrap();
+        }
+        assert_eq!(derived.0.len(), DerivedKeys::KEPT);
+        assert_eq!(derived.derive(b"pw", [1; 16], 0).unwrap(), first);
     }
 
     #[test]

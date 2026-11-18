@@ -38,6 +38,7 @@ use crate::streaming::Spool;
 use crate::write_progress::{check_cancelled, CancellableIo, ProgressReporter};
 use crate::{Error, Result, WriterResources};
 use std::io::{Read, Write};
+use std::sync::Arc;
 
 pub(super) struct EnginePlan<'a> {
     pub(super) compress: CompressPlan,
@@ -92,35 +93,11 @@ enum Payload<'a> {
     },
 }
 
+// Arca: a member's packed payload is no longer encrypted here: compression
+// seals it as it is spooled (`MemberSeal`).
 enum PlainPayload<'a> {
     Borrowed(&'a [u8]),
     Stored(PreparedSource),
-    Packed(Spool),
-}
-
-// Member payloads cannot borrow comment/service bytes. Keeping their two
-// forms distinct avoids an impossible borrowed arm during plain emission.
-enum MemberPlainPayload {
-    Stored(PreparedSource),
-    Packed(Spool),
-}
-
-impl From<MemberPlainPayload> for PlainPayload<'_> {
-    fn from(member: MemberPlainPayload) -> Self {
-        match member {
-            MemberPlainPayload::Stored(source) => Self::Stored(source),
-            MemberPlainPayload::Packed(packed) => Self::Packed(packed),
-        }
-    }
-}
-
-impl From<MemberPlainPayload> for Payload<'_> {
-    fn from(member: MemberPlainPayload) -> Self {
-        match member {
-            MemberPlainPayload::Stored(source) => Self::Stored(source),
-            MemberPlainPayload::Packed(packed) => Self::Packed(packed),
-        }
-    }
 }
 
 // A reopenable source is not a snapshot. Keep the size and integrity used by
@@ -229,9 +206,21 @@ pub(super) fn write_archive(
         None
     };
 
+    // Arca: an encrypted member's packed payload is encrypted as it is
+    // spooled, so its IV and keys are settled before it is compressed.
+    let mut archive_keys = ArchiveKeys::default();
+    let mut seals = Records::new(entries.len(), resources)?;
     let mut sources = Records::new(entries.len(), resources)?;
     for entry in entries {
-        sources.push(entry.source.clone())?;
+        let seal = match entry.password.as_deref() {
+            Some(password) => Some(archive_keys.seal_for(password)?),
+            None => None,
+        };
+        sources.push(match &seal {
+            Some(seal) => seal.source(&entry.source)?,
+            None => entry.source.clone(),
+        })?;
+        seals.push(seal)?;
     }
     let total_input = total_input_size(entries)?;
     let total_entries = entries.len();
@@ -270,17 +259,32 @@ pub(super) fn write_archive(
     );
     let mut blocks = Records::<PreparedBlock>::new(block_count, resources)?;
     if let Some(comment) = &plan.archive_comment {
-        blocks.push(prepare_comment(comment, header_keys.as_ref(), resources)?)?;
+        blocks.push(prepare_comment(
+            comment,
+            &mut archive_keys,
+            header_keys.as_ref(),
+            resources,
+        )?)?;
     }
-    for (index, (entry, member)) in entries.iter().zip(compressed).enumerate() {
+    for (index, ((entry, member), seal)) in
+        entries.iter().zip(compressed).zip(seals.iter()).enumerate()
+    {
         check_cancelled(plan.progress)?;
-        let mut block = prepare_member(entry, member, &plan, header_keys.as_ref(), resources)
-            .map_err(|error| member_error(error, &entry.name, "preparing"))?;
+        let mut block = prepare_member(
+            entry,
+            member,
+            seal.as_ref(),
+            &plan,
+            header_keys.as_ref(),
+            resources,
+        )
+        .map_err(|error| member_error(error, &entry.name, "preparing"))?;
         block.entry_index = Some(index);
         blocks.push(block)?;
         for service in &entry.services {
-            let mut block = prepare_service(service, header_keys.as_ref(), resources)
-                .map_err(|error| member_error(error, &entry.name, "preparing service"))?;
+            let mut block =
+                prepare_service(service, &mut archive_keys, header_keys.as_ref(), resources)
+                    .map_err(|error| member_error(error, &entry.name, "preparing service"))?;
             block.entry_index = Some(index);
             blocks.push(block)?;
         }
@@ -582,6 +586,7 @@ fn stored_service_header(
 
 fn prepare_comment<'a>(
     comment: &ArchiveCommentPlan<'a>,
+    keys: &mut ArchiveKeys,
     header_keys: Option<&HeaderEncryptionKeys>,
     resources: &WriterResources,
 ) -> Result<PreparedBlock<'a>> {
@@ -593,13 +598,14 @@ fn prepare_comment<'a>(
             Ok(block)
         }
         ArchiveCommentPlan::Encrypted { data, password } => {
-            encrypted_service_block(b"CMT", data, &[], password, header_keys, resources)
+            encrypted_service_block(b"CMT", data, &[], password, keys, header_keys, resources)
         }
     }
 }
 
 fn prepare_service<'a>(
     service: &'a super::ServiceEntry,
+    keys: &mut ArchiveKeys,
     header_keys: Option<&HeaderEncryptionKeys>,
     resources: &WriterResources,
 ) -> Result<PreparedBlock<'a>> {
@@ -609,11 +615,96 @@ fn prepare_service<'a>(
             &service.data,
             &[],
             password,
+            keys,
             header_keys,
             resources,
         ),
         None => stored_service_block(&service.name, &service.data, &[], header_keys, resources),
     }
+}
+
+/// Arca: the salt and keys each password encrypts with, derived once for the
+/// whole archive as WinRAR does, rather than once per member and service.
+/// PBKDF2 runs 2^15 rounds, so a set of small encrypted members spent nearly
+/// all its time deriving. Every member and service still gets a random IV of
+/// its own, which is what CBC needs to share a key.
+#[derive(Default)]
+struct ArchiveKeys {
+    derived: Vec<(Vec<u8>, [u8; 16], Arc<Rar50Keys>)>,
+}
+
+impl ArchiveKeys {
+    fn for_password(&mut self, password: &[u8]) -> Result<([u8; 16], Rar50Keys)> {
+        let (salt, keys) = self.derive(password)?;
+        Ok((salt, Rar50Keys::clone(&keys)))
+    }
+
+    fn seal_for(&mut self, password: &[u8]) -> Result<MemberSeal> {
+        let (salt, keys) = self.derive(password)?;
+        Ok(MemberSeal {
+            salt,
+            keys,
+            iv: fresh_iv()?,
+        })
+    }
+
+    fn derive(&mut self, password: &[u8]) -> Result<([u8; 16], Arc<Rar50Keys>)> {
+        if let Some((_, salt, keys)) = self.derived.iter().find(|(known, ..)| known == password) {
+            return Ok((*salt, Arc::clone(keys)));
+        }
+        let mut salt = [0u8; 16];
+        crate::write_stream::fill_entropy(
+            &mut salt,
+            "RAR 5 writer could not generate encryption salt",
+        )?;
+        let keys =
+            Arc::new(Rar50Keys::derive(password, salt, WRITE_KDF_COUNT_LOG).map_err(Error::from)?);
+        self.derived
+            .push((password.to_vec(), salt, Arc::clone(&keys)));
+        Ok((salt, keys))
+    }
+}
+
+/// Arca: what an encrypted member's payload is encrypted with: the salt and
+/// keys of its password, and an IV of its own.
+struct MemberSeal {
+    salt: [u8; 16],
+    keys: Arc<Rar50Keys>,
+    iv: [u8; 16],
+}
+
+impl MemberSeal {
+    /// `source`, made to seal the packed spool compression writes for it.
+    fn source(&self, source: &crate::EntrySource) -> Result<crate::EntrySource> {
+        #[cfg(feature = "encryption")]
+        {
+            let keys = Arc::clone(&self.keys);
+            let iv = self.iv;
+            Ok(source
+                .clone()
+                .sealed(move || Box::new(crate::crypto::rar50::Rar50Cipher::new(keys.key, iv))))
+        }
+        #[cfg(not(feature = "encryption"))]
+        {
+            let _ = source;
+            Err(Error::FeatureDisabled {
+                feature: "encryption",
+            })
+        }
+    }
+}
+
+#[cfg(feature = "encryption")]
+impl crate::streaming::SpoolCipher for crate::crypto::rar50::Rar50Cipher {
+    fn encrypt(&mut self, blocks: &mut [u8]) -> std::io::Result<()> {
+        self.encrypt_in_place(blocks).map_err(std::io::Error::other)
+    }
+}
+
+fn fresh_iv() -> Result<[u8; 16]> {
+    let mut iv = [0u8; 16];
+    crate::write_stream::fill_entropy(&mut iv, "RAR 5 writer could not generate encryption IV")?;
+    Ok(iv)
 }
 
 /// A service block whose borrowed payload is encrypted during emission.
@@ -622,18 +713,13 @@ fn encrypted_service_block<'a>(
     data: &'a [u8],
     service_data: &[u8],
     password: &[u8],
+    archive_keys: &mut ArchiveKeys,
     header_keys: Option<&HeaderEncryptionKeys>,
     resources: &WriterResources,
 ) -> Result<PreparedBlock<'a>> {
     super::validate_nonempty_password(password)?;
-    let mut salt = [0u8; 16];
-    let mut iv = [0u8; 16];
-    crate::write_stream::fill_entropy(
-        &mut salt,
-        "RAR 5 writer could not generate encryption salt",
-    )?;
-    crate::write_stream::fill_entropy(&mut iv, "RAR 5 writer could not generate encryption IV")?;
-    let keys = Rar50Keys::derive(password, salt, WRITE_KDF_COUNT_LOG).map_err(Error::from)?;
+    let (salt, keys) = archive_keys.for_password(password)?;
+    let iv = fresh_iv()?;
 
     let mut extra = Bytes::new(resources);
     write_extra_record(&mut extra, FHEXTRA_SUBDATA, service_data)?;
@@ -699,53 +785,64 @@ fn decoded_rar50_name_len(bytes: &[u8]) -> usize {
 fn prepare_member(
     entry: &ArchiveEntry,
     member: CompressedMember,
+    seal: Option<&MemberSeal>,
     plan: &EnginePlan<'_>,
     header_keys: Option<&HeaderEncryptionKeys>,
     resources: &WriterResources,
 ) -> Result<PreparedBlock<'static>> {
     let compression_info = compress::member_compression_info(&plan.compress, &member)?;
-    let plain_len = if member.store {
-        member.input_size
-    } else {
-        member.packed.len()
-    };
-    let plain = if member.store {
-        MemberPlainPayload::Stored(PreparedSource::new(&entry.source, &member))
-    } else {
-        MemberPlainPayload::Packed(member.packed)
-    };
 
     let mut extra = Bytes::new(resources);
-    let (payload, payload_len, data_crc32, hash) = match entry.password.as_deref() {
-        Some(password) => {
-            let mut salt = [0u8; 16];
-            let mut iv = [0u8; 16];
-            crate::write_stream::fill_entropy(
-                &mut salt,
-                "RAR 5 writer could not generate encryption salt",
-            )?;
-            crate::write_stream::fill_entropy(
-                &mut iv,
-                "RAR 5 writer could not generate encryption IV",
-            )?;
-            let keys =
-                Rar50Keys::derive(password, salt, WRITE_KDF_COUNT_LOG).map_err(Error::from)?;
-            write_file_encryption_record(&mut extra, salt, iv, keys.checked_password_record()?)?;
-            let crc32 = keys.checked_crc_mac(member.crc32)?;
-            let hash = keys.checked_hash_mac(member.hash)?;
-            (
-                Payload::Encrypted {
-                    plain: Owned::new(plain.into(), resources)?,
-                    keys,
+    let (payload, payload_len, data_crc32, hash) = match seal {
+        Some(seal) => {
+            let crc32 = seal.keys.checked_crc_mac(member.crc32)?;
+            let hash = seal.keys.checked_hash_mac(member.hash)?;
+            // Arca: a stored member is encrypted from its source on the way
+            // out, under an IV of its own rather than the one its discarded
+            // packed spool was sealed with.
+            let (payload, payload_len, iv) = if member.store {
+                let iv = fresh_iv()?;
+                let plain = PlainPayload::Stored(PreparedSource::new(&entry.source, &member));
+                (
+                    Payload::Encrypted {
+                        plain: Owned::new(plain, resources)?,
+                        keys: Rar50Keys::clone(&seal.keys),
+                        iv,
+                    },
+                    // Encryption pads the payload up to the cipher block size.
+                    member.input_size.div_ceil(16) * 16,
                     iv,
-                },
-                // Encryption pads the payload up to the cipher block size.
-                plain_len.div_ceil(16) * 16,
-                crc32,
-                hash,
+                )
+            } else {
+                let mut packed = member.packed;
+                packed.seal()?;
+                packed.park();
+                let len = packed.len();
+                (Payload::Packed(packed), len, seal.iv)
+            };
+            write_file_encryption_record(
+                &mut extra,
+                seal.salt,
+                iv,
+                seal.keys.checked_password_record()?,
+            )?;
+            (payload, payload_len, crc32, hash)
+        }
+        None if member.store => (
+            Payload::Stored(PreparedSource::new(&entry.source, &member)),
+            member.input_size,
+            member.crc32,
+            member.hash,
+        ),
+        None => {
+            let len = member.packed.len();
+            (
+                Payload::Packed(member.packed),
+                len,
+                member.crc32,
+                member.hash,
             )
         }
-        None => (plain.into(), plain_len, member.crc32, member.hash),
     };
     // A link has no file payload to hash; its target is protected by the header CRC.
     if entry.redirection.is_none() {
@@ -852,20 +949,6 @@ fn write_payload(
                     reader.finish(&source, source.len)?;
                     source.source.release();
                     Ok(())
-                }
-                PlainPayload::Packed(mut packed) => {
-                    let len = packed.len();
-                    packed.rewind()?;
-                    encrypt_reader_to(
-                        &mut packed,
-                        len,
-                        output,
-                        &keys,
-                        iv,
-                        ENCRYPT_CHUNK,
-                        progress,
-                        resources,
-                    )
                 }
                 PlainPayload::Borrowed(mut data) => {
                     let len = data.len() as u64;
@@ -1242,6 +1325,25 @@ struct VolumeMember<'a> {
     source: FragmentSource,
     /// Encryption record for the file header, when the payload is encrypted.
     encryption: Option<([u8; 16], [u8; 16], [u8; 12])>,
+    /// Arca: the keys whose hash key tweaks the checksums an encrypted
+    /// member's fragments report, as the encryption record says they are.
+    checksum_keys: Option<Rar50Keys>,
+}
+
+impl VolumeMember<'_> {
+    /// Arca: the checksums a fragment's header carries for the bytes it
+    /// stores. The encryption record sets the tweaked-checksum flag, which
+    /// covers every fragment and not only the last, so WinRAR checks a
+    /// fragment of an encrypted member against the HMAC-converted values.
+    fn reported(&self, fragment: FragmentChecksums) -> Result<FragmentChecksums> {
+        match &self.checksum_keys {
+            Some(keys) => Ok(FragmentChecksums {
+                crc32: keys.checked_crc_mac(fragment.crc32)?,
+                hash: keys.checked_hash_mac(fragment.hash)?,
+            }),
+            None => Ok(fragment),
+        }
+    }
 }
 
 struct MemberProgress<'a, 'p> {
@@ -1319,9 +1421,21 @@ pub(super) fn write_limited_volumes(
         None
     };
 
+    // Arca: an encrypted member's packed payload is encrypted as it is
+    // spooled, so its IV and keys are settled before it is compressed.
+    let mut archive_keys = ArchiveKeys::default();
+    let mut seals = Records::new(entries.len(), resources)?;
     let mut sources = Records::new(entries.len(), resources)?;
     for entry in entries {
-        sources.push(entry.source.clone())?;
+        let seal = match entry.password.as_deref() {
+            Some(password) => Some(archive_keys.seal_for(password)?),
+            None => None,
+        };
+        sources.push(match &seal {
+            Some(seal) => seal.source(&entry.source)?,
+            None => entry.source.clone(),
+        })?;
+        seals.push(seal)?;
     }
     let total_input = total_input_size(entries)?;
     let total_entries = entries.len();
@@ -1350,10 +1464,10 @@ pub(super) fn write_limited_volumes(
     )?;
 
     let mut members = Records::new(entries.len(), resources)?;
-    for (entry, member) in entries.iter().zip(compressed) {
+    for ((entry, member), seal) in entries.iter().zip(compressed).zip(seals.iter()) {
         check_cancelled(plan.progress)?;
         members.push(
-            prepare_volume_member(entry, member, &plan, resources)
+            prepare_volume_member(entry, member, seal.as_ref(), &plan, resources)
                 .map_err(|error| member_error(error, &entry.name, "preparing volume payload"))?,
         )?;
     }
@@ -1400,47 +1514,34 @@ pub(super) fn write_limited_volumes(
 fn prepare_volume_member<'a>(
     entry: &'a ArchiveEntry,
     member: CompressedMember,
+    seal: Option<&MemberSeal>,
     plan: &EnginePlan<'_>,
     resources: &WriterResources,
 ) -> Result<VolumeMember<'a>> {
     let progress = plan.progress;
     check_cancelled(progress)?;
     let compression_info = compress::member_compression_info(&plan.compress, &member)?;
-    let plain_len = if member.store {
-        member.input_size
-    } else {
-        member.packed.len()
-    };
 
-    match entry.password.as_deref() {
-        Some(password) => {
-            let mut salt = [0u8; 16];
-            let mut iv = [0u8; 16];
-            crate::write_stream::fill_entropy(
-                &mut salt,
-                "RAR 5 writer could not generate encryption salt",
-            )?;
-            crate::write_stream::fill_entropy(
-                &mut iv,
-                "RAR 5 writer could not generate encryption IV",
-            )?;
-            let keys =
-                Rar50Keys::derive(password, salt, WRITE_KDF_COUNT_LOG).map_err(Error::from)?;
-
+    match seal {
+        Some(seal) => {
+            let keys = Rar50Keys::clone(&seal.keys);
             // A volume boundary can fall anywhere, and the cipher runs as one
-            // chain over the member, so encrypt it up front into scratch
-            // storage and slice the ciphertext.
-            let mut encrypted = Spool::for_member(resources)?;
-            const ENCRYPT_CHUNK: usize = 64 * 1024;
-            let _permit = resources.acquire_cancellable(ENCRYPT_CHUNK as u64, 0, &|| {
-                progress.is_some_and(ProgressReporter::is_cancelled)
-            })?;
-            if member.store {
+            // chain over the member, so the ciphertext is sliced. Arca: a
+            // packed payload was sealed as it was spooled; a stored one is
+            // encrypted from its source into scratch storage, under an IV of
+            // its own.
+            let (iv, mut encrypted) = if member.store {
+                let iv = fresh_iv()?;
+                let mut encrypted = Spool::for_member(resources)?;
+                const ENCRYPT_CHUNK: usize = 64 * 1024;
+                let _permit = resources.acquire_cancellable(ENCRYPT_CHUNK as u64, 0, &|| {
+                    progress.is_some_and(ProgressReporter::is_cancelled)
+                })?;
                 let source = PreparedSource::new(&entry.source, &member);
                 let mut reader = source.open()?;
                 encrypt_reader_to(
                     &mut reader,
-                    plain_len,
+                    member.input_size,
                     &mut encrypted,
                     &keys,
                     iv,
@@ -1449,20 +1550,13 @@ fn prepare_volume_member<'a>(
                     resources,
                 )?;
                 reader.finish(&source, source.len)?;
+                (iv, encrypted)
             } else {
                 let mut packed = member.packed;
-                packed.rewind()?;
-                encrypt_reader_to(
-                    &mut packed,
-                    plain_len,
-                    &mut encrypted,
-                    &keys,
-                    iv,
-                    ENCRYPT_CHUNK,
-                    progress,
-                    resources,
-                )?;
-            }
+                packed.seal()?;
+                (seal.iv, packed)
+            };
+            let salt = seal.salt;
             let payload_len = encrypted.len();
             encrypted.park();
             Ok(VolumeMember {
@@ -1480,6 +1574,7 @@ fn prepare_volume_member<'a>(
                 payload_len,
                 source: FragmentSource::Packed(encrypted),
                 encryption: Some((salt, iv, keys.checked_password_record()?)),
+                checksum_keys: Some(keys),
             })
         }
         None => Ok(VolumeMember {
@@ -1494,7 +1589,11 @@ fn prepare_volume_member<'a>(
             crc32: member.crc32,
             hash: member.hash,
             compression_info,
-            payload_len: plain_len,
+            payload_len: if member.store {
+                member.input_size
+            } else {
+                member.packed.len()
+            },
             source: if member.store {
                 FragmentSource::Stored {
                     prepared: PreparedSource::new(&entry.source, &member),
@@ -1504,6 +1603,7 @@ fn prepare_volume_member<'a>(
                 FragmentSource::Packed(member.packed)
             },
             encryption: None,
+            checksum_keys: None,
         }),
     }
 }
@@ -1860,8 +1960,10 @@ impl VolumeWriter<'_> {
 /// Every fragment repeats the member's metadata. The last one carries the
 /// member's own checksum and hash; the rest carry `fragment` over the bytes
 /// they store, which is what WinRAR puts there and lets one volume be checked
-/// on its own. Encrypted fragments checksum the ciphertext, so that check needs
-/// no password.
+/// on its own. Encrypted fragments checksum the ciphertext. Arca: and, like the
+/// last fragment's values, those checksums go through the hash key (see
+/// [`VolumeMember::reported`]), so checking an encrypted fragment needs the
+/// password.
 ///
 /// Both a CRC32 and a hash record go on every fragment. A reader takes the hash
 /// record as the member's checksum type when it has one, and unrar picks that
@@ -1877,6 +1979,8 @@ fn fragment_header(
     resources: &WriterResources,
 ) -> Result<Bytes> {
     let split_after = fragment.is_some();
+    // Arca: the header reports tweaked checksums for an encrypted member.
+    let fragment = fragment.map(|f| member.reported(f)).transpose()?;
     let mut extra = Bytes::new(resources);
     if let Some((salt, iv, check_value)) = member.encryption {
         write_file_encryption_record(&mut extra, salt, iv, check_value)?;
@@ -2133,6 +2237,7 @@ mod service_payload_tests {
                     &data,
                     &[],
                     b"secret",
+                    &mut ArchiveKeys::default(),
                     None,
                     &WriterResources::default(),
                 )
@@ -2826,6 +2931,144 @@ mod emission_ledger_tests {
         assert_eq!(error.entry_context(), Some((b"file".as_slice(), "reading")));
     }
 
+    /// Arca: WinRAR checks every fragment of an encrypted member against
+    /// checksums converted through the hash key, not only the last one.
+    #[test]
+    #[cfg(feature = "encryption")]
+    fn encrypted_fragments_report_tweaked_checksums() {
+        let mut state = 0x9e37_79b9u32;
+        let data: Vec<u8> = (0..20_000)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                b'a' + (state % 16) as u8
+            })
+            .collect();
+        for (method, hidden) in [(0, false), (3, false), (3, true)] {
+            let entries = [ArchiveEntry::new(
+                b"payload".to_vec(),
+                crate::EntrySource::from_bytes(data.clone()),
+            )
+            .with_password(b"secret")];
+            let mut settings = plan(hidden);
+            settings.compress.method = method;
+            settings.recovery_percent = None;
+            let mut sink = super::super::CollectedVolumes::new();
+            write_volumes(
+                &entries,
+                settings,
+                4096,
+                &mut sink,
+                &WriterResources::default(),
+            )
+            .unwrap();
+            let volumes = sink.take();
+            assert!(volumes.len() > 2, "method {method}");
+            let mut fragments = 0;
+            for volume in &volumes {
+                let archive =
+                    crate::rar50::Archive::parse_with_password(volume, Some(b"secret")).unwrap();
+                let file = archive.files().next().unwrap();
+                if !file.is_split_after() {
+                    continue;
+                }
+                let encryption = file.encryption.as_ref().unwrap();
+                assert_ne!(encryption.flags & 0x0002, 0);
+                let keys =
+                    Rar50Keys::derive(b"secret", encryption.salt, encryption.kdf_count).unwrap();
+                let stored = file.packed_data(&archive).unwrap();
+                let raw_crc = crate::crc32::crc32(&stored);
+                let raw_hash = crate::rar50::blake2sp::hash(&stored);
+                assert_eq!(file.data_crc32, Some(keys.mac_crc32(raw_crc)));
+                assert_ne!(file.data_crc32, Some(raw_crc));
+                let hash = file.hash.as_ref().unwrap();
+                assert_eq!(hash.data, keys.mac_hash32(raw_hash));
+                fragments += 1;
+            }
+            assert_eq!(fragments, volumes.len() - 1, "method {method}");
+        }
+    }
+
+    /// Arca: one salt and key per password for the whole archive, a fresh IV
+    /// for every member and service, and the password check still refusing a
+    /// wrong password.
+    #[test]
+    #[cfg(feature = "encryption")]
+    fn an_archive_derives_one_key_per_password() {
+        let entries: Vec<_> = (0..4)
+            .map(|index| {
+                ArchiveEntry::new(
+                    format!("file{index}").into_bytes(),
+                    crate::EntrySource::from_bytes(vec![index as u8; 100 + index * 50]),
+                )
+                .with_password(b"secret")
+                .with_service(
+                    super::super::ServiceEntry::new(b"CMT", b"note").with_password(b"secret"),
+                )
+            })
+            .collect();
+        let mut settings = plan(false);
+        settings.archive_comment = Some(ArchiveCommentPlan::Encrypted {
+            data: b"comment",
+            password: b"secret",
+        });
+        settings.recovery_percent = None;
+        let mut bytes = Vec::new();
+        write_archive(&entries, settings, &WriterResources::default(), &mut bytes).unwrap();
+        let archive = crate::rar50::Archive::parse_with_password(&bytes, Some(b"secret")).unwrap();
+        let records: Vec<_> = archive
+            .files()
+            .chain(archive.services())
+            .map(|header| header.encryption.clone().unwrap())
+            .collect();
+        assert_eq!(records.len(), 9);
+        assert!(records.iter().all(|record| record.salt == records[0].salt));
+        let ivs: std::collections::HashSet<_> = records.iter().map(|record| record.iv).collect();
+        assert_eq!(ivs.len(), records.len());
+        for index in 0..4 {
+            assert_eq!(
+                crate::ArchiveReader::read(&bytes)
+                    .unwrap()
+                    .read_member(format!("file{index}").as_bytes(), Some(b"secret"))
+                    .unwrap()
+                    .unwrap(),
+                vec![index as u8; 100 + index * 50]
+            );
+        }
+        assert_eq!(
+            crate::rar50::Archive::parse_with_password(&bytes, Some(b"wrong"))
+                .err()
+                .unwrap()
+                .kind(),
+            crate::ErrorKind::BadPassword
+        );
+
+        let mut sink = super::super::CollectedVolumes::new();
+        let mut settings = plan(false);
+        settings.recovery_percent = None;
+        write_volumes(
+            &entries,
+            settings,
+            128,
+            &mut sink,
+            &WriterResources::default(),
+        )
+        .unwrap();
+        let salts: std::collections::HashSet<_> = sink
+            .take()
+            .iter()
+            .flat_map(|volume| {
+                crate::rar50::Archive::parse_with_password(volume, Some(b"secret"))
+                    .unwrap()
+                    .files()
+                    .map(|file| file.encryption.as_ref().unwrap().salt)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(salts.len(), 1);
+    }
+
     #[test]
     fn archive_and_volume_emission_keep_the_ledger_reusable() {
         let scratch = crate::scratch::case("archive-emission-ledger");
@@ -3096,9 +3339,17 @@ mod emission_ledger_tests {
     fn encrypted_service_rejects_oversized_name_after_extra_preparation() {
         let name = vec![b'n'; 4096];
         let resources = WriterResources::default().with_max_preparation_bytes(512);
-        let error = encrypted_service_block(&name, b"payload", &[], b"secret", None, &resources)
-            .err()
-            .expect("the service name exceeds the preparation quota");
+        let error = encrypted_service_block(
+            &name,
+            b"payload",
+            &[],
+            b"secret",
+            &mut ArchiveKeys::default(),
+            None,
+            &resources,
+        )
+        .err()
+        .expect("the service name exceeds the preparation quota");
         assert!(matches!(
             error,
             Error::WriterPreparationLimitExceeded { limit: 512, .. }
@@ -3380,7 +3631,7 @@ mod emission_ledger_tests {
 
     #[test]
     #[cfg(feature = "encryption")]
-    fn encrypted_compressed_volume_payload_propagates_spool_refusal() {
+    fn encrypted_volume_payloads_propagate_spool_refusal() {
         let scratch = crate::scratch::case("encrypted-volume-spool-refusal");
         let resources = WriterResources::default().with_temp_dir(&*scratch);
         let entry = ArchiveEntry::new(
@@ -3391,6 +3642,19 @@ mod emission_ledger_tests {
         let mut settings = plan(false);
         settings.compress.method = 1;
         settings.recovery_percent = None;
+        let seal = ArchiveKeys::default().seal_for(b"secret").unwrap();
+        let constrained = resources.clone().with_max_spool_bytes(0);
+        let error = compress::compress_members_reporting(
+            &[seal.source(&entry.source).unwrap()],
+            settings.compress.clone(),
+            &constrained,
+            &|_| true,
+        )
+        .err()
+        .expect("sealed ciphertext must be charged to its spool");
+        assert_eq!(error.kind(), crate::ErrorKind::ResourceLimit);
+
+        settings.compress.method = 0;
         let member = compress::compress_members_reporting(
             std::slice::from_ref(&entry.source),
             settings.compress.clone(),
@@ -3399,12 +3663,10 @@ mod emission_ledger_tests {
         )
         .unwrap()
         .remove(0);
-        assert!(!member.store);
-
-        let constrained = resources.clone().with_max_spool_bytes(0);
-        let error = prepare_volume_member(&entry, member, &settings, &constrained)
+        assert!(member.store);
+        let error = prepare_volume_member(&entry, member, Some(&seal), &settings, &constrained)
             .err()
-            .expect("encrypted ciphertext must be charged to its spool");
+            .expect("encrypted stored data must be charged to its spool");
         assert_eq!(error.kind(), crate::ErrorKind::ResourceLimit);
         assert_eq!(std::fs::read_dir(&*scratch).unwrap().count(), 0);
     }

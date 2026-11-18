@@ -110,3 +110,34 @@ fn damaged_headers_say_why_they_cannot_be_repaired() {
     );
     assert!(!output.exists());
 }
+
+#[test]
+fn repair_never_replaces_an_existing_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("bad.rar");
+    fs::write(&input, damaged(&built(Some(10), None))).unwrap();
+    let output = dir.path().join("good.rar");
+    fs::write(&output, b"someone else's file").unwrap();
+    let error = arca_rar::repair(&input, &output, None, &|_, _, _| true).unwrap_err();
+    assert!(
+        matches!(&error, Error::Io(e) if e.kind() == std::io::ErrorKind::AlreadyExists),
+        "{error:?}"
+    );
+    assert!(error.to_string().contains("never replaces"), "{error}");
+    assert_eq!(fs::read(&output).unwrap(), b"someone else's file");
+    let names: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+
+    fs::remove_file(&output).unwrap();
+    arca_rar::repair(&input, &output, None, &|_, _, _| true).unwrap();
+    assert_eq!(
+        RarArchive::open(&output, None)
+            .unwrap()
+            .read_entry(0, None)
+            .unwrap(),
+        payload()
+    );
+}

@@ -674,3 +674,18 @@ fn rejects_metadata_mismatch_even_with_valid_header_checksums() {
         failure_leaves_destination_untouched(&dir.path().join(NAMES[0]), NAMES[1]);
     }
 }
+
+/// Arca 0.10.0 gave the fragments of an encrypted member checksums that had
+/// not gone through the hash key, which WinRAR reports as damage. Those sets
+/// still read: only the last fragment's checksum covers the member.
+#[test]
+fn encrypted_sets_with_untweaked_fragment_checksums_still_read() {
+    let password = Some("arca-test-only");
+    let expected: Vec<u8> = (0..66_000u64)
+        .map(|i| ((i * 2_654_435_761) >> 11) as u8)
+        .collect();
+    let archive = RarArchive::open(&fixture("untweaked.part1.rar"), password).unwrap();
+    assert_eq!(archive.entries()[0].name, "split.bin");
+    archive.test(password, &|_, _, _| true).unwrap();
+    assert_eq!(archive.read_entry(0, password).unwrap(), expected);
+}

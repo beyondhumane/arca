@@ -284,7 +284,7 @@ impl<B: Budget> MemberStream<B> {
             source: source.clone(),
             reader: None,
             remaining: size,
-            packed: Spool::for_member(resources)?,
+            packed: Spool::for_member_of(source, resources)?,
             pushback: Buffer::new(allowance),
             crc: Crc32::new(),
             hash: blake2sp::Hasher::new(),
@@ -382,7 +382,7 @@ pub(super) fn compress_members_with_context(
                         || input_size == 0
                         || should_store_compressed_payload(
                             input_size,
-                            packed.len(),
+                            packed.plain_len(),
                             plan.solid,
                             &plan.filter_policy,
                         ),
@@ -652,7 +652,7 @@ fn compress_whole_member<B: Budget>(
     let mut crc = Crc32::new();
     let mut hasher = blake2sp::Hasher::new();
 
-    let mut packed_spool = Spool::for_member(resources)?;
+    let mut packed_spool = Spool::for_member_of(source, resources)?;
     let mut stored = input_size == 0;
     if !stored {
         advance.started(index, input_size);
@@ -721,6 +721,7 @@ fn compress_whole_member<B: Budget>(
         );
         if !stored {
             packed_spool.write_all(&packed)?;
+            packed_spool.seal()?;
         }
     }
 
@@ -803,7 +804,7 @@ fn compress_fallback_member(
         hash,
         store: should_store_compressed_payload(
             input_size,
-            packed.len(),
+            packed.plain_len(),
             false,
             &FilterPolicy::None,
         ),
@@ -1211,12 +1212,17 @@ fn append_packed_runs<B: Budget, C: Budget>(
             .write_all(&packed)
             .map_err(|error| error_context(streams[member].member, error.into()))?;
         if last {
+            // Arca: a sealed spool drops its cipher once its member is whole.
+            streams[member]
+                .packed
+                .seal()
+                .map_err(|error| error_context(streams[member].member, error))?;
             let stream = &streams[member];
             // A completed block run always came from `has_more`, so an empty
             // member cannot reach this branch.
             if !should_store_compressed_payload(
                 stream.input_size,
-                stream.packed.len(),
+                stream.packed.plain_len(),
                 plan.solid,
                 &plan.filter_policy,
             ) {
@@ -3256,6 +3262,70 @@ mod tests {
                     assert_eq!(member.hash, blake2sp::hash(input));
                 }
             }
+        }
+    }
+
+    /// Arca: compressing a sealed source spools the same packed stream, but
+    /// only ever as its ciphertext, on each path that compresses members, and
+    /// seals it once the member is whole.
+    #[cfg(all(
+        feature = "encryption",
+        not(all(target_arch = "wasm32", target_os = "unknown"))
+    ))]
+    #[test]
+    fn a_sealed_source_spools_only_the_ciphertext_of_its_packed_stream() {
+        use crate::crypto::rar50::{Rar50Cipher, Rar50Keys};
+
+        let scratch = crate::scratch::case("sealed-compression");
+        let resources = WriterResources::default().with_temp_dir(&*scratch);
+        let keys = std::sync::Arc::new(Rar50Keys::derive(b"pw", [3; 16], 0).unwrap());
+        let iv = [9; 16];
+        let size = crate::codec::rar50::MAX_LZ_BLOCK_SIZE + 4099;
+        let data: Vec<u8> = (0..size)
+            .map(|i| (((i * 71) % 251) ^ (i >> 9)) as u8)
+            .collect();
+        let options = EncodeOptions::new(8).with_max_match_distance(65536);
+        for (solid, filter_policy) in [
+            (false, FilterPolicy::None),
+            (true, FilterPolicy::None),
+            (false, FilterPolicy::Auto),
+        ] {
+            let plan = CompressPlan {
+                algorithm_version: 0,
+                encode_options: options,
+                dictionary_size: 65536,
+                block_size: 65536,
+                solid,
+                method: 1,
+                filter_policy,
+                candidates: vec![options].into(),
+            };
+            let compress = |source| {
+                compress_members_with_context(&[source], &plan, &resources, &|_| true, &|_, e| e)
+                    .unwrap()
+                    .into_iter()
+                    .next()
+                    .unwrap()
+            };
+            let mut plain = compress(EntrySource::from_bytes(data.clone()));
+            let sealed_keys = keys.clone();
+            let mut sealed = compress(
+                EntrySource::from_bytes(data.clone())
+                    .sealed(move || Box::new(Rar50Cipher::new(sealed_keys.key, iv))),
+            );
+            assert!(!plain.store && !sealed.store, "solid={solid}");
+            let mut packed = Vec::new();
+            plain.packed.copy_to(&mut packed).unwrap();
+            assert_eq!(sealed.packed.plain_len(), packed.len() as u64);
+            let mut expected = packed.clone();
+            expected.resize(packed.len().div_ceil(16) * 16, 0);
+            Rar50Cipher::new(keys.key, iv)
+                .encrypt_in_place(&mut expected)
+                .unwrap();
+            assert_eq!(sealed.packed.stored_bytes(), expected);
+            sealed.packed.seal().unwrap();
+            assert_eq!(sealed.packed.stored_bytes(), expected);
+            assert_ne!(expected[..64], packed[..64]);
         }
     }
 }

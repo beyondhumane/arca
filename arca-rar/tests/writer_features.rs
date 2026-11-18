@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 const PASSWORD: &str = "contraseña segura";
 
@@ -569,16 +569,29 @@ fn winrar() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+/// Whether Rar.exe succeeded and said nothing about damage. It reports some
+/// damage, such as a bad checksum on a volume's fragment, and still exits 0.
 fn rar(program: &Path, dir: &Path, args: &[&str]) -> bool {
-    Command::new(program)
+    let output = Command::new(program)
         .current_dir(dir)
         .args(["-y", "-idq"])
         .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .unwrap()
-        .success()
+        .output()
+        .unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .to_lowercase();
+    if let Some(complaint) = ["checksum error", "corrupt", "crc failed", "warning"]
+        .into_iter()
+        .find(|complaint| said.contains(complaint))
+    {
+        eprintln!("Rar.exe {args:?} reported {complaint:?}:\n{said}");
+        return false;
+    }
+    output.status.success()
 }
 
 fn assert_extracted(dir: &Path, expected: &[(String, Option<Vec<u8>>)]) {

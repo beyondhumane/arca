@@ -15,10 +15,12 @@ an empty `[workspace]` so its own tests run with
 a lockfile of its own and still builds the crates.io copy: the reader it
 exercises is unchanged here.
 
-Every change is in the writers and is marked `Arca:` in the source: the RAR 5
-writer, and four match arms of the RAR 1.5 to 4.0 writer that treat
-`FilterPolicy::Detect` as `None`. The reader, the format and the integrity
-checks are as published, and no RARLAB source was consulted for any of it.
+Every change is marked `Arca:` in the source. All but one are in the writers:
+the RAR 5 writer, and four match arms of the RAR 1.5 to 4.0 writer that treat
+`FilterPolicy::Detect` as `None`. The one in the reader only remembers the
+keys a parse derives (see "One key per password" below). The format and the
+integrity checks are as published, and no RARLAB source was consulted for any
+of it.
 
 - **Tree search for a whole member.** The optimal parse searched the first
   block of a member with the binary-tree finder and then switched to hash
@@ -124,6 +126,16 @@ Container fixes, which do not touch the encoder:
   `recovery_service_header`; the bytes are the same. The payload-limited
   `write_streaming_volumes_with_progress` behaves as before
   (`rar50/write/engine.rs`).
+- **Tweaked checksums on every encrypted fragment.** A fragment that is not
+  a member's last reports the CRC32 and BLAKE2sp of the ciphertext it
+  stores. Only the last fragment's values went through the hash key, while
+  the encryption record sets the tweaked-checksum flag for the whole member,
+  so WinRAR 7.23 printed "packed data checksum error" for every other
+  fragment of every encrypted member of a set, and still exited 0. The
+  volume member now keeps its keys and `fragment_header` converts what it
+  reports (`VolumeMember::reported`, with
+  `encrypted_fragments_report_tweaked_checksums`). The reader checks only the
+  last fragment's checksum, so sets written either way read the same.
 
 Spool plumbing, which does not touch the encoder or the archive bytes:
 
@@ -152,3 +164,46 @@ Spool plumbing, which does not touch the encoder or the archive bytes:
   whole-member payload, which the automatic filter search produces, is
   charged to its worker's fixed reservation and so moves to disk whenever
   the estimate leaves no room.
+
+Encryption, which keeps the format and the password check as they are:
+
+- **One key per password.** Every encrypted member, service and comment got
+  a salt of its own and so a PBKDF2 derivation of its own, 2^15 rounds of
+  HMAC-SHA256, and reading it back derived again for each one. On 2,000
+  files of a few bytes, made with
+  `mkdir tiny && for i in $(seq 1 2000); do echo "file $i" > tiny/f$i.txt; done`,
+  `arca create out.rar tiny -p secret` took 22.7 s against 0.8 s without
+  the password, and `arca test out.rar -p secret` 11.1 s; now they take 0.8
+  to 0.9 s and 0.03 s (Windows 11, 16 threads, release build). The RAR 5
+  writer now derives once per password for the whole archive or volume set
+  (`ArchiveKeys` in `rar50/write/engine.rs`), as WinRAR does, and still
+  gives every member, service and comment a random IV of its own: CBC under
+  one key needs only that. The header-encryption key keeps its own salt.
+  The reader keeps the keys a parse has derived by salt and iteration count
+  (`DerivedKeys` in `rar50.rs`, the last four), so an archive written that
+  way costs one derivation per parse, and one with a salt per member costs
+  what it did. The password check runs for every header as before. See
+  `an_archive_derives_one_key_per_password` and
+  `a_parse_derives_each_salt_once_and_keeps_only_a_few`.
+- **Only ciphertext spooled.** An encrypted member's packed payload was
+  compressed into a plain member spool and encrypted only on its way into
+  the archive, or, for a volume set, into a second spool. A spool moves to a
+  `.rars-spool-*` file beside the output past 1 MiB or when the resident cap
+  is full, so compressed plaintext reached the disk, where a crash or a
+  synchronised folder could keep it. The writer now settles each encrypted
+  member's keys and IV before compressing it (`MemberSeal` in
+  `rar50/write/engine.rs`) and hands the compressor its source wrapped by
+  `EntrySource::sealed` (`streaming.rs`). Every packed spool made for such a
+  source (`Spool::for_member_of`, used by `compress.rs` for the streaming,
+  solid and whole-member paths) encrypts as it is written and holds back
+  only the plaintext of an incomplete block, in memory. The compressor calls
+  `Spool::seal` once a member is whole, which pads that block with zeros as
+  before and drops the cipher; the cipher is made on the first write, so the
+  spools kept until emission hold no key schedule. The packed spool is then
+  the payload as it is: nothing is encrypted at emission and a volume set
+  needs no second spool. Store decisions read `Spool::plain_len`, so they
+  and the archive are as before. A member that ends up stored is encrypted
+  from its source as before, under an IV of its own rather than the one its
+  discarded spool used. See
+  `a_sealed_spool_stores_only_ciphertext_in_memory_and_on_disk` and
+  `a_sealed_source_spools_only_the_ciphertext_of_its_packed_stream`.

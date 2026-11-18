@@ -5,7 +5,7 @@ mod corpus;
 use arca_core::Level;
 use arca_rar::{create_rar, CreateOptions, RarArchive, Source};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 const MIB: usize = 1024 * 1024;
 
@@ -187,16 +187,25 @@ fn winrar() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+/// Rar.exe must succeed and say nothing about damage: it reports some damage,
+/// such as a bad checksum on a volume's fragment, and still exits 0.
 fn rar(program: &Path, dir: &Path, args: &[&str]) {
-    let status = Command::new(program)
+    let output = Command::new(program)
         .current_dir(dir)
         .args(["-y", "-idq"])
         .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .output()
         .unwrap();
-    assert!(status.success(), "Rar.exe {args:?}");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .to_lowercase();
+    for complaint in ["checksum error", "corrupt", "crc failed", "warning"] {
+        assert!(!said.contains(complaint), "Rar.exe {args:?}: {said}");
+    }
+    assert!(output.status.success(), "Rar.exe {args:?}");
 }
 
 #[test]
