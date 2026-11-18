@@ -15,10 +15,12 @@ an empty `[workspace]` so its own tests run with
 a lockfile of its own and still builds the crates.io copy: the reader it
 exercises is unchanged here.
 
-Every change is in the writers and is marked `Arca:` in the source: the RAR 5
-writer, and four match arms of the RAR 1.5 to 4.0 writer that treat
-`FilterPolicy::Detect` as `None`. The reader, the format and the integrity
-checks are as published, and no RARLAB source was consulted for any of it.
+Every change is marked `Arca:` in the source. All but one are in the writers:
+the RAR 5 writer, and four match arms of the RAR 1.5 to 4.0 writer that treat
+`FilterPolicy::Detect` as `None`. The one in the reader only remembers the
+keys a parse derives (see "One key per password" below). The format and the
+integrity checks are as published, and no RARLAB source was consulted for any
+of it.
 
 - **Tree search for a whole member.** The optimal parse searched the first
   block of a member with the binary-tree finder and then switched to hash
@@ -162,3 +164,22 @@ Spool plumbing, which does not touch the encoder or the archive bytes:
   whole-member payload, which the automatic filter search produces, is
   charged to its worker's fixed reservation and so moves to disk whenever
   the estimate leaves no room.
+
+Encryption cost, which keeps the format and the password check as they are:
+
+- **One key per password.** Every encrypted member, service and comment got
+  a salt of its own and so a PBKDF2 derivation of its own, 2^15 rounds of
+  HMAC-SHA256, and reading it back derived again for each one. On 2,000
+  files of a few bytes, `arca create out.rar <dir> -p secret` took 22.7 s
+  against 0.8 s without the password, and `arca test out.rar -p secret`
+  11.1 s; now they take 0.8 to 0.9 s and 0.03 s (Windows 11, 16 threads,
+  release build). The RAR 5 writer now derives once per password for the
+  whole archive or volume set (`ArchiveKeys` in `rar50/write/engine.rs`), as
+  WinRAR does, and still gives every member, service and comment a random IV
+  of its own: CBC under one key needs only that. The header-encryption key
+  keeps its own salt. The reader keeps the keys a parse has derived by salt
+  and iteration count (`DerivedKeys` in `rar50.rs`, the last four), so an
+  archive written that way costs one derivation per parse, and one with a
+  salt per member costs what it did. The password check runs for every
+  header as before. See `an_archive_derives_one_key_per_password` and
+  `a_parse_derives_each_salt_once_and_keeps_only_a_few`.

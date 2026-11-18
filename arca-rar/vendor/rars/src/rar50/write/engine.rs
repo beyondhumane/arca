@@ -269,18 +269,32 @@ pub(super) fn write_archive(
         |total, entry| total + 1 + entry.services.len(),
     );
     let mut blocks = Records::<PreparedBlock>::new(block_count, resources)?;
+    let mut archive_keys = ArchiveKeys::default();
     if let Some(comment) = &plan.archive_comment {
-        blocks.push(prepare_comment(comment, header_keys.as_ref(), resources)?)?;
+        blocks.push(prepare_comment(
+            comment,
+            &mut archive_keys,
+            header_keys.as_ref(),
+            resources,
+        )?)?;
     }
     for (index, (entry, member)) in entries.iter().zip(compressed).enumerate() {
         check_cancelled(plan.progress)?;
-        let mut block = prepare_member(entry, member, &plan, header_keys.as_ref(), resources)
-            .map_err(|error| member_error(error, &entry.name, "preparing"))?;
+        let mut block = prepare_member(
+            entry,
+            member,
+            &plan,
+            &mut archive_keys,
+            header_keys.as_ref(),
+            resources,
+        )
+        .map_err(|error| member_error(error, &entry.name, "preparing"))?;
         block.entry_index = Some(index);
         blocks.push(block)?;
         for service in &entry.services {
-            let mut block = prepare_service(service, header_keys.as_ref(), resources)
-                .map_err(|error| member_error(error, &entry.name, "preparing service"))?;
+            let mut block =
+                prepare_service(service, &mut archive_keys, header_keys.as_ref(), resources)
+                    .map_err(|error| member_error(error, &entry.name, "preparing service"))?;
             block.entry_index = Some(index);
             blocks.push(block)?;
         }
@@ -582,6 +596,7 @@ fn stored_service_header(
 
 fn prepare_comment<'a>(
     comment: &ArchiveCommentPlan<'a>,
+    keys: &mut ArchiveKeys,
     header_keys: Option<&HeaderEncryptionKeys>,
     resources: &WriterResources,
 ) -> Result<PreparedBlock<'a>> {
@@ -593,13 +608,14 @@ fn prepare_comment<'a>(
             Ok(block)
         }
         ArchiveCommentPlan::Encrypted { data, password } => {
-            encrypted_service_block(b"CMT", data, &[], password, header_keys, resources)
+            encrypted_service_block(b"CMT", data, &[], password, keys, header_keys, resources)
         }
     }
 }
 
 fn prepare_service<'a>(
     service: &'a super::ServiceEntry,
+    keys: &mut ArchiveKeys,
     header_keys: Option<&HeaderEncryptionKeys>,
     resources: &WriterResources,
 ) -> Result<PreparedBlock<'a>> {
@@ -609,11 +625,44 @@ fn prepare_service<'a>(
             &service.data,
             &[],
             password,
+            keys,
             header_keys,
             resources,
         ),
         None => stored_service_block(&service.name, &service.data, &[], header_keys, resources),
     }
+}
+
+/// Arca: the salt and keys each password encrypts with, derived once for the
+/// whole archive as WinRAR does, rather than once per member and service.
+/// PBKDF2 runs 2^15 rounds, so a set of small encrypted members spent nearly
+/// all its time deriving. Every member and service still gets a random IV of
+/// its own, which is what CBC needs to share a key.
+#[derive(Default)]
+struct ArchiveKeys {
+    derived: Vec<(Vec<u8>, [u8; 16], Rar50Keys)>,
+}
+
+impl ArchiveKeys {
+    fn for_password(&mut self, password: &[u8]) -> Result<([u8; 16], Rar50Keys)> {
+        if let Some((_, salt, keys)) = self.derived.iter().find(|(known, ..)| known == password) {
+            return Ok((*salt, keys.clone()));
+        }
+        let mut salt = [0u8; 16];
+        crate::write_stream::fill_entropy(
+            &mut salt,
+            "RAR 5 writer could not generate encryption salt",
+        )?;
+        let keys = Rar50Keys::derive(password, salt, WRITE_KDF_COUNT_LOG).map_err(Error::from)?;
+        self.derived.push((password.to_vec(), salt, keys.clone()));
+        Ok((salt, keys))
+    }
+}
+
+fn fresh_iv() -> Result<[u8; 16]> {
+    let mut iv = [0u8; 16];
+    crate::write_stream::fill_entropy(&mut iv, "RAR 5 writer could not generate encryption IV")?;
+    Ok(iv)
 }
 
 /// A service block whose borrowed payload is encrypted during emission.
@@ -622,18 +671,13 @@ fn encrypted_service_block<'a>(
     data: &'a [u8],
     service_data: &[u8],
     password: &[u8],
+    archive_keys: &mut ArchiveKeys,
     header_keys: Option<&HeaderEncryptionKeys>,
     resources: &WriterResources,
 ) -> Result<PreparedBlock<'a>> {
     super::validate_nonempty_password(password)?;
-    let mut salt = [0u8; 16];
-    let mut iv = [0u8; 16];
-    crate::write_stream::fill_entropy(
-        &mut salt,
-        "RAR 5 writer could not generate encryption salt",
-    )?;
-    crate::write_stream::fill_entropy(&mut iv, "RAR 5 writer could not generate encryption IV")?;
-    let keys = Rar50Keys::derive(password, salt, WRITE_KDF_COUNT_LOG).map_err(Error::from)?;
+    let (salt, keys) = archive_keys.for_password(password)?;
+    let iv = fresh_iv()?;
 
     let mut extra = Bytes::new(resources);
     write_extra_record(&mut extra, FHEXTRA_SUBDATA, service_data)?;
@@ -700,6 +744,7 @@ fn prepare_member(
     entry: &ArchiveEntry,
     member: CompressedMember,
     plan: &EnginePlan<'_>,
+    archive_keys: &mut ArchiveKeys,
     header_keys: Option<&HeaderEncryptionKeys>,
     resources: &WriterResources,
 ) -> Result<PreparedBlock<'static>> {
@@ -718,18 +763,8 @@ fn prepare_member(
     let mut extra = Bytes::new(resources);
     let (payload, payload_len, data_crc32, hash) = match entry.password.as_deref() {
         Some(password) => {
-            let mut salt = [0u8; 16];
-            let mut iv = [0u8; 16];
-            crate::write_stream::fill_entropy(
-                &mut salt,
-                "RAR 5 writer could not generate encryption salt",
-            )?;
-            crate::write_stream::fill_entropy(
-                &mut iv,
-                "RAR 5 writer could not generate encryption IV",
-            )?;
-            let keys =
-                Rar50Keys::derive(password, salt, WRITE_KDF_COUNT_LOG).map_err(Error::from)?;
+            let (salt, keys) = archive_keys.for_password(password)?;
+            let iv = fresh_iv()?;
             write_file_encryption_record(&mut extra, salt, iv, keys.checked_password_record()?)?;
             let crc32 = keys.checked_crc_mac(member.crc32)?;
             let hash = keys.checked_hash_mac(member.hash)?;
@@ -1369,10 +1404,11 @@ pub(super) fn write_limited_volumes(
     )?;
 
     let mut members = Records::new(entries.len(), resources)?;
+    let mut archive_keys = ArchiveKeys::default();
     for (entry, member) in entries.iter().zip(compressed) {
         check_cancelled(plan.progress)?;
         members.push(
-            prepare_volume_member(entry, member, &plan, resources)
+            prepare_volume_member(entry, member, &plan, &mut archive_keys, resources)
                 .map_err(|error| member_error(error, &entry.name, "preparing volume payload"))?,
         )?;
     }
@@ -1420,6 +1456,7 @@ fn prepare_volume_member<'a>(
     entry: &'a ArchiveEntry,
     member: CompressedMember,
     plan: &EnginePlan<'_>,
+    archive_keys: &mut ArchiveKeys,
     resources: &WriterResources,
 ) -> Result<VolumeMember<'a>> {
     let progress = plan.progress;
@@ -1433,18 +1470,8 @@ fn prepare_volume_member<'a>(
 
     match entry.password.as_deref() {
         Some(password) => {
-            let mut salt = [0u8; 16];
-            let mut iv = [0u8; 16];
-            crate::write_stream::fill_entropy(
-                &mut salt,
-                "RAR 5 writer could not generate encryption salt",
-            )?;
-            crate::write_stream::fill_entropy(
-                &mut iv,
-                "RAR 5 writer could not generate encryption IV",
-            )?;
-            let keys =
-                Rar50Keys::derive(password, salt, WRITE_KDF_COUNT_LOG).map_err(Error::from)?;
+            let (salt, keys) = archive_keys.for_password(password)?;
+            let iv = fresh_iv()?;
 
             // A volume boundary can fall anywhere, and the cipher runs as one
             // chain over the member, so encrypt it up front into scratch
@@ -2158,6 +2185,7 @@ mod service_payload_tests {
                     &data,
                     &[],
                     b"secret",
+                    &mut ArchiveKeys::default(),
                     None,
                     &WriterResources::default(),
                 )
@@ -2910,6 +2938,85 @@ mod emission_ledger_tests {
         }
     }
 
+    /// Arca: one salt and key per password for the whole archive, a fresh IV
+    /// for every member and service, and the password check still refusing a
+    /// wrong password.
+    #[test]
+    #[cfg(feature = "encryption")]
+    fn an_archive_derives_one_key_per_password() {
+        let entries: Vec<_> = (0..4)
+            .map(|index| {
+                ArchiveEntry::new(
+                    format!("file{index}").into_bytes(),
+                    crate::EntrySource::from_bytes(vec![index as u8; 100 + index * 50]),
+                )
+                .with_password(b"secret")
+                .with_service(
+                    super::super::ServiceEntry::new(b"CMT", b"note").with_password(b"secret"),
+                )
+            })
+            .collect();
+        let mut settings = plan(false);
+        settings.archive_comment = Some(ArchiveCommentPlan::Encrypted {
+            data: b"comment",
+            password: b"secret",
+        });
+        settings.recovery_percent = None;
+        let mut bytes = Vec::new();
+        write_archive(&entries, settings, &WriterResources::default(), &mut bytes).unwrap();
+        let archive = crate::rar50::Archive::parse_with_password(&bytes, Some(b"secret")).unwrap();
+        let records: Vec<_> = archive
+            .files()
+            .chain(archive.services())
+            .map(|header| header.encryption.clone().unwrap())
+            .collect();
+        assert_eq!(records.len(), 9);
+        assert!(records.iter().all(|record| record.salt == records[0].salt));
+        let ivs: std::collections::HashSet<_> = records.iter().map(|record| record.iv).collect();
+        assert_eq!(ivs.len(), records.len());
+        for index in 0..4 {
+            assert_eq!(
+                crate::ArchiveReader::read(&bytes)
+                    .unwrap()
+                    .read_member(format!("file{index}").as_bytes(), Some(b"secret"))
+                    .unwrap()
+                    .unwrap(),
+                vec![index as u8; 100 + index * 50]
+            );
+        }
+        assert_eq!(
+            crate::rar50::Archive::parse_with_password(&bytes, Some(b"wrong"))
+                .err()
+                .unwrap()
+                .kind(),
+            crate::ErrorKind::BadPassword
+        );
+
+        let mut sink = super::super::CollectedVolumes::new();
+        let mut settings = plan(false);
+        settings.recovery_percent = None;
+        write_volumes(
+            &entries,
+            settings,
+            128,
+            &mut sink,
+            &WriterResources::default(),
+        )
+        .unwrap();
+        let salts: std::collections::HashSet<_> = sink
+            .take()
+            .iter()
+            .flat_map(|volume| {
+                crate::rar50::Archive::parse_with_password(volume, Some(b"secret"))
+                    .unwrap()
+                    .files()
+                    .map(|file| file.encryption.as_ref().unwrap().salt)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(salts.len(), 1);
+    }
+
     #[test]
     fn archive_and_volume_emission_keep_the_ledger_reusable() {
         let scratch = crate::scratch::case("archive-emission-ledger");
@@ -3180,9 +3287,17 @@ mod emission_ledger_tests {
     fn encrypted_service_rejects_oversized_name_after_extra_preparation() {
         let name = vec![b'n'; 4096];
         let resources = WriterResources::default().with_max_preparation_bytes(512);
-        let error = encrypted_service_block(&name, b"payload", &[], b"secret", None, &resources)
-            .err()
-            .expect("the service name exceeds the preparation quota");
+        let error = encrypted_service_block(
+            &name,
+            b"payload",
+            &[],
+            b"secret",
+            &mut ArchiveKeys::default(),
+            None,
+            &resources,
+        )
+        .err()
+        .expect("the service name exceeds the preparation quota");
         assert!(matches!(
             error,
             Error::WriterPreparationLimitExceeded { limit: 512, .. }
@@ -3486,9 +3601,15 @@ mod emission_ledger_tests {
         assert!(!member.store);
 
         let constrained = resources.clone().with_max_spool_bytes(0);
-        let error = prepare_volume_member(&entry, member, &settings, &constrained)
-            .err()
-            .expect("encrypted ciphertext must be charged to its spool");
+        let error = prepare_volume_member(
+            &entry,
+            member,
+            &settings,
+            &mut ArchiveKeys::default(),
+            &constrained,
+        )
+        .err()
+        .expect("encrypted ciphertext must be charged to its spool");
         assert_eq!(error.kind(), crate::ErrorKind::ResourceLimit);
         assert_eq!(std::fs::read_dir(&*scratch).unwrap().count(), 0);
     }
