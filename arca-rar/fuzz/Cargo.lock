@@ -39,6 +39,7 @@ dependencies = [
  "jiff",
  "sha1",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]
