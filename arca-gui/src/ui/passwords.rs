@@ -3,6 +3,7 @@
 use super::theme::{hex, palette_of};
 use super::widgets::*;
 use super::*;
+use crate::controller::VaultTask;
 use crate::vault::{Saved, LOCK_AFTER};
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
@@ -91,6 +92,13 @@ impl Shell {
     /// Lets go of whatever the page holds for the vault once it locks or
     /// unlocks, whether or not the page is on screen when it happens.
     pub(super) fn follow_vault(&mut self) {
+        if let Some((task, said)) = self.controller.take_vault_said() {
+            if task == (VaultTask::Unlock { from_box: true }) {
+                self.passwords.prompt_error = said.err();
+            } else {
+                self.passwords.said(said, None);
+            }
+        }
         let unlocked = self.controller.state.saved.keyring.unlocked();
         self.passwords.follow_lock(unlocked);
     }
@@ -99,6 +107,7 @@ impl Shell {
         self.follow_vault();
         let s = self.controller.s();
         let p = palette_of(ui.ctx());
+        let busy = self.controller.vault_busy();
         let keyring = &self.controller.state.saved.keyring;
         let (unlocked, has_file, can_keep) =
             (keyring.unlocked(), keyring.has_file(), keyring.can_keep());
@@ -112,15 +121,22 @@ impl Shell {
         };
         section_title(ui, s.vault_title);
         card(ui, s.vault_title, Some(s.vault_about), false, |ui| {
-            ui.label(RichText::new(&status).color(hex(p.muted)));
+            ui.horizontal(|ui| {
+                if busy {
+                    ui.spinner();
+                }
+                ui.label(RichText::new(&status).color(hex(p.muted)));
+            });
             ui.add_space(6.0);
-            if unlocked {
-                self.vault_open(ui);
-            } else if has_file {
-                self.vault_locked(ui);
-            } else if can_keep {
-                self.vault_new(ui);
-            }
+            ui.add_enabled_ui(!busy, |ui| {
+                if unlocked {
+                    self.vault_open(ui);
+                } else if has_file {
+                    self.vault_locked(ui);
+                } else if can_keep {
+                    self.vault_new(ui);
+                }
+            });
         });
         if let Some((text, error)) = &self.passwords.message {
             let color = if *error { p.danger } else { p.muted };
@@ -129,15 +145,17 @@ impl Shell {
         }
         ui.add_space(12.0);
         section_title(ui, s.saved_title);
-        self.saved_list(ui);
-        if self.passwords.draft.is_some() {
-            self.draft_card(ui);
-        } else if secondary_button(ui, s.saved_add, true).clicked() {
-            self.passwords.draft = Some(Draft {
-                session: !self.controller.state.saved.keyring.unlocked(),
-                ..Default::default()
-            });
-        }
+        ui.add_enabled_ui(!busy, |ui| {
+            self.saved_list(ui);
+            if self.passwords.draft.is_some() {
+                self.draft_card(ui);
+            } else if secondary_button(ui, s.saved_add, true).clicked() {
+                self.passwords.draft = Some(Draft {
+                    session: !self.controller.state.saved.keyring.unlocked(),
+                    ..Default::default()
+                });
+            }
+        });
     }
 
     fn vault_new(&mut self, ui: &mut egui::Ui) {
@@ -158,8 +176,8 @@ impl Shell {
             }
             let master = std::mem::take(&mut page.master);
             page.clear_master();
-            let result = self.controller.create_vault(&master);
-            self.passwords.said(result, None);
+            self.passwords.message = None;
+            self.controller.create_vault(master);
         }
     }
 
@@ -192,8 +210,8 @@ impl Shell {
         }
         if unlock && !page.master.is_empty() {
             let master = std::mem::take(&mut page.master);
-            let result = self.controller.unlock_vault(&master);
-            self.passwords.said(result, None);
+            self.passwords.message = None;
+            self.controller.unlock_vault(master, false);
         } else if aside {
             self.passwords.setting_aside = false;
             let result = self.controller.state.saved.keyring.set_aside();
@@ -254,10 +272,9 @@ impl Shell {
             let master = std::mem::take(&mut page.master);
             page.clear_master();
             page.changing = false;
-            let result = self
-                .controller
-                .vault_do(|keyring| keyring.change_master(&master));
-            self.passwords.said(result, None);
+            self.passwords.message = None;
+            self.controller
+                .vault_do(move |keyring| keyring.change_master(&master));
         }
     }
 
@@ -332,8 +349,8 @@ impl Shell {
         if let Some(i) = remove {
             self.passwords.shown = None;
             self.passwords.draft = None;
-            let result = self.controller.vault_do(|keyring| keyring.remove(i));
-            self.passwords.said(result, None);
+            self.passwords.message = None;
+            self.controller.vault_do(move |keyring| keyring.remove(i));
         }
     }
 
@@ -434,12 +451,13 @@ impl Shell {
             auto: draft.auto,
             session: draft.session,
         };
-        let result = self.controller.vault_do(|keyring| match draft.editing {
+        let editing = draft.editing;
+        self.passwords.message = None;
+        self.controller.vault_do(move |keyring| match editing {
             Some(i) => keyring.replace(i, entry),
             None => keyring.add(entry),
         });
         self.passwords.shown = None;
-        self.passwords.said(result, None);
     }
 
     /// What the password box shows beyond its own field when it asks for
@@ -463,13 +481,18 @@ impl Shell {
             });
         }
         let keyring = &self.controller.state.saved.keyring;
+        let busy = self.controller.vault_busy();
         if keyring.has_file() && !keyring.unlocked() {
             ui.add_space(8.0);
             let mut unlock = false;
             ui.horizontal(|ui| {
                 let page = &mut self.passwords;
+                if busy {
+                    ui.spinner();
+                }
                 unlock =
-                    secondary_button(ui, s.unlock_word, !page.prompt_master.is_empty()).clicked();
+                    secondary_button(ui, s.unlock_word, !busy && !page.prompt_master.is_empty())
+                        .clicked();
                 let edit = secret_field(
                     ui,
                     &mut page.prompt_master,
@@ -485,9 +508,10 @@ impl Shell {
             if let Some(error) = &self.passwords.prompt_error {
                 ui.label(RichText::new(error).color(hex(p.danger)));
             }
-            if unlock {
+            if unlock && !busy {
                 let master = std::mem::take(&mut self.passwords.prompt_master);
-                self.passwords.prompt_error = self.controller.unlock_vault(&master).err();
+                self.passwords.prompt_error = None;
+                self.controller.unlock_vault(master, true);
             }
         }
         ui.add_space(8.0);
@@ -534,7 +558,10 @@ mod tests {
         shell.passwords.shown = Some(0);
         shell.passwords.draft = Some(Draft::default());
         draw(&mut shell, &ctx);
-        shell.controller.create_vault("master").unwrap();
+        shell
+            .controller
+            .create_vault(Zeroizing::new("master".into()));
+        assert!(matches!(shell.controller.vault_settle(), Some((_, Ok(())))));
         shell.passwords.changing = true;
         draw(&mut shell, &ctx);
         shell.controller.state.saved.keyring.lock();
@@ -567,10 +594,10 @@ mod tests {
         shell.edit_saved(1);
         shell.passwords.draft.as_mut().unwrap().label = "renamed".into();
         shell.save_draft();
+        assert!(matches!(shell.controller.vault_settle(), Some((_, Ok(())))));
         let entries = &shell.controller.state.saved.keyring.entries;
         let labels: Vec<&str> = entries.iter().map(|e| e.label.as_str()).collect();
         assert_eq!(labels, ["first", "renamed"]);
-        assert!(shell.passwords.message.is_none());
     }
 
     struct Frames {
@@ -640,7 +667,10 @@ mod tests {
         shell.controller =
             crate::controller::AppController::new(crate::settings::Settings::default());
         shell.controller.state.saved.keyring = Keyring::cheap(room.path("passwords.vault"));
-        shell.controller.create_vault("hunter2-master").unwrap();
+        shell
+            .controller
+            .create_vault(Zeroizing::new("hunter2-master".into()));
+        assert!(matches!(shell.controller.vault_settle(), Some((_, Ok(())))));
         shell.controller.lock_vault();
         shell
     }
@@ -677,6 +707,7 @@ mod tests {
         });
         frames.idle(30, |ui| shell.settings_passwords(ui));
         frames.run(vec![enter()], |ui| shell.settings_passwords(ui));
+        assert!(matches!(shell.controller.vault_settle(), Some((_, Ok(())))));
         assert!(shell.controller.state.saved.keyring.unlocked());
         assert!(shell.passwords.master.is_empty());
         frames.idle(30, |ui| shell.settings_passwords(ui));
@@ -708,6 +739,7 @@ mod tests {
         frames.run(vec![enter()], |ui| {
             shell.saved_password_rows(ui);
         });
+        assert!(matches!(shell.controller.vault_settle(), Some((_, Ok(())))));
         assert!(shell.controller.state.saved.keyring.unlocked());
         shell.controller.lock_vault();
         frames.idle(3, |ui| {

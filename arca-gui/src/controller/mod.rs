@@ -34,7 +34,7 @@ mod panes;
 mod passwords;
 #[cfg(test)]
 mod passwords_tests;
-pub(crate) use passwords::{vault_error, PasswordState};
+pub(crate) use passwords::{vault_error, PasswordState, VaultTask};
 mod preview;
 mod repair;
 #[cfg(test)]

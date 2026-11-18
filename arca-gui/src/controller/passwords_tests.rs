@@ -7,6 +7,7 @@ fn settle(controller: &mut AppController) {
     let end = Instant::now() + std::time::Duration::from_secs(60);
     while controller.state.busy
         || controller.working()
+        || controller.vault_busy()
         || controller.state.preview.status == PreviewStatus::Loading
     {
         assert!(!controller.receive());
@@ -208,9 +209,12 @@ fn unlocking_from_the_box_tries_the_vault_and_secrets_stay_out_of_the_settings()
     app.open(archive);
     settle(&mut app);
     assert!(app.state.waiting_on_password.is_some());
-    assert!(app.unlock_vault("wrong").is_err());
+    app.unlock_vault(Zeroizing::new("wrong".into()), true);
+    assert!(matches!(app.vault_settle(), Some((_, Err(_)))));
     assert!(app.state.waiting_on_password.is_some());
-    app.unlock_vault("master-of-all").unwrap();
+    app.unlock_vault(Zeroizing::new("master-of-all".into()), true);
+    assert!(app.vault_busy());
+    assert!(!app.state.saved.keyring.unlocked());
     settle(&mut app);
     assert!(app.state.waiting_on_password.is_none());
     assert_eq!(app.state.archive_password.as_deref(), Some("secret"));
@@ -268,7 +272,8 @@ fn locking_forgets_the_passwords_waiting_to_be_tried() {
     let file = room.path("passwords.vault");
     let mut app = AppController::new(Settings::default());
     app.state.saved.keyring = Keyring::cheap(file);
-    app.create_vault("master").unwrap();
+    app.create_vault(Zeroizing::new("master".into()));
+    assert!(matches!(app.vault_settle(), Some((_, Ok(())))));
     let mut kept = saved("*.zip", "wrong", true);
     kept.session = false;
     app.state.saved.keyring.add(kept).unwrap();
@@ -495,4 +500,53 @@ fn proving_a_password_on_a_broken_zipcrypto_archive_fails_without_panicking() {
         Err(arca_core::Error::PasswordOrCorrupt)
     ));
     assert!(!weak_password_check(&zip(&room, "secret")));
+}
+
+#[test]
+fn vault_changes_run_off_the_window_thread_one_after_another() {
+    let room = Room::new();
+    let mut app = AppController::new(Settings::default());
+    app.state.saved.keyring = Keyring::cheap(room.path("passwords.vault"));
+    app.create_vault(Zeroizing::new("master".into()));
+    assert!(app.vault_busy());
+    assert!(!app.state.saved.keyring.unlocked());
+    for mask in ["*.zip", "*.7z"] {
+        let mut kept = saved(mask, "secret", true);
+        kept.session = false;
+        app.vault_do(move |keyring| keyring.add(kept));
+    }
+    settle(&mut app);
+    assert!(app.state.saved.keyring.unlocked());
+    let masks: Vec<&str> = app
+        .state
+        .saved
+        .keyring
+        .entries
+        .iter()
+        .map(|e| e.mask.as_str())
+        .collect();
+    assert_eq!(masks, ["*.zip", "*.7z"]);
+    app.lock_vault();
+    app.unlock_vault(Zeroizing::new("master".into()), false);
+    assert!(matches!(app.vault_settle(), Some((_, Ok(())))));
+    assert_eq!(app.state.saved.keyring.entries.len(), 2);
+}
+
+#[test]
+fn changes_still_on_their_way_reach_the_file_before_the_window_closes() {
+    let room = Room::new();
+    let file = room.path("passwords.vault");
+    let mut app = AppController::new(Settings::default());
+    app.state.saved.keyring = Keyring::cheap(file.clone());
+    app.create_vault(Zeroizing::new("master".into()));
+    for mask in ["*.zip", "*.7z"] {
+        let mut kept = saved(mask, "secret", true);
+        kept.session = false;
+        app.vault_do(move |keyring| keyring.add(kept));
+    }
+    app.finish_vault();
+    assert!(!app.vault_busy());
+    let mut again = Keyring::cheap(file);
+    again.unlock("master").unwrap();
+    assert_eq!(again.entries.len(), 2);
 }

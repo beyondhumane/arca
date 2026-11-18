@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 pub(crate) const LOCK_AFTER: Duration = Duration::from_secs(10 * 60);
+const LOOK_AGAIN: Duration = Duration::from_secs(2);
 
 const MAGIC: &[u8; 8] = b"ARCAVLT\0";
 const VERSION: u8 = 1;
@@ -67,6 +68,7 @@ impl Cost {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Saved {
     pub(crate) label: String,
     pub(crate) mask: String,
@@ -94,6 +96,7 @@ impl From<std::io::Error> for VaultError {
     }
 }
 
+#[derive(Clone)]
 struct Sealing {
     key: Zeroizing<[u8; 32]>,
     salt: [u8; SALT],
@@ -345,7 +348,7 @@ pub(crate) fn rank(mask: &str, archive: &Path) -> Option<(u8, usize)> {
         .max()
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Keyring {
     file: Option<PathBuf>,
     cost: Option<Cost>,
@@ -353,6 +356,7 @@ pub(crate) struct Keyring {
     seen: Option<[u8; 32]>,
     pub(crate) entries: Vec<Saved>,
     used: Option<Instant>,
+    present: std::cell::Cell<Option<(Instant, bool)>>,
 }
 
 impl Keyring {
@@ -376,8 +380,26 @@ impl Keyring {
         self.file.is_some()
     }
 
+    /// Whether the file is there. The settings page asks on every frame, so
+    /// the disk is looked at again only now and then, or after this vault
+    /// wrote or moved the file itself.
     pub(crate) fn has_file(&self) -> bool {
-        self.file.as_deref().is_some_and(Path::exists)
+        let Some(file) = self.file.as_deref() else {
+            return false;
+        };
+        let now = Instant::now();
+        if let Some((at, present)) = self.present.get() {
+            if now.saturating_duration_since(at) < LOOK_AGAIN {
+                return present;
+            }
+        }
+        let present = file.exists();
+        self.present.set(Some((now, present)));
+        present
+    }
+
+    fn look_again(&self) {
+        self.present.set(None);
     }
 
     pub(crate) fn unlocked(&self) -> bool {
@@ -420,6 +442,7 @@ impl Keyring {
 
     pub(crate) fn create(&mut self, master: &str) -> Result<(), VaultError> {
         let file = self.file()?.to_path_buf();
+        self.look_again();
         if file.exists() {
             return Err(VaultError::Exists);
         }
@@ -451,6 +474,7 @@ impl Keyring {
     }
 
     pub(crate) fn unlock(&mut self, master: &str) -> Result<(), VaultError> {
+        self.look_again();
         let bytes = read_bounded(self.file()?)?;
         let (sealing, kept) = open(&bytes, master)?;
         self.seen = Some(fingerprint(&bytes));
@@ -486,6 +510,7 @@ impl Keyring {
             return Err(VaultError::Locked);
         };
         let file = self.file()?.to_path_buf();
+        self.look_again();
         match (read_bounded(&file), self.seen) {
             (Ok(bytes), Some(seen)) if fingerprint(&bytes) == seen => {}
             (Err(VaultError::Io(error)), None) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -506,6 +531,7 @@ impl Keyring {
     /// Nothing is deleted: with the old master password it still opens.
     pub(crate) fn set_aside(&mut self) -> Result<PathBuf, VaultError> {
         let file = self.file()?.to_path_buf();
+        self.look_again();
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -648,6 +674,18 @@ mod tests {
     }
 
     #[test]
+    fn whether_the_file_is_there_is_not_asked_of_the_disk_every_time() {
+        let room = room();
+        let file = room.path("passwords.vault");
+        let mut keyring = Keyring::cheap(file.clone());
+        assert!(!keyring.has_file());
+        std::fs::write(&file, b"not a vault").unwrap();
+        assert!(!keyring.has_file());
+        assert!(keyring.unlock("master").is_err());
+        assert!(keyring.has_file());
+    }
+
+    #[test]
     fn replacing_an_entry_that_is_not_there_says_so() {
         let mut keyring = Keyring::default();
         let mut kept = entry("a", "*.zip", "pw", false);
@@ -659,6 +697,7 @@ mod tests {
         assert_eq!(keyring.entries.len(), 1);
         assert_eq!(keyring.entries[0].label, "a");
     }
+
     #[test]
     fn a_vault_reads_back_what_was_sealed() {
         let entries = [
