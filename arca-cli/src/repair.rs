@@ -1,4 +1,5 @@
-use super::{detect, detect_archive, printable, staged_path, tar_source, BUF};
+use super::{detect, detect_archive, printable, tar_source, BUF};
+use arca_core::volumes::{refuse_existing, staged_new};
 use arca_core::{Container, Error, Format, Level, Result};
 use arca_tar::TarWriter;
 use arca_zip::ZipArchive;
@@ -8,9 +9,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 // The repaired archive is written beside --out and only takes that name once
-// it reads back, and never the damaged archive's: that file may be the only
-// copy of whatever could not be recovered.
+// it reads back, and only if nothing has it, least of all the damaged
+// archive: that file may be the only copy of whatever could not be recovered.
 pub(crate) fn run(archive: &Path, out: &Path, password: Option<&str>) -> Result<()> {
+    refuse_existing(archive, out)?;
     // Looking inside a .tar.xz decodes its first header, which is what may be
     // damaged, so a name that says what the archive is wins.
     let format = match Format::detect(archive) {
@@ -27,11 +29,6 @@ pub(crate) fn run(archive: &Path, out: &Path, password: Option<&str>) -> Result<
             "a repair writes the format it reads, so --out needs a .{} name",
             writes.extension()
         )));
-    }
-    if out.exists() && fs::canonicalize(archive)? == fs::canonicalize(out)? {
-        return Err(Error::Format(
-            "--out names the damaged archive; write the repaired one somewhere else".into(),
-        ));
     }
     match format.container() {
         Container::Zip => repair_zip(archive, out),
@@ -65,53 +62,42 @@ fn repairable(format: Format) -> bool {
 
 fn repair_zip(archive: &Path, out: &Path) -> Result<()> {
     let t0 = Instant::now();
-    let temp = staged_path(out);
-    let result = (|| {
+    let report = staged_new(archive, out, |temp| {
         let source = BufReader::with_capacity(BUF, arca_core::volumes::open(archive)?);
-        let sink = BufWriter::with_capacity(BUF, File::create(&temp)?);
+        let sink = BufWriter::with_capacity(BUF, File::create(temp)?);
         let (mut sink, report) = arca_zip::repair(source, sink)?;
         sink.flush()?;
         drop(sink);
-        if ZipArchive::open(File::open(&temp)?)?.len() != report.recovered.len() {
+        if ZipArchive::open(File::open(temp)?)?.len() != report.recovered.len() {
             return Err(Error::Format(
                 "the rebuilt archive does not read back as written".into(),
             ));
         }
-        Ok(report)
-    })();
-    let report = match result {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = fs::remove_file(&temp);
-            return Err(e);
+        for s in &report.skipped {
+            eprintln!(
+                "  skipped at offset {}: {}: {}",
+                s.offset,
+                printable(s.name.as_deref().unwrap_or("?")),
+                printable(&s.reason)
+            );
         }
-    };
-
-    for s in &report.skipped {
-        eprintln!(
-            "  skipped at offset {}: {}: {}",
-            s.offset,
-            printable(s.name.as_deref().unwrap_or("?")),
-            printable(&s.reason)
-        );
-    }
-    if report.unreported > 0 {
-        eprintln!("  and {} more skipped", report.unreported);
-    }
-    for r in report.recovered.iter().filter(|r| !r.verified) {
-        eprintln!(
-            "  encrypted, copied without checking its contents: {}",
-            printable(&r.name)
-        );
-    }
-    if report.recovered.is_empty() {
-        let _ = fs::remove_file(&temp);
-        return Err(Error::Format(format!(
-            "no entry of '{}' could be recovered",
-            archive.display()
-        )));
-    }
-    fs::rename(&temp, out)?;
+        if report.unreported > 0 {
+            eprintln!("  and {} more skipped", report.unreported);
+        }
+        for r in report.recovered.iter().filter(|r| !r.verified) {
+            eprintln!(
+                "  encrypted, copied without checking its contents: {}",
+                printable(&r.name)
+            );
+        }
+        if report.recovered.is_empty() {
+            return Err(Error::Format(format!(
+                "no entry of '{}' could be recovered",
+                archive.display()
+            )));
+        }
+        Ok(report)
+    })?;
     println!(
         "{}: {} entries recovered, {} skipped in {:.3} s",
         out.display(),
@@ -207,72 +193,65 @@ fn read_back(temp: &Path, format: Format, kept: &[String]) -> Result<()> {
 
 fn repair_tar(archive: &Path, out: &Path, format: Format) -> Result<()> {
     let t0 = Instant::now();
-    let temp = staged_path(out);
-    let spool = spool_path(out);
-    let result = (|| {
-        let source = salvage_source(archive, format)?;
-        let mut held = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&spool)?;
-        let file = BufWriter::with_capacity(BUF, File::create(&temp)?);
-        let mut w = TarWriter::new(Packed::new(file, format)?);
-        let report = arca_tar::salvage(source, &mut w, &mut held, &mut |_, _| true)?;
-        drop(held);
-        let file = w.finish()?.finish()?;
-        file.into_inner()
-            .map_err(|e| Error::Io(e.into_error()))?
-            .sync_all()?;
-        if !report.kept.is_empty() {
-            read_back(&temp, format, &report.kept)?;
+    let report = staged_new(archive, out, |temp| {
+        let spool = spool_path(temp);
+        let result = (|| -> Result<arca_tar::Salvaged> {
+            let source = salvage_source(archive, format)?;
+            let mut held = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&spool)?;
+            let file = BufWriter::with_capacity(BUF, File::create(temp)?);
+            let mut w = TarWriter::new(Packed::new(file, format)?);
+            let report = arca_tar::salvage(source, &mut w, &mut held, &mut |_, _| true)?;
+            drop(held);
+            let file = w.finish()?.finish()?;
+            file.into_inner()
+                .map_err(|e| Error::Io(e.into_error()))?
+                .sync_all()?;
+            if !report.kept.is_empty() {
+                read_back(temp, format, &report.kept)?;
+            }
+            Ok(report)
+        })();
+        let _ = fs::remove_file(&spool);
+        let report = result?;
+        for l in &report.lost {
+            eprintln!(
+                "  lost at offset {}: {}: {}",
+                l.offset,
+                printable(l.name.as_deref().unwrap_or("?")),
+                printable(&l.reason)
+            );
+        }
+        if report.unreported > 0 {
+            eprintln!("  and {} more lost", report.unreported);
+        }
+        if let Some(why) = &report.stream {
+            if format == Format::Tar {
+                eprintln!(
+                    "  the archive could not be read past here: {}",
+                    printable(why)
+                );
+            } else {
+                eprintln!(
+                    "  the {} stream is damaged ({}): nothing after the damage decodes, and since \
+                     its checks come after the data they cover, the last entries kept before it \
+                     are unchecked",
+                    format.label(),
+                    printable(why)
+                );
+            }
+        }
+        if report.kept.is_empty() {
+            return Err(Error::Format(format!(
+                "no entry of '{}' could be recovered",
+                archive.display()
+            )));
         }
         Ok(report)
-    })();
-    let _ = fs::remove_file(&spool);
-    let report = match result {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = fs::remove_file(&temp);
-            return Err(e);
-        }
-    };
-    for l in &report.lost {
-        eprintln!(
-            "  lost at offset {}: {}: {}",
-            l.offset,
-            printable(l.name.as_deref().unwrap_or("?")),
-            printable(&l.reason)
-        );
-    }
-    if report.unreported > 0 {
-        eprintln!("  and {} more lost", report.unreported);
-    }
-    if let Some(why) = &report.stream {
-        if format == Format::Tar {
-            eprintln!(
-                "  the archive could not be read past here: {}",
-                printable(why)
-            );
-        } else {
-            eprintln!(
-                "  the {} stream is damaged ({}): nothing after the damage decodes, and since its \
-                 checks come after the data they cover, the last entries kept before it are \
-                 unchecked",
-                format.label(),
-                printable(why)
-            );
-        }
-    }
-    if report.kept.is_empty() {
-        let _ = fs::remove_file(&temp);
-        return Err(Error::Format(format!(
-            "no entry of '{}' could be recovered",
-            archive.display()
-        )));
-    }
-    fs::rename(&temp, out)?;
+    })?;
     println!(
         "{}: {} entries recovered, {} lost in {:.3} s",
         out.display(),
@@ -308,32 +287,22 @@ fn repair_rar(archive: &Path, out: &Path, password: Option<&str>) -> Result<()> 
 
 fn repair_7z(archive: &Path, out: &Path, password: Option<&str>) -> Result<()> {
     let t0 = Instant::now();
-    let temp = staged_path(out);
-    let result = arca_7z::salvage_7z(archive, &temp, password, Level::NORMAL, &mut |_| true)
-        .and_then(|report| {
-            let rebuilt =
-                arca_7z::SevenZArchive::open(BufReader::new(File::open(&temp)?), password)?;
-            let any_file = rebuilt.entries().iter().any(|e| !e.is_dir);
-            Ok((report, any_file))
-        });
-    let (report, any_file) = match result {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = fs::remove_file(&temp);
-            return Err(e);
+    let report = staged_new(archive, out, |temp| {
+        let report = arca_7z::salvage_7z(archive, temp, password, Level::NORMAL, &mut |_| true)?;
+        let rebuilt = arca_7z::SevenZArchive::open(BufReader::new(File::open(temp)?), password)?;
+        let any_file = rebuilt.entries().iter().any(|e| !e.is_dir);
+        drop(rebuilt);
+        for (name, why) in &report.lost {
+            eprintln!("  lost: {}: {}", printable(name), printable(why));
         }
-    };
-    for (name, why) in &report.lost {
-        eprintln!("  lost: {}: {}", printable(name), printable(why));
-    }
-    if !any_file {
-        let _ = fs::remove_file(&temp);
-        return Err(Error::Format(format!(
-            "no file of '{}' could be recovered",
-            archive.display()
-        )));
-    }
-    fs::rename(&temp, out)?;
+        if !any_file {
+            return Err(Error::Format(format!(
+                "no file of '{}' could be recovered",
+                archive.display()
+            )));
+        }
+        Ok(report)
+    })?;
     println!(
         "{}: {} entries recovered, {} lost in {:.3} s",
         out.display(),

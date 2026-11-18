@@ -189,10 +189,10 @@ arca repair copia.tar.gz -o rescatado.tar.gz
 | Argumento / opción | Por defecto | Descripción |
 | --- | --- | --- |
 | `<ARCHIVE>` | obligatorio | Archivo dañado: ZIP, TAR (sin comprimir, gzip, XZ, bzip2 o Zstandard), 7z o RAR. Solo se lee; nunca se modifica. |
-| `-o, --out <PATH>` | obligatorio | Dónde escribir el archivo reconstruido, con la extensión del mismo formato. No puede ser el propio archivo dañado. |
+| `-o, --out <PATH>` | obligatorio | Dónde escribir el archivo reconstruido, con la extensión del mismo formato. No debe existir todavía: una reparación nunca sustituye un fichero, y menos aún el propio archivo dañado. |
 | `-p, --password <PASSWORD>` | ninguna | Contraseña de un 7z o un RAR cifrado. |
 
-El archivo reconstruido se escribe con un nombre temporal, se vuelve a leer y solo entonces se renombra. Si no se puede recuperar nada, no se escribe nada y la orden falla. Las entradas perdidas se listan por la salida de error estándar con el motivo.
+El archivo reconstruido se escribe con un nombre temporal, se vuelve a leer y solo entonces se renombra. Una reparación nunca sobrescribe nada: si la ruta de `--out` ya existe, aunque sea un enlace que no lleva a ninguna parte, no se lee ni se escribe nada y la orden falla; y si aparece un fichero con ese nombre mientras la reparación está en marcha, se conserva y la reparación también falla. Si no se puede recuperar nada, no se escribe nada y la orden falla. Las entradas perdidas se listan por la salida de error estándar con el motivo.
 
 **ZIP.** Arca recorre el archivo en busca de cabeceras locales, toma los tamaños de cada entrada de su cabecera o, en las entradas escritas a chorro, del descriptor de datos que sigue a los datos, la descomprime y compara su CRC, y copia byte a byte las entradas que pasan la comprobación a un archivo nuevo.
 

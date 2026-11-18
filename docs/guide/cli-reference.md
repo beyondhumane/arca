@@ -189,10 +189,10 @@ arca repair backup.tar.gz -o rescued.tar.gz
 | Argument / option | Default | Description |
 | --- | --- | --- |
 | `<ARCHIVE>` | required | Damaged archive: ZIP, TAR (plain, gzip, XZ, bzip2 or Zstandard), 7z or RAR. It is only read, never modified. |
-| `-o, --out <PATH>` | required | Where to write the rebuilt archive, with the extension of the same format. It can’t be the damaged archive itself. |
+| `-o, --out <PATH>` | required | Where to write the rebuilt archive, with the extension of the same format. It must not exist yet: a repair never replaces a file, least of all the damaged archive itself. |
 | `-p, --password <PASSWORD>` | none | Password of an encrypted 7z or RAR. |
 
-The rebuilt archive is written under a temporary name, read back, and only then renamed. If nothing can be recovered, nothing is written and the command fails. Lost entries are listed on standard error with the reason.
+The rebuilt archive is written under a temporary name, read back, and only then renamed. A repair never overwrites anything: if the `--out` path already exists, even as a link that leads nowhere, nothing is read or written and the command fails, and a file that appears under that name while the repair runs is kept and the repair fails too. If nothing can be recovered, nothing is written and the command fails. Lost entries are listed on standard error with the reason.
 
 **ZIP.** Arca scans the file for local headers, takes each entry’s sizes from its header or, for streamed entries, from the data descriptor that follows the data, decompresses it and compares its CRC, and copies the entries that pass byte for byte into a new archive.
 

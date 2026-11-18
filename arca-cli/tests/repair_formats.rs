@@ -189,3 +189,71 @@ fn a_tar_xz_whose_first_header_is_damaged_is_still_taken_for_a_tar() {
     assert!(stdout.contains("entries recovered, 1 lost"), "{stdout}");
     assert!(run(&["test".as_ref(), fixed.as_os_str()]).status.success());
 }
+
+fn names(dir: &Path) -> Vec<std::ffi::OsString> {
+    let mut names: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    names.sort();
+    names
+}
+
+fn never_replaces_a_file(made_as: &str, fresh_as: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = made(dir.path(), made_as);
+    let original = std::fs::read(&archive).unwrap();
+    let taken = dir.path().join(format!("taken{}", &fresh_as[5..]));
+    std::fs::write(&taken, b"somebody else's file").unwrap();
+    let before = names(dir.path());
+
+    let out = repair(&archive, &taken);
+    let (stdout, stderr) = text(&out);
+    assert!(!out.status.success(), "{stdout}");
+    assert!(stderr.contains("already exists"), "{stderr}");
+    assert!(stderr.contains("never replaces"), "{stderr}");
+    assert!(
+        stderr.contains(taken.file_name().unwrap().to_str().unwrap()),
+        "{stderr}"
+    );
+    assert_eq!(std::fs::read(&taken).unwrap(), b"somebody else's file");
+    assert_eq!(names(dir.path()), before);
+
+    let mut itself = vec![archive.clone()];
+    if cfg!(windows) {
+        itself.push(dir.path().join(made_as.to_uppercase()));
+    }
+    for same in itself {
+        let out = repair(&archive, &same);
+        let (_, stderr) = text(&out);
+        assert!(!out.status.success());
+        assert!(stderr.contains("is the damaged archive"), "{stderr}");
+        assert!(stderr.contains("never replaces"), "{stderr}");
+        assert_eq!(std::fs::read(&archive).unwrap(), original);
+        assert_eq!(names(dir.path()), before);
+    }
+
+    let fresh = dir.path().join(fresh_as);
+    let out = repair(&archive, &fresh);
+    assert!(out.status.success(), "{}", text(&out).1);
+    assert!(run(&["test".as_ref(), fresh.as_os_str()]).status.success());
+    let mut after = before.clone();
+    after.push(fresh_as.into());
+    after.sort();
+    assert_eq!(names(dir.path()), after);
+}
+
+#[test]
+fn a_tar_repair_never_replaces_a_file() {
+    never_replaces_a_file("good.tar", "fresh.tar");
+}
+
+#[test]
+fn a_tar_gz_repair_never_replaces_a_file() {
+    never_replaces_a_file("good.tar.gz", "fresh.tar.gz");
+}
+
+#[test]
+fn a_7z_repair_never_replaces_a_file() {
+    never_replaces_a_file("good.7z", "fresh.7z");
+}

@@ -1,6 +1,6 @@
 use super::{Progress, RarArchive, Repaired};
 use crate::reader::{self, controlled};
-use arca_core::{Error, Result};
+use arca_core::{volumes, Error, Result};
 use rars::{Archive, ArchiveReader};
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
@@ -14,17 +14,7 @@ pub(super) fn repair(
     password: Option<&str>,
     progress: &Progress<'_>,
 ) -> Result<Repaired> {
-    if output.symlink_metadata().is_ok() {
-        let same = fs::canonicalize(input)
-            .ok()
-            .zip(fs::canonicalize(output).ok())
-            .is_some_and(|(input, output)| input == output);
-        return Err(if same {
-            Error::Format("the repaired archive cannot replace the damaged one".into())
-        } else {
-            exists(output)
-        });
-    }
+    volumes::refuse_existing(input, output)?;
     let size = fs::metadata(input)?.len();
     let parent = match output.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
@@ -94,22 +84,12 @@ pub(super) fn repair(
     drop(check);
     staged.persist_noclobber(output).map_err(|failure| {
         if failure.error.kind() == io::ErrorKind::AlreadyExists {
-            exists(output)
+            volumes::already_exists(output)
         } else {
             Error::Io(failure.error)
         }
     })?;
     Ok(done)
-}
-
-fn exists(output: &Path) -> Error {
-    Error::Io(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        format!(
-            "'{}' already exists; a RAR repair writes a new file and never replaces one",
-            output.display()
-        ),
-    ))
 }
 
 fn is_volume(archive: &Archive) -> bool {

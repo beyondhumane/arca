@@ -19,8 +19,11 @@ cap-fs-ext = "4.0.3"
 # its times as wall-clock time and nothing else, so turning them into instants
 # and back needs the zone's history, which no format here carries.
 jiff = "0.2"
-
-[dev-dependencies]
+# A repaired archive is moved into place with a rename that refuses to replace
+# a file: MoveFileExW without MOVEFILE_REPLACE_EXISTING on Windows, and
+# renameat2(RENAME_NOREPLACE), renamex_np(RENAME_EXCL) or link and unlink on
+# Unix. std's rename always replaces, and a hard link alone fails on FAT and
+# exFAT.
 tempfile = "3"
 
 [lints.rust]

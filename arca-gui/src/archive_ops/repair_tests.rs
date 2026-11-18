@@ -67,7 +67,12 @@ fn a_zip_without_its_directory_is_repaired_into_a_new_file() {
     assert!(!room.path("fixed.zip.arca-new").exists());
 
     let error = run(repair_job(&broken, &broken)).unwrap_err();
-    assert!(error.contains("cannot replace"), "{error}");
+    assert!(error.contains("is the damaged archive"), "{error}");
+    let taken = room.path("taken.zip");
+    fs::write(&taken, b"somebody else's file").unwrap();
+    let error = run(repair_job(&broken, &taken)).unwrap_err();
+    assert!(error.contains("already exists"), "{error}");
+    assert_eq!(fs::read(&taken).unwrap(), b"somebody else's file");
     let nothing = room.path("nothing.zip");
     fs::write(&nothing, b"PK\x03\x04 hardly an archive").unwrap();
     assert!(run(repair_job(&nothing, &room.path("none.zip"))).is_err());
