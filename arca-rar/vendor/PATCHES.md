@@ -170,18 +170,20 @@ Encryption, which keeps the format and the password check as they are:
 - **One key per password.** Every encrypted member, service and comment got
   a salt of its own and so a PBKDF2 derivation of its own, 2^15 rounds of
   HMAC-SHA256, and reading it back derived again for each one. On 2,000
-  files of a few bytes, `arca create out.rar <dir> -p secret` took 22.7 s
-  against 0.8 s without the password, and `arca test out.rar -p secret`
-  11.1 s; now they take 0.8 to 0.9 s and 0.03 s (Windows 11, 16 threads,
-  release build). The RAR 5 writer now derives once per password for the
-  whole archive or volume set (`ArchiveKeys` in `rar50/write/engine.rs`), as
-  WinRAR does, and still gives every member, service and comment a random IV
-  of its own: CBC under one key needs only that. The header-encryption key
-  keeps its own salt. The reader keeps the keys a parse has derived by salt
-  and iteration count (`DerivedKeys` in `rar50.rs`, the last four), so an
-  archive written that way costs one derivation per parse, and one with a
-  salt per member costs what it did. The password check runs for every
-  header as before. See `an_archive_derives_one_key_per_password` and
+  files of a few bytes, made with
+  `mkdir tiny && for i in $(seq 1 2000); do echo "file $i" > tiny/f$i.txt; done`,
+  `arca create out.rar tiny -p secret` took 22.7 s against 0.8 s without
+  the password, and `arca test out.rar -p secret` 11.1 s; now they take 0.8
+  to 0.9 s and 0.03 s (Windows 11, 16 threads, release build). The RAR 5
+  writer now derives once per password for the whole archive or volume set
+  (`ArchiveKeys` in `rar50/write/engine.rs`), as WinRAR does, and still
+  gives every member, service and comment a random IV of its own: CBC under
+  one key needs only that. The header-encryption key keeps its own salt.
+  The reader keeps the keys a parse has derived by salt and iteration count
+  (`DerivedKeys` in `rar50.rs`, the last four), so an archive written that
+  way costs one derivation per parse, and one with a salt per member costs
+  what it did. The password check runs for every header as before. See
+  `an_archive_derives_one_key_per_password` and
   `a_parse_derives_each_salt_once_and_keeps_only_a_few`.
 - **Only ciphertext spooled.** An encrypted member's packed payload was
   compressed into a plain member spool and encrypted only on its way into
