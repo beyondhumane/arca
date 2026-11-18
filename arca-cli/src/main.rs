@@ -225,7 +225,7 @@ enum Cmd {
         #[arg(
             short = 'o',
             long,
-            help = "Where to write the rebuilt archive, in the same format"
+            help = "Where to write the rebuilt archive, in the same format; must not exist yet"
         )]
         out: PathBuf,
         #[arg(short = 'p', long, help = "Password, for an encrypted 7z or RAR")]
