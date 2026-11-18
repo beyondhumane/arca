@@ -185,12 +185,11 @@ impl Shell {
             PreviewStatus::PasswordRequired { .. }
         ) {
             let index = self.controller.state.preview.index;
-            let field = ui.add(
-                super::widgets::field(ui, &mut self.preview_password)
-                    .password(true)
-                    .hint_text(s.password_needed)
-                    .desired_width(f32::INFINITY),
-            );
+            let edit = super::widgets::field(ui, &mut self.preview_password)
+                .password(true)
+                .hint_text(s.password_needed)
+                .desired_width(f32::INFINITY);
+            let field = super::widgets::secret_edit(ui, edit);
             super::widgets::named(&field, s.password_needed);
             let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if primary_button(ui, s.continue_word, true).clicked() || entered {

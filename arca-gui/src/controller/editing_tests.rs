@@ -108,3 +108,21 @@ fn the_password_stays_a_zip_thing() {
     assert!(!app.working());
     assert_eq!(app.state.notice, app.s().only_zip_can_change);
 }
+
+#[test]
+fn a_comment_refused_on_a_tar_says_only_zip_comments_change() {
+    let room = Room::new();
+    let archive = tar_gz(&room);
+    let mut app = AppController::new(Settings::default());
+    app.open(archive.clone());
+    settle(&mut app);
+    app.run_job(Job::Comment {
+        archive,
+        entry: None,
+        text: "hello".into(),
+        password: None,
+    });
+    assert!(!app.working());
+    assert!(app.state.error);
+    assert_eq!(app.state.notice, app.s().comment_only_zip);
+}

@@ -20,9 +20,20 @@ pub(crate) struct Checksums {
     pub(crate) source: String,
     pub(crate) rows: Vec<Checksum>,
     pub(crate) algorithm: Algorithm,
+    failed: usize,
 }
 
 impl Checksums {
+    pub(crate) fn new(source: String, rows: Vec<Checksum>) -> Self {
+        let failed = rows.iter().filter(|row| row.sums.is_err()).count();
+        Checksums {
+            source,
+            rows,
+            algorithm: Algorithm::Sha256,
+            failed,
+        }
+    }
+
     pub(crate) fn lines(&self) -> String {
         let at = Algorithm::ALL
             .iter()
@@ -38,7 +49,11 @@ impl Checksums {
     }
 
     pub(crate) fn failed(&self) -> usize {
-        self.rows.iter().filter(|row| row.sums.is_err()).count()
+        self.failed
+    }
+
+    pub(crate) fn any_read(&self) -> bool {
+        self.failed < self.rows.len()
     }
 }
 
@@ -132,11 +147,7 @@ impl AppController {
                 let _ = tx.send(match work(&notify) {
                     Ok(rows) => {
                         let n = rows.len().to_string();
-                        let _ = report.send(Checksums {
-                            source,
-                            rows,
-                            algorithm: Algorithm::Sha256,
-                        });
+                        let _ = report.send(Checksums::new(source, rows));
                         Message::Done(fill(s.checksums_done, &[("n", &n)]))
                     }
                     Err(e) => Message::Failed(e.to_string()),
@@ -289,6 +300,8 @@ mod tests {
         settle(&mut app);
         let found = app.checksums().expect("a report");
         assert_eq!(found.rows.len(), 2);
+        assert_eq!(found.failed(), 0);
+        assert!(found.any_read());
         assert_eq!(
             found.lines(),
             format!(

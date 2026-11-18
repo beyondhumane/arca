@@ -34,7 +34,7 @@ mod panes;
 mod passwords;
 #[cfg(test)]
 mod passwords_tests;
-pub(crate) use passwords::{vault_error, PasswordState};
+pub(crate) use passwords::{vault_error, PasswordState, VaultTask};
 mod preview;
 mod repair;
 #[cfg(test)]
@@ -244,14 +244,23 @@ impl AppController {
             self.state.archive.is_some(),
         );
         let (stop, hold) = self.fresh_flags();
+        let prove = self.state.saved.proving();
         self.spawn(0, move |tx| {
             let notify = worker_notify(tx, &stop, &hold);
             let result = paths.iter().try_for_each(|path| {
                 if !notify(0, 0, "") {
                     return Err(arca_core::Error::Cancelled);
                 }
-                check_access(path, password.as_deref(), &notify)
+                check_access(path, password.as_deref(), &notify)?;
+                match password.as_deref() {
+                    Some(password) if prove => prove_password(path, password),
+                    _ => Ok(()),
+                }
             });
+            if result.as_ref().is_err_and(password_error) {
+                let weak = paths.iter().any(|path| weak_password_check(path));
+                let _ = tx.send(Message::Weak(paths, weak));
+            }
             let _ = tx.send(Message::AccessChecked(pending, password, result));
         });
     }
@@ -385,11 +394,19 @@ impl AppController {
         self.try_saved_passwords();
     }
 
+    /// Whether the archive open can be given a new password: a ZIP that is
+    /// whole, since a split one cannot be rewritten.
+    pub(crate) fn can_change_password(&self) -> bool {
+        self.state.archive.as_deref().is_some_and(|archive| {
+            self.state.format == Format::Zip && !arca_core::volumes::is_part(archive)
+        })
+    }
+
     pub(crate) fn begin_password_change(&mut self) {
         let Some(archive) = self.state.archive.clone() else {
             return;
         };
-        if detect(&archive) != Some(Format::Zip) {
+        if arca_core::volumes::is_part(&archive) || detect(&archive) != Some(Format::Zip) {
             self.state.notice = self.cannot_change(detect(&archive));
             self.state.error = true;
             return;
@@ -1141,6 +1158,15 @@ impl AppController {
             Some(f) if !f.can_write() => f.read_only().to_string(),
             Some(f) if editable(f) => self.s().only_zip_can_change.to_string(),
             _ => self.s().only_archives_change.to_string(),
+        }
+    }
+
+    fn cannot_run(&self, job: &Job, format: Option<Format>) -> String {
+        let message = self.cannot_change(format);
+        if matches!(job, Job::Comment { .. }) && message == self.s().only_zip_can_change {
+            self.s().comment_only_zip.to_string()
+        } else {
+            message
         }
     }
 
@@ -2123,6 +2149,7 @@ impl AppController {
                     self.state.total_count = total;
                     self.state.current_file = name;
                 }
+                Message::Weak(archives, weak) => self.state.saved.note_weak(archives, weak),
                 Message::Comments(path, comments) => {
                     self.state.comments.listed = comments.map(|c| (path, c));
                 }
@@ -2564,25 +2591,18 @@ impl AppController {
         self.show_job(self.s().opening, archive_stem(&path), true);
         let (stop, hold) = self.fresh_flags();
         let comment_label = self.s().archive_comment_word;
+        let prove = self.state.saved.proving();
         self.spawn(0, move |tx| {
             let notify = worker_notify(tx, &stop, &hold);
-            let result = (|| {
-                if password.is_some() {
-                    check_access(&path, password.as_deref(), &notify)?;
-                }
-                if !notify(0, 0, "") {
-                    return Err(arca_core::Error::Cancelled);
-                }
-                let (entries, mut notices) = list_entries(&path, password.as_deref(), &notify)?;
-                notices.extend(comment_notice(&path, comment_label));
-                let comments = read_comments(&path, password.as_deref());
-                if container_of(&path) == Some(Container::Rar) {
-                    let text = comments.as_ref().map_or("", |c| c.archive.as_str());
-                    notices.extend(notice_line(text, comment_label));
-                }
-                let _ = tx.send(Message::Comments(path.clone(), comments));
-                Ok((entries, notices))
-            })();
+            let result = listing(&path, password.as_deref(), &notify, comment_label)
+                .and_then(|listed| match password.as_deref() {
+                    Some(password) if prove => prove_password(&path, password).map(|()| listed),
+                    _ => Ok(listed),
+                })
+                .map(|(entries, notices, comments)| {
+                    let _ = tx.send(Message::Comments(path.clone(), comments));
+                    (entries, notices)
+                });
             let _ = tx.send(Message::Listing(path, result, password));
         });
     }
@@ -2608,7 +2628,7 @@ impl AppController {
         }
         if !can_edit(&job) {
             self.state.error = true;
-            self.state.notice = self.cannot_change(mutation.and_then(|archive| detect(archive)));
+            self.state.notice = self.cannot_run(&job, mutation.and_then(|archive| detect(archive)));
             return;
         }
         let Some(mut job) = self.with_password(job) else {
@@ -2643,7 +2663,7 @@ impl AppController {
         | Job::Comment { archive, .. } = &job
         {
             if !can_edit(&job) {
-                self.state.notice = self.cannot_change(detect(archive));
+                self.state.notice = self.cannot_run(&job, detect(archive));
                 self.state.error = true;
                 return;
             }

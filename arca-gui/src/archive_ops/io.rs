@@ -244,14 +244,85 @@ pub(crate) fn list_entries(
     }
 }
 
-// The status line holds one short line, and the comment is whatever the
-// archive's author typed: control characters go, and a long one is cut.
-pub(crate) fn comment_notice(archive: &Path, label: &str) -> Option<String> {
-    if detect(archive).map(|f| f.container()) != Some(Container::Zip) {
-        return None;
+/// What the window reads to open an archive: its entries, the notices for
+/// the status line, among them the archive comment, and every comment it
+/// keeps. With a password it is checked first. A ZIP's central directory is
+/// read once for all of it.
+pub(crate) fn listing(
+    archive: &Path,
+    password: Option<&str>,
+    notify: &(dyn Fn(usize, usize, &str) -> bool + Sync),
+    comment_label: &str,
+) -> arca_core::Result<(Vec<Entry>, Vec<String>, Option<super::Comments>)> {
+    if detect(archive).map(|f| f.container()) == Some(Container::Zip) {
+        let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
+        if password.is_some() {
+            zip_access(archive, a.entries(), password)?;
+        }
+        if !notify(0, 0, "") {
+            return Err(arca_core::Error::Cancelled);
+        }
+        let comments = super::comments::zip_comments(&a);
+        let notices = super::notice_line(&comments.archive, comment_label)
+            .into_iter()
+            .collect();
+        return Ok((a.entries().to_vec(), notices, Some(comments)));
     }
-    let comment = arca_zip::read_comment(arca_core::volumes::open(archive).ok()?).ok()?;
-    super::notice_line(&comment, label)
+    if password.is_some() {
+        check_access(archive, password, notify)?;
+    }
+    if !notify(0, 0, "") {
+        return Err(arca_core::Error::Cancelled);
+    }
+    let (entries, mut notices) = list_entries(archive, password, notify)?;
+    let comments = super::read_comments(archive, password);
+    if container_of(archive) == Some(Container::Rar) {
+        let text = comments.as_ref().map_or("", |c| c.archive.as_str());
+        notices.extend(super::notice_line(text, comment_label));
+    }
+    Ok((entries, notices, comments))
+}
+
+fn zip_access(archive: &Path, entries: &[Entry], password: Option<&str>) -> arca_core::Result<()> {
+    if !entries.iter().any(|e| e.encrypted) {
+        return Ok(());
+    }
+    let password = password.ok_or(arca_core::Error::PasswordRequired)?;
+    arca_zip::check_password(&mut arca_core::volumes::open(archive)?, entries, password)
+}
+
+/// Whether a password for `archive` is only checked against ZipCrypto's one
+/// byte, which one wrong password in 256 gets past, and always the same one.
+pub(crate) fn weak_password_check(archive: &Path) -> bool {
+    container_of(archive) == Some(Container::Zip)
+        && arca_core::volumes::open(archive)
+            .ok()
+            .and_then(|source| ZipArchive::open(source).ok())
+            .is_some_and(|a| a.entries().iter().any(|e| e.encrypted && e.zipcrypto))
+}
+
+/// Proves a password that passed ZipCrypto's one-byte check by decrypting
+/// the smallest ZipCrypto entry that has contents and checking its CRC. An
+/// empty entry proves nothing: the CRC of nothing is zero for any password.
+pub(crate) fn prove_password(archive: &Path, password: &str) -> arca_core::Result<()> {
+    if container_of(archive) != Some(Container::Zip) {
+        return Ok(());
+    }
+    let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
+    let Some(entry) = a
+        .entries()
+        .iter()
+        .filter(|e| e.encrypted && e.zipcrypto && !e.is_dir && e.size > 0)
+        .min_by_key(|e| e.compressed_size)
+    else {
+        return Ok(());
+    };
+    let mut source = arca_core::volumes::open(archive)?;
+    match arca_zip::extract_entry_with(&mut source, entry, std::io::sink(), Some(password)) {
+        Ok(_) => Ok(()),
+        Err(error @ (arca_core::Error::Io(_) | arca_core::Error::Cancelled)) => Err(error),
+        Err(_) => Err(arca_core::Error::PasswordOrCorrupt),
+    }
 }
 
 pub(crate) fn check_access(
@@ -278,17 +349,7 @@ pub(crate) fn check_access(
         }
         Some(Container::Zip) => {
             let a = ZipArchive::open(arca_core::volumes::open(archive)?)?;
-            if a.has_encrypted() {
-                let password = password.ok_or(arca_core::Error::PasswordRequired)?;
-                let entries = a.entries().to_vec();
-                arca_zip::check_password(
-                    &mut arca_core::volumes::open(archive)?,
-                    &entries,
-                    password,
-                )
-            } else {
-                Ok(())
-            }
+            zip_access(archive, a.entries(), password)
         }
         Some(_) => Ok(()),
         None => Err(arca_core::Error::Unsupported("unknown format".into())),

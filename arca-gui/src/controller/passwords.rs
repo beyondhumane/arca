@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::vault::{Keyring, Saved, VaultError};
+use std::collections::VecDeque;
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use zeroize::Zeroizing;
 
 #[derive(Default)]
@@ -10,12 +12,48 @@ pub(crate) struct PasswordState {
     pub(crate) save_typed: bool,
     trying: Option<Attempts>,
     typed: Option<Zeroizing<String>>,
+    weak: Option<(Vec<PathBuf>, bool)>,
+    vault_job: Option<VaultJob>,
+    vault_queue: VecDeque<(VaultTask, VaultChange)>,
+    vault_said: Option<(VaultTask, Result<(), String>)>,
+    lock_when_back: bool,
+}
+
+/// What a change to the vault was for, so its outcome reaches the place
+/// that asked for it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum VaultTask {
+    Unlock { from_box: bool },
+    Create,
+    Change,
+    KeepTyped { session: bool },
+}
+
+type VaultChange = Box<dyn FnOnce(&mut Keyring) -> Result<(), VaultError> + Send>;
+
+// Stretching the master password costs Argon2id's 64 MiB and three passes,
+// and every change rewrites and syncs the file, so changes run on a thread
+// of their own, one at a time and in order, on a copy of the vault that
+// takes the place of the one here when it comes back.
+struct VaultJob {
+    task: VaultTask,
+    back: Receiver<(Keyring, Result<(), VaultError>)>,
 }
 
 impl PasswordState {
     #[cfg(test)]
     pub(super) fn trying(&self) -> bool {
         self.trying.is_some()
+    }
+
+    /// Whether the password about to be sent is one typed to be saved, which
+    /// has to be proved beyond ZipCrypto's one check byte before it is kept.
+    pub(super) fn proving(&self) -> bool {
+        self.typed.is_some()
+    }
+
+    pub(super) fn note_weak(&mut self, archives: Vec<PathBuf>, weak: bool) {
+        self.weak = Some((archives, weak));
     }
 }
 
@@ -52,7 +90,7 @@ impl AppController {
     /// answer, while the password box is up and nothing else is running.
     pub(super) fn try_saved_passwords(&mut self) {
         self.vault_tick();
-        if self.state.channel.is_some() || self.state.busy {
+        if self.state.channel.is_some() || self.state.busy || self.vault_busy() {
             return;
         }
         let Some(pending) = &self.state.waiting_on_password else {
@@ -74,7 +112,7 @@ impl AppController {
                 Vec::new()
             } else {
                 keyring
-                    .matching(&archives, true)
+                    .matching_all(&archives, true)
                     .into_iter()
                     .map(|i| keyring.entries[i].password.clone())
                     .collect()
@@ -101,13 +139,21 @@ impl AppController {
     // A ZipCrypto check is one byte, so one wrong password in 256 passes it,
     // and the same one passes every time. Such an archive gets its saved
     // passwords offered, never tried, or a false match would stop the box
-    // from ever asking.
+    // from ever asking. The open archive says so through its entries; any
+    // other, through the worker that found it needs a password.
     fn weak_check(&self, archives: &[PathBuf]) -> bool {
-        self.state
+        let open = self
+            .state
             .archive
             .as_ref()
             .is_some_and(|open| archives.contains(open))
-            && self.state.entries.iter().any(|entry| entry.zipcrypto)
+            && self.state.entries.iter().any(|entry| entry.zipcrypto);
+        open || self
+            .state
+            .saved
+            .weak
+            .as_ref()
+            .is_some_and(|(asked, weak)| *weak && asked == archives)
     }
 
     /// Whether the password that just failed was the saved one sent for it,
@@ -126,6 +172,7 @@ impl AppController {
         let archive = self.asked_for(pending).into_iter().next();
         let saved = &mut self.state.saved;
         saved.trying = None;
+        saved.weak = None;
         saved.save_typed = false;
         saved.keyring.touch();
         let Some(typed) = saved.typed.take() else {
@@ -150,24 +197,22 @@ impl AppController {
             return;
         }
         let session = !keyring.unlocked();
-        let result = keyring.add(Saved {
+        let entry = Saved {
             label: name.clone(),
             mask: name,
             password,
             auto: true,
             session,
+        };
+        self.vault_run(VaultTask::KeepTyped { session }, move |keyring| {
+            keyring.add(entry)
         });
-        let s = self.s();
-        match result {
-            Ok(()) if session => self.set_notice(s.saved_for_session, false),
-            Ok(()) => self.set_notice(s.saved_password, false),
-            Err(error) => self.set_notice(vault_error(s, &error), true),
-        }
     }
 
     pub(super) fn forget_attempts(&mut self) {
         let saved = &mut self.state.saved;
         saved.trying = None;
+        saved.weak = None;
         saved.typed = None;
         saved.save_typed = false;
     }
@@ -197,16 +242,16 @@ impl AppController {
             return Vec::new();
         }
         let keyring = &self.state.saved.keyring;
-        let mut picks = keyring.matching(&archives, false);
-        if self.weak_check(&archives) {
-            picks = keyring
-                .matching(&archives, true)
-                .into_iter()
-                .chain(picks)
-                .collect();
-        }
-        picks
+        let tried = if self.weak_check(&archives) {
+            Vec::new()
+        } else {
+            keyring.matching_all(&archives, true)
+        };
+        keyring
+            .matching(&archives, true)
             .into_iter()
+            .filter(|i| !tried.contains(i))
+            .chain(keyring.matching(&archives, false))
             .map(|i| {
                 let entry = &keyring.entries[i];
                 let label = if entry.label.is_empty() {
@@ -238,42 +283,111 @@ impl AppController {
         self.submit_password(password);
     }
 
-    /// Opens the vault, and tries what it holds on the archive the password
-    /// box is waiting on, if it is up.
-    pub(crate) fn unlock_vault(&mut self, master: &str) -> Result<(), String> {
-        let s = self.s();
-        self.state
-            .saved
-            .keyring
-            .unlock(master)
-            .map_err(|error| vault_error(s, &error))?;
-        self.state.saved.trying = None;
-        self.try_saved_passwords();
-        Ok(())
+    /// Opens the vault, and then tries what it holds on the archive the
+    /// password box is waiting on, if it is up.
+    pub(crate) fn unlock_vault(&mut self, master: Zeroizing<String>, from_box: bool) {
+        self.vault_run(VaultTask::Unlock { from_box }, move |keyring| {
+            keyring.unlock(&master)
+        });
     }
 
-    pub(crate) fn create_vault(&mut self, master: &str) -> Result<(), String> {
-        let s = self.s();
-        self.state
-            .saved
-            .keyring
-            .create(master)
-            .map_err(|error| vault_error(s, &error))
+    pub(crate) fn create_vault(&mut self, master: Zeroizing<String>) {
+        self.vault_run(VaultTask::Create, move |keyring| keyring.create(&master));
     }
 
     pub(crate) fn vault_do(
         &mut self,
-        change: impl FnOnce(&mut Keyring) -> Result<(), VaultError>,
-    ) -> Result<(), String> {
-        let s = self.s();
-        let result = change(&mut self.state.saved.keyring).map_err(|error| vault_error(s, &error));
-        self.state.saved.trying = None;
-        result
+        change: impl FnOnce(&mut Keyring) -> Result<(), VaultError> + Send + 'static,
+    ) {
+        self.vault_run(VaultTask::Change, change);
     }
 
-    /// Locks the vault once it has gone unused long enough; otherwise, how
-    /// long it has left, so the window can wake up in time to lock it.
+    pub(crate) fn vault_busy(&self) -> bool {
+        self.state.saved.vault_job.is_some()
+    }
+
+    /// The outcome of the last change the settings page or the password box
+    /// asked for, once it is known.
+    pub(crate) fn take_vault_said(&mut self) -> Option<(VaultTask, Result<(), String>)> {
+        self.state.saved.vault_said.take()
+    }
+
+    fn vault_run(
+        &mut self,
+        task: VaultTask,
+        change: impl FnOnce(&mut Keyring) -> Result<(), VaultError> + Send + 'static,
+    ) {
+        self.state
+            .saved
+            .vault_queue
+            .push_back((task, Box::new(change)));
+        self.vault_next();
+    }
+
+    fn vault_next(&mut self) {
+        let saved = &mut self.state.saved;
+        if saved.vault_job.is_some() {
+            return;
+        }
+        let Some((task, change)) = saved.vault_queue.pop_front() else {
+            return;
+        };
+        let mut keyring = saved.keyring.clone();
+        let (tx, back) = channel();
+        std::thread::spawn(move || {
+            let result = change(&mut keyring);
+            let _ = tx.send((keyring, result));
+        });
+        saved.vault_job = Some(VaultJob { task, back });
+    }
+
+    fn vault_poll(&mut self) {
+        let Some(job) = &self.state.saved.vault_job else {
+            return;
+        };
+        let task = job.task;
+        let result = match job.back.try_recv() {
+            Ok((keyring, result)) => {
+                self.state.saved.keyring = keyring;
+                result
+            }
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(VaultError::Io(std::io::Error::other(
+                "the vault worker stopped",
+            ))),
+        };
+        let saved = &mut self.state.saved;
+        saved.vault_job = None;
+        saved.trying = None;
+        if std::mem::take(&mut saved.lock_when_back) {
+            saved.keyring.lock();
+        }
+        let s = self.s();
+        match (task, result) {
+            (VaultTask::KeepTyped { session: true }, Ok(())) => {
+                self.set_notice(s.saved_for_session, false)
+            }
+            (VaultTask::KeepTyped { .. }, Ok(())) => self.set_notice(s.saved_password, false),
+            (VaultTask::KeepTyped { .. }, Err(error)) => {
+                self.set_notice(vault_error(s, &error), true)
+            }
+            (task, result) => {
+                self.state.saved.vault_said =
+                    Some((task, result.map_err(|error| vault_error(s, &error))))
+            }
+        }
+        self.vault_next();
+    }
+
+    /// Takes back what the vault's thread finished, and locks the vault
+    /// once it has gone unused long enough. Gives how long until the window
+    /// should look again: soon while a change is under way, otherwise in
+    /// time to lock it.
     pub(crate) fn vault_tick(&mut self) -> Option<std::time::Duration> {
+        self.vault_poll();
+        if self.vault_busy() {
+            return Some(std::time::Duration::from_millis(30));
+        }
         let was_open = self.state.saved.keyring.unlocked();
         let left = self.state.saved.keyring.tick(Instant::now());
         if was_open && !self.state.saved.keyring.unlocked() {
@@ -283,8 +397,28 @@ impl AppController {
     }
 
     pub(crate) fn lock_vault(&mut self) {
-        self.state.saved.keyring.lock();
-        self.state.saved.trying = None;
+        let saved = &mut self.state.saved;
+        saved.keyring.lock();
+        saved.trying = None;
+        saved.lock_when_back = saved.vault_job.is_some();
+    }
+
+    /// Waits for the vault's thread to get through every change asked of
+    /// it, so closing the window loses none that is still on its way to the
+    /// file.
+    pub(crate) fn finish_vault(&mut self) {
+        let end = Instant::now() + std::time::Duration::from_secs(10);
+        while self.vault_busy() && Instant::now() < end {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            self.vault_poll();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn vault_settle(&mut self) -> Option<(VaultTask, Result<(), String>)> {
+        self.finish_vault();
+        assert!(!self.vault_busy(), "the vault did not finish");
+        self.take_vault_said()
     }
 }
 
@@ -298,5 +432,6 @@ pub(crate) fn vault_error(s: &Strings, error: &VaultError) -> String {
         VaultError::Exists => s.vault_exists.to_string(),
         VaultError::Nowhere => s.vault_nowhere.to_string(),
         VaultError::Locked => s.vault_locked.to_string(),
+        VaultError::Gone => s.vault_entry_gone.to_string(),
     }
 }

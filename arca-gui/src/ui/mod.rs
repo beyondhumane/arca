@@ -415,6 +415,7 @@ impl Shell {
         if self.controller.receive() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        self.follow_vault();
         if !conflict_was_open && self.controller.conflict().is_some() {
             ctx.memory_mut(|memory| {
                 if let Some(id) = memory.focused() {
@@ -434,6 +435,7 @@ impl Shell {
         self.notice_new_tasks();
         let state = &self.controller.state;
         let waiting = self.dialog.is_some()
+            || self.controller.vault_busy()
             || self.controller.bench().running()
             || state.busy
             || state.listing
@@ -2230,6 +2232,7 @@ impl eframe::App for Shell {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.controller.close_bench();
         self.controller.drop_undo();
+        self.controller.finish_vault();
         self.controller.state.saved.keyring.close();
     }
 }

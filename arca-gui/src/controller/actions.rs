@@ -24,6 +24,9 @@ pub(crate) enum Message {
         Option<String>,
     ),
     AccessChecked(Pending, Option<String>, arca_core::Result<()>),
+    // Sent before an AccessChecked that asks for a password: the archives
+    // asked about, and whether any is only checked by ZipCrypto's one byte.
+    Weak(Vec<PathBuf>, bool),
     Created(PathBuf, Option<String>),
     // The installer is down and checked. It ends in a file to run rather than
     // in a text to read, which is why it is not a `Done`.
