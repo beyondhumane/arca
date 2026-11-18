@@ -152,12 +152,13 @@ fn damage_is_reported_and_leaves_no_file_behind() {
         .unwrap();
     payload[at] = b'j';
     let exe = program(temp.path(), "crc", &payload, 0);
-    let dest = temp.path().join("out");
+    let dest = temp.path().join("new").join("out");
     failed(&run(&exe, &["-o", dest.to_str().unwrap(), "--console"]));
-    assert!(!dest.join("a.txt").exists());
-    if let Ok(left) = fs::read_dir(&dest) {
-        assert_eq!(left.count(), 0);
-    }
+    assert!(!temp.path().join("new").exists());
+    let dest = temp.path().join("out");
+    fs::create_dir(&dest).unwrap();
+    failed(&run(&exe, &["-o", dest.to_str().unwrap(), "--console"]));
+    assert_eq!(fs::read_dir(&dest).unwrap().count(), 0);
 
     let good = program(temp.path(), "cut", &zip(&[("a.txt", b"hello")]), 0);
     let bytes = fs::read(&good).unwrap();

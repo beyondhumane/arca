@@ -170,8 +170,30 @@ impl Read for Piped<'_> {
 }
 
 /// Every entry into `dest`, replacing what is there. Answers with the number
-/// of files written.
+/// of files written. A failure takes back the folders this run made, as long
+/// as nothing is left in them.
 fn extract<R: Read + io::Seek + Send>(source: R, entries: &[Entry], dest: &Path) -> Result<usize> {
+    let made = dest
+        .ancestors()
+        .take_while(|p| !p.as_os_str().is_empty() && std::fs::symlink_metadata(p).is_err())
+        .last()
+        .map(Path::to_path_buf);
+    let result = extract_into(source, entries, dest);
+    if let (Err(_), Some(top)) = (&result, made) {
+        for folder in dest.ancestors() {
+            if std::fs::remove_dir(folder).is_err() || folder == top {
+                break;
+            }
+        }
+    }
+    result
+}
+
+fn extract_into<R: Read + io::Seek + Send>(
+    source: R,
+    entries: &[Entry],
+    dest: &Path,
+) -> Result<usize> {
     std::fs::create_dir_all(dest)?;
     let mut source = BufReader::with_capacity(256 * 1024, source);
     let mut destination = Destination::new(dest);
