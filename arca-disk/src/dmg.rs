@@ -10,6 +10,7 @@ const MAX_CHUNK: u64 = 64 * 1024 * 1024;
 const MAX_CHUNKS: usize = 4 * 1024 * 1024;
 const CHECK_PIECE: u64 = 1024 * 1024;
 const CACHE: u64 = 128 * 1024 * 1024;
+const CACHED: usize = 16;
 const REDECODE: u64 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,7 +131,9 @@ fn parse(path: &Path) -> Result<(Dmg, Vec<Partition>, Vec<String>)> {
         chunks,
         blocks,
         cached: Vec::new(),
+        held: 0,
         cache: CACHE,
+        most: CACHED,
         decoded: 0,
         allowed: 2 * MAX_CHUNK + REDECODE * packed,
     };
@@ -325,9 +328,12 @@ struct Dmg {
     size: u64,
     chunks: Vec<Chunk>,
     blocks: Vec<Block>,
-    /// Decoded chunks, the one used last at the end, within `cache` bytes.
+    /// Decoded chunks, the one used last at the end, within `cache` bytes
+    /// and `most` chunks; `held` is the bytes they take.
     cached: Vec<(usize, Vec<u8>)>,
+    held: u64,
     cache: u64,
+    most: usize,
     decoded: u64,
     allowed: u64,
 }
@@ -341,11 +347,13 @@ impl Dmg {
             }
             None => {
                 let out = self.decode(index)?;
-                let mut held = out.len() as u64;
-                held += self.cached.iter().map(|(_, b)| b.len() as u64).sum::<u64>();
-                while held > self.cache && !self.cached.is_empty() {
-                    held -= self.cached.remove(0).1.len() as u64;
+                let size = out.len() as u64;
+                while !self.cached.is_empty()
+                    && (self.held + size > self.cache || self.cached.len() >= self.most)
+                {
+                    self.held -= self.cached.remove(0).1.len() as u64;
                 }
+                self.held += size;
                 self.cached.push((index, out));
             }
         }
@@ -542,6 +550,27 @@ mod tests {
             assert!(dmg.cached.len() <= 2);
         }
         assert_eq!(dmg.decoded, 30 * CHUNK);
+    }
+
+    #[test]
+    fn the_cache_holds_a_bounded_number_of_chunks() {
+        let disk = disk();
+        let (_dir, mut dmg) = opened(&disk);
+        assert_eq!(dmg.most, CACHED);
+        dmg.most = 4;
+        for pass in 0..2 {
+            for c in 0..32u64 {
+                let at = c * CHUNK + 7;
+                assert_eq!(
+                    read(&mut dmg, at, 300).unwrap(),
+                    disk[at as usize..at as usize + 300]
+                );
+                assert!(dmg.cached.len() <= 4);
+                let held: u64 = dmg.cached.iter().map(|(_, b)| b.len() as u64).sum();
+                assert_eq!(dmg.held, held, "pass {pass}, chunk {c}");
+            }
+        }
+        assert_eq!(dmg.decoded, 2 * 24 * CHUNK);
     }
 
     #[test]
