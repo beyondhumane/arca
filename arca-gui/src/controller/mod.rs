@@ -385,11 +385,19 @@ impl AppController {
         self.try_saved_passwords();
     }
 
+    /// Whether the archive open can be given a new password: a ZIP that is
+    /// whole, since a split one cannot be rewritten.
+    pub(crate) fn can_change_password(&self) -> bool {
+        self.state.archive.as_deref().is_some_and(|archive| {
+            self.state.format == Format::Zip && !arca_core::volumes::is_part(archive)
+        })
+    }
+
     pub(crate) fn begin_password_change(&mut self) {
         let Some(archive) = self.state.archive.clone() else {
             return;
         };
-        if detect(&archive) != Some(Format::Zip) {
+        if arca_core::volumes::is_part(&archive) || detect(&archive) != Some(Format::Zip) {
             self.state.notice = self.cannot_change(detect(&archive));
             self.state.error = true;
             return;

@@ -341,3 +341,31 @@ fn saving_a_copy_of_a_split_archive_joins_its_parts() {
     read_entry(&copy, at, &mut data, None, GO).unwrap();
     assert_eq!(data, big);
 }
+
+#[test]
+fn a_split_zip_offers_no_new_password() {
+    let room = Room::new();
+    let (source, _) = sample(&room);
+    let out = room.path("set.zip");
+    compress_split(
+        &out,
+        Some(50_000),
+        &[source],
+        Format::Zip,
+        Codec::Store,
+        Level::STORE,
+        GO,
+        (None, false),
+    )
+    .unwrap();
+    let mut app = crate::AppController::new(crate::settings::Settings::default());
+    app.state.archive = Some(part_path(&out, 1));
+    app.state.format = Format::Zip;
+    assert!(!app.can_change_password());
+    app.begin_password_change();
+    assert!(app.state.waiting_on_password.is_none());
+    assert!(app.state.error);
+    assert_eq!(app.state.notice, app.s().split_read_only);
+    app.state.archive = Some(out);
+    assert!(app.can_change_password());
+}
