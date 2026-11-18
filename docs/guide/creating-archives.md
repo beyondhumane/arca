@@ -237,15 +237,23 @@ land on a FAT32 stick. They are written under temporary names and only take
 their real names once the whole set is complete, so a stop or an error leaves
 no partial set. `create` refuses to replace an existing `.001`; remove the old
 parts first, or pick another name. Passing `backup.zip.001` as the output name
-is the same as passing `backup.zip`.
+is the same as passing `backup.zip`. When the window replaces a set, the old
+parts are first renamed to `.arca-old` and only deleted once every new part is
+in place; if one can’t be replaced, for instance because another program has
+it open, the new parts are removed and the old set is put back as it was. An
+`.arca-old` part left by a run that was cut off in between may be the only copy
+of the old set, so that set isn’t written again until it is moved away.
 
 To read a set, open any of its parts: `arca list backup.zip.002`, `arca test`
 and `arca extract` find the others in the same folder and read them as one
 archive. Every part must be there and numbered without gaps, and every part
 but the last must have the same size; a missing or short part is named in the
-error. A split archive is read-only: `arca password` and the window’s
-editing commands refuse it. RAR multivolume sets (`.part1.rar`) and split ISO
-images are not joined this way.
+error. Part names are matched the way the file system compares them, so on
+Windows and macOS `BACKUP.ZIP.001` finds `backup.zip.002`. A numbered file with
+no other part of its set beside it, such as a `backup.zip.100` kept on its own,
+opens as a file of its own. A split archive is read-only: `arca password` and
+the window’s editing commands refuse it. RAR multivolume sets (`.part1.rar`)
+and split ISO images are not joined this way.
 
 ## Self-extracting programs
 
@@ -258,8 +266,9 @@ arca create setup.exe my-files/ --sfx --console
 shows a folder picker and extracts into the folder chosen, with the same path
 checks as `arca extract`: an entry cannot land outside that folder, and a file
 whose checksum does not match is not written. Files already there are
-replaced. With `--console` the program asks for the folder in the console it
-was started from, and offers a folder beside itself, named after it, by
+replaced. If extraction fails, the folders it created and left empty are
+removed again. With `--console` the program asks for the folder in the console
+it was started from, and offers a folder beside itself, named after it, by
 default. Either kind also accepts `-o FOLDER` to extract there without asking,
 for scripts.
 
@@ -269,8 +278,14 @@ says where the ZIP starts. If it is not there, `create` says where it looked
 (`cargo build -p arca-sfx` builds it from source, and `ARCA_SFX_STUB` can name
 another copy). The ZIP inside uses Deflate or Store, so `-c zstd` and
 `-c lzma2` are refused, and `-p`, `--hide-names` and `-v` cannot be combined
-with `--sfx`. Self-extractors are made for Windows; the Linux and macOS
-packages do not include the stub.
+with `--sfx`. The output is a program, so a name with an archive suffix such
+as `.zip` or `.7z` is refused; use `.exe`. Self-extractors are made for
+Windows; the Linux and macOS packages do not include the stub.
+
+The ZIP counts its offsets from the start of the program, as `zip -A` leaves a
+self-extractor, so ZIP tools such as `unzip -t setup.exe` or .NET’s
+`ZipFile.OpenRead` read the program itself as a ZIP, and so do `arca list`,
+`arca test` and `arca extract`.
 
 ## What gets stored
 

@@ -34,7 +34,7 @@ Options:
   -V, --version  Print version
 ```
 
-`list`, `extract` y `test` también leen los [contenedores ZIP](zip-containers.md) (.apk, .jar, .epub, .cbz y el resto), las [imágenes ISO 9660](iso.md), los archivos [CPIO, AR, DEB, RPM, CAB y LZH](more-formats.md), las [imágenes de disco](disk-images.md) (.vhd, .vhdx, .vmdk, .dmg, .img) y, en compilaciones con [RAR](rar.md), .rar y .cbr. Son de solo lectura: `password` los rechaza y `create` los rechaza todos salvo los archivos `.rar` nuevos. Cualquier parte de un [conjunto dividido](creating-archives.md#dividir-en-partes), como `copia.zip.002`, abre el conjunto entero; los conjuntos divididos también son de solo lectura.
+`list`, `extract` y `test` también leen los [contenedores ZIP](zip-containers.md) (.apk, .jar, .epub, .cbz y el resto), las [imágenes ISO 9660](iso.md), los archivos [CPIO, AR, DEB, RPM, CAB y LZH](more-formats.md), las [imágenes de disco](disk-images.md) (.vhd, .vhdx, .vmdk, .dmg, .img) y, en compilaciones con [RAR](rar.md), .rar y .cbr. Son de solo lectura: `password` los rechaza y `create` los rechaza todos salvo los archivos `.rar` nuevos. Cualquier parte de un [conjunto dividido](creating-archives.md#dividir-en-partes), como `copia.zip.002`, abre el conjunto entero; los conjuntos divididos también son de solo lectura. Un programa que se extrae solo hecho con `create --sfx` se lee como el ZIP que lleva dentro.
 
 ## create · c
 
@@ -52,7 +52,7 @@ Crea un archivo. El formato se toma de la extensión del archivo de salida.
 | `-v, --volume <SIZE>` | ninguno | Divide en partes de SIZE bytes, o con k, m o g para KiB, MiB, GiB: `salida.zip.001`, `salida.zip.002`… como hace 7-Zip. Se niega a sustituir un `.001` existente. Un .rar se escribe en cambio como conjunto de volúmenes RAR, `salida.part1.rar`, `salida.part2.rar`…, como hace el `-v` de WinRAR, cada uno de como mucho SIZE (al menos 64 KiB); no puede existir ningún volumen con ese nombre. Véase [dividir en partes](creating-archives.md#dividir-en-partes) y [RAR](creating-archives.md#rar). |
 | `--solid` | desactivado | Solo .rar: comprime los ficheros como un único flujo, como el `-s` de WinRAR. |
 | `--recovery <PERCENT>` | ninguno | Solo .rar: añade un registro de recuperación de PERCENT (de 1 a 100, `3` o `3%`), en cada volumen de un conjunto, como el `-rr` de WinRAR. `arca repair` y WinRAR reconstruyen con él los datos dañados. |
-| `--sfx` | desactivado | Escribe un programa de Windows que se extrae solo (cualquier nombre, normalmente `.exe`) a partir del `arca-sfx.exe` que hay junto a arca. No con `-p`, `--hide-names`, `-v`, `--solid` ni `--recovery`. Véase [programas que se extraen solos](creating-archives.md#programas-que-se-extraen-solos). |
+| `--sfx` | desactivado | Escribe un programa de Windows que se extrae solo (normalmente `.exe`; un nombre con la extensión de un archivo comprimido, como `.zip` o `.7z`, se rechaza) a partir del `arca-sfx.exe` que hay junto a arca. No con `-p`, `--hide-names`, `-v`, `--solid` ni `--recovery`. Véase [programas que se extraen solos](creating-archives.md#programas-que-se-extraen-solos). |
 | `--console` | desactivado | Con `--sfx`: el programa pide la carpeta e informa en la consola en lugar de en ventanas. |
 
 ## list · l
@@ -199,6 +199,7 @@ El archivo reconstruido se escribe con un nombre temporal, se vuelve a leer y so
 - Las entradas cifradas no se pueden comprobar sin la contraseña: se copian tras una comprobación solo estructural y se nombran por la salida de error estándar.
 - Se pierde lo que solo guardaba el directorio central: los comentarios del archivo y de las entradas, los permisos Unix y otros atributos externos.
 - Un ZIP guardado dentro de una entrada se queda dentro de ella. Pero si esa entrada exterior está dañada, las entradas interiores pueden aparecer como entradas propias.
+- Un fichero que haría leer al recorrido mucho más que su propio tamaño, como uno preparado con una cabecera falsa cada pocos bytes, o uno con más de diez millones de cabeceras locales, se recorre solo hasta ahí: lo recuperado hasta ese punto se conserva, y la salida de error estándar dice en qué desplazamiento se detuvo el recorrido y por qué.
 
 **TAR.** Cada entrada cuya cabecera cuadra con su suma de comprobación y cuyos datos están completos se copia con sus cabeceras tal cual; el archivo nuevo se vuelve a comprimir con el mismo códec. Tras una cabecera dañada, Arca mira los bloques de 512 bytes siguientes hasta dar con otra cabecera válida y sigue desde ahí.
 

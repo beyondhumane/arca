@@ -34,7 +34,7 @@ Options:
   -V, --version  Print version
 ```
 
-`list`, `extract` and `test` also read the [ZIP containers](zip-containers.md) (.apk, .jar, .epub, .cbz and the rest), [ISO 9660 images](iso.md), [CPIO, AR, DEB, RPM, CAB and LZH](more-formats.md), [disk images](disk-images.md) (.vhd, .vhdx, .vmdk, .dmg, .img) and, in builds with [RAR](rar.md), .rar and .cbr. Those are read-only: `password` refuses them and `create` refuses every one of them except new `.rar` archives. Any part of a [split set](creating-archives.md#split-volumes), such as `backup.zip.002`, opens the whole set; split sets are read-only too.
+`list`, `extract` and `test` also read the [ZIP containers](zip-containers.md) (.apk, .jar, .epub, .cbz and the rest), [ISO 9660 images](iso.md), [CPIO, AR, DEB, RPM, CAB and LZH](more-formats.md), [disk images](disk-images.md) (.vhd, .vhdx, .vmdk, .dmg, .img) and, in builds with [RAR](rar.md), .rar and .cbr. Those are read-only: `password` refuses them and `create` refuses every one of them except new `.rar` archives. Any part of a [split set](creating-archives.md#split-volumes), such as `backup.zip.002`, opens the whole set; split sets are read-only too. A self-extracting program made with `create --sfx` reads as the ZIP it carries.
 
 ## create · c
 
@@ -52,7 +52,7 @@ Create an archive. The format is taken from the extension of the output file.
 | `-v, --volume <SIZE>` | none | Split into parts of SIZE bytes, or with k, m or g for KiB, MiB, GiB: `out.zip.001`, `out.zip.002`… as 7-Zip does. Refuses to replace an existing `.001`. A .rar becomes a RAR volume set instead, `out.part1.rar`, `out.part2.rar`… as WinRAR’s `-v` makes, each at most SIZE (at least 64 KiB); no volume of that name may exist. See [split volumes](creating-archives.md#split-volumes) and [RAR](creating-archives.md#rar). |
 | `--solid` | off | .rar only: compress the files as one stream, as WinRAR’s `-s`. |
 | `--recovery <PERCENT>` | none | .rar only: add a recovery record of PERCENT (1 to 100, `3` or `3%`), in each volume of a set, as WinRAR’s `-rr`. `arca repair` and WinRAR rebuild damaged data from it. |
-| `--sfx` | off | Write a self-extracting Windows program (any name, usually `.exe`) from the `arca-sfx.exe` found next to arca. Not with `-p`, `--hide-names`, `-v`, `--solid` or `--recovery`. See [self-extracting programs](creating-archives.md#self-extracting-programs). |
+| `--sfx` | off | Write a self-extracting Windows program (usually `.exe`; a name with an archive suffix such as `.zip` or `.7z` is refused) from the `arca-sfx.exe` found next to arca. Not with `-p`, `--hide-names`, `-v`, `--solid` or `--recovery`. See [self-extracting programs](creating-archives.md#self-extracting-programs). |
 | `--console` | off | With `--sfx`: the program asks for the folder and reports in the console instead of in windows. |
 
 ## list · l
@@ -199,6 +199,7 @@ The rebuilt archive is written under a temporary name, read back, and only then 
 - Encrypted entries can’t be checked without the password: they are copied after a structural check only and named on standard error.
 - What only the central directory held is lost: archive and entry comments, Unix permissions and other external attributes.
 - A ZIP stored inside an entry stays inside it. If that outer entry is damaged, though, the inner entries can surface as entries of their own.
+- A file that would make the scan read far more than its own size, such as one crafted with a fake header every few bytes, or one with more than ten million local headers, is scanned only that far: what was recovered up to there is kept, and standard error says at which offset the scan stopped and why.
 
 **TAR.** Every entry whose header checksum holds and whose data is all there is copied with its headers unchanged; the new archive is compressed again with the same codec. After a damaged header, Arca looks at the following 512-byte blocks for the next one that is a valid header and carries on from there.
 
