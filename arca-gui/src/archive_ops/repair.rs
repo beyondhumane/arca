@@ -5,6 +5,7 @@ use super::edit::Packed;
 use super::{open_source, BUF};
 use crate::i18n::Strings;
 use crate::{detect, fill, Format};
+use arca_core::volumes::{refuse_existing, staged_new};
 use arca_core::{Error, Level, Result};
 use arca_tar::{TarReader, TarWriter};
 use arca_zip::ZipArchive;
@@ -78,15 +79,7 @@ pub(crate) fn repair(
     let format = detect(archive)
         .filter(|f| repairable(*f))
         .ok_or_else(|| s.repair_cannot.to_string())?;
-    if out.exists()
-        && fs::canonicalize(archive).map_err(|e| e.to_string())?
-            == fs::canonicalize(out).map_err(|e| e.to_string())?
-    {
-        return Err(
-            Error::Format("the repaired copy cannot replace the damaged archive".into())
-                .to_string(),
-        );
-    }
+    refuse_existing(archive, out).map_err(|e| e.to_string())?;
     let name = out
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -104,7 +97,8 @@ pub(crate) fn repair(
     let text = match format {
         Format::Zip => {
             let (kept, lost, unchecked) =
-                staged(out, |temp| zip(archive, temp, notify)).map_err(|e| e.to_string())?;
+                staged_new(archive, out, |temp| zip(archive, temp, notify))
+                    .map_err(|e| e.to_string())?;
             let mut text = done(kept, lost);
             if unchecked > 0 {
                 text.push_str(". ");
@@ -113,7 +107,7 @@ pub(crate) fn repair(
             text
         }
         Format::SevenZ => {
-            let report = staged(out, |temp| {
+            let report = staged_new(archive, out, |temp| {
                 arca_7z::salvage_7z(archive, temp, password, Level::NORMAL, &mut |p| {
                     notify(p.entries_done, p.entries_total, p.name)
                 })
@@ -130,7 +124,7 @@ pub(crate) fn repair(
             fill(s.repair_rebuilt, &[("name", &name)])
         }
         format => {
-            let report = staged(out, |temp| tar(archive, temp, format, notify))
+            let report = staged_new(archive, out, |temp| tar(archive, temp, format, notify))
                 .map_err(|e| e.to_string())?;
             let mut text = done(
                 report.kept.len(),
@@ -144,20 +138,6 @@ pub(crate) fn repair(
         }
     };
     Ok((text, Some(out.to_path_buf())))
-}
-
-fn staged<T>(out: &Path, write: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
-    let temp = beside(out, ".arca-new");
-    match write(&temp) {
-        Ok(value) => {
-            fs::rename(&temp, out)?;
-            Ok(value)
-        }
-        Err(e) => {
-            let _ = fs::remove_file(&temp);
-            Err(e)
-        }
-    }
 }
 
 fn zip(archive: &Path, temp: &Path, notify: Notify<'_>) -> Result<(usize, u64, usize)> {
@@ -213,8 +193,7 @@ fn tar(
         let mut held = OpenOptions::new()
             .read(true)
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .open(&spool)?;
         let file = BufWriter::with_capacity(BUF, File::create(temp)?);
         let mut w = TarWriter::new(Packed::new(file, format, Level::NORMAL)?);

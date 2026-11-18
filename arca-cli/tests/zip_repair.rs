@@ -101,3 +101,79 @@ fn repair_refuses_to_write_over_its_input_or_to_a_non_zip() {
     );
     assert!(std::fs::read_dir(dir.path()).unwrap().count() == 1);
 }
+
+fn names(dir: &std::path::Path) -> Vec<std::ffi::OsString> {
+    let mut names: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn repair_never_replaces_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input");
+    std::fs::create_dir_all(&input).unwrap();
+    std::fs::write(input.join("a.txt"), b"first file ".repeat(100)).unwrap();
+    let good = dir.path().join("good.zip");
+    assert!(
+        run(&["create".as_ref(), good.as_os_str(), input.as_os_str()])
+            .status
+            .success()
+    );
+    let original = std::fs::read(&good).unwrap();
+    let taken = dir.path().join("taken.zip");
+    std::fs::write(&taken, b"somebody else's file").unwrap();
+    let before = names(dir.path());
+
+    let out = run(&[
+        "repair".as_ref(),
+        good.as_os_str(),
+        "-o".as_ref(),
+        taken.as_os_str(),
+    ]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(stderr.contains("taken.zip' already exists"), "{stderr}");
+    assert!(stderr.contains("never replaces"), "{stderr}");
+    assert_eq!(std::fs::read(&taken).unwrap(), b"somebody else's file");
+    assert_eq!(names(dir.path()), before);
+
+    let mut itself = vec![good.clone()];
+    if cfg!(windows) {
+        itself.push(dir.path().join("GOOD.ZIP"));
+    }
+    for same in itself {
+        let out = run(&[
+            "repair".as_ref(),
+            good.as_os_str(),
+            "-o".as_ref(),
+            same.as_os_str(),
+        ]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success());
+        assert!(stderr.contains("is the damaged archive"), "{stderr}");
+        assert_eq!(std::fs::read(&good).unwrap(), original);
+        assert_eq!(names(dir.path()), before);
+    }
+
+    let fresh = dir.path().join("fresh.zip");
+    let out = run(&[
+        "repair".as_ref(),
+        good.as_os_str(),
+        "-o".as_ref(),
+        fresh.as_os_str(),
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(run(&["test".as_ref(), fresh.as_os_str()]).status.success());
+    let mut after = before;
+    after.push("fresh.zip".into());
+    after.sort();
+    assert_eq!(names(dir.path()), after);
+}
