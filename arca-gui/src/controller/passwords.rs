@@ -298,5 +298,6 @@ pub(crate) fn vault_error(s: &Strings, error: &VaultError) -> String {
         VaultError::Exists => s.vault_exists.to_string(),
         VaultError::Nowhere => s.vault_nowhere.to_string(),
         VaultError::Locked => s.vault_locked.to_string(),
+        VaultError::Gone => s.vault_entry_gone.to_string(),
     }
 }

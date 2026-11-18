@@ -85,6 +85,7 @@ pub(crate) enum VaultError {
     Exists,
     Nowhere,
     Locked,
+    Gone,
 }
 
 impl From<std::io::Error> for VaultError {
@@ -539,7 +540,7 @@ impl Keyring {
 
     pub(crate) fn replace(&mut self, index: usize, entry: Saved) -> Result<(), VaultError> {
         let Some(old) = self.entries.get(index) else {
-            return Ok(());
+            return Err(VaultError::Gone);
         };
         let kept = !old.session || !entry.session;
         if kept && !self.unlocked() {
@@ -628,6 +629,18 @@ mod tests {
         seal(&sealing, entries.iter()).unwrap()
     }
 
+    #[test]
+    fn replacing_an_entry_that_is_not_there_says_so() {
+        let mut keyring = Keyring::default();
+        let mut kept = entry("a", "*.zip", "pw", false);
+        kept.session = true;
+        keyring.add(kept).unwrap();
+        let mut other = entry("b", "*.zip", "pw", false);
+        other.session = true;
+        assert!(matches!(keyring.replace(1, other), Err(VaultError::Gone)));
+        assert_eq!(keyring.entries.len(), 1);
+        assert_eq!(keyring.entries[0].label, "a");
+    }
     #[test]
     fn a_vault_reads_back_what_was_sealed() {
         let entries = [

@@ -3,7 +3,7 @@
 use super::theme::{hex, palette_of};
 use super::widgets::*;
 use super::*;
-use crate::vault::{Saved, VaultError, LOCK_AFTER};
+use crate::vault::{Saved, LOCK_AFTER};
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
 use zeroize::Zeroizing;
@@ -24,7 +24,7 @@ pub(super) struct PasswordsPage {
 
 #[derive(Default)]
 struct Draft {
-    before: Option<(String, Zeroizing<String>)>,
+    editing: Option<usize>,
     label: String,
     mask: String,
     password: Zeroizing<String>,
@@ -68,7 +68,7 @@ impl PasswordsPage {
         if !unlocked {
             self.changing = false;
         }
-        if !unlocked || self.draft.as_ref().is_some_and(|d| d.before.is_some()) {
+        if !unlocked || self.draft.as_ref().is_some_and(|d| d.editing.is_some()) {
             self.draft = None;
         }
     }
@@ -327,16 +327,7 @@ impl Shell {
             self.passwords.shown = (self.passwords.shown != Some(i)).then_some(i);
         }
         if let Some(i) = edit {
-            let entry = &self.controller.state.saved.keyring.entries[i];
-            self.passwords.draft = Some(Draft {
-                before: Some((entry.mask.clone(), entry.password.clone())),
-                label: entry.label.clone(),
-                mask: entry.mask.clone(),
-                password: entry.password.clone(),
-                auto: entry.auto,
-                session: entry.session,
-                show: false,
-            });
+            self.edit_saved(i);
         }
         if let Some(i) = remove {
             self.passwords.shown = None;
@@ -354,7 +345,7 @@ impl Shell {
         };
         let mut save = false;
         let mut cancel = false;
-        let title = if draft.before.is_some() {
+        let title = if draft.editing.is_some() {
             s.edit_word
         } else {
             s.saved_add
@@ -413,27 +404,42 @@ impl Shell {
         if cancel {
             self.passwords.draft = None;
         } else if save {
-            let Some(draft) = self.passwords.draft.take() else {
-                return;
-            };
-            let entry = Saved {
-                label: draft.label.trim().to_string(),
-                mask: draft.mask.trim().to_string(),
-                password: draft.password,
-                auto: draft.auto,
-                session: draft.session,
-            };
-            let result = self.controller.vault_do(|keyring| match draft.before {
-                Some((mask, password)) => keyring
-                    .entries
-                    .iter()
-                    .position(|e| e.mask == mask && e.password == password)
-                    .map_or(Err(VaultError::Locked), |i| keyring.replace(i, entry)),
-                None => keyring.add(entry),
-            });
-            self.passwords.shown = None;
-            self.passwords.said(result, None);
+            self.save_draft();
         }
+    }
+
+    fn edit_saved(&mut self, i: usize) {
+        let Some(entry) = self.controller.state.saved.keyring.entries.get(i) else {
+            return;
+        };
+        self.passwords.draft = Some(Draft {
+            editing: Some(i),
+            label: entry.label.clone(),
+            mask: entry.mask.clone(),
+            password: entry.password.clone(),
+            auto: entry.auto,
+            session: entry.session,
+            show: false,
+        });
+    }
+
+    fn save_draft(&mut self) {
+        let Some(draft) = self.passwords.draft.take() else {
+            return;
+        };
+        let entry = Saved {
+            label: draft.label.trim().to_string(),
+            mask: draft.mask.trim().to_string(),
+            password: draft.password,
+            auto: draft.auto,
+            session: draft.session,
+        };
+        let result = self.controller.vault_do(|keyring| match draft.editing {
+            Some(i) => keyring.replace(i, entry),
+            None => keyring.add(entry),
+        });
+        self.passwords.shown = None;
+        self.passwords.said(result, None);
     }
 
     /// What the password box shows beyond its own field when it asks for
@@ -535,6 +541,36 @@ mod tests {
         shell.passwords.setting_aside = true;
         draw(&mut shell, &ctx);
         assert!(shell.controller.state.saved.keyring.entries.is_empty());
+    }
+
+    #[test]
+    fn editing_one_of_two_alike_saved_passwords_changes_that_one() {
+        let ctx = egui::Context::default();
+        let mut shell = Shell::new(&ctx, crate::Startup::Browse(None));
+        shell.controller =
+            crate::controller::AppController::new(crate::settings::Settings::default());
+        for label in ["first", "second"] {
+            shell
+                .controller
+                .state
+                .saved
+                .keyring
+                .add(Saved {
+                    label: label.into(),
+                    mask: "*.zip".into(),
+                    password: Zeroizing::new("same".into()),
+                    auto: false,
+                    session: true,
+                })
+                .unwrap();
+        }
+        shell.edit_saved(1);
+        shell.passwords.draft.as_mut().unwrap().label = "renamed".into();
+        shell.save_draft();
+        let entries = &shell.controller.state.saved.keyring.entries;
+        let labels: Vec<&str> = entries.iter().map(|e| e.label.as_str()).collect();
+        assert_eq!(labels, ["first", "renamed"]);
+        assert!(shell.passwords.message.is_none());
     }
 
     struct Frames {
