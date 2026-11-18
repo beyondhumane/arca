@@ -58,12 +58,44 @@ $OnRequest = @{
 $Known = $Formats + $OnRequest
 $Registered = if ($Iso) { $Known } else { $Formats }
 
+# Removes one type from all three registrations below, and the default the
+# user picked for it in Settings when that default is Arca's: it would point
+# at a ProgID that no longer exists. Windows refuses to write a UserChoice but
+# lets it be deleted.
+function Unregister-Type($ext, $progid) {
+    $hkcu = [Microsoft.Win32.Registry]::CurrentUser
+    $hkcu.DeleteSubKeyTree("Software\Classes\$progid", $false)
+    $values = @(
+        @("Software\Classes\$ext\OpenWithProgids", $progid),
+        @("Software\Classes\Applications\arca-gui.exe\SupportedTypes", $ext),
+        @("Software\Arca\Capabilities\FileAssociations", $ext)
+    )
+    foreach ($pair in $values) {
+        $k = $hkcu.OpenSubKey($pair[0], $true)
+        if ($k) { $k.DeleteValue($pair[1], $false); $k.Close() }
+    }
+    $choice = "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\$ext\UserChoice"
+    $k = $hkcu.OpenSubKey($choice)
+    if ($k) {
+        $current = "$($k.GetValue('ProgId'))"
+        $k.Close()
+        if ($current.StartsWith("Arca.")) {
+            try { $hkcu.DeleteSubKeyTree($choice, $false) } catch {}
+        }
+    }
+}
+
 # Three separate registrations, and all three are needed:
 #   1. The ProgID, which says what command opens it.
 #   2. OpenWithProgids on the extension, which is what fills "Open with".
 #   3. Capabilities + RegisteredApplications, which is what makes Arca show up
 #      under Settings > Default apps.
 function Register-Associations($gui) {
+    # Installing again without -Iso takes back a disc image registration left
+    # by an earlier install with it.
+    foreach ($ext in $Known.Keys) {
+        if (-not $Registered.ContainsKey($ext)) { Unregister-Type $ext $Known[$ext].ProgId }
+    }
     foreach ($ext in $Registered.Keys) {
         $progid = $Registered[$ext].ProgId
         $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Classes\$progid")

@@ -58,7 +58,8 @@ back to whatever had it before when Arca is uninstalled.
 Disc images are off by default, because Explorer mounts them itself. Tick
 **Disc images (.iso) too** in the Inno Setup installer, start the new
 installer built by `windows/build-setup.ps1` with `--iso`, or run
-`windows\install.ps1 -Iso` for the development install.
+`windows\install.ps1 -Iso` for the development install. Installing again
+without them takes back the disc images an earlier install registered.
 
 ZIP-based packages and documents (`.jar`, `.apk`, `.epub`, `.cbz` and the rest
 of [ZIP containers](zip-containers.md)) and `.cbr` comics are never

@@ -209,6 +209,7 @@ El archivo reconstruido se escribe con un nombre temporal, se vuelve a leer y so
 **7z.** Cada bloque sólido se descomprime por separado, así que el daño en un bloque no cuesta nada en los demás. En un bloque dañado se pierden la primera entrada que no cuadra con su CRC o no se descomprime y todas las que la siguen; una entrada sin CRC propio solo se conserva si su bloque entero se descomprime. Lo que se salva se vuelve a comprimir al nivel normal.
 
 - La cabecera del final de un 7z es la que dice dónde está cada bloque y cada entrada: un 7z con la cabecera dañada no se puede reparar.
+- Las carpetas solas no son una reparación: si se pierden todos los ficheros, no se escribe nada y la orden falla, aunque las carpetas se salven.
 
 **RAR.** Reconstruye el archivo a partir de su registro de recuperación, con el que tiene que haberse creado (*Añadir registro de recuperación* en WinRAR). Sin él, un RAR dañado no se puede reparar. Si el registro no encuentra nada mal, no se escribe nada.
 
@@ -230,7 +231,7 @@ arca bench big.zip
 | --- | --- | --- |
 | `<ARCHIVE>` | obligatorio sin `--codecs` | Archivo contra el que medir R1 y R2. No va con `--codecs`. |
 | `--codecs` | desactivado | Mide la velocidad de compresión y de descompresión y la relación de Store, Deflate, Zstandard, LZMA2, bzip2 y RAR5, e imprime una puntuación. No se lee ni se escribe nada en el disco. |
-| `-j, --threads <N>` | `0` | Hilos de la segunda medición; `0` significa todos los núcleos. Con `1` solo se mide un hilo. |
+| `-j, --threads <N>` | `0` | Hilos de la segunda medición, de 0 a 256; `0` significa todos los núcleos. Con `1` solo se mide un hilo. |
 | `--seconds <S>` | `1` | Segundos que cada medición repite sus pasadas, de 0 a 3600. Siempre se hace al menos una. |
 | `--size <MIB>` | `16` | MiB de datos generados, de 1 a 4096; se suben a 1 MiB por hilo. |
 | `--json` | desactivado | Imprime un objeto JSON en lugar de la tabla: velocidades en MB/s, relaciones como tamaño comprimido entre original y `null` para lo que no se midió. |

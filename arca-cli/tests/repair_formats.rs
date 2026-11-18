@@ -93,8 +93,47 @@ fn repair_keeps_the_format_and_refuses_its_input() {
     assert!(repair(&tar, &sound).status.success());
 }
 
+fn noise(seed: u32, len: usize) -> Vec<u8> {
+    let mut state = seed;
+    (0..len)
+        .map(|_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 24) as u8
+        })
+        .collect()
+}
+
 #[test]
 fn a_damaged_7z_keeps_its_folders_and_whatever_checks_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input");
+    std::fs::create_dir_all(input.join("sub")).unwrap();
+    std::fs::write(input.join("a.txt"), noise(1, 40_000)).unwrap();
+    std::fs::write(input.join("b.txt"), noise(2, 40_000)).unwrap();
+    std::fs::write(input.join("sub/c.txt"), noise(3, 40_000)).unwrap();
+    let sz = dir.path().join("good.7z");
+    let made = run(&["create".as_ref(), sz.as_os_str(), input.as_os_str()]);
+    assert!(made.status.success(), "{}", text(&made).1);
+    let mut bytes = std::fs::read(&sz).unwrap();
+    let packed = u64::from_le_bytes(bytes[12..20].try_into().unwrap()) as usize;
+    bytes[32 + packed - packed / 6] ^= 0x5A;
+    let broken = dir.path().join("broken.7z");
+    std::fs::write(&broken, &bytes).unwrap();
+    let fixed = dir.path().join("fixed.7z");
+    let out = repair(&broken, &fixed);
+    let (stdout, stderr) = text(&out);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stdout.contains("entries recovered, 1 lost"), "{stdout}");
+    assert!(stderr.contains("lost: input/sub/c.txt"), "{stderr}");
+    assert!(run(&["test".as_ref(), fixed.as_os_str()]).status.success());
+    let listing = text(&run(&["list".as_ref(), fixed.as_os_str()])).0;
+    assert!(listing.contains("input/sub/"), "{listing}");
+    assert!(listing.contains("input/a.txt"), "{listing}");
+    assert!(!listing.contains("input/sub/c.txt"), "{listing}");
+}
+
+#[test]
+fn a_7z_whose_every_file_is_lost_is_not_rewritten_with_only_its_folders() {
     let dir = tempfile::tempdir().unwrap();
     let sz = made(dir.path(), "good.7z");
     let mut bytes = std::fs::read(&sz).unwrap();
@@ -105,11 +144,12 @@ fn a_damaged_7z_keeps_its_folders_and_whatever_checks_out() {
     std::fs::write(&broken, &bytes).unwrap();
     let fixed = dir.path().join("fixed.7z");
     let out = repair(&broken, &fixed);
-    let (stdout, stderr) = text(&out);
-    assert!(out.status.success(), "{stderr}");
-    assert!(stdout.contains("entries recovered"), "{stdout}");
-    assert!(stderr.contains("lost:"), "{stderr}");
-    assert!(run(&["test".as_ref(), fixed.as_os_str()]).status.success());
+    let (_, stderr) = text(&out);
+    assert!(!out.status.success());
+    assert!(stderr.contains("no file of"), "{stderr}");
+    assert!(stderr.contains("lost: input/a.txt"), "{stderr}");
+    assert!(!fixed.exists());
+    assert!(!dir.path().join("fixed.7z.arca-new").exists());
 }
 
 #[cfg(feature = "rar")]

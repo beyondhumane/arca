@@ -17,9 +17,10 @@ pub const UNINSTALLER: &str = "unins000.exe";
 pub const MANIFEST: &str = "AppxManifest.xml";
 pub const INNO_LEFTOVERS: [&str; 2] = ["unins000.dat", "unins000.msg"];
 
-pub const KNOWN_FILES: [&str; 9] = [
+pub const KNOWN_FILES: [&str; 10] = [
     "arca.exe",
     "arca-gui.exe",
+    "arca-sfx.exe",
     "arca_shell.dll",
     "AppxManifest.xml",
     "LICENSE",
@@ -312,6 +313,35 @@ mod tests {
             leftovers_error(&left),
             Err("could not remove a.exe, b.dll".to_string())
         );
+    }
+
+    #[test]
+    fn every_file_the_installer_packs_is_one_it_removes() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let script = std::fs::read_to_string(root.join("windows/build-setup.ps1")).unwrap();
+        let marker = "\"create\", $Payload,";
+        let line = script
+            .lines()
+            .find_map(|line| line.split_once(marker).map(|(_, names)| names))
+            .expect("build-setup.ps1 packs the payload with arca create");
+        let mut packed = std::collections::BTreeSet::new();
+        for name in line.split('"').skip(1).step_by(2) {
+            if name == "Assets" {
+                for entry in std::fs::read_dir(root.join("windows/assets")).unwrap() {
+                    let entry = entry.unwrap().file_name();
+                    let entry = entry.to_string_lossy();
+                    if entry.ends_with(".png") {
+                        packed.insert(format!("Assets/{entry}"));
+                    }
+                }
+            } else {
+                packed.insert(name.to_string());
+            }
+        }
+        assert!(packed.contains("arca-sfx.exe"), "{packed:?}");
+        let known: std::collections::BTreeSet<String> =
+            KNOWN_FILES.iter().map(|name| name.to_string()).collect();
+        assert_eq!(packed, known);
     }
 
     #[test]

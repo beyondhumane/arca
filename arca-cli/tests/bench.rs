@@ -61,9 +61,14 @@ fn an_archive_and_the_codec_benchmark_do_not_mix() {
         .status
         .success());
     assert!(!arca(&["bench", "--codecs", "--size", "0"]).status.success());
+    for threads in ["257", "100000"] {
+        let out = arca(&["bench", "--codecs", "-j", threads]);
+        assert_eq!(out.status.code(), Some(2), "{threads}");
+        assert!(out.stdout.is_empty(), "{threads}");
+    }
 }
 
-#[cfg(all(unix, feature = "rar"))]
+#[cfg(unix)]
 #[test]
 fn ctrl_c_stops_the_codec_benchmark_and_prints_what_it_measured() {
     use std::time::Duration;

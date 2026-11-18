@@ -130,11 +130,11 @@ fn rar_level(level: Level, codec: CodecArg) -> Result<Level> {
 /// runs. SIGKILL and power loss are not covered.
 pub(crate) fn interruption() -> Result<Arc<AtomicBool>> {
     let cancelled = Arc::new(AtomicBool::new(false));
-    #[cfg(all(feature = "rar", unix))]
+    #[cfg(unix)]
     for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
         signal_hook::flag::register(signal, Arc::clone(&cancelled))?;
     }
-    #[cfg(all(feature = "rar", windows))]
+    #[cfg(windows)]
     ctrlc::set_handler({
         let cancelled = Arc::clone(&cancelled);
         move || cancelled.store(true, Ordering::SeqCst)

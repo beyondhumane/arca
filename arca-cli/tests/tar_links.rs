@@ -103,29 +103,47 @@ fn creating_a_tar_stores_symbolic_links_without_following_them() {
     let long = format!("{}sub/real.txt", "./".repeat(60));
     symlink(&long, src.join("long")).unwrap();
     symlink("sub/missing/../real.txt", src.join("through")).unwrap();
+    let only = dir.join("only");
+    fs::create_dir_all(&only).unwrap();
+    symlink("../src/sub/real.txt", only.join("link")).unwrap();
 
-    ok(dir, &["create", "tree.tar", "src"]);
-    let (listing, _) = ok(dir, &["list", "tree.tar"]);
-    assert!(listing.contains("src/near -> sub/real.txt"), "{listing}");
-    assert!(
-        listing.contains(&format!("src/long -> {long}")),
-        "{listing}"
-    );
-    assert!(!listing.contains("secret"), "{listing}");
+    for suffix in ["tar", "tar.gz", "tar.xz", "tar.bz2", "tar.zst"] {
+        let archive = format!("tree.{suffix}");
+        ok(dir, &["create", &archive, "src"]);
+        let (listing, _) = ok(dir, &["list", &archive]);
+        assert!(
+            listing.contains("src/near -> sub/real.txt"),
+            "{suffix}: {listing}"
+        );
+        assert!(
+            listing.contains(&format!("src/long -> {long}")),
+            "{suffix}: {listing}"
+        );
+        assert!(!listing.contains("secret"), "{suffix}: {listing}");
 
-    let (_, stderr) = ok(dir, &["extract", "tree.tar", "-o", "out"]);
-    let out = dir.join("out/src");
-    assert_eq!(
-        fs::read_link(out.join("near")).unwrap(),
-        Path::new("sub/real.txt")
-    );
-    assert_eq!(fs::read(out.join("near")).unwrap(), b"real");
-    assert_eq!(fs::read_link(out.join("long")).unwrap(), Path::new(&long));
-    assert_eq!(fs::read(out.join("long")).unwrap(), b"real");
-    assert!(fs::symlink_metadata(out.join("far")).is_err());
-    assert!(fs::symlink_metadata(out.join("through")).is_err());
-    assert!(stderr.contains("'src/far'"), "{stderr}");
-    assert!(stderr.contains("'src/through'"), "{stderr}");
+        let target = format!("out-{suffix}");
+        let (_, stderr) = ok(dir, &["extract", &archive, "-o", &target]);
+        let out = dir.join(&target).join("src");
+        assert_eq!(
+            fs::read_link(out.join("near")).unwrap(),
+            Path::new("sub/real.txt")
+        );
+        assert_eq!(fs::read(out.join("near")).unwrap(), b"real");
+        assert_eq!(fs::read_link(out.join("long")).unwrap(), Path::new(&long));
+        assert_eq!(fs::read(out.join("long")).unwrap(), b"real");
+        assert!(fs::symlink_metadata(out.join("far")).is_err());
+        assert!(fs::symlink_metadata(out.join("through")).is_err());
+        assert!(stderr.contains("'src/far'"), "{suffix}: {stderr}");
+        assert!(stderr.contains("'src/through'"), "{suffix}: {stderr}");
+
+        let archive = format!("only.{suffix}");
+        ok(dir, &["create", &archive, "only"]);
+        let (listing, _) = ok(dir, &["list", &archive]);
+        assert!(
+            listing.contains("only/link -> ../src/sub/real.txt"),
+            "{suffix}: {listing}"
+        );
+    }
 
     ok(dir, &["create", "tree.zip", "src"]);
     let (listing, _) = ok(dir, &["list", "tree.zip"]);

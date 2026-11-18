@@ -209,6 +209,7 @@ The rebuilt archive is written under a temporary name, read back, and only then 
 **7z.** Each solid block is decoded on its own, so damage in one block costs nothing in the others. In a damaged block, the first entry that fails its CRC or doesn’t decode and every entry after it are lost; an entry without a CRC of its own is kept only if its whole block decodes. The survivors are compressed again at the normal level.
 
 - The header at the end of a 7z is what says where every block and entry is: a 7z with a damaged header can’t be repaired.
+- Folders alone are not a repair: when every file is lost, nothing is written and the command fails, even if the folders survive.
 
 **RAR.** Rebuilds the archive from its recovery record, which it must have been made with (WinRAR’s *Add recovery record*). Without one, a damaged RAR can’t be repaired. When the record finds nothing wrong, nothing is written.
 
@@ -230,7 +231,7 @@ arca bench big.zip
 | --- | --- | --- |
 | `<ARCHIVE>` | required without `--codecs` | Archive to measure R1 and R2 against. Not with `--codecs`. |
 | `--codecs` | off | Measure compression and decompression speed and ratio of Store, Deflate, Zstandard, LZMA2, bzip2 and RAR5, and print a rating. Nothing is read from or written to the disk. |
-| `-j, --threads <N>` | `0` | Threads for the second measurement; `0` means every core. With `1` only one thread is measured. |
+| `-j, --threads <N>` | `0` | Threads for the second measurement, from 0 to 256; `0` means every core. With `1` only one thread is measured. |
 | `--seconds <S>` | `1` | Seconds each measurement keeps repeating its runs, from 0 to 3600. At least one run is always made. |
 | `--size <MIB>` | `16` | MiB of generated data, from 1 to 4096; raised to 1 MiB per thread. |
 | `--json` | off | Print one JSON object instead of the table: speeds in MB/s, ratios as compressed over original size, and `null` for whatever was not measured. |

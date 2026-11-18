@@ -275,8 +275,9 @@ enum Cmd {
             short = 'j',
             long,
             default_value_t = 0,
+            value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(0..=256),
             requires = "codecs",
-            help = "Threads for the second measurement. 0 means every core"
+            help = "Threads for the second measurement, up to 256. 0 means every core"
         )]
         threads: usize,
         #[arg(
@@ -814,7 +815,11 @@ fn create(
     raw_list.retain(|(path, _, _)| !own.is_own(path));
     if !matches!(
         format_kind.container(),
-        Container::Tar | Container::TarGz | Container::TarXz
+        Container::Tar
+            | Container::TarGz
+            | Container::TarXz
+            | Container::TarBz2
+            | Container::TarZst
     ) {
         links.clear();
     }
