@@ -32,13 +32,17 @@ fn program(dir: &Path, name: &str, payload: &[u8], flags: u32) -> PathBuf {
     .unwrap()
     .into_inner();
     let path = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-    fs::write(&path, bytes).unwrap();
+    write_program(&path, &bytes);
+    path
+}
+
+fn write_program(path: &Path, bytes: &[u8]) {
+    fs::write(path, bytes).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
     }
-    path
 }
 
 fn run(exe: &Path, args: &[&str]) -> Output {
@@ -94,7 +98,7 @@ fn a_self_extractor_whose_offsets_count_from_the_program_extracts() {
     let exe = temp
         .path()
         .join(format!("whole{}", std::env::consts::EXE_SUFFIX));
-    fs::write(&exe, bytes).unwrap();
+    write_program(&exe, &bytes);
     let dest = temp.path().join("out");
     let output = run(&exe, &["-o", dest.to_str().unwrap(), "--console"]);
     assert!(output.status.success(), "{output:?}");
