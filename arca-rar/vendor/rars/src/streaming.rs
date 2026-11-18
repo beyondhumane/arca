@@ -34,6 +34,51 @@ pub(crate) trait SourceFactory: Send + Sync {
     fn release(&self) {}
     fn len(&self) -> Result<u64>;
     fn open(&self) -> Result<Box<dyn EntryReader>>;
+    /// Arca: whether packed spools made for this source are sealed.
+    fn seals_packed(&self) -> bool {
+        false
+    }
+    /// Arca: a cipher to seal a packed spool made for this source with.
+    fn packed_cipher(&self) -> Option<Box<dyn SpoolCipher>> {
+        None
+    }
+}
+
+/// Arca: encrypts whole 16-byte blocks in place for a sealed spool, carrying
+/// its chain from one call to the next.
+pub(crate) trait SpoolCipher: Send + Sync {
+    fn encrypt(&mut self, blocks: &mut [u8]) -> std::io::Result<()>;
+}
+
+/// Arca: a member whose payload is encrypted, so that compressing it puts
+/// only ciphertext in its packed spool, whether that spool stays in memory or
+/// moves to a file beside the output.
+#[cfg(feature = "encryption")]
+struct SealedSource {
+    inner: EntrySource,
+    cipher: Box<dyn Fn() -> Box<dyn SpoolCipher> + Send + Sync>,
+}
+
+#[cfg(feature = "encryption")]
+impl SourceFactory for SealedSource {
+    fn max_preparation_window(&self) -> usize {
+        self.inner.max_preparation_window()
+    }
+    fn release(&self) {
+        self.inner.release();
+    }
+    fn len(&self) -> Result<u64> {
+        self.inner.len()
+    }
+    fn open(&self) -> Result<Box<dyn EntryReader>> {
+        self.inner.open()
+    }
+    fn seals_packed(&self) -> bool {
+        true
+    }
+    fn packed_cipher(&self) -> Option<Box<dyn SpoolCipher>> {
+        Some((self.cipher)())
+    }
 }
 
 #[derive(Clone)]
@@ -65,6 +110,27 @@ impl EntrySource {
     /// Release a session-owned payload once this write will never reopen it.
     pub(crate) fn release(&self) {
         self.0.release();
+    }
+
+    /// Arca: this source, with every packed spool made for it sealed by a
+    /// cipher from `cipher`. See [`Spool::for_member_of`].
+    #[cfg(feature = "encryption")]
+    pub(crate) fn sealed(
+        self,
+        cipher: impl Fn() -> Box<dyn SpoolCipher> + Send + Sync + 'static,
+    ) -> Self {
+        Self::from_factory(SealedSource {
+            inner: self,
+            cipher: Box::new(cipher),
+        })
+    }
+
+    pub(crate) fn seals_packed(&self) -> bool {
+        self.0.seals_packed()
+    }
+
+    pub(crate) fn packed_cipher(&self) -> Option<Box<dyn SpoolCipher>> {
+        self.0.packed_cipher()
     }
 
     pub fn from_bytes(data: impl Into<Arc<[u8]>>) -> Self {
@@ -860,6 +926,23 @@ pub(crate) struct Spool {
     len: u64,
     pos: u64,
     charge: Option<StorageCharge>,
+    /// Arca: set on a spool that stores only the ciphertext of what it is
+    /// given. See [`Spool::for_member_of`].
+    sealing: Option<Box<Sealing>>,
+}
+
+/// Arca: a sealed spool's source, its cipher, and the plaintext of the block
+/// it has not completed yet, which stays here until the next write or
+/// [`Spool::seal`] pads it. The cipher, a whole AES key schedule, is made on
+/// the first write and dropped by the seal, so the many spools a write keeps
+/// until emission do not each hold one.
+struct Sealing {
+    source: EntrySource,
+    cipher: Option<Box<dyn SpoolCipher>>,
+    sealed: bool,
+    tail: [u8; 16],
+    tail_len: usize,
+    plain_len: u64,
 }
 
 impl Spool {
@@ -869,7 +952,106 @@ impl Spool {
             len: 0,
             pos: 0,
             charge: StorageCharge::new(resources),
+            sealing: None,
         }
+    }
+
+    /// Arca: a member spool for `source`'s packed payload. When the source
+    /// carries a cipher, the spool encrypts as it is written and holds back
+    /// only the plaintext of an incomplete block, in memory, so no plaintext
+    /// reaches its store, even once that store is a file. It is then
+    /// append-only and has to be [`seal`](Self::seal)ed before it is read.
+    pub(crate) fn for_member_of(source: &EntrySource, resources: &WriterResources) -> Result<Self> {
+        let mut spool = Self::for_member(resources)?;
+        if source.seals_packed() {
+            spool.sealing = Some(Box::new(Sealing {
+                source: source.clone(),
+                cipher: None,
+                sealed: false,
+                tail: [0; 16],
+                tail_len: 0,
+                plain_len: 0,
+            }));
+        }
+        Ok(spool)
+    }
+
+    /// Arca: the bytes written to this spool, before any encryption pads them.
+    pub(crate) fn plain_len(&self) -> u64 {
+        self.sealing
+            .as_ref()
+            .map_or(self.len, |sealing| sealing.plain_len)
+    }
+
+    /// Arca: pads a sealed spool's last block with zeros, as the RAR 5 writer
+    /// pads encrypted data, and encrypts it, leaving whole ciphertext. Sealing
+    /// again, or sealing any other spool, changes nothing.
+    pub(crate) fn seal(&mut self) -> Result<()> {
+        let Some(mut sealing) = self.sealing.take() else {
+            return Ok(());
+        };
+        sealing.sealed = true;
+        let result = match sealing.cipher.take() {
+            Some(mut cipher) if sealing.tail_len != 0 => {
+                let mut block = [0u8; 16];
+                block[..sealing.tail_len].copy_from_slice(&sealing.tail[..sealing.tail_len]);
+                cipher
+                    .encrypt(&mut block)
+                    .and_then(|()| self.write_stored(&block))
+            }
+            _ => Ok(()),
+        };
+        sealing.tail = [0; 16];
+        sealing.tail_len = 0;
+        self.sealing = Some(sealing);
+        Ok(result?)
+    }
+
+    /// Arca: encrypts `input` behind what a sealed spool holds back and
+    /// stores every block that is complete.
+    fn write_sealed(&mut self, sealing: &mut Sealing, mut input: &[u8]) -> std::io::Result<()> {
+        if sealing.sealed {
+            return Err(std::io::Error::other(Error::InvalidArgument(
+                "sealed spool written after it was sealed",
+            )));
+        }
+        if sealing.cipher.is_none() {
+            sealing.cipher = sealing.source.packed_cipher();
+        }
+        let Some(cipher) = sealing.cipher.as_mut() else {
+            return Err(std::io::Error::other(Error::InvalidArgument(
+                "sealed spool has no cipher",
+            )));
+        };
+        let mut block = [0u8; 4096];
+        while !input.is_empty() {
+            let held = sealing.tail_len;
+            block[..held].copy_from_slice(&sealing.tail[..held]);
+            let take = input.len().min(block.len() - held);
+            block[held..held + take].copy_from_slice(&input[..take]);
+            input = &input[take..];
+            let filled = held + take;
+            let whole = filled & !15;
+            sealing.tail_len = filled - whole;
+            sealing.tail[..sealing.tail_len].copy_from_slice(&block[whole..filled]);
+            sealing.plain_len += take as u64;
+            if whole != 0 {
+                cipher.encrypt(&mut block[..whole])?;
+                self.write_stored(&block[..whole])?;
+            }
+        }
+        block.fill(0);
+        Ok(())
+    }
+
+    fn write_stored(&mut self, mut bytes: &[u8]) -> std::io::Result<()> {
+        while !bytes.is_empty() {
+            match self.write_with(bytes, |io, bytes| io.write(bytes))? {
+                0 => return Err(std::io::ErrorKind::WriteZero.into()),
+                written => bytes = &bytes[written..],
+            }
+        }
+        Ok(())
     }
 
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -1058,6 +1240,11 @@ impl Spool {
 
 impl Write for Spool {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if let Some(mut sealing) = self.sealing.take() {
+            let result = self.write_sealed(&mut sealing, buffer);
+            self.sealing = Some(sealing);
+            return result.map(|()| buffer.len());
+        }
         self.write_with(buffer, |io, bytes| io.write(bytes))
     }
 
@@ -1081,6 +1268,18 @@ impl Spool {
             Store::File(store) => store,
             Store::Resident { .. } => panic!("spool is still in memory"),
         }
+    }
+
+    /// Arca: what the store holds right now, wherever it is.
+    pub(crate) fn stored_bytes(&mut self) -> Vec<u8> {
+        match &mut self.store {
+            Store::File(store) => std::fs::read(&store.path).unwrap(),
+            Store::Resident { spool, .. } => spool.contents().to_vec(),
+        }
+    }
+
+    pub(crate) fn is_file(&self) -> bool {
+        matches!(self.store, Store::File(_))
     }
 }
 
@@ -1933,6 +2132,67 @@ mod tests {
         source.open().unwrap().read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"payload");
         drop(source);
+        assert_eq!(std::fs::read_dir(&*root).unwrap().count(), 0);
+    }
+
+    /// Arca: a sealed member spool never stores plaintext, before or after
+    /// it moves from memory to a file, and holds back at most one block.
+    #[cfg(all(
+        feature = "encryption",
+        not(all(target_arch = "wasm32", target_os = "unknown"))
+    ))]
+    #[test]
+    fn a_sealed_spool_stores_only_ciphertext_in_memory_and_on_disk() {
+        use super::*;
+
+        struct Chained(u8);
+        impl SpoolCipher for Chained {
+            fn encrypt(&mut self, blocks: &mut [u8]) -> std::io::Result<()> {
+                assert_eq!(blocks.len() % 16, 0);
+                for byte in blocks {
+                    self.0 = self.0.wrapping_add(*byte) ^ 0xa5;
+                    *byte = self.0;
+                }
+                Ok(())
+            }
+        }
+
+        let root = crate::scratch::case("sealed-spool");
+        let resources = WriterResources::default()
+            .with_temp_dir(&*root)
+            .with_max_spool_memory_bytes(8 << 20);
+        let source = EntrySource::from_bytes(Vec::new()).sealed(|| Box::new(Chained(0)));
+        let mut spool = Spool::for_member_of(&source, &resources).unwrap();
+        let plain: Vec<u8> = (0..RESIDENT_SPOOL_LIMIT * 3 / 2 + 5)
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let mut expected = plain.clone();
+        expected.resize(plain.len().div_ceil(16) * 16, 0);
+        Chained(0).encrypt(&mut expected).unwrap();
+
+        let mut written = 0;
+        let mut checked_in_memory = false;
+        for (index, chunk) in plain.chunks(4093).enumerate() {
+            spool.write_all(chunk).unwrap();
+            written += chunk.len();
+            assert_eq!(spool.plain_len(), written as u64);
+            assert_eq!(spool.len(), (written / 16 * 16) as u64);
+            if index % 64 == 0 || written == plain.len() {
+                checked_in_memory |= !spool.is_file();
+                let stored = spool.stored_bytes();
+                assert_eq!(stored[..], expected[..written / 16 * 16]);
+            }
+        }
+        assert!(checked_in_memory);
+        assert!(spool.is_file());
+        spool.seal().unwrap();
+        assert_eq!(spool.plain_len(), plain.len() as u64);
+        assert_eq!(spool.stored_bytes(), expected);
+        assert!(spool.write_all(b"late").is_err());
+        let mut copied = Vec::new();
+        spool.copy_to(&mut copied).unwrap();
+        assert_eq!(copied, expected);
+        drop(spool);
         assert_eq!(std::fs::read_dir(&*root).unwrap().count(), 0);
     }
 }

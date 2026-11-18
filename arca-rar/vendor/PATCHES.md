@@ -165,7 +165,7 @@ Spool plumbing, which does not touch the encoder or the archive bytes:
   charged to its worker's fixed reservation and so moves to disk whenever
   the estimate leaves no room.
 
-Encryption cost, which keeps the format and the password check as they are:
+Encryption, which keeps the format and the password check as they are:
 
 - **One key per password.** Every encrypted member, service and comment got
   a salt of its own and so a PBKDF2 derivation of its own, 2^15 rounds of
@@ -183,3 +183,25 @@ Encryption cost, which keeps the format and the password check as they are:
   salt per member costs what it did. The password check runs for every
   header as before. See `an_archive_derives_one_key_per_password` and
   `a_parse_derives_each_salt_once_and_keeps_only_a_few`.
+- **Only ciphertext spooled.** An encrypted member's packed payload was
+  compressed into a plain member spool and encrypted only on its way into
+  the archive, or, for a volume set, into a second spool. A spool moves to a
+  `.rars-spool-*` file beside the output past 1 MiB or when the resident cap
+  is full, so compressed plaintext reached the disk, where a crash or a
+  synchronised folder could keep it. The writer now settles each encrypted
+  member's keys and IV before compressing it (`MemberSeal` in
+  `rar50/write/engine.rs`) and hands the compressor its source wrapped by
+  `EntrySource::sealed` (`streaming.rs`). Every packed spool made for such a
+  source (`Spool::for_member_of`, used by `compress.rs` for the streaming,
+  solid and whole-member paths) encrypts as it is written and holds back
+  only the plaintext of an incomplete block, in memory. The compressor calls
+  `Spool::seal` once a member is whole, which pads that block with zeros as
+  before and drops the cipher; the cipher is made on the first write, so the
+  spools kept until emission hold no key schedule. The packed spool is then
+  the payload as it is: nothing is encrypted at emission and a volume set
+  needs no second spool. Store decisions read `Spool::plain_len`, so they
+  and the archive are as before. A member that ends up stored is encrypted
+  from its source as before, under an IV of its own rather than the one its
+  discarded spool used. See
+  `a_sealed_spool_stores_only_ciphertext_in_memory_and_on_disk` and
+  `a_sealed_source_spools_only_the_ciphertext_of_its_packed_stream`.

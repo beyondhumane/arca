@@ -38,6 +38,7 @@ use crate::streaming::Spool;
 use crate::write_progress::{check_cancelled, CancellableIo, ProgressReporter};
 use crate::{Error, Result, WriterResources};
 use std::io::{Read, Write};
+use std::sync::Arc;
 
 pub(super) struct EnginePlan<'a> {
     pub(super) compress: CompressPlan,
@@ -92,35 +93,11 @@ enum Payload<'a> {
     },
 }
 
+// Arca: a member's packed payload is no longer encrypted here: compression
+// seals it as it is spooled (`MemberSeal`).
 enum PlainPayload<'a> {
     Borrowed(&'a [u8]),
     Stored(PreparedSource),
-    Packed(Spool),
-}
-
-// Member payloads cannot borrow comment/service bytes. Keeping their two
-// forms distinct avoids an impossible borrowed arm during plain emission.
-enum MemberPlainPayload {
-    Stored(PreparedSource),
-    Packed(Spool),
-}
-
-impl From<MemberPlainPayload> for PlainPayload<'_> {
-    fn from(member: MemberPlainPayload) -> Self {
-        match member {
-            MemberPlainPayload::Stored(source) => Self::Stored(source),
-            MemberPlainPayload::Packed(packed) => Self::Packed(packed),
-        }
-    }
-}
-
-impl From<MemberPlainPayload> for Payload<'_> {
-    fn from(member: MemberPlainPayload) -> Self {
-        match member {
-            MemberPlainPayload::Stored(source) => Self::Stored(source),
-            MemberPlainPayload::Packed(packed) => Self::Packed(packed),
-        }
-    }
 }
 
 // A reopenable source is not a snapshot. Keep the size and integrity used by
@@ -229,9 +206,21 @@ pub(super) fn write_archive(
         None
     };
 
+    // Arca: an encrypted member's packed payload is encrypted as it is
+    // spooled, so its IV and keys are settled before it is compressed.
+    let mut archive_keys = ArchiveKeys::default();
+    let mut seals = Records::new(entries.len(), resources)?;
     let mut sources = Records::new(entries.len(), resources)?;
     for entry in entries {
-        sources.push(entry.source.clone())?;
+        let seal = match entry.password.as_deref() {
+            Some(password) => Some(archive_keys.seal_for(password)?),
+            None => None,
+        };
+        sources.push(match &seal {
+            Some(seal) => seal.source(&entry.source)?,
+            None => entry.source.clone(),
+        })?;
+        seals.push(seal)?;
     }
     let total_input = total_input_size(entries)?;
     let total_entries = entries.len();
@@ -269,7 +258,6 @@ pub(super) fn write_archive(
         |total, entry| total + 1 + entry.services.len(),
     );
     let mut blocks = Records::<PreparedBlock>::new(block_count, resources)?;
-    let mut archive_keys = ArchiveKeys::default();
     if let Some(comment) = &plan.archive_comment {
         blocks.push(prepare_comment(
             comment,
@@ -278,13 +266,15 @@ pub(super) fn write_archive(
             resources,
         )?)?;
     }
-    for (index, (entry, member)) in entries.iter().zip(compressed).enumerate() {
+    for (index, ((entry, member), seal)) in
+        entries.iter().zip(compressed).zip(seals.iter()).enumerate()
+    {
         check_cancelled(plan.progress)?;
         let mut block = prepare_member(
             entry,
             member,
+            seal.as_ref(),
             &plan,
-            &mut archive_keys,
             header_keys.as_ref(),
             resources,
         )
@@ -640,22 +630,74 @@ fn prepare_service<'a>(
 /// its own, which is what CBC needs to share a key.
 #[derive(Default)]
 struct ArchiveKeys {
-    derived: Vec<(Vec<u8>, [u8; 16], Rar50Keys)>,
+    derived: Vec<(Vec<u8>, [u8; 16], Arc<Rar50Keys>)>,
 }
 
 impl ArchiveKeys {
     fn for_password(&mut self, password: &[u8]) -> Result<([u8; 16], Rar50Keys)> {
+        let (salt, keys) = self.derive(password)?;
+        Ok((salt, Rar50Keys::clone(&keys)))
+    }
+
+    fn seal_for(&mut self, password: &[u8]) -> Result<MemberSeal> {
+        let (salt, keys) = self.derive(password)?;
+        Ok(MemberSeal {
+            salt,
+            keys,
+            iv: fresh_iv()?,
+        })
+    }
+
+    fn derive(&mut self, password: &[u8]) -> Result<([u8; 16], Arc<Rar50Keys>)> {
         if let Some((_, salt, keys)) = self.derived.iter().find(|(known, ..)| known == password) {
-            return Ok((*salt, keys.clone()));
+            return Ok((*salt, Arc::clone(keys)));
         }
         let mut salt = [0u8; 16];
         crate::write_stream::fill_entropy(
             &mut salt,
             "RAR 5 writer could not generate encryption salt",
         )?;
-        let keys = Rar50Keys::derive(password, salt, WRITE_KDF_COUNT_LOG).map_err(Error::from)?;
-        self.derived.push((password.to_vec(), salt, keys.clone()));
+        let keys =
+            Arc::new(Rar50Keys::derive(password, salt, WRITE_KDF_COUNT_LOG).map_err(Error::from)?);
+        self.derived
+            .push((password.to_vec(), salt, Arc::clone(&keys)));
         Ok((salt, keys))
+    }
+}
+
+/// Arca: what an encrypted member's payload is encrypted with: the salt and
+/// keys of its password, and an IV of its own.
+struct MemberSeal {
+    salt: [u8; 16],
+    keys: Arc<Rar50Keys>,
+    iv: [u8; 16],
+}
+
+impl MemberSeal {
+    /// `source`, made to seal the packed spool compression writes for it.
+    fn source(&self, source: &crate::EntrySource) -> Result<crate::EntrySource> {
+        #[cfg(feature = "encryption")]
+        {
+            let keys = Arc::clone(&self.keys);
+            let iv = self.iv;
+            Ok(source
+                .clone()
+                .sealed(move || Box::new(crate::crypto::rar50::Rar50Cipher::new(keys.key, iv))))
+        }
+        #[cfg(not(feature = "encryption"))]
+        {
+            let _ = source;
+            Err(Error::FeatureDisabled {
+                feature: "encryption",
+            })
+        }
+    }
+}
+
+#[cfg(feature = "encryption")]
+impl crate::streaming::SpoolCipher for crate::crypto::rar50::Rar50Cipher {
+    fn encrypt(&mut self, blocks: &mut [u8]) -> std::io::Result<()> {
+        self.encrypt_in_place(blocks).map_err(std::io::Error::other)
     }
 }
 
@@ -743,44 +785,64 @@ fn decoded_rar50_name_len(bytes: &[u8]) -> usize {
 fn prepare_member(
     entry: &ArchiveEntry,
     member: CompressedMember,
+    seal: Option<&MemberSeal>,
     plan: &EnginePlan<'_>,
-    archive_keys: &mut ArchiveKeys,
     header_keys: Option<&HeaderEncryptionKeys>,
     resources: &WriterResources,
 ) -> Result<PreparedBlock<'static>> {
     let compression_info = compress::member_compression_info(&plan.compress, &member)?;
-    let plain_len = if member.store {
-        member.input_size
-    } else {
-        member.packed.len()
-    };
-    let plain = if member.store {
-        MemberPlainPayload::Stored(PreparedSource::new(&entry.source, &member))
-    } else {
-        MemberPlainPayload::Packed(member.packed)
-    };
 
     let mut extra = Bytes::new(resources);
-    let (payload, payload_len, data_crc32, hash) = match entry.password.as_deref() {
-        Some(password) => {
-            let (salt, keys) = archive_keys.for_password(password)?;
-            let iv = fresh_iv()?;
-            write_file_encryption_record(&mut extra, salt, iv, keys.checked_password_record()?)?;
-            let crc32 = keys.checked_crc_mac(member.crc32)?;
-            let hash = keys.checked_hash_mac(member.hash)?;
-            (
-                Payload::Encrypted {
-                    plain: Owned::new(plain.into(), resources)?,
-                    keys,
+    let (payload, payload_len, data_crc32, hash) = match seal {
+        Some(seal) => {
+            let crc32 = seal.keys.checked_crc_mac(member.crc32)?;
+            let hash = seal.keys.checked_hash_mac(member.hash)?;
+            // Arca: a stored member is encrypted from its source on the way
+            // out, under an IV of its own rather than the one its discarded
+            // packed spool was sealed with.
+            let (payload, payload_len, iv) = if member.store {
+                let iv = fresh_iv()?;
+                let plain = PlainPayload::Stored(PreparedSource::new(&entry.source, &member));
+                (
+                    Payload::Encrypted {
+                        plain: Owned::new(plain, resources)?,
+                        keys: Rar50Keys::clone(&seal.keys),
+                        iv,
+                    },
+                    // Encryption pads the payload up to the cipher block size.
+                    member.input_size.div_ceil(16) * 16,
                     iv,
-                },
-                // Encryption pads the payload up to the cipher block size.
-                plain_len.div_ceil(16) * 16,
-                crc32,
-                hash,
+                )
+            } else {
+                let mut packed = member.packed;
+                packed.seal()?;
+                packed.park();
+                let len = packed.len();
+                (Payload::Packed(packed), len, seal.iv)
+            };
+            write_file_encryption_record(
+                &mut extra,
+                seal.salt,
+                iv,
+                seal.keys.checked_password_record()?,
+            )?;
+            (payload, payload_len, crc32, hash)
+        }
+        None if member.store => (
+            Payload::Stored(PreparedSource::new(&entry.source, &member)),
+            member.input_size,
+            member.crc32,
+            member.hash,
+        ),
+        None => {
+            let len = member.packed.len();
+            (
+                Payload::Packed(member.packed),
+                len,
+                member.crc32,
+                member.hash,
             )
         }
-        None => (plain.into(), plain_len, member.crc32, member.hash),
     };
     // A link has no file payload to hash; its target is protected by the header CRC.
     if entry.redirection.is_none() {
@@ -887,20 +949,6 @@ fn write_payload(
                     reader.finish(&source, source.len)?;
                     source.source.release();
                     Ok(())
-                }
-                PlainPayload::Packed(mut packed) => {
-                    let len = packed.len();
-                    packed.rewind()?;
-                    encrypt_reader_to(
-                        &mut packed,
-                        len,
-                        output,
-                        &keys,
-                        iv,
-                        ENCRYPT_CHUNK,
-                        progress,
-                        resources,
-                    )
                 }
                 PlainPayload::Borrowed(mut data) => {
                     let len = data.len() as u64;
@@ -1373,9 +1421,21 @@ pub(super) fn write_limited_volumes(
         None
     };
 
+    // Arca: an encrypted member's packed payload is encrypted as it is
+    // spooled, so its IV and keys are settled before it is compressed.
+    let mut archive_keys = ArchiveKeys::default();
+    let mut seals = Records::new(entries.len(), resources)?;
     let mut sources = Records::new(entries.len(), resources)?;
     for entry in entries {
-        sources.push(entry.source.clone())?;
+        let seal = match entry.password.as_deref() {
+            Some(password) => Some(archive_keys.seal_for(password)?),
+            None => None,
+        };
+        sources.push(match &seal {
+            Some(seal) => seal.source(&entry.source)?,
+            None => entry.source.clone(),
+        })?;
+        seals.push(seal)?;
     }
     let total_input = total_input_size(entries)?;
     let total_entries = entries.len();
@@ -1404,11 +1464,10 @@ pub(super) fn write_limited_volumes(
     )?;
 
     let mut members = Records::new(entries.len(), resources)?;
-    let mut archive_keys = ArchiveKeys::default();
-    for (entry, member) in entries.iter().zip(compressed) {
+    for ((entry, member), seal) in entries.iter().zip(compressed).zip(seals.iter()) {
         check_cancelled(plan.progress)?;
         members.push(
-            prepare_volume_member(entry, member, &plan, &mut archive_keys, resources)
+            prepare_volume_member(entry, member, seal.as_ref(), &plan, resources)
                 .map_err(|error| member_error(error, &entry.name, "preparing volume payload"))?,
         )?;
     }
@@ -1455,38 +1514,34 @@ pub(super) fn write_limited_volumes(
 fn prepare_volume_member<'a>(
     entry: &'a ArchiveEntry,
     member: CompressedMember,
+    seal: Option<&MemberSeal>,
     plan: &EnginePlan<'_>,
-    archive_keys: &mut ArchiveKeys,
     resources: &WriterResources,
 ) -> Result<VolumeMember<'a>> {
     let progress = plan.progress;
     check_cancelled(progress)?;
     let compression_info = compress::member_compression_info(&plan.compress, &member)?;
-    let plain_len = if member.store {
-        member.input_size
-    } else {
-        member.packed.len()
-    };
 
-    match entry.password.as_deref() {
-        Some(password) => {
-            let (salt, keys) = archive_keys.for_password(password)?;
-            let iv = fresh_iv()?;
-
+    match seal {
+        Some(seal) => {
+            let keys = Rar50Keys::clone(&seal.keys);
             // A volume boundary can fall anywhere, and the cipher runs as one
-            // chain over the member, so encrypt it up front into scratch
-            // storage and slice the ciphertext.
-            let mut encrypted = Spool::for_member(resources)?;
-            const ENCRYPT_CHUNK: usize = 64 * 1024;
-            let _permit = resources.acquire_cancellable(ENCRYPT_CHUNK as u64, 0, &|| {
-                progress.is_some_and(ProgressReporter::is_cancelled)
-            })?;
-            if member.store {
+            // chain over the member, so the ciphertext is sliced. Arca: a
+            // packed payload was sealed as it was spooled; a stored one is
+            // encrypted from its source into scratch storage, under an IV of
+            // its own.
+            let (iv, mut encrypted) = if member.store {
+                let iv = fresh_iv()?;
+                let mut encrypted = Spool::for_member(resources)?;
+                const ENCRYPT_CHUNK: usize = 64 * 1024;
+                let _permit = resources.acquire_cancellable(ENCRYPT_CHUNK as u64, 0, &|| {
+                    progress.is_some_and(ProgressReporter::is_cancelled)
+                })?;
                 let source = PreparedSource::new(&entry.source, &member);
                 let mut reader = source.open()?;
                 encrypt_reader_to(
                     &mut reader,
-                    plain_len,
+                    member.input_size,
                     &mut encrypted,
                     &keys,
                     iv,
@@ -1495,20 +1550,13 @@ fn prepare_volume_member<'a>(
                     resources,
                 )?;
                 reader.finish(&source, source.len)?;
+                (iv, encrypted)
             } else {
                 let mut packed = member.packed;
-                packed.rewind()?;
-                encrypt_reader_to(
-                    &mut packed,
-                    plain_len,
-                    &mut encrypted,
-                    &keys,
-                    iv,
-                    ENCRYPT_CHUNK,
-                    progress,
-                    resources,
-                )?;
-            }
+                packed.seal()?;
+                (seal.iv, packed)
+            };
+            let salt = seal.salt;
             let payload_len = encrypted.len();
             encrypted.park();
             Ok(VolumeMember {
@@ -1541,7 +1589,11 @@ fn prepare_volume_member<'a>(
             crc32: member.crc32,
             hash: member.hash,
             compression_info,
-            payload_len: plain_len,
+            payload_len: if member.store {
+                member.input_size
+            } else {
+                member.packed.len()
+            },
             source: if member.store {
                 FragmentSource::Stored {
                     prepared: PreparedSource::new(&entry.source, &member),
@@ -3579,7 +3631,7 @@ mod emission_ledger_tests {
 
     #[test]
     #[cfg(feature = "encryption")]
-    fn encrypted_compressed_volume_payload_propagates_spool_refusal() {
+    fn encrypted_volume_payloads_propagate_spool_refusal() {
         let scratch = crate::scratch::case("encrypted-volume-spool-refusal");
         let resources = WriterResources::default().with_temp_dir(&*scratch);
         let entry = ArchiveEntry::new(
@@ -3590,6 +3642,19 @@ mod emission_ledger_tests {
         let mut settings = plan(false);
         settings.compress.method = 1;
         settings.recovery_percent = None;
+        let seal = ArchiveKeys::default().seal_for(b"secret").unwrap();
+        let constrained = resources.clone().with_max_spool_bytes(0);
+        let error = compress::compress_members_reporting(
+            &[seal.source(&entry.source).unwrap()],
+            settings.compress.clone(),
+            &constrained,
+            &|_| true,
+        )
+        .err()
+        .expect("sealed ciphertext must be charged to its spool");
+        assert_eq!(error.kind(), crate::ErrorKind::ResourceLimit);
+
+        settings.compress.method = 0;
         let member = compress::compress_members_reporting(
             std::slice::from_ref(&entry.source),
             settings.compress.clone(),
@@ -3598,18 +3663,10 @@ mod emission_ledger_tests {
         )
         .unwrap()
         .remove(0);
-        assert!(!member.store);
-
-        let constrained = resources.clone().with_max_spool_bytes(0);
-        let error = prepare_volume_member(
-            &entry,
-            member,
-            &settings,
-            &mut ArchiveKeys::default(),
-            &constrained,
-        )
-        .err()
-        .expect("encrypted ciphertext must be charged to its spool");
+        assert!(member.store);
+        let error = prepare_volume_member(&entry, member, Some(&seal), &settings, &constrained)
+            .err()
+            .expect("encrypted stored data must be charged to its spool");
         assert_eq!(error.kind(), crate::ErrorKind::ResourceLimit);
         assert_eq!(std::fs::read_dir(&*scratch).unwrap().count(), 0);
     }
