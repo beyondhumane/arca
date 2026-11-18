@@ -15,6 +15,13 @@ on:
         description: Publish a preview release from this commit
         type: boolean
         default: false
+      # A release whose files never made it, for instance because no macOS
+      # runner picked up its jobs: the files are built again from the tag and
+      # attached to it, replacing any already there.
+      tag:
+        description: Build this existing release's tag (e.g. v1.0.0) and attach its files
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -59,10 +66,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.tag || '' }}
           persist-credentials: false
       - id: version
         env:
-          TAG: ${{ needs.release-please.outputs.tag }}
+          TAG: ${{ needs.release-please.outputs.tag || inputs.tag }}
           PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.preview }}
         run: |
           VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
@@ -128,6 +136,8 @@ jobs:
             tests: true
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || '' }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -263,20 +273,28 @@ jobs:
             dist/*.sha256
           retention-days: 7
 
+  # Windows and Linux are required. macOS runners are sometimes not available
+  # at all (the jobs are cancelled after waiting), and a release whose files
+  # never appear breaks every installed copy's update check, so the release
+  # goes out without them and a later `tag` run attaches the full set.
   publish:
     name: Publish the Release
-    needs: [release-please, binaries]
+    needs: [release-please, version, binaries]
     if: >-
-      !cancelled() && needs.binaries.result == 'success' &&
-      needs.release-please.outputs.created == 'true'
+      !cancelled() && needs.version.result == 'success' &&
+      needs.binaries.result != 'skipped' &&
+      (needs.release-please.outputs.created == 'true' ||
+      (github.event_name == 'workflow_dispatch' && inputs.tag != ''))
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
       attestations: write
       actions: write
+    outputs:
+      complete: ${{ steps.gather.outputs.complete }}
     env:
-      TAG: ${{ needs.release-please.outputs.tag }}
+      TAG: ${{ needs.release-please.outputs.tag || inputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/download-artifact@v8
@@ -284,12 +302,24 @@ jobs:
           path: artifacts
 
       - name: Gather the files and the checksums
+        id: gather
         run: |
+          set -eu
           mkdir -p publish
           find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -exec cp {} publish/ \;
           cat artifacts/*/*.sha256 | sed 's#.*/##' > publish/SHA256SUMS.txt
           ls -la publish
           cat publish/SHA256SUMS.txt
+          V="${TAG#v}"
+          for f in "arca-setup-$V-x86_64.exe" "arca-$TAG-windows-x86_64.zip" \
+            "arca-$TAG-linux-x86_64.tar.gz" "arca-$TAG-linux-arm64.tar.gz"; do
+            test -f "publish/$f" || { echo "missing $f: nothing is published"; exit 1; }
+          done
+          if [ -f "publish/arca-$TAG-macos-arm64.tar.gz" ] && [ -f "publish/arca-$TAG-macos-x86_64.tar.gz" ]; then
+            echo "complete=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # Signed build provenance, kept by GitHub: anyone can check that a file
       # came out of this workflow at this commit with `gh attestation verify`.
@@ -302,15 +332,24 @@ jobs:
       # token: one third-party action fewer in the supply chain of a project
       # that defines itself by not trusting what reaches it.
       - name: Upload the files
-        run: gh release upload "$TAG" publish/* -R "$GITHUB_REPOSITORY"
+        run: gh release upload "$TAG" publish/* -R "$GITHUB_REPOSITORY" --clobber
 
       # release-please wrote the CHANGELOG.md entry as the body; the downloads
       # go under it.
       - name: Release notes
+        env:
+          COMPLETE: ${{ steps.gather.outputs.complete }}
         run: |
           set -eu
-          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json body --jq .body > notes.md
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json body --jq .body \
+            | sed '/^## Downloads$/,$d' > notes.md
           V="${TAG#v}"
+          if [ "$COMPLETE" = "true" ]; then
+            MACOS="| macOS, Apple silicon | \`arca-$TAG-macos-arm64.tar.gz\` |
+          | macOS, Intel | \`arca-$TAG-macos-x86_64.tar.gz\` |"
+          else
+            MACOS="| macOS | Not built yet: no macOS runner was available. They are added to this release later. |"
+          fi
           cat >> notes.md <<END
 
           ## Downloads
@@ -319,8 +358,7 @@ jobs:
           | --- | --- |
           | Windows installer | \`arca-setup-$V-x86_64.exe\` |
           | Windows portable | \`arca-$TAG-windows-x86_64.zip\` |
-          | macOS, Apple silicon | \`arca-$TAG-macos-arm64.tar.gz\` |
-          | macOS, Intel | \`arca-$TAG-macos-x86_64.tar.gz\` |
+          $MACOS
           | Linux x86_64 (glibc 2.35+) | \`arca-$TAG-linux-x86_64.tar.gz\` |
           | Linux arm64 (glibc 2.35+) | \`arca-$TAG-linux-arm64.tar.gz\` |
           | Linux AppImage | \`arca-$TAG-linux-x86_64.AppImage\`, \`arca-$TAG-linux-arm64.AppImage\` |
@@ -389,10 +427,12 @@ jobs:
   packages:
     name: Package managers
     needs: [release-please, publish]
-    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    if: >-
+      !cancelled() && needs.publish.result == 'success' &&
+      needs.publish.outputs.complete == 'true'
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ needs.release-please.outputs.tag }}
+      VERSION: ${{ needs.release-please.outputs.tag || inputs.tag }}
       PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
       AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
       WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
