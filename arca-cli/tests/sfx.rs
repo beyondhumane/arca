@@ -161,3 +161,25 @@ fn what_a_self_extractor_cannot_hold_is_refused() {
     );
     assert!(!dir.join("x.exe").exists());
 }
+
+// Reading a program as its ZIP must not make it editable: a rewrite would
+// write a plain ZIP in its place and lose the program.
+#[test]
+fn a_program_is_never_rewritten_as_a_zip() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    corpus(dir);
+    let stub = dir.join("stub.bin");
+    fs::write(&stub, b"not really a program").unwrap();
+    let output = run(dir, Some(&stub), &["create", "setup.exe", "src", "--sfx"]);
+    assert!(output.status.success(), "{output:?}");
+    let before = fs::read(dir.join("setup.exe")).unwrap();
+    for args in [
+        &["password", "setup.exe", "--new", "secret"][..],
+        &["comment", "setup.exe", "--set", "hola"],
+    ] {
+        let output = run(dir, None, args);
+        assert!(!output.status.success(), "{args:?}: {output:?}");
+    }
+    assert_eq!(fs::read(dir.join("setup.exe")).unwrap(), before);
+}
