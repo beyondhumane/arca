@@ -3131,6 +3131,7 @@ mod reread_tests {
             utf8: true,
             encrypted: false,
             zipcrypto: false,
+            aes_strength: None,
         }];
         assert_eq!(nearest_existing_dir(&entries, "gone/child/"), "");
         assert_eq!(nearest_existing_dir(&entries, "kept/"), "kept/");
@@ -3337,6 +3338,7 @@ mod password_tests {
             utf8: true,
             encrypted,
             zipcrypto: false,
+            aes_strength: None,
         }];
         controller.state.active_pane_mut().checked = vec![false];
         controller
@@ -3436,6 +3438,7 @@ mod filter_tests {
             offset: 0,
             encrypted: false,
             zipcrypto: false,
+            aes_strength: None,
         }
     }
 

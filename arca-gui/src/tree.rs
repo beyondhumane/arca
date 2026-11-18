@@ -291,6 +291,7 @@ mod tests {
             offset: 0,
             encrypted: false,
             zipcrypto: false,
+            aes_strength: None,
         }
     }
 
@@ -473,6 +474,7 @@ mod folder_tests {
             attributes: 0,
             encrypted: false,
             zipcrypto: false,
+            aes_strength: None,
             offset: 0,
         }
     }

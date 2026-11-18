@@ -175,6 +175,7 @@ pub(super) fn open(
                 utf8: true,
                 encrypted: meta.is_encrypted,
                 zipcrypto: false,
+                aes_strength: None,
             });
         }
         for name in &names {

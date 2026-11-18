@@ -515,6 +515,7 @@ impl<R: Read + Seek> Walker<'_, R> {
                 utf8: true,
                 encrypted: false,
                 zipcrypto: false,
+                aes_strength: None,
             });
             self.extents.push(if is_dir { Vec::new() } else { parts });
             if is_dir {

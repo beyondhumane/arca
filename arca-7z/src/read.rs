@@ -134,6 +134,7 @@ impl<R: Read + Seek> SevenZArchive<R> {
                 utf8: true,
                 encrypted,
                 zipcrypto: false,
+                aes_strength: None,
             });
         }
         let encrypted = archive.header_encrypted || encrypted_blocks.iter().any(|&e| e);

@@ -1,6 +1,7 @@
 use arca_core::{Codec, Level};
-use arca_zip::ZipWriter;
+use arca_zip::{aes, ZipWriter};
 use std::fs::{self, File};
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -278,4 +279,89 @@ fn a_failed_overwrite_keeps_the_files_it_would_have_replaced() {
         );
     }
     assert_eq!(fs::read_dir(output.path()).unwrap().count(), 2);
+}
+
+fn aes_entry_without_local_field(
+    strength: u8,
+    name: &[u8],
+    plain: &[u8],
+    password: &str,
+) -> Vec<u8> {
+    let (salt_len, _) = aes::sizes(strength).unwrap();
+    let salt: Vec<u8> = (0..salt_len as u8).map(|i| i ^ 0xA5).collect();
+    let keys = aes::derive_with(password, &salt, strength).unwrap();
+    let mut data = salt;
+    data.extend_from_slice(&aes::verifier_of(&keys));
+    let mut writer = aes::AesWriter::new(Vec::new(), &keys).unwrap();
+    writer.write_all(plain).unwrap();
+    let (cipher, auth, _) = writer.finish();
+    data.extend_from_slice(&cipher);
+    data.extend_from_slice(&auth);
+
+    let mut extra = Vec::new();
+    extra.extend_from_slice(&aes::EXTRA_AE.to_le_bytes());
+    extra.extend_from_slice(&7u16.to_le_bytes());
+    extra.extend_from_slice(&aes::AE2.to_le_bytes());
+    extra.extend_from_slice(&aes::VENDOR_AE.to_le_bytes());
+    extra.push(strength);
+    extra.extend_from_slice(&0u16.to_le_bytes());
+
+    let fixed = |out: &mut Vec<u8>, extra_len: u16| {
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&aes::METHOD_AE.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0x5021u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(plain.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(&extra_len.to_le_bytes());
+    };
+    let mut out = Vec::new();
+    out.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+    out.extend_from_slice(&51u16.to_le_bytes());
+    fixed(&mut out, 0);
+    out.extend_from_slice(name);
+    out.extend_from_slice(&data);
+
+    let cd_at = out.len();
+    out.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+    out.extend_from_slice(&51u16.to_le_bytes());
+    out.extend_from_slice(&51u16.to_le_bytes());
+    fixed(&mut out, extra.len() as u16);
+    out.extend_from_slice(&[0u8; 14]);
+    out.extend_from_slice(name);
+    out.extend_from_slice(&extra);
+    let cd_size = out.len() - cd_at;
+
+    out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&(cd_size as u32).to_le_bytes());
+    out.extend_from_slice(&(cd_at as u32).to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out
+}
+
+#[test]
+fn an_aes_128_or_192_entry_without_its_local_field_extracts() {
+    let dir = tempfile::tempdir().unwrap();
+    let plain = b"una clave corta sigue siendo una clave\n".repeat(20);
+    for strength in [aes::STRENGTH_128, aes::STRENGTH_192] {
+        let archive = dir.path().join(format!("aes{strength}.zip"));
+        fs::write(
+            &archive,
+            aes_entry_without_local_field(strength, b"corta.txt", &plain, "clave"),
+        )
+        .unwrap();
+        let output = tempfile::tempdir().unwrap();
+        success(extract(&archive, output.path(), &["-p", "clave"]));
+        assert_eq!(fs::read(output.path().join("corta.txt")).unwrap(), plain);
+
+        let output = tempfile::tempdir().unwrap();
+        let result = extract(&archive, output.path(), &["-p", "otra"]);
+        assert!(!result.status.success());
+        assert!(!String::from_utf8_lossy(&result.stderr).contains("panicked"));
+    }
 }

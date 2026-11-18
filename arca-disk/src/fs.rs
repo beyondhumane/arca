@@ -321,6 +321,7 @@ pub(crate) fn entry(name: String, size: u64, is_dir: bool, mtime: Option<i64>) -
         utf8: true,
         encrypted: false,
         zipcrypto: false,
+        aes_strength: None,
     }
 }
 

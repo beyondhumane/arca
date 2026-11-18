@@ -1828,6 +1828,7 @@ mod tests {
             offset,
             encrypted: false,
             zipcrypto: false,
+            aes_strength: None,
         }
     }
 

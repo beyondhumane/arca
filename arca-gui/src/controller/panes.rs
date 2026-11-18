@@ -366,6 +366,7 @@ mod tests {
             utf8: true,
             encrypted: false,
             zipcrypto: false,
+            aes_strength: None,
         }
     }
 

@@ -244,6 +244,10 @@ pub struct Entry {
     // Arca reads it and never writes it, so this is always false on anything it
     // produces.
     pub zipcrypto: bool,
+    // The WinZip AES strength the central directory gives a ZIP entry. It is
+    // only used when the local header lost its own 0x9901 field, which wins
+    // when it is there. Nothing for every other entry and every other format.
+    pub aes_strength: Option<u8>,
 }
 
 impl Entry {

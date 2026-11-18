@@ -177,6 +177,7 @@ pub fn entry(path: &Path, format: Format) -> Result<Entry> {
         utf8: true,
         encrypted: false,
         zipcrypto: false,
+        aes_strength: None,
     })
 }
 

@@ -718,6 +718,7 @@ fn a_ctrl_band_starts_from_the_rows_already_picked() {
             utf8: true,
             encrypted: false,
             zipcrypto: false,
+            aes_strength: None,
         })
         .collect();
     c.state.active_pane_mut().checked = vec![true, false, false, false];

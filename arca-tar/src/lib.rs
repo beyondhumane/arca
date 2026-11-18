@@ -472,6 +472,7 @@ impl<R: Read> TarReader<R> {
             offset: self.pos,
             encrypted: false,
             zipcrypto: false,
+            aes_strength: None,
         };
         let headers =
             (self.keep && self.raw.len() <= RAW_LIMIT).then(|| std::mem::take(&mut self.raw));

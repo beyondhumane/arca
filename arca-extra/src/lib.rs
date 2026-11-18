@@ -654,6 +654,7 @@ pub(crate) fn entry(name: String, raw_name: Vec<u8>, size: u64, mtime: Option<i6
         utf8: true,
         encrypted: false,
         zipcrypto: false,
+        aes_strength: None,
     }
 }
 

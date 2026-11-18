@@ -399,12 +399,7 @@ impl<R: Read + Seek> ZipArchive<R> {
             .get(idx)
             .ok_or_else(|| Error::Format(format!("no such entry: {idx}")))?
             .clone();
-        let central = self
-            .kept
-            .get(idx)
-            .and_then(|k| aes::parse_extra(&k.extra))
-            .map(|info| info.strength);
-        extract_verified(&mut self.source, &e, dest, password, central)
+        extract_entry_with(&mut self.source, &e, dest, password)
     }
 
     pub fn has_encrypted(&self) -> bool {
@@ -426,17 +421,7 @@ pub fn extract_entry_with<R: Read + Seek, W: Write>(
     dest: W,
     password: Option<&str>,
 ) -> Result<u64> {
-    extract_verified(source, e, dest, password, None)
-}
-
-fn extract_verified<R: Read + Seek, W: Write>(
-    source: &mut R,
-    e: &Entry,
-    dest: W,
-    password: Option<&str>,
-    central: Option<u8>,
-) -> Result<u64> {
-    let (crc_val, written) = extract_inner(source, e, dest, password, central)?;
+    let (crc_val, written) = extract_inner(source, e, dest, password)?;
 
     // AE-2 stores a zero CRC on purpose, and the HMAC has already spoken for
     // the contents. AE-1 keeps the real one, so a non-zero value still gets
@@ -465,7 +450,7 @@ pub fn checksum_entry<R: Read + Seek>(
     e: &Entry,
     password: Option<&str>,
 ) -> Result<u32> {
-    Ok(extract_inner(source, e, io::sink(), password, None)?.0)
+    Ok(extract_inner(source, e, io::sink(), password)?.0)
 }
 
 // Says whether a password can open the archive, reading only the few bytes at
@@ -553,16 +538,6 @@ fn open_data<'a, R: Read + Seek>(
     source: &'a mut R,
     e: &Entry,
 ) -> Result<(io::Take<&'a mut R>, Crypt)> {
-    open_data_with(source, e, None)
-}
-
-// `central` is the AES strength the central directory gives, used only when
-// the local header has no 0x9901 field of its own.
-fn open_data_with<'a, R: Read + Seek>(
-    source: &'a mut R,
-    e: &Entry,
-    central: Option<u8>,
-) -> Result<(io::Take<&'a mut R>, Crypt)> {
     source.seek(SeekFrom::Start(e.offset))?;
     let mut lfh = [0u8; LFH_FIXED];
     source.read_exact(&mut lfh)?;
@@ -617,7 +592,7 @@ fn open_data_with<'a, R: Read + Seek>(
         source.read_exact(&mut extra)?;
         *strength = aes::parse_extra(&extra)
             .map(|info| info.strength)
-            .or(central)
+            .or(e.aes_strength)
             .unwrap_or(aes::STRENGTH_256);
     }
 
@@ -680,9 +655,8 @@ fn extract_inner<R: Read + Seek, W: Write>(
     e: &Entry,
     dest: W,
     password: Option<&str>,
-    central: Option<u8>,
 ) -> Result<(u32, u64)> {
-    let (mut bounded, crypt) = open_data_with(source, e, central)?;
+    let (mut bounded, crypt) = open_data(source, e)?;
     let mut cw = CrcWriter::new(dest);
 
     if let Crypt::Zip { check } = crypt {
@@ -1024,7 +998,7 @@ fn read_central(c: &mut Cursor<'_>) -> Result<(Entry, Kept)> {
     let aes_entry = method_code == aes::METHOD_AE;
     let encrypted = aes_entry || flags & 1 != 0;
     let zipcrypto = encrypted && !aes_entry;
-    let real_code = if aes_entry {
+    let (real_code, aes_strength) = if aes_entry {
         let info = aes::parse_extra(extra).ok_or_else(|| {
             Error::Format("entry says AES but carries no 0x9901 extra field".into())
         })?;
@@ -1034,9 +1008,9 @@ fn read_central(c: &mut Cursor<'_>) -> Result<(Entry, Kept)> {
                 info.strength
             )));
         }
-        info.real_method
+        (info.real_method, Some(info.strength))
     } else {
-        method_code
+        (method_code, None)
     };
 
     let method = match real_code {
@@ -1081,6 +1055,7 @@ fn read_central(c: &mut Cursor<'_>) -> Result<(Entry, Kept)> {
         offset,
         encrypted,
         zipcrypto,
+        aes_strength,
     };
     let kept = Kept {
         made_by,
@@ -4614,14 +4589,46 @@ mod tests {
         a.extract_to_with(0, &mut got, Some("k")).unwrap();
         assert_eq!(got, plain);
 
-        let buf = without_local_field(aes::STRENGTH_256);
-        let e = ZipArchive::open(IoCursor::new(buf.clone()))
+        for strength in [aes::STRENGTH_128, aes::STRENGTH_192, aes::STRENGTH_256] {
+            let buf = without_local_field(strength);
+            let e = ZipArchive::open(IoCursor::new(buf.clone()))
+                .unwrap()
+                .entries()[0]
+                .clone();
+            let mut got = Vec::new();
+            extract_entry_with(&mut IoCursor::new(buf.clone()), &e, &mut got, Some("k"))
+                .unwrap_or_else(|err| panic!("strength {strength}: {err}"));
+            assert_eq!(got, plain);
+            check_password(&mut IoCursor::new(buf), std::slice::from_ref(&e), "k")
+                .unwrap_or_else(|err| panic!("strength {strength}: {err}"));
+        }
+
+        let buf = without_local_field(aes::STRENGTH_128);
+        let real = ZipArchive::open(IoCursor::new(buf.clone()))
             .unwrap()
             .entries()[0]
             .clone();
-        let mut got = Vec::new();
-        extract_entry_with(&mut IoCursor::new(buf), &e, &mut got, Some("k")).unwrap();
-        assert_eq!(got, plain);
+        for bad in [0u8, 4, 0xFF] {
+            let mut e = real.clone();
+            e.aes_strength = Some(bad);
+            let r = extract_entry_with(&mut IoCursor::new(buf.clone()), &e, Vec::new(), Some("k"));
+            assert!(
+                matches!(r, Err(Error::Unsupported(ref m)) if m.contains("AES strength")),
+                "strength {bad}: {r:?}"
+            );
+            let r = check_password(&mut IoCursor::new(buf.clone()), &[e], "k");
+            assert!(r.is_err(), "strength {bad}");
+        }
+        let data_end = LFH_FIXED + "cifrado.txt".len() + real.compressed_size as usize;
+        for cut in [0, LFH_FIXED, LFH_FIXED + 16, data_end - 3] {
+            let r = extract_entry_with(
+                &mut IoCursor::new(buf[..cut].to_vec()),
+                &real,
+                Vec::new(),
+                Some("k"),
+            );
+            assert!(r.is_err(), "cut at {cut}");
+        }
     }
 
     #[test]

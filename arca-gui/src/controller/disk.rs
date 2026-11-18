@@ -315,6 +315,7 @@ fn disk_entry(name: String, is_dir: bool, meta: Option<&fs::Metadata>, hidden: b
         utf8: true,
         encrypted: false,
         zipcrypto: false,
+        aes_strength: None,
     }
 }
 
