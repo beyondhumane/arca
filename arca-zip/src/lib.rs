@@ -499,8 +499,9 @@ fn open_data_with<'a, R: Read + Seek>(
     }
 
     // The key size decides how long the salt is, so it is read from the 0x9901
-    // field in this header, the one that travels with the data. Guessing it
-    // would read the salt short or long and fail as a wrong password.
+    // field in this header, the one that travels with the data, then from the
+    // central directory. Only without either is AES-256, the common case,
+    // assumed; a wrong guess fails the verifier and the authentication code.
     if let Crypt::Aes { strength } = &mut crypt {
         source.seek(SeekFrom::Current(n_len as i64))?;
         let mut extra = vec![0u8; x_len as usize];
@@ -508,12 +509,7 @@ fn open_data_with<'a, R: Read + Seek>(
         *strength = aes::parse_extra(&extra)
             .map(|info| info.strength)
             .or(central)
-            .ok_or_else(|| {
-                Error::Format(format!(
-                    "'{}': the local header has no AES 0x9901 extra field to say its key size",
-                    e.name
-                ))
-            })?;
+            .unwrap_or(aes::STRENGTH_256);
     }
 
     let data_start = e.offset + LFH_FIXED as u64 + n_len + x_len;
@@ -4486,24 +4482,30 @@ mod tests {
     #[test]
     fn an_aes_entry_without_its_local_field_takes_the_directory_strength() {
         let plain = b"la clave corta".repeat(10);
-        let mut buf = aes_archive(aes::STRENGTH_128, &plain, "k", true, 0);
-        let field = LFH_FIXED + "cifrado.txt".len();
-        buf.drain(field..field + 11);
-        buf[28..30].copy_from_slice(&0u16.to_le_bytes());
-        let eocd = buf.len() - EOCD_MIN;
-        let cd_at = u32::from_le_bytes(buf[eocd + 16..eocd + 20].try_into().unwrap()) - 11;
-        buf[eocd + 16..eocd + 20].copy_from_slice(&cd_at.to_le_bytes());
-
-        let mut a = ZipArchive::open(IoCursor::new(buf.clone())).unwrap();
+        let without_local_field = |strength: u8| {
+            let mut buf = aes_archive(strength, &plain, "k", true, 0);
+            let field = LFH_FIXED + "cifrado.txt".len();
+            buf.drain(field..field + 11);
+            buf[28..30].copy_from_slice(&0u16.to_le_bytes());
+            let eocd = buf.len() - EOCD_MIN;
+            let cd_at = u32::from_le_bytes(buf[eocd + 16..eocd + 20].try_into().unwrap()) - 11;
+            buf[eocd + 16..eocd + 20].copy_from_slice(&cd_at.to_le_bytes());
+            buf
+        };
+        let buf = without_local_field(aes::STRENGTH_128);
+        let mut a = ZipArchive::open(IoCursor::new(buf)).unwrap();
         let mut got = Vec::new();
         a.extract_to_with(0, &mut got, Some("k")).unwrap();
         assert_eq!(got, plain);
 
-        let e = a.entries()[0].clone();
-        let error = extract_entry_with(&mut IoCursor::new(buf), &e, io::sink(), Some("k"))
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("0x9901"), "{error}");
+        let buf = without_local_field(aes::STRENGTH_256);
+        let e = ZipArchive::open(IoCursor::new(buf.clone()))
+            .unwrap()
+            .entries()[0]
+            .clone();
+        let mut got = Vec::new();
+        extract_entry_with(&mut IoCursor::new(buf), &e, &mut got, Some("k")).unwrap();
+        assert_eq!(got, plain);
     }
 
     #[test]
