@@ -7,7 +7,7 @@ keywords: cli command line options flags reference help exit status
 
 # CLI reference
 
-ZIP, 7z, TAR (plain, gzip, XZ, bzip2 and Zstandard), standalone XZ, bzip2 and Zstandard, and [RAR](rar.md) are enabled by default. RAR supports `list`,
+ZIP, 7z, TAR (plain, gzip, XZ, bzip2 and Zstandard), standalone gzip, XZ, bzip2 and Zstandard, and [RAR](rar.md) are enabled by default. RAR supports `list`,
 `test` and `extract`, including `-p` for encrypted data or headers, and
 `create` for new RAR5 archives, solid, encrypted, in volumes or with a recovery record. Modifying an existing RAR or
 CBR, and creating CBR, is always rejected.
@@ -42,10 +42,10 @@ Create an archive. The format is taken from the extension of the output file.
 
 | Argument / option | Default | Description |
 | --- | --- | --- |
-| `<OUT>` | required | Output archive: .zip, .7z, .rar, .tar, .tar.gz (or .tgz), .tar.xz (or .txz), .xz, .tar.bz2 (or .tbz2, .tbz), .bz2, .tar.zst (or .tzst), .zst. An .xz, .bz2 or .zst takes exactly one file. |
+| `<OUT>` | required | Output archive: .zip, .7z, .rar, .tar, .tar.gz (or .tgz), .gz, .tar.xz (or .txz), .xz, .tar.bz2 (or .tbz2, .tbz), .bz2, .tar.zst (or .tzst), .zst. A .gz, .xz, .bz2 or .zst takes exactly one file. |
 | `<INPUTS>...` | required | Files or directories to include. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
-| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2 · lzma · ppmd · bzip2. auto uses Deflate in .zip, LZMA2 in .7z, .xz and .tar.xz, bzip2 in .bz2 and .tar.bz2, Zstandard in .zst and .tar.zst and the RAR compressor in .rar (auto or store only). .7z takes lzma2, lzma, ppmd, bzip2 (with codecs-native), deflate or store, never zstd, which 7-Zip cannot read in a 7z. |
+| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2 · lzma · ppmd · bzip2. auto uses Deflate in .zip, .gz and .tar.gz, LZMA2 in .7z, .xz and .tar.xz, bzip2 in .bz2 and .tar.bz2, Zstandard in .zst and .tar.zst and the RAR compressor in .rar (auto or store only). .7z takes lzma2, lzma, ppmd, bzip2 (with codecs-native), deflate or store, never zstd, which 7-Zip cannot read in a 7z. |
 | `-j, --threads <N>` | 0 | ZIP and XZ threads; 0 means every core. XZ uses as many as fit in 2 GiB, Zstandard as many as asked and bzip2 one; 7z with LZMA2 and RAR use every core their memory budget allows, whatever this says, and 7z with any other method one. |
 | `-p, --password <PASSWORD>` | none | Encrypt with AES-256 (.zip, .7z, .rar). Other tools will ask for it to open the archive. |
 | `--hide-names` | off | .7z and .rar: encrypt headers too, so names are hidden; requires a nonempty password. In .rar this is WinRAR’s `-hp`. |
@@ -135,7 +135,7 @@ arca diff --quick -p secret a.7z b.zip
 
 - Lines come in name order. Names use `/` and folders end in `/`. They are compared exactly as written, so case matters. A leading `./` and doubled slashes are ignored, and a backslash reads as `/`.
 - A folder is compared by what it holds, not by its own name: `arca diff a.zip out` after `arca x a.zip -o out` prints nothing. Folders that only appear in the paths of their files count as folders, so an archive without folder entries still matches its extraction.
-- By default, files of the same size are read on both sides and compared by SHA-256, unless both sides store CRC32s and those differ. A standalone `.xz`, `.bz2` or `.zst` has no reliable size, so it is always read, except with `--quick`, which never reports it as changed.
+- By default, files of the same size are read on both sides and compared by SHA-256, unless both sides store CRC32s and those differ. A standalone `.gz`, `.xz`, `.bz2` or `.zst` has no reliable size, so it is always read, except with `--quick`, which never reports it as changed.
 - Links can only be told apart in TAR and on the disk. A TAR hard link counts as the file it names. Devices and pipes are left out.
 - A side that can’t be opened, a wrong or missing password, or an entry that has to be read and can’t be, gives exit status 2 rather than a difference.
 

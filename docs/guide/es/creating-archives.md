@@ -159,9 +159,22 @@ límites y la lista completa de rechazos están en la
 ```sh
 arca create copy.tar my-files/
 arca create copy.tar.gz my-files/ -l best
+arca create access.log.gz access.log       # un fichero, sin contenedor
 ```
 
-La capa gzip respeta el nivel elegido. TAR no tiene dónde poner el cifrado, así que `-p` se rechaza para `.tar` y `.tar.gz`.
+La capa gzip respeta el nivel elegido. TAR no tiene dónde poner el cifrado, así que `-p` se rechaza para `.tar`, `.tar.gz` y `.gz`.
+
+Un `.gz` a secas se comporta como un [`.xz`](#xz): guarda un único fichero, y
+una carpeta o varias entradas necesitan `.tar.gz`. Solo se aceptan los códecs
+`auto` y `deflate`. Al leer se unen todos los miembros, como los escriben
+`gzip`, `pigz` y `cat a.gz b.gz`, y se comprueban el CRC-32 y la longitud de
+cada uno; los datos finales que no son otro miembro son un error. `.tar.gz` y
+`.tgz` se leen siempre como TAR. Un `.gz` a secas, o un fichero gzip sin
+sufijo, se mira por dentro: un TAR al principio lo convierte en `.tar.gz`, y
+cualquier otra cosa es un único fichero que se llama como el archivo sin
+`.gz`, así que `access.log.gz` se extrae como `access.log`. El nombre que pueda
+guardar la cabecera gzip no se usa. gzip solo registra el tamaño del último
+miembro, módulo 4 GiB, así que `list` muestra 0 como tamaño.
 
 ## XZ
 

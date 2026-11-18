@@ -39,7 +39,7 @@ to **Settings > Default apps** for these extensions:
 | Extensions | Formats |
 | --- | --- |
 | `.zip`, `.7z`, `.rar`, `.tar` | ZIP, 7z, RAR, TAR |
-| `.gz`, `.tgz` | TAR.GZ |
+| `.gz`, `.tgz` | GZ and TAR.GZ |
 | `.xz`, `.txz` | XZ and TAR.XZ |
 | `.bz2`, `.tbz2`, `.tbz` | BZ2 and TAR.BZ2 |
 | `.zst`, `.tzst` | ZST and TAR.ZST |

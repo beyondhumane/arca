@@ -40,7 +40,7 @@ y a **Configuración > Aplicaciones predeterminadas** para estas extensiones:
 | Extensiones | Formatos |
 | --- | --- |
 | `.zip`, `.7z`, `.rar`, `.tar` | ZIP, 7z, RAR, TAR |
-| `.gz`, `.tgz` | TAR.GZ |
+| `.gz`, `.tgz` | GZ y TAR.GZ |
 | `.xz`, `.txz` | XZ y TAR.XZ |
 | `.bz2`, `.tbz2`, `.tbz` | BZ2 y TAR.BZ2 |
 | `.zst`, `.tzst` | ZST y TAR.ZST |

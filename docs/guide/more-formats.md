@@ -60,7 +60,7 @@ prints `note: N device files, pipes or sockets are not listed`.
   headers of packages with files over 4 GiB.
 - **DEB:** packages in the old 0.939 format and `data.tar.lzma`.
 - **LZH:** `-lhx-` and the other UNLHA32 extensions.
-- **Compressed CPIO:** an `initrd.img` or a `.cpio.gz` is a CPIO inside gzip, often after an uncompressed microcode CPIO, and does not open as CPIO; a `.cpio.xz`, `.cpio.bz2` or `.cpio.zst` opens as a single compressed file. Decompress it first.
+- **Compressed CPIO:** an `initrd.img` is a CPIO inside gzip, often after an uncompressed microcode CPIO, and does not open as CPIO; a `.cpio.gz`, `.cpio.xz`, `.cpio.bz2` or `.cpio.zst` opens as a single compressed file. Decompress it first.
 - **LZH names** in a code page, usually Shift-JIS in Japanese archives, are shown with every non-ASCII byte as `%xx`.
 - **WIM** and **ARJ** are not supported. No maintained pure-Rust WIM reader
   exists yet: the crates published for it are first releases, and WIM also

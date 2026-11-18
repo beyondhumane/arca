@@ -63,7 +63,7 @@ sockets ni se listan ni se extraen; la línea de órdenes escribe
   de los paquetes con ficheros de más de 4 GiB.
 - **DEB:** los paquetes del formato antiguo 0.939 y `data.tar.lzma`.
 - **LZH:** `-lhx-` y las demás extensiones de UNLHA32.
-- **CPIO comprimido:** un `initrd.img` o un `.cpio.gz` es un CPIO dentro de gzip, a menudo detrás de un CPIO de microcódigo sin comprimir, y no se abre como CPIO; un `.cpio.xz`, `.cpio.bz2` o `.cpio.zst` se abre como un único fichero comprimido. Hay que descomprimirlo antes.
+- **CPIO comprimido:** un `initrd.img` es un CPIO dentro de gzip, a menudo detrás de un CPIO de microcódigo sin comprimir, y no se abre como CPIO; un `.cpio.gz`, `.cpio.xz`, `.cpio.bz2` o `.cpio.zst` se abre como un único fichero comprimido. Hay que descomprimirlo antes.
 - **Los nombres LZH** en una página de códigos, normalmente Shift-JIS en los archivos japoneses, se muestran con cada byte que no es ASCII como `%xx`.
 - **WIM** y **ARJ** no están soportados. Todavía no hay un lector de WIM en
   Rust puro que se mantenga: los crates publicados son primeras versiones, y WIM

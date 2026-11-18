@@ -155,9 +155,21 @@ in the [RAR guide](rar.md#creating-rar5-archives).
 ```sh
 arca create copy.tar my-files/
 arca create copy.tar.gz my-files/ -l best
+arca create access.log.gz access.log       # one file, no container
 ```
 
-The gzip layer honours the chosen level. TAR has nowhere to put encryption, so `-p` is refused for `.tar` and `.tar.gz`.
+The gzip layer honours the chosen level. TAR has nowhere to put encryption, so `-p` is refused for `.tar`, `.tar.gz` and `.gz`.
+
+A bare `.gz` behaves like an [`.xz`](#xz): it holds exactly one file, and a
+folder or several inputs need `.tar.gz`. Only `auto` and `deflate` are accepted
+as codecs. Reading joins every member, as `gzip`, `pigz` and `cat a.gz b.gz`
+write them, and checks each member's CRC-32 and length; trailing data that is
+not another member is an error. `.tar.gz` and `.tgz` are always read as TAR. A
+bare `.gz`, or a gzip file without a suffix, is looked inside: a TAR at the
+start makes it a `.tar.gz`, and anything else is one file named after the
+archive without `.gz`, so `access.log.gz` extracts to `access.log`. The name a
+gzip header may store is not used. gzip records only the last member's size,
+modulo 4 GiB, so `list` shows 0 for the size.
 
 On Linux and macOS a symbolic link inside the folders being archived goes into a TAR (`.tar`, `.tar.gz`, `.tar.xz`) as a link, after the regular files, holding exactly the target it had. It is never followed, so a link to a folder elsewhere does not pull that folder in. Targets longer than 100 bytes go in a pax `linkpath` record. Whether a link is safe to recreate is decided on extraction (see [Links in TAR archives](listing-extracting.md#links-in-tar-archives)). On Windows links are left out, as before.
 

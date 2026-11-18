@@ -29,6 +29,7 @@ y limpieza. El resumen final da el número según la compilación y las herramie
 - Un TAR dentro de un fichero llamado `.xz` se lista como TAR.XZ; un `.xz` dañado falla sin publicar nada, y un `.tar.xz` truncado falla.
 - `.tar.bz2` y `.tar.zst` con uno o cuatro hilos pasan `bzip2 -t` y `zstd -t` y se extraen idénticos con `tar`; Arca lee lo que escriben `tar -cjf` y `zstd`, también con los nombres `.tbz2` y `.tzst`, y los flujos concatenados. Un `.bz2` y un `.zst` sueltos van y vuelven con `bzip2` y `zstd`; los dañados no publican nada, y `.tar.bz2` y `.tar.zst` truncados fallan.
 - Un ZIP escrito con `zip -Z bzip2` se comprueba y se extrae idéntico.
+- Un `.gz` suelto va y vuelve con `gzip`, pasa `gzip -t` y se leen los ficheros de varios miembros; un TAR detrás de un `.gz` a secas se lista como TAR, se rechazan dos entradas, y los dañados o truncados fallan y no publican nada.
 
 ```sh
 bash interop.sh

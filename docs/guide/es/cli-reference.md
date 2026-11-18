@@ -7,7 +7,7 @@ keywords: cli línea de comandos opciones flags referencia ayuda estado de salid
 
 # Referencia de la CLI
 
-ZIP, 7z, TAR (sin comprimir, gzip, XZ, bzip2 y Zstandard), XZ, bzip2 y Zstandard sueltos y [RAR](rar.md) están activos por defecto. RAR permite `list`,
+ZIP, 7z, TAR (sin comprimir, gzip, XZ, bzip2 y Zstandard), gzip, XZ, bzip2 y Zstandard sueltos y [RAR](rar.md) están activos por defecto. RAR permite `list`,
 `test` y `extract`, con `-p` para datos o cabeceras cifradas, y `create` para
 nuevos archivos RAR5, sólidos, cifrados, en volúmenes o con registro de recuperación. Modificar un RAR o CBR existente, y
 crear CBR, siempre se rechaza.
@@ -42,10 +42,10 @@ Crea un archivo. El formato se toma de la extensión del archivo de salida.
 
 | Argumento / opción | Por defecto | Descripción |
 | --- | --- | --- |
-| `<OUT>` | obligatorio | Archivo de salida: .zip, .7z, .rar, .tar, .tar.gz (o .tgz), .tar.xz (o .txz), .xz, .tar.bz2 (o .tbz2, .tbz), .bz2, .tar.zst (o .tzst), .zst. Un .xz, .bz2 o .zst admite un único fichero. |
+| `<OUT>` | obligatorio | Archivo de salida: .zip, .7z, .rar, .tar, .tar.gz (o .tgz), .gz, .tar.xz (o .txz), .xz, .tar.bz2 (o .tbz2, .tbz), .bz2, .tar.zst (o .tzst), .zst. Un .gz, .xz, .bz2 o .zst admite un único fichero. |
 | `<INPUTS>...` | obligatorio | Archivos o directorios a incluir. |
 | `-l, --level <LEVEL>` | normal | store · fast · normal · best. |
-| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2 · lzma · ppmd · bzip2. auto usa Deflate en .zip, LZMA2 en .7z, .xz y .tar.xz, bzip2 en .bz2 y .tar.bz2, Zstandard en .zst y .tar.zst y el compresor RAR en .rar (solo auto o store). .7z admite lzma2, lzma, ppmd, bzip2 (con codecs-native), deflate o store, nunca zstd, que 7-Zip no lee dentro de un 7z. |
+| `-c, --codec <CODEC>` | auto | auto · store · deflate · zstd · lzma2 · lzma · ppmd · bzip2. auto usa Deflate en .zip, .gz y .tar.gz, LZMA2 en .7z, .xz y .tar.xz, bzip2 en .bz2 y .tar.bz2, Zstandard en .zst y .tar.zst y el compresor RAR en .rar (solo auto o store). .7z admite lzma2, lzma, ppmd, bzip2 (con codecs-native), deflate o store, nunca zstd, que 7-Zip no lee dentro de un 7z. |
 | `-j, --threads <N>` | 0 | Hilos ZIP y XZ; 0 usa todos los núcleos. XZ usa tantos como quepan en 2 GiB, Zstandard tantos como se pidan y bzip2 uno; 7z con LZMA2 y RAR usan todos los núcleos que permite su presupuesto de memoria, diga lo que diga esta opción, y 7z con otro método, uno. |
 | `-p, --password <PASSWORD>` | ninguna | Cifra con AES-256 (.zip, .7z, .rar). Otras herramientas la pedirán para abrir el archivo. |
 | `--hide-names` | desactivado | .7z y .rar: cifra también las cabeceras, para ocultar los nombres; exige una contraseña no vacía. En .rar es el `-hp` de WinRAR. |
@@ -135,7 +135,7 @@ arca diff --quick -p secreto a.7z b.zip
 
 - Las líneas salen por orden de nombre. Los nombres usan `/` y las carpetas terminan en `/`. Se comparan tal como están escritos, así que las mayúsculas cuentan. Se ignoran un `./` inicial y las barras dobles, y una barra invertida se lee como `/`.
 - Una carpeta se compara por lo que contiene, no por su propio nombre: `arca diff a.zip salida` después de `arca x a.zip -o salida` no imprime nada. Las carpetas que solo aparecen en la ruta de sus ficheros cuentan como carpetas, así que un archivo sin entradas de carpeta sigue coincidiendo con lo que se extrae de él.
-- Por defecto, los ficheros del mismo tamaño se leen en los dos lados y se comparan por SHA-256, salvo que los dos lados guarden CRC32 y no coincidan. Un `.xz`, `.bz2` o `.zst` suelto no tiene un tamaño fiable, así que siempre se lee, salvo con `--quick`, que nunca lo da por cambiado.
+- Por defecto, los ficheros del mismo tamaño se leen en los dos lados y se comparan por SHA-256, salvo que los dos lados guarden CRC32 y no coincidan. Un `.gz`, `.xz`, `.bz2` o `.zst` suelto no tiene un tamaño fiable, así que siempre se lee, salvo con `--quick`, que nunca lo da por cambiado.
 - Los enlaces solo se distinguen en TAR y en el disco. Un enlace duro de TAR cuenta como el fichero que nombra. Los dispositivos y las tuberías se dejan fuera.
 - Un lado que no se puede abrir, una contraseña incorrecta o ausente, o una entrada que hay que leer y no se puede, dan el estado de salida 2 en vez de una diferencia.
 

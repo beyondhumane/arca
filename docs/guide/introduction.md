@@ -17,7 +17,7 @@ It is also fast. On the machine it was measured on, Arca with Zstandard compress
 
 ## At a glance
 
-- **Formats:** ZIP with Zip64 (Store/Deflate/Zstandard), 7z (creation with LZMA2, LZMA, PPMd, BZip2, Deflate or Store, and solid reading), ustar TAR, `.tar.gz`, `.tar.xz`, `.tar.bz2`, `.tar.zst` and standalone `.xz`, `.bz2` and `.zst`. [ISO 9660 images](iso.md) and [CPIO, AR, DEB, RPM, CAB and LZH](more-formats.md) are read, never written.
+- **Formats:** ZIP with Zip64 (Store/Deflate/Zstandard), 7z (creation with LZMA2, LZMA, PPMd, BZip2, Deflate or Store, and solid reading), ustar TAR, `.tar.gz`, `.tar.xz`, `.tar.bz2`, `.tar.zst` and standalone `.gz`, `.xz`, `.bz2` and `.zst`. [ISO 9660 images](iso.md) and [CPIO, AR, DEB, RPM, CAB and LZH](more-formats.md) are read, never written.
 - **Speed:** multi-threaded compression, parallel extraction of `.zip`, and a sub-millisecond cold start.
 - **Safety:** unsafe-free parsers, bounded header reads and a Zip Slip defence on every entry name.
 - **Encryption:** ZIP WinZip AE-2; 7z AES-256 with optional encrypted headers. See [integrity limits](encryption.md).

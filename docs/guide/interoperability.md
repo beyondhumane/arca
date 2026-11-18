@@ -1,5 +1,5 @@
 ---
-description: What interop.sh verifies against unzip, tar, xz, bzip2, zstd and 7-Zip.
+description: What interop.sh verifies against unzip, tar, gzip, xz, bzip2, zstd and 7-Zip.
 group: Reference
 order: 13
 keywords: interop compatibility 7-zip unzip tar xz winrar nanazip sha-256
@@ -29,6 +29,7 @@ Its final summary reports the count for the selected build and available tools.
 - A TAR inside a file named `.xz` is listed as TAR.XZ; a corrupt `.xz` fails and publishes nothing, and a truncated `.tar.xz` fails.
 - `.tar.bz2` and `.tar.zst` with one or four threads pass `bzip2 -t` and `zstd -t` and extract identically with `tar`; Arca reads what `tar -cjf` and `zstd` write, also named `.tbz2` and `.tzst`, and concatenated streams. A standalone `.bz2` and `.zst` round-trip with `bzip2` and `zstd`; corrupt ones publish nothing, and truncated `.tar.bz2` and `.tar.zst` fail.
 - A ZIP written with `zip -Z bzip2` tests and extracts identically.
+- A standalone `.gz` round-trips with `gzip`, passes `gzip -t` and reads multi-member files; a TAR behind a bare `.gz` is listed as a TAR, two inputs are refused, and corrupt or truncated ones fail and publish nothing.
 
 ```sh
 bash interop.sh
