@@ -33,6 +33,11 @@ fn program(dir: &Path, name: &str, payload: &[u8], flags: u32) -> PathBuf {
     .into_inner();
     let path = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
     fs::write(&path, bytes).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
     path
 }
 

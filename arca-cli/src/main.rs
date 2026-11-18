@@ -944,6 +944,15 @@ fn create(
         }
     };
 
+    #[cfg(unix)]
+    if stub.is_some() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(out)?.permissions().mode();
+        fs::set_permissions(
+            out,
+            fs::Permissions::from_mode(mode | ((mode & 0o444) >> 2)),
+        )?;
+    }
     let dt = t0.elapsed();
     let program = stub
         .as_ref()
