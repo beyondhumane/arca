@@ -62,6 +62,19 @@ pub(crate) fn vhd_sparse(size: u64, pieces: &[(u64, &[u8])]) -> Vec<u8> {
 /// An exFAT volume of `clusters` 512-byte clusters in a sparse VHD, with the
 /// root folder at cluster `root`, the FAT `fat` and `data` put at clusters.
 fn exfat_sparse(clusters: u32, root: u32, fat: &[u32], data: &[(u32, &[u8])]) -> Vec<u8> {
+    let (len, pieces) = exfat_layout(clusters, root, fat, data);
+    let pieces: Vec<(u64, &[u8])> = pieces.iter().map(|(at, b)| (*at, &b[..])).collect();
+    vhd_sparse(len, &pieces)
+}
+
+/// The bytes of that exFAT volume: its length and the pieces that are not
+/// zeros.
+fn exfat_layout(
+    clusters: u32,
+    root: u32,
+    fat: &[u32],
+    data: &[(u32, &[u8])],
+) -> (u64, Vec<(u64, Vec<u8>)>) {
     let fat_sectors = (u64::from(clusters) + 2).saturating_mul(4).div_ceil(512) as u32;
     let heap = 24 + fat_sectors;
     let total = u64::from(heap) + u64::from(clusters);
@@ -81,11 +94,11 @@ fn exfat_sparse(clusters: u32, root: u32, fat: &[u32], data: &[(u32, &[u8])]) ->
     boot[510] = 0x55;
     boot[511] = 0xaa;
     let fat: Vec<u8> = fat.iter().flat_map(|v| v.to_le_bytes()).collect();
-    let mut pieces: Vec<(u64, &[u8])> = vec![(0, &boot), (24 * 512, &fat)];
+    let mut pieces = vec![(0, boot), (24 * 512, fat)];
     for &(c, bytes) in data {
-        pieces.push(((u64::from(heap) + u64::from(c - 2)) * 512, bytes));
+        pieces.push(((u64::from(heap) + u64::from(c - 2)) * 512, bytes.to_vec()));
     }
-    vhd_sparse(total * 512, &pieces)
+    (total * 512, pieces)
 }
 
 /// An exFAT volume of `clusters` 512-byte clusters, in a sparse VHD, whose
@@ -330,4 +343,80 @@ fn an_exfat_file_larger_than_the_volume_is_left_out() {
     let fits = read(&a, "fits");
     assert_eq!(&fits[..2], b"ok");
     assert_eq!(fits.len(), 1 << 20);
+}
+
+/// A device of `len` bytes that holds `pieces` and zeros elsewhere, and
+/// counts the bytes read from it.
+struct Counting {
+    len: u64,
+    pieces: Vec<(u64, Vec<u8>)>,
+    read: u64,
+}
+
+impl device::Device for Counting {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&mut self, pos: u64, buf: &mut [u8]) -> Result<()> {
+        self.read += buf.len() as u64;
+        buf.fill(0);
+        let end = pos + buf.len() as u64;
+        for (at, bytes) in &self.pieces {
+            let from = pos.max(*at);
+            let to = end.min(at + bytes.len() as u64);
+            if from < to {
+                buf[(from - pos) as usize..(to - pos) as usize]
+                    .copy_from_slice(&bytes[(from - at) as usize..(to - at) as usize]);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn list_counting(kind: crate::fs::Fs, dev: &mut Counting) -> Vec<String> {
+    let len = dev.len;
+    let mut vol = Volume { dev, base: 0, len };
+    let listing =
+        crate::fs::list(kind, &mut vol, &mut crate::fs::Runs::default(), &|| true).unwrap();
+    listing.members.into_iter().map(|m| m.entry.name).collect()
+}
+
+#[test]
+fn listing_a_huge_sparse_exfat_folder_reads_little() {
+    let fat = [0xffff_fff8, 0xffff_ffff, 0xffff_ffff];
+    let root = exfat_set("Big", true, 3, 256 << 20, 256 << 20, false);
+    let inner = exfat_set("inner.txt", false, 1 << 19, 2, 2, false);
+    let (len, pieces) = exfat_layout(1 << 20, 2, &fat, &[(2, &root), (3, &inner)]);
+    let mut dev = Counting {
+        len,
+        pieces,
+        read: 0,
+    };
+    assert_eq!(
+        list_counting(crate::fs::Fs::Exfat, &mut dev),
+        ["Big", "Big/inner.txt"]
+    );
+    assert!(dev.read < 1 << 20, "{} bytes read", dev.read);
+}
+
+#[test]
+fn listing_a_huge_hfs_plus_catalog_reads_little() {
+    let image = super::hfs::hfs();
+    let block = 512u64;
+    let size = 1u64 << 30;
+    let blocks = (size + (4 << 20)) / block;
+    let mut first = image.clone();
+    let h = &mut first[1024..1536];
+    h[44..48].copy_from_slice(&(blocks as u32).to_be_bytes());
+    h[272..280].copy_from_slice(&size.to_be_bytes());
+    h[272 + 20..272 + 24].copy_from_slice(&((size / block) as u32).to_be_bytes());
+    let mut dev = Counting {
+        len: blocks * block,
+        pieces: vec![(0, first)],
+        read: 0,
+    };
+    let names = list_counting(crate::fs::Fs::Hfs, &mut dev);
+    assert!(names.contains(&"Docs/big.bin".to_string()), "{names:?}");
+    assert!(dev.read < 1 << 20, "{} bytes read", dev.read);
 }
