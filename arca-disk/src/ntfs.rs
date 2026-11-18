@@ -1,5 +1,5 @@
 use arca_core::{Error, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::device::{le16, le32, le64, Volume};
 use crate::fs::{self, Kind, Listing, Member, Run, Runs};
@@ -23,6 +23,7 @@ struct Data {
     pieces: Vec<(u64, Vec<Extent>)>,
     size: u64,
     initialized: u64,
+    allocated: u64,
     packed: bool,
     broken: bool,
 }
@@ -152,6 +153,7 @@ fn data_piece(a: &[u8], geo: &Geometry, data: &mut Data) -> Option<()> {
     if start == 0 {
         data.size = le64(a, 48);
         data.initialized = le64(a, 56).min(data.size);
+        data.allocated = le64(a, 40);
     }
     let runs = a.get(usize::from(le16(a, 32))..)?;
     data.pieces.push((start, decode_runs(runs, geo)?));
@@ -186,17 +188,33 @@ impl Map {
     }
 
     fn read(&self, vol: &mut Volume<'_>, pos: u64, buf: &mut [u8]) -> Result<()> {
-        if pos.saturating_add(buf.len() as u64) > self.len {
+        if pos
+            .checked_add(buf.len() as u64)
+            .is_none_or(|end| end > self.len)
+        {
             return Err(Error::Format("a read past the end of the NTFS MFT".into()));
         }
         let mut done = 0usize;
         while done < buf.len() {
             let at = pos + done as u64;
-            let i = self.parts.partition_point(|(start, _, _)| *start <= at) - 1;
+            let broken = || Error::Format("the map of the NTFS MFT is damaged".into());
+            let i = self
+                .parts
+                .partition_point(|(start, _, _)| *start <= at)
+                .checked_sub(1)
+                .ok_or_else(broken)?;
             let (start, place, len) = self.parts[i];
-            let n = ((start + len - at) as usize).min(buf.len() - done);
+            let left = len.saturating_sub(at - start);
+            if left == 0 {
+                return Err(broken());
+            }
+            let n = usize::try_from(left)
+                .unwrap_or(usize::MAX)
+                .min(buf.len() - done);
             match place {
-                Some(base) => vol.read(base + (at - start), &mut buf[done..done + n])?,
+                Some(base) => {
+                    vol.read(base.saturating_add(at - start), &mut buf[done..done + n])?
+                }
                 None => buf[done..done + n].fill(0),
             }
             done += n;
@@ -391,66 +409,79 @@ fn name_of(rec: &Record) -> Option<&(u64, u8, String)> {
         .or_else(|| rec.names.first())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Place {
     Path(String),
     System,
     Lost,
 }
 
-fn place(
-    records: &HashMap<u64, Record>,
-    number: u64,
-    memo: &mut HashMap<u64, Option<String>>,
-) -> Place {
+/// Where record `number` lies. Every record a walk passes through shares
+/// its fate, so all of them are remembered when the walk ends at a broken
+/// or system parent; only the record itself is, when it is too deep.
+fn place(records: &HashMap<u64, Record>, number: u64, memo: &mut HashMap<u64, Place>) -> Place {
     let mut chain = Vec::new();
+    let mut visited = HashSet::new();
     let mut at = number;
     let mut prefix = String::new();
-    loop {
-        if let Some(known) = memo.get(&at) {
-            match known {
-                Some(path) => {
-                    prefix = path.clone();
-                    break;
-                }
-                None => return Place::Lost,
+    let fate = loop {
+        match memo.get(&at) {
+            Some(Place::Path(path)) => {
+                prefix = path.clone();
+                break None;
             }
+            Some(known) => break Some(known.clone()),
+            None => {}
         }
-        if chain.len() > MAX_PARENTS || chain.contains(&at) {
+        if chain.len() > MAX_PARENTS {
+            memo.insert(number, Place::Lost);
             return Place::Lost;
+        }
+        if !visited.insert(at) {
+            break Some(Place::Lost);
         }
         let Some(rec) = records.get(&at).filter(|r| r.used) else {
-            return Place::Lost;
+            break Some(Place::Lost);
         };
         let Some((parent, _, name)) = name_of(rec) else {
-            return Place::Lost;
+            break Some(Place::Lost);
         };
         chain.push(at);
         let (up, sequence) = (parent & REFERENCE, (parent >> 48) as u16);
         if up == ROOT {
-            break;
+            break None;
         }
         if up < FIRST_USER_RECORD {
-            return Place::System;
+            break Some(Place::System);
         }
         let Some(dir) = records.get(&up).filter(|r| r.used && r.is_dir) else {
-            return Place::Lost;
+            break Some(Place::Lost);
         };
         if sequence != 0 && dir.sequence != sequence {
-            return Place::Lost;
+            break Some(Place::Lost);
         }
         if !fs::usable(name) {
-            return Place::Lost;
+            break Some(Place::Lost);
         }
         at = up;
+    };
+    if let Some(fate) = fate {
+        for n in chain {
+            memo.insert(n, fate.clone());
+        }
+        return fate;
     }
     let mut path = prefix;
-    for &n in chain.iter().rev() {
+    for (k, &n) in chain.iter().enumerate().rev() {
         let name = name_of(&records[&n]).map_or("", |(_, _, name)| name.as_str());
         if !fs::usable(name) {
+            for &below in &chain[..=k] {
+                memo.insert(below, Place::Lost);
+            }
             return Place::Lost;
         }
         path = fs::join(&path, name);
-        memo.insert(n, Some(path.clone()));
+        memo.insert(n, Place::Path(path.clone()));
     }
     Place::Path(path)
 }
@@ -501,7 +532,7 @@ fn build(
             packed += 1;
             continue;
         }
-        if rec.data.broken {
+        if rec.data.broken || (rec.data.resident.is_none() && rec.data.size > rec.data.allocated) {
             broken += 1;
             continue;
         }
@@ -569,4 +600,150 @@ fn build(
         ));
     }
     Ok(listing)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::device::Device;
+
+    struct Zeros(u64);
+
+    impl Device for Zeros {
+        fn len(&self) -> u64 {
+            self.0
+        }
+
+        fn read_at(&mut self, _: u64, buf: &mut [u8]) -> Result<()> {
+            buf.fill(0x5a);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_map_with_a_huge_sparse_run_reads_without_overflow() {
+        let geo = Geometry {
+            cluster: 512,
+            clusters: 64,
+            record: 1024,
+        };
+        let extents = vec![
+            Extent {
+                lcn: Some(0),
+                clusters: 8,
+            },
+            Extent {
+                lcn: None,
+                clusters: u64::MAX,
+            },
+        ];
+        let map = Map::new(&mut [(0, extents)], &geo, u64::MAX);
+        assert_eq!(map.len, u64::MAX);
+        let mut dev = Zeros(64 * 512);
+        let mut vol = Volume {
+            dev: &mut dev,
+            base: 0,
+            len: 64 * 512,
+        };
+        let mut buf = [1u8; 1024];
+        map.read(&mut vol, 1 << 40, &mut buf).unwrap();
+        assert!(buf.iter().all(|&b| b == 0));
+        map.read(&mut vol, 4096 - 512, &mut buf).unwrap();
+        assert!(buf[..512].iter().all(|&b| b == 0x5a));
+        assert!(buf[512..].iter().all(|&b| b == 0));
+        assert!(map.read(&mut vol, u64::MAX - 10, &mut buf).is_err());
+        let empty = Map::new(&mut [], &geo, 4096);
+        assert!(empty.read(&mut vol, 0, &mut buf).is_err());
+    }
+
+    fn folder(parent: u64, name: &str) -> Record {
+        Record {
+            used: true,
+            is_dir: true,
+            names: vec![(parent, 1, name.to_string())],
+            ..Record::default()
+        }
+    }
+
+    #[test]
+    fn a_file_larger_than_its_allocation_is_left_out() {
+        let geo = Geometry {
+            cluster: 512,
+            clusters: 64,
+            record: 1024,
+        };
+        let file = |name: &str, size: u64| Record {
+            used: true,
+            names: vec![(ROOT, 1, name.to_string())],
+            data: Data {
+                pieces: vec![(
+                    0,
+                    vec![Extent {
+                        lcn: Some(1),
+                        clusters: 1,
+                    }],
+                )],
+                size,
+                initialized: size.min(512),
+                allocated: 512,
+                ..Data::default()
+            },
+            ..Record::default()
+        };
+        let records = HashMap::from([(16, file("fits", 300)), (17, file("huge", 1 << 50))]);
+        let listing = build(&records, &geo, 0, &mut Runs::default()).unwrap();
+        let names: Vec<&str> = listing
+            .members
+            .iter()
+            .map(|m| m.entry.name.as_str())
+            .collect();
+        assert_eq!(names, ["fits"]);
+        assert!(listing.notices.iter().any(|n| n.contains("damaged")));
+    }
+
+    #[test]
+    fn a_long_broken_chain_is_walked_once() {
+        let records: HashMap<u64, Record> = (100..300u64)
+            .map(|n| (n, folder(n - 1, &format!("d{n}"))))
+            .collect();
+        let mut memo = HashMap::new();
+        assert_eq!(place(&records, 299, &mut memo), Place::Lost);
+        assert_eq!(memo.len(), 200);
+        for n in 100..299u64 {
+            assert_eq!(place(&records, n, &mut memo), Place::Lost);
+        }
+        assert_eq!(memo.len(), 200);
+        assert!(memo.values().all(|p| *p == Place::Lost));
+    }
+
+    #[test]
+    fn a_chain_too_deep_leaves_its_ancestors_free_to_resolve() {
+        let records: HashMap<u64, Record> = (16..400u64)
+            .map(|n| (n, folder(if n == 16 { ROOT } else { n - 1 }, "d")))
+            .collect();
+        let mut memo = HashMap::new();
+        assert_eq!(place(&records, 399, &mut memo), Place::Lost);
+        assert_eq!(memo.len(), 1);
+        let Place::Path(path) = place(&records, 100, &mut memo) else {
+            panic!("record 100 is lost");
+        };
+        assert_eq!(path.split('/').count(), 85);
+    }
+
+    #[test]
+    fn a_loop_and_a_system_parent_are_remembered_for_every_record_on_them() {
+        let mut records: HashMap<u64, Record> = HashMap::new();
+        records.insert(20, folder(21, "a"));
+        records.insert(21, folder(22, "b"));
+        records.insert(22, folder(20, "c"));
+        records.insert(30, folder(11, "x"));
+        records.insert(31, folder(30, "y"));
+        let mut memo = HashMap::new();
+        assert_eq!(place(&records, 20, &mut memo), Place::Lost);
+        assert_eq!(place(&records, 31, &mut memo), Place::System);
+        for n in [20, 21, 22] {
+            assert_eq!(memo[&n], Place::Lost);
+        }
+        assert_eq!(memo[&30], Place::System);
+    }
 }

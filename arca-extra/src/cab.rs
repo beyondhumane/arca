@@ -14,6 +14,7 @@ const NEXT: u16 = 0x2;
 const RESERVE: u16 = 0x4;
 const CONTINUED: u16 = 0xfffd;
 const MAX_STRING: usize = 256;
+const MAX_BLOCKS: u64 = 1 << 20;
 pub(crate) const MAX_BLOCK: usize = 32 * 1024;
 const WINDOW: usize = 32 * 1024;
 
@@ -192,6 +193,8 @@ pub(crate) fn open(path: &Path, carry_on: &dyn Fn(&str) -> bool) -> Result<Parse
     }
     let mut index = Index::default();
     let mut cut = Vec::new();
+    let mut left = (len / (8 + u64::from(data_reserve))).min(MAX_BLOCKS);
+    let mut spans = Vec::new();
     for (start, count, kind) in raw_folders {
         let compression = compression(kind)?;
         let mut blocks = Vec::new();
@@ -199,6 +202,12 @@ pub(crate) fn open(path: &Path, carry_on: &dyn Fn(&str) -> bool) -> Result<Parse
         let mut at = start;
         let mut split = false;
         for _ in 0..count {
+            if left == 0 {
+                return Err(Error::Format(
+                    "the cabinet's folders declare more data blocks than it holds".into(),
+                ));
+            }
+            left -= 1;
             if len.saturating_sub(at) < 8 + u64::from(data_reserve) {
                 return Err(truncated());
             }
@@ -219,6 +228,9 @@ pub(crate) fn open(path: &Path, carry_on: &dyn Fn(&str) -> bool) -> Result<Parse
                     "a cabinet block holds more than 32 KiB".into(),
                 ));
             }
+            if packed == 0 {
+                return Err(Error::Format("a cabinet block holds no data".into()));
+            }
             if compression == Compression::None && packed != size {
                 return Err(Error::Format("a stored cabinet block has two sizes".into()));
             }
@@ -232,12 +244,21 @@ pub(crate) fn open(path: &Path, carry_on: &dyn Fn(&str) -> bool) -> Result<Parse
             total += u64::from(size);
             at = data + u64::from(packed);
         }
+        if at > start {
+            spans.push((start, at));
+        }
         cut.push(split);
         index.folders.push(Folder {
             compression,
             blocks,
             total,
         });
+    }
+    spans.sort_unstable();
+    if spans.windows(2).any(|pair| pair[1].0 < pair[0].1) {
+        return Err(Error::Format(
+            "two cabinet folders share their data blocks".into(),
+        ));
     }
     c.file.seek(SeekFrom::Start(files_at))?;
     let mut members = Vec::new();

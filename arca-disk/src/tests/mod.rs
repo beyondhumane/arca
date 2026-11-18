@@ -3,8 +3,9 @@ use std::fs as stdfs;
 
 pub(crate) mod build;
 pub(crate) mod containers;
-mod filesystems;
-mod hfs;
+mod crafted;
+pub(crate) mod filesystems;
+pub(crate) mod hfs;
 mod images;
 
 use build::*;

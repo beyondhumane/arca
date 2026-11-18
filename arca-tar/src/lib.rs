@@ -275,6 +275,7 @@ pub struct TarReader<R: Read> {
     finished: bool,
     keep: bool,
     raw: Vec<u8>,
+    prelude: Vec<u8>,
 }
 
 /// The most header bytes kept for one entry: a whole pax header, a long name
@@ -290,6 +291,7 @@ impl<R: Read> TarReader<R> {
             finished: false,
             keep: false,
             raw: Vec::new(),
+            prelude: Vec::new(),
         }
     }
 
@@ -297,6 +299,12 @@ impl<R: Read> TarReader<R> {
     /// [`copy_entries`] can write them out again as they were.
     pub fn keep_headers(&mut self) {
         self.keep = true;
+    }
+
+    /// The headers of the `./` entries stepped over since the last call, as
+    /// they were, so that a copy can write them again.
+    pub(crate) fn take_prelude(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.prelude)
     }
 
     fn record(&mut self, bytes: &[u8]) {
@@ -399,7 +407,15 @@ impl<R: Read> TarReader<R> {
             if bare.is_empty() {
                 if header[156] == b'5' || name.ends_with('/') || name == "." {
                     let size = unsigned(&header[124..136], "size")?;
-                    self.skip(longer.size.unwrap_or(size))?;
+                    let size = longer.size.unwrap_or(size);
+                    self.skip(size)?;
+                    if size == 0
+                        && self.keep
+                        && self.raw.len() <= RAW_LIMIT
+                        && self.prelude.len() <= RAW_LIMIT
+                    {
+                        self.prelude.extend_from_slice(&self.raw);
+                    }
                     continue;
                 }
                 return Err(Error::Format("an entry without a name".into()));

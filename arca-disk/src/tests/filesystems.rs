@@ -78,7 +78,14 @@ fn set_sum(set: &[u8]) -> u16 {
 
 const STAMP: u32 = (DOS_DATE as u32) << 16 | DOS_TIME as u32;
 
-fn exfat_set(name: &str, dir: bool, first: u32, size: u64, valid: u64, chain: bool) -> Vec<u8> {
+pub(crate) fn exfat_set(
+    name: &str,
+    dir: bool,
+    first: u32,
+    size: u64,
+    valid: u64,
+    chain: bool,
+) -> Vec<u8> {
     let units: Vec<u16> = name.encode_utf16().collect();
     let parts = units.len().div_ceil(15);
     let mut set = vec![0u8; 32 * (2 + parts)];

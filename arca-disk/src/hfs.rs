@@ -90,47 +90,94 @@ fn read_fork(vol: &mut Volume<'_>, geo: &Geometry, fork: &Fork, max: u64) -> Res
     Ok(out)
 }
 
-/// The records of every leaf node of a B-tree, following the leaf chain
-/// from the first leaf and stopping at a node seen before.
-fn leaves(tree: &[u8], carry_on: &dyn Fn() -> bool) -> Result<Vec<(usize, usize)>> {
+/// Reads `buf` from `pos` in a fork laid out as `pieces` on the volume.
+fn read_pieces(vol: &mut Volume<'_>, pieces: &[Run], pos: u64, buf: &mut [u8]) -> Result<()> {
+    let mut start = 0u64;
+    let mut done = 0usize;
+    for piece in pieces {
+        let &Run::Disk { at, len } = piece else {
+            continue;
+        };
+        let here = pos + done as u64;
+        if done < buf.len() && here >= start && here - start < len {
+            let within = here - start;
+            let n = ((len - within) as usize).min(buf.len() - done);
+            vol.read(at + within, &mut buf[done..done + n])?;
+            done += n;
+        }
+        start += len;
+    }
+    if done < buf.len() {
+        return Err(Error::Format(
+            "an HFS+ B-tree node lies past its fork".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Hands `visit` the records of every leaf node of the B-tree in `fork`,
+/// reading one node at a time: the header node first, then the leaf chain
+/// from the first leaf, which stops at a node seen before.
+fn leaves(
+    vol: &mut Volume<'_>,
+    geo: &Geometry,
+    fork: &Fork,
+    carry_on: &dyn Fn() -> bool,
+    visit: &mut dyn FnMut(&[u8]) -> Result<()>,
+) -> Result<()> {
     let bad = |what: &str| Error::Format(format!("HFS+ B-tree: {what}"));
-    if tree.len() < 512 || tree[8] != 1 {
+    if fork.size > MAX_TREE {
+        return Err(Error::Limit(format!(
+            "an HFS+ structure of {} bytes",
+            fork.size
+        )));
+    }
+    let mut pieces = Vec::new();
+    if !fork.runs(geo, 0, &mut Runs::default(), &mut pieces)? {
+        return Err(Error::Format("an HFS+ fork lies outside the volume".into()));
+    }
+    if fork.size < 512 {
         return Err(bad("header node"));
     }
-    let node = usize::from(be16(tree, 14 + 18));
-    if !node.is_power_of_two() || !(512..=32768).contains(&node) || node > tree.len() {
+    let mut header = [0u8; 512];
+    read_pieces(vol, &pieces, 0, &mut header)?;
+    if header[8] != 1 {
+        return Err(bad("header node"));
+    }
+    let node = usize::from(be16(&header, 14 + 18));
+    if !node.is_power_of_two() || !(512..=32768).contains(&node) || node as u64 > fork.size {
         return Err(bad("node size"));
     }
-    let mut next = be32(tree, 14 + 10);
+    let mut next = be32(&header, 14 + 10);
     let mut seen = HashSet::new();
-    let mut out = Vec::new();
+    let mut n = vec![0u8; node];
     while next != 0 {
         if !carry_on() {
             return Err(Error::Cancelled);
         }
-        let at = next as usize * node;
-        if !seen.insert(next) || at + node > tree.len() {
+        let at = u64::from(next) * node as u64;
+        if !seen.insert(next) || at + node as u64 > fork.size {
             break;
         }
-        let n = &tree[at..at + node];
+        read_pieces(vol, &pieces, at, &mut n)?;
         if n[8] as i8 != -1 {
             return Err(bad("a leaf chain reaches a node that is not a leaf"));
         }
-        let count = usize::from(be16(n, 10));
+        let count = usize::from(be16(&n, 10));
         if 14 + 2 * (count + 1) > node {
             return Err(bad("too many records in a node"));
         }
         for r in 0..count {
-            let start = usize::from(be16(n, node - 2 * (r + 1)));
-            let end = usize::from(be16(n, node - 2 * (r + 2)));
+            let start = usize::from(be16(&n, node - 2 * (r + 1)));
+            let end = usize::from(be16(&n, node - 2 * (r + 2)));
             if start < 14 || end <= start || end > node - 2 * (count + 1) {
                 return Err(bad("a record outside its node"));
             }
-            out.push((at + start, at + end));
+            visit(&n[start..end])?;
         }
-        next = be32(n, 0);
+        next = be32(&n, 0);
     }
-    Ok(out)
+    Ok(())
 }
 
 type Overflow = HashMap<u32, Vec<(u32, Vec<(u64, u64)>)>>;
@@ -180,21 +227,19 @@ pub(crate) fn list(
     };
     let extents_fork = Fork::parse(&header[192..272]);
     let mut catalog_fork = Fork::parse(&header[272..352]);
-    let limit = vol.len.min(MAX_TREE);
     let mut overflow: Overflow = HashMap::new();
     if extents_fork.size > 0 {
-        let tree = read_fork(vol, &geo, &extents_fork, limit)?;
-        for (start, end) in leaves(&tree, carry_on)? {
-            let r = &tree[start..end];
+        leaves(vol, &geo, &extents_fork, carry_on, &mut |r| {
             if r.len() < 12 + 64 || be16(r, 0) != 10 || r[2] != 0 {
-                continue;
+                return Ok(());
             }
             let fork = Fork::parse(&[&[0u8; 16][..], &r[12..76]].concat());
             overflow
                 .entry(be32(r, 4))
                 .or_default()
                 .push((be32(r, 8), fork.extents));
-        }
+            Ok(())
+        })?;
     }
     let extend = |fork: &mut Fork, id: u32| {
         if let Some(more) = overflow.get(&id) {
@@ -208,24 +253,22 @@ pub(crate) fn list(
         }
     };
     extend(&mut catalog_fork, CATALOG_FILE);
-    let tree = read_fork(vol, &geo, &catalog_fork, limit)?;
     let mut folders: HashMap<u32, Item> = HashMap::new();
     let mut files: Vec<Item> = Vec::new();
-    for (start, end) in leaves(&tree, carry_on)? {
-        let r = &tree[start..end];
+    leaves(vol, &geo, &catalog_fork, carry_on, &mut |r| {
         let key_len = usize::from(be16(r, 0));
         if r.len() < 8 || key_len < 6 {
-            continue;
+            return Ok(());
         }
         let Some(name) = name(r) else {
-            continue;
+            return Ok(());
         };
         let data_at = (2 + key_len + 1) & !1;
         let Some(d) = r.get(data_at..) else {
-            continue;
+            return Ok(());
         };
         if d.len() < 2 {
-            continue;
+            return Ok(());
         }
         let parent = be32(r, 2);
         match be16(d, 0) {
@@ -268,7 +311,8 @@ pub(crate) fn list(
         if folders.len() + files.len() >= arca_core::limits::MAX_ENTRIES as usize {
             return Err(Error::Limit("too many entries".into()));
         }
-    }
+        Ok(())
+    })?;
     build(vol, &geo, folders, files, runs)
 }
 
