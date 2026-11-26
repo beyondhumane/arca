@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.1](https://github.com/beyondhumane/arca/compare/v1.0.0...v1.0.1) (2026-11-26)
+
+
+### Bug fixes
+
+* **arca-gui:** refine Ukrainian sidebar strings ([fd8161a](https://github.com/beyondhumane/arca/commit/fd8161ad4c720d044b09f168f60fdefbd5c11074))
+
+
+### Documentation
+
+* add issue and pull request templates ([7b3ad3c](https://github.com/beyondhumane/arca/commit/7b3ad3c459c612cb3382b6f01fa9272b3fb8760f))
+* add Spanish README and a language switcher to every guide page ([#122](https://github.com/beyondhumane/arca/issues/122)) ([511cb7c](https://github.com/beyondhumane/arca/commit/511cb7c31c4f942f3ea9139e97a908314e83da18))
+* reconcile roadmap, TAR links and bzip2 notes with the code ([#125](https://github.com/beyondhumane/arca/issues/125)) ([ee46e49](https://github.com/beyondhumane/arca/commit/ee46e49ca77156be2cfb6f15fed562ddf92c5a6f))
+
 ## [1.0.0](https://github.com/beyondhumane/arca/compare/v0.10.0...v1.0.0) (2026-11-18)
 
 
