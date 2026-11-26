@@ -7,6 +7,8 @@ keywords: rendimiento velocidad benchmarks nanazip 7-zip zip números puntuació
 
 # Benchmarks
 
+[English](../benchmarks.md) | **Español**
+
 Estos números vienen de máquinas concretas y no deben leerse como una ventaja general. Cada uno trae su método, incluidos los casos donde Arca pierde.
 
 ## Mide tu propia máquina

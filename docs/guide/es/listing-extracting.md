@@ -7,6 +7,8 @@ keywords: listar extraer descomprimir paralelo conflicto sobrescribir omitir ren
 
 # Listar y extraer
 
+[English](../listing-extracting.md) | **Español**
+
 ## Listar
 
 ```text

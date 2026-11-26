@@ -7,6 +7,8 @@ keywords: contribuir pull request issue error licencia apache contribute pull re
 
 # Contribuir y licencia
 
+[English](../contributing.md) | **Español**
+
 Arca se desarrolla de forma abierta en GitHub. Los informes de errores, los benchmarks de tu propio hardware y los pull requests son bienvenidos.
 
 ## Configuración

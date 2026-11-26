@@ -33,6 +33,10 @@ export const headingSlug = (s: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
+// The "English | Español" line is for GitHub readers; the site has its own language switch.
+const LANG_LINK = String.raw`(?:\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^)\n]+\))`;
+const LANG_LINE = new RegExp(`^${LANG_LINK}(?: \\| ${LANG_LINK})+\\n+`);
+
 const outsideCode = (body: string) => body.replace(/^```[\s\S]*?^```/gm, '');
 
 function parse(file: string, raw: string): Omit<DocPage, 'ids'> {
@@ -52,7 +56,7 @@ function parse(file: string, raw: string): Omit<DocPage, 'ids'> {
     group: meta.group ?? '',
     keywords: meta.keywords ?? '',
     order: Number(meta.order ?? 0),
-    body: h1 ? rest.slice(h1[0].length) : rest,
+    body: (h1 ? rest.slice(h1[0].length) : rest).trimStart().replace(LANG_LINE, ''),
     path,
     updated: __DOCS_UPDATED__[path] ?? '',
   };

@@ -7,6 +7,8 @@ keywords: list extract unpack parallel conflict overwrite skip rename zip slip -
 
 # Listing & extracting
 
+**English** | [Español](es/listing-extracting.md)
+
 ## Listing
 
 ```text

@@ -9,9 +9,11 @@
 
 A file explorer and archiver in one window, written in Rust. Browse your disk, step into ZIP, 7z, TAR and RAR archives as if they were folders, and compress with parallel Zstandard and AES-256 behind safe-Rust parsers.
 
-[![CI](https://github.com/beyondhumane/arca/actions/workflows/ci.yml/badge.svg)](https://github.com/beyondhumane/arca/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/beyondhumane/arca?color=0066FF)](https://github.com/beyondhumane/arca/releases/latest) [![License](https://img.shields.io/badge/license-Apache--2.0-FF8A3D)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.95%2B-0E1628)](Cargo.toml)
+[![CI](https://github.com/beyondhumane/arca/actions/workflows/ci.yml/badge.svg)](https://github.com/beyondhumane/arca/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/beyondhumane/arca?color=0066FF)](https://github.com/beyondhumane/arca/releases/latest) [![License](https://img.shields.io/badge/license-Apache--2.0-FF8A3D)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.95%2B-0066FF)](Cargo.toml)
 
-**[Website](https://arca.beyondhumane.com/)** · **[Download](https://github.com/beyondhumane/arca/releases/latest)** · **[Guide](docs/guide/README.md)** · **[Guía en español](docs/guide/es/README.md)**
+**[Website](https://arca.beyondhumane.com/)** · **[Download](https://github.com/beyondhumane/arca/releases/latest)** · **[Guide](docs/guide/README.md)**
+
+**English** | [Español](README.es.md)
 
 <br>
 

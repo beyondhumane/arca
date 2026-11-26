@@ -7,6 +7,8 @@ keywords: contraseña aes aes-256 cifrar descifrar zipcrypto hmac pbkdf2 segurid
 
 # Cifrado
 
+[English](../encryption.md) | **Español**
+
 Arca cifra archivos `.zip` con AES-256 usando el esquema WinZip AE-2, el mismo que escriben 7-Zip, WinRAR y NanaZip. `interop.sh` lo comprueba en ambas direcciones contra 7-Zip.
 
 ## El esquema ZIP

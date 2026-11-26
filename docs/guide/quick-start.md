@@ -7,6 +7,8 @@ keywords: tutorial first steps aliases getting started basics
 
 # Quick start
 
+**English** | [Español](es/quick-start.md)
+
 Four commands cover almost everything. Each one prints a single summary line when it’s done.
 
 1. **Create an archive**

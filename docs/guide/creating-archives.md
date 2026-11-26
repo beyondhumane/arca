@@ -7,6 +7,8 @@ keywords: create compress level codec zstd deflate store threads tar gzip xz txz
 
 # Creating archives
 
+**English** | [Español](es/creating-archives.md)
+
 ```text
 arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [--hide-names] [-v SIZE] [--solid] [--recovery PERCENT] [--sfx [--console]]
 ```

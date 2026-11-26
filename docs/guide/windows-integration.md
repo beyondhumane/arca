@@ -7,6 +7,8 @@ keywords: windows explorer context menu right click installer inno setup msix sh
 
 # Windows integration
 
+**English** | [Español](es/windows-integration.md)
+
 On Windows, Arca plugs into File Explorer so you can open and extract archives without touching a terminal.
 
 ## Explorer context menu

@@ -7,6 +7,8 @@ keywords: crates workspace unsafe diseño dependencias perfiles lto crates works
 
 # Arquitectura
 
+[English](../architecture.md) | **Español**
+
 Arca es un workspace de Cargo. Cada crate tiene una sola tarea y una postura declarada sobre el código unsafe.
 
 ## Crates

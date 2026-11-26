@@ -7,6 +7,8 @@ keywords: gui window arca-gui desktop app egui file explorer panes preview devic
 
 # The desktop workspace
 
+**English** | [Español](es/desktop-app.md)
+
 `arca-gui` is a file explorer and an archiver in the same window. It starts in the folder you left it in, shows the disk the way any explorer does, and opens an archive in place when you double-click it, with the same panes, filters, preview and context menus. The top band holds history, breadcrumbs (click their empty part, the pencil or press **Ctrl+L** to type a path), the filter, the **View** menu, search (**Ctrl+K**), settings and the **More** menu.
 
 ## Browsing the disk

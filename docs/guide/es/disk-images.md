@@ -7,6 +7,8 @@ keywords: vhd vhdx vmdk dmg img imagen de disco máquina virtual partición mbr 
 
 # Imágenes de disco
 
+[English](../disk-images.md) | **Español**
+
 Arca abre las imágenes de disco de las máquinas virtuales, de los instaladores
 de macOS y de las tarjetas SD y memorias USB, y muestra los archivos que hay
 dentro, como hace 7-Zip. Vienen incluidas, no necesitan ninguna feature de

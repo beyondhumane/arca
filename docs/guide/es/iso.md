@@ -7,6 +7,8 @@ keywords: iso 9660 imagen de disco rock ridge joliet udf solo lectura cd dvd iso
 
 # Imágenes de disco ISO
 
+[English](../iso.md) | **Español**
+
 Arca lee imágenes ISO 9660 (`.iso`): imágenes de CD/DVD, medios de instalación
 de Linux, paquetes de software. Viene incluido, no necesita ninguna feature de
 Cargo y es de **solo lectura**: Arca nunca crea ni modifica una ISO.

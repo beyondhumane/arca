@@ -7,6 +7,8 @@ keywords: interop compatibility 7-zip unzip tar xz winrar nanazip sha-256
 
 # Interoperability
 
+**English** | [Español](es/interoperability.md)
+
 An archiver is only useful if other tools can open what it writes. `interop.sh`
 round-trips contents and compares hashes; it also checks rejection and cleanup.
 Its final summary reports the count for the selected build and available tools.

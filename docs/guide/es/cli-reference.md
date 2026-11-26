@@ -7,6 +7,8 @@ keywords: cli línea de comandos opciones flags referencia ayuda estado de salid
 
 # Referencia de la CLI
 
+[English](../cli-reference.md) | **Español**
+
 ZIP, 7z, TAR (sin comprimir, gzip, XZ, bzip2 y Zstandard), gzip, XZ, bzip2 y Zstandard sueltos y [RAR](rar.md) están activos por defecto. RAR permite `list`,
 `test` y `extract`, con `-p` para datos o cabeceras cifradas, y `create` para
 nuevos archivos RAR5, sólidos, cifrados, en volúmenes o con registro de recuperación. Modificar un RAR o CBR existente, y

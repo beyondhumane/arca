@@ -7,6 +7,8 @@ keywords: test verify crc ci github actions bench benchmark r1 r2 methodology
 
 # Testing & benchmarking
 
+**English** | [Español](es/testing-benchmarking.md)
+
 ## arca test
 
 Reads every entry and checks its CRC (or its HMAC, when the entry is encrypted) without writing anything to disk.

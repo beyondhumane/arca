@@ -7,6 +7,8 @@ keywords: tutorial primeros pasos alias conceptos básicos tutorial first steps 
 
 # Guía rápida
 
+[English](../quick-start.md) | **Español**
+
 Cuatro comandos cubren casi todo. Cada uno imprime una única línea de resumen al terminar.
 
 1. **Crear un archivo**

@@ -7,6 +7,8 @@ keywords: rar cbr read-only create rar5 encryption hide names solid archive mult
 
 # RAR
 
+**English** | [Español](es/rar.md)
+
 Arca reads every RAR family and **creates new RAR5 archives**: solid or not,
 encrypted with or without hidden names, whole or as a volume set, with or
 without a recovery record.
