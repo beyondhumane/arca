@@ -79,7 +79,7 @@ match ZipArchive::open(file) {
 - Diccionarios LZMA y modelos PPMd: 256 MiB por etapa; ventana Zstd: 256 MiB.
   No es una cuota global de memoria. No hay límite total de bytes extraídos ni de tiempo de CPU.
 - Lectura básica: Copy, LZMA, LZMA2, PPMd, DEFLATE, AES, BCJ/Delta de un flujo.
-  `codecs-native` añade Bzip2 y Zstd. Brotli y LZ4 no se admiten.
+  `codecs-native` añade Bzip2 y Zstd dentro de 7z; `.bz2` y `.tar.bz2` no dependen de él (usan `libbz2-rs-sys` en todas las compilaciones). Brotli y LZ4 no se admiten.
 - La extracción cifrada valida todo el origen estable antes de escribir y luego
   procesa los bloques seleccionados. CRC-32 no es autenticación.
 - La cancelación es cooperativa; el análisis de cabeceras y la KDF están acotados

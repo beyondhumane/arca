@@ -1,6 +1,6 @@
 # Password manager
 
-Status: removed from the code, pending a full rewrite. Tracked in [#6](https://github.com/beyondhumane/arca/issues/6).
+Status: rebuilt (master password, per-entry mask, "use without confirmation" and labels; see `arca-gui/src/vault.rs` and [Encryption](../guide/encryption.md)). The text below is the design record. Open work is tracked in [#4](https://github.com/beyondhumane/arca/issues/4): passwords handed to worker threads are still plain `String`s.
 
 The default password was removed because it was a quarter of a feature, and the quarter that pays off least.
 
@@ -47,7 +47,7 @@ WinRAR has already solved the design, and it is worth copying its four pieces, b
 
 Today no password touches the disk. `Settings`, the only thing written, has no field to put one in; every password lives in `AppState`, in memory, and dies with the process. Any future version has to keep that property unless it ships with the master password from point 3.
 
-Separately, and already true of the current tree: there is no `zeroize` or `secrecy` in any `Cargo.toml`. Passwords are plain `String`s, so they are not overwritten when freed and can end up in `pagefile.sys` or in a crash dump. That protects against "someone reads my config file", which was the goal, but not against forensic memory analysis. A manager that persists raises the stakes considerably, so `Zeroizing<String>` should come in the same change, taking care with the clones handed to worker threads.
+Separately, and already true of the current tree: there was no `zeroize` or `secrecy` in any `Cargo.toml` when this was written; `arca-gui` now uses `Zeroizing` for the vault and the password fields. Passwords are plain `String`s, so they are not overwritten when freed and can end up in `pagefile.sys` or in a crash dump. That protects against "someone reads my config file", which was the goal, but not against forensic memory analysis. A manager that persists raises the stakes considerably, so `Zeroizing<String>` should come in the same change, taking care with the clones handed to worker threads.
 
 ## What exactly was removed
 

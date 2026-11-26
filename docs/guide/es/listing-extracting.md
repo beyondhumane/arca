@@ -96,6 +96,18 @@ extracción sin cifrar puede fallar tras escribir entradas previas; no hay una
 reversión de todo el directorio. Consulta los límites de recursos y códecs en
 [Arquitectura](architecture.md).
 
+## Enlaces en archivos TAR
+
+Un TAR puede guardar enlaces simbólicos y enlaces duros. `arca list` muestra a dónde apunta cada uno: `nombre -> destino` para un enlace simbólico y `nombre link to destino` para un enlace duro. Se leen los nombres largos de enlace GNU y los registros pax `linkpath`, así que un destino de hasta 4096 bytes llega entero.
+
+La extracción recrea los enlaces solo cuando no pueden hacer daño:
+
+- **Enlaces simbólicos:** se crean después de escribir todas las demás entradas, así que ningún fichero del archivo puede escribirse a través de un enlace del mismo archivo. Solo se crea un enlace si su destino es relativo y, leído desde donde está el enlace, queda dentro del destino: puede subir con `..` solo hasta el propio destino, y cada carpeta por la que pasa debe ser ya una carpeta real, no un enlace. Los destinos absolutos, los que salen fuera y los que pasan por otro enlace o por una carpeta inexistente se dejan fuera. Nunca se pone un enlace donde ya hay una carpeta. Los ficheros existentes en su lugar siguen `--on-conflict`.
+- **Enlaces duros:** solo se crean hacia un fichero que esa misma extracción escribió, con el nombre que se le dio (tras un `rename`, el renombrado). Un enlace duro hacia cualquier otra cosa se deja fuera. Donde el sistema de ficheros no tiene enlaces duros, como FAT32 o exFAT, se copia el fichero.
+- **En Windows** los enlaces simbólicos exigen privilegios que la mayoría de las cuentas no tiene, así que siempre se dejan fuera y se informa de ello; no se copian sus destinos en su lugar. Los enlaces duros funcionan en NTFS sin privilegios.
+
+Cada enlace que se deja fuera se comunica por la salida de error con su motivo (en la ventana, como un recuento tras el resumen) y la extracción continúa. Un destino que ya contiene un enlace de antes sigue sin escribirse a través de él.
+
 ## Rutas seguras
 
 Cada nombre de entrada pasa por la defensa Zip Slip de Arca antes de unirse al destino. Una entrada como `../../etc/passwd` se rechaza con un error en lugar de escribirse fuera del directorio de destino.

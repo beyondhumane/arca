@@ -31,7 +31,8 @@ extracted in CLI and desktop. See
 [issue #18](https://github.com/beyondhumane/arca/issues/18) and
 [Creating archives](creating-archives.md#xz). bzip2 and Zstandard work the same
 way, standalone and around a TAR; see
-[Creating archives](creating-archives.md#bzip2-and-zstandard). ZIP entries
+[Creating archives](creating-archives.md#bzip2-and-zstandard) and
+[issue #33](https://github.com/beyondhumane/arca/issues/33). ZIP entries
 compressed with bzip2 are read.
 
 CPIO, AR, DEB, RPM, CAB (MSZIP and LZX) and LZH are listed, tested, extracted,
@@ -42,7 +43,7 @@ previewed, hashed and compared, read-only; see
 
 - **UDF:** ISO images are read through ISO 9660, so files stored only in UDF (such as `install.wim` on Windows media) are not listed yet.
 - **WIM, ARJ and Quantum-compressed cabinets** are not read yet; WIM waits for a maintained pure-Rust reader.
-- **Symbolic links:** skipped for ZIP/TAR creation, rejected for 7z.
+- **Symbolic links outside TAR:** ZIP skips them on creation and 7z and RAR reject them. TAR (including `.tar.gz`, `.tar.xz`, `.tar.bz2` and `.tar.zst`) stores them as links on Linux and macOS; see [Creating archives](creating-archives.md#tar-and-gzip). See [issue #17](https://github.com/beyondhumane/arca/issues/17).
 - **7z password changes:** adding, deleting and renaming entries rewrite the archive with its own password; changing that password is not offered yet.
 - **Desktop integration on Linux and macOS:** the Explorer menu is Windows-only for now.
 - **Mutation outside ZIP, TAR and 7z:** RAR stays read-only once created, and ISO images, the ZIP containers and the formats of [CPIO, AR, DEB, RPM, CAB and LZH](more-formats.md) are never modified.
