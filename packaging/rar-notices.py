@@ -20,7 +20,7 @@ LEGAL_NAMES = ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE")
 # Third-party crates copied into the tree and patched; their notices are
 # published like any other dependency's.
 VENDOR = ROOT / "arca-rar" / "vendor"
-VENDORED = "vendored in arca-rar/vendor from registry+https://github.com/rust-lang/crates.io-index"
+VENDORED = "vendored in crates/arca-rar/vendor from registry+https://github.com/rust-lang/crates.io-index"
 
 
 def vendored(package):

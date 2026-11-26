@@ -22,7 +22,7 @@ on independent writers or evidence that readers require native code. See
 
 Use Apache-2.0 `sevenz-rust2 =0.23.0`, vendored from crates.io, and
 `lzma-rust2 =0.21.0`. Version/provenance hashes and every patch are recorded in
-[PATCHES.md](../../arca-7z/vendor/PATCHES.md). No custom cipher or compressor is
+[PATCHES.md](../../crates/arca-7z/vendor/PATCHES.md). No custom cipher or compressor is
 implemented. The dependency uses edition 2024/MSRV 1.93; Arca keeps Rust 1.95 and
 edition 2021. Dependency editions do not require a workspace migration.
 
@@ -104,7 +104,7 @@ four single-input/output stages. LZMA memory: 256 MiB per stage; Zstd window:
 not a global CPU-time, memory or extracted-byte quota. Header parsing/KDF setup
 is bounded but not internally cancellable; stream progress is cooperative.
 
-See [arca-7z API](../../arca-7z/README.md) for reader, writer, progress, error and
+See [arca-7z API](../../crates/arca-7z/README.md) for reader, writer, progress, error and
 callback contracts. Shared `Entry.offset` is a 7z index. Only the first member
 reports a solid block's packed size. `Method::code() -> Result<u16>` rejects
 non-ZIP metadata values instead of assigning invented ZIP method numbers.

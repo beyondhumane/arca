@@ -602,7 +602,7 @@ $ARCA extract out/cut.gz -o y >/dev/null 2>&1 && ko "truncated .gz extracted" ||
 echo
 if [ "${ARCA_TEST_RAR:-1}" = 1 ]; then
   echo "RAR) External fixtures -> Arca (read-only)"
-  FIXTURES="$ROOT/arca-rar/tests/fixtures"
+  FIXTURES="$ROOT/crates/arca-rar/tests/fixtures"
   for f in plain stored solid encrypted headers; do
     ARGS=()
     case "$f" in encrypted|headers) ARGS=(-p arca-test-only);; esac
@@ -629,7 +629,7 @@ if [ "${ARCA_TEST_RAR:-1}" = 1 ]; then
       python3 -c 'from pathlib import Path; p=Path("rar-out"); assert (p/"first.txt").read_bytes()==b"Arca RAR fixture alpha\n"*64; assert (p/"folder/second.txt").read_bytes()==b"Arca RAR fixture beta\n"*64' &&
       ok "RAR complete set resolved from volume $part" || ko "RAR volume $part resolution"
   done
-  ARCA="$ARCA" python3 "$ROOT/arca-rar/tests/compare-matrix.py" &&
+  ARCA="$ARCA" python3 "$ROOT/crates/arca-rar/tests/compare-matrix.py" &&
     ok "RAR independent generation/volume/dictionary matrix" || ko "RAR independent matrix"
   echo
   echo "RAR) Arca creates solid, encrypted, hidden, volume and recovery RAR5 -> Arca and UnRAR"

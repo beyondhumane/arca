@@ -98,7 +98,7 @@ cargo tree -p arca-7z -e features -i lzma-rust2
 The first two must omit native `zstd-sys` and `bzip2-sys`. LZMA features must be `std`/`encoder`, never `optimization`. Rust 1.95 and edition 2021 remain
 the workspace baseline; dependency editions are per crate. See the
 [accepted design](https://github.com/beyondhumane/arca/blob/main/docs/plans/7z-format.md)
-and [patch inventory](https://github.com/beyondhumane/arca/blob/main/arca-7z/vendor/PATCHES.md).
+and [patch inventory](https://github.com/beyondhumane/arca/blob/main/crates/arca-7z/vendor/PATCHES.md).
 
 ## Build profiles
 

@@ -1,31 +1,31 @@
 [workspace]
 resolver = "2"
 members = [
-    "arca-core",
-    "arca-zip",
-    "arca-tar",
-    "arca-xz",
-    "arca-stream",
-    "arca-compare",
-    "arca-bench",
-    "arca-7z",
-    "arca-rar",
-    "arca-iso",
-    "arca-extra",
-    "arca-disk",
-    "arca-cli",
-    "arca-gui",
-    "arca-setup",
-    "arca-brand",
-    "arca-icons",
-    "arca-drag",
-    "arca-notify",
-    "arca-net",
-    "arca-sfx",
+    "crates/arca-core",
+    "crates/arca-zip",
+    "crates/arca-tar",
+    "crates/arca-xz",
+    "crates/arca-stream",
+    "crates/arca-compare",
+    "crates/arca-bench",
+    "crates/arca-7z",
+    "crates/arca-rar",
+    "crates/arca-iso",
+    "crates/arca-extra",
+    "crates/arca-disk",
+    "crates/arca-cli",
+    "crates/arca-gui",
+    "crates/arca-setup",
+    "crates/arca-brand",
+    "crates/arca-icons",
+    "crates/arca-drag",
+    "crates/arca-notify",
+    "crates/arca-net",
+    "crates/arca-sfx",
 ]
 # Solo compila en Windows: se queda fuera del workspace para que
 # `cargo build` siga funcionando en Linux y macOS.
-exclude = ["windows/arca-shell", "arca-7z/vendor/sevenz-rust2", "arca-rar/vendor/rars", "arca-xz/vendor/lzma-rust2"]
+exclude = ["windows/arca-shell", "crates/arca-7z/vendor/sevenz-rust2", "crates/arca-rar/vendor/rars", "crates/arca-xz/vendor/lzma-rust2"]
 
 [workspace.package]
 version = "1.0.0"
@@ -40,20 +40,20 @@ authors = ["Proyecto Arca"]
 # Un numero que hay que sincronizar a mano es un fallo esperando a ocurrir, y
 # aqui no aporta nada porque estos crates no se publican en crates.io. Si algun
 # dia se publican, hay que devolver el `version` a los tres.
-arca-core = { path = "arca-core" }
-arca-zip  = { path = "arca-zip", default-features = false }
-arca-tar  = { path = "arca-tar" }
-arca-xz   = { path = "arca-xz" }
-arca-stream = { path = "arca-stream", default-features = false }
-arca-7z   = { path = "arca-7z", default-features = false }
-arca-rar = { path = "arca-rar" }
-arca-iso = { path = "arca-iso" }
-arca-extra = { path = "arca-extra" }
-arca-disk = { path = "arca-disk" }
-arca-compare = { path = "arca-compare" }
-arca-bench = { path = "arca-bench" }
-arca-icons = { path = "arca-icons" }
-arca-brand = { path = "arca-brand" }
+arca-core = { path = "crates/arca-core" }
+arca-zip  = { path = "crates/arca-zip", default-features = false }
+arca-tar  = { path = "crates/arca-tar" }
+arca-xz   = { path = "crates/arca-xz" }
+arca-stream = { path = "crates/arca-stream", default-features = false }
+arca-7z   = { path = "crates/arca-7z", default-features = false }
+arca-rar = { path = "crates/arca-rar" }
+arca-iso = { path = "crates/arca-iso" }
+arca-extra = { path = "crates/arca-extra" }
+arca-disk = { path = "crates/arca-disk" }
+arca-compare = { path = "crates/arca-compare" }
+arca-bench = { path = "crates/arca-bench" }
+arca-icons = { path = "crates/arca-icons" }
+arca-brand = { path = "crates/arca-brand" }
 # DEFLATE: zlib-rs, la implementacion en Rust mas rapida medida (ver diseno S02)
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 # bzip2: libbz2-rs-sys, el port a Rust de libbzip2. Sin compilador de C, asi que
@@ -93,6 +93,6 @@ strip = true
 inherits = "release"
 
 [patch.crates-io]
-sevenz-rust2 = { path = "arca-7z/vendor/sevenz-rust2" }
-rars = { path = "arca-rar/vendor/rars" }
-lzma-rust2 = { path = "arca-xz/vendor/lzma-rust2" }
+sevenz-rust2 = { path = "crates/arca-7z/vendor/sevenz-rust2" }
+rars = { path = "crates/arca-rar/vendor/rars" }
+lzma-rust2 = { path = "crates/arca-xz/vendor/lzma-rust2" }

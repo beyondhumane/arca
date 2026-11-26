@@ -23,7 +23,7 @@ Done in this batch:
 file that grew:
 
 ```sh
-git show gpui-kit-redesign:arca-gui/src/main.rs > /tmp/referencia.rs
+git show gpui-kit-redesign:crates/arca-gui/src/main.rs > /tmp/referencia.rs
 ```
 
 That file has `struct AppState` (55 fields), `struct AppController { state:
@@ -38,16 +38,16 @@ The tables below were produced with this, in case the file moves again:
 
 ```sh
 # contract the shell needs
-rg -o 'controller\.state\.([a-z_0-9]+)' -r '$1' arca-gui/src/gpui_shell.rs | sort -u
-rg -o 'controller\.([a-z_]+)\(' -r '$1'    arca-gui/src/gpui_shell.rs | sort -u
-rg -o 'AppAction::([A-Za-z_]+)' -r '$1'    arca-gui/src/gpui_shell.rs | sort -u
+rg -o 'controller\.state\.([a-z_0-9]+)' -r '$1' crates/arca-gui/src/gpui_shell.rs | sort -u
+rg -o 'controller\.([a-z_]+)\(' -r '$1'    crates/arca-gui/src/gpui_shell.rs | sort -u
+rg -o 'AppAction::([A-Za-z_]+)' -r '$1'    crates/arca-gui/src/gpui_shell.rs | sort -u
 
 # impl Arca methods, in order
-rg -n '^    (pub )?fn [a-z_0-9]+' arca-gui/src/main.rs
+rg -n '^    (pub )?fn [a-z_0-9]+' crates/arca-gui/src/main.rs
 ```
 
 The original `gpui-kit-redesign` branch was made on `c4c0354`. While it lived,
-`main` moved 18 commits ahead, rewriting `arca-gui/src/main.rs`. Both sides
+`main` moved 18 commits ahead, rewriting `crates/arca-gui/src/main.rs`. Both sides
 started from a 4,441-line file:
 
 | | `main.rs` | what it added |

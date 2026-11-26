@@ -71,7 +71,7 @@
         },
         {
           "type": "toml",
-          "path": "arca-rar/fuzz/Cargo.lock",
+          "path": "crates/arca-rar/fuzz/Cargo.lock",
           "jsonpath": "$.package[?(@.name.value == 'arca-core' || @.name.value == 'arca-rar')].version"
         }
       ]

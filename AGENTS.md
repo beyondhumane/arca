@@ -4,7 +4,7 @@ This file defines the project-wide rules for agents and contributors. More-speci
 
 ## Project shape
 
-Arca is a cross-platform archiver written in Rust. The workspace contains:
+Arca is a cross-platform archiver written in Rust. The workspace crates live under `crates/`:
 
 - `arca-core`: shared errors, bounded parsing, limits, and path safety.
 - `arca-zip`: ZIP/Zip64 reading and writing, compression, and encryption.

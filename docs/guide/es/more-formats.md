@@ -91,7 +91,7 @@ completo. Las vistas previas tienen un máximo de 64 MiB.
 
 ## Contrastarlo con otras herramientas
 
-Los cabinets de prueba de `arca-extra/tests/fixtures` se hicieron con `makecab`
+Los cabinets de prueba de `crates/arca-extra/tests/fixtures` se hicieron con `makecab`
 de Windows (MSZIP y LZX) y `bsdtar` también los lista. Los lectores de CPIO y
 AR se comprobaron a mano con archivos escritos por `bsdtar --format newc`,
 `odc`, `bin`, `ar` y `argnu`.

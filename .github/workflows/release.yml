@@ -180,7 +180,7 @@ jobs:
           fi
           "$BIN" --version
           "$BIN" --help > /dev/null
-          "$BIN" test arca-rar/tests/fixtures/volume.part4.rar
+          "$BIN" test crates/arca-rar/tests/fixtures/volume.part4.rar
 
       - name: Package
         shell: bash

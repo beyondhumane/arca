@@ -99,7 +99,7 @@ Los dos primeros no deben contener los nativos `zstd-sys` ni `bzip2-sys`.
 LZMA debe activar `std`/`encoder`, nunca `optimization`. El workspace mantiene
 Rust 1.95 y edición 2021; cada dependencia elige su edición. Consulta el
 [diseño aceptado](https://github.com/beyondhumane/arca/blob/main/docs/plans/7z-format.md)
-y el [inventario de parches](https://github.com/beyondhumane/arca/blob/main/arca-7z/vendor/PATCHES.md).
+y el [inventario de parches](https://github.com/beyondhumane/arca/blob/main/crates/arca-7z/vendor/PATCHES.md).
 
 ## Perfiles de compilación
 

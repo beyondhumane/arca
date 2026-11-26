@@ -112,7 +112,7 @@ tablas MBR y GPT, contenedores VHD, VHDX, VMDK y DMG) y la dañan: cortada a
 muchas longitudes, o con bytes cambiados en sus cabeceras, debe abrirse,
 comprobarse y leerse sin un pánico. El volumen NTFS es la imagen `testfs1` de
 2 MiB del crate [`ntfs`](https://crates.io/crates/ntfs) (MIT o Apache-2.0),
-guardada como `arca-disk/tests/fixtures/ntfs.img.xz`.
+guardada como `crates/arca-disk/tests/fixtures/ntfs.img.xz`.
 
 ```sh
 cargo test -p arca-disk

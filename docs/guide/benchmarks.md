@@ -338,7 +338,7 @@ The disk sustained 327 MB/s before the four runs and 90 MB/s after them. Arca ra
 
 ## RAR 5 against WinRAR
 
-Arca writes RAR 5 with its own compressor, a patched copy of `rars` (see `arca-rar/vendor/PATCHES.md`). These figures compare it with WinRAR's console `Rar.exe` 7.23 at the level each Arca level stands in for: Arca `-l 1`, `3`, `6`, `7` and `9` against `-m1` to `-m5`.
+Arca writes RAR 5 with its own compressor, a patched copy of `rars` (see `crates/arca-rar/vendor/PATCHES.md`). These figures compare it with WinRAR's console `Rar.exe` 7.23 at the level each Arca level stands in for: Arca `-l 1`, `3`, `6`, `7` and `9` against `-m1` to `-m5`.
 
 AMD Ryzen 7 3700X (8 cores, 16 threads), 32 GB, Windows 11. **The machine was busy**: other builds ran throughout, and the processor load sampled before each run was mostly 60–100%. Wall times swing by a factor of two or more from run to run, so the tables lead with the CPU time of the whole process (all its threads) and the size, which load moves far less. Each figure is the median of 3 runs; the CSV the script writes keeps every run and its load.
 
@@ -409,7 +409,7 @@ The before row is the same command with `-Arca` pointing at a build of `17769b4`
 
 ### Data filters
 
-From `-l 5` on Arca applies RAR 5's E8, E8E9, ARM and delta filters, chosen for each 64 KiB stretch of a file, as WinRAR does from `-m3` (see `arca-rar/vendor/PATCHES.md`). The tables above predate them. Measured the same way, `-Runs 3`, with `-Levels "3,4,5" -Kinds "exe,media,all"`; "Before" is Arca at commit `17769b4`, the last without filters, run the same day. The machine was busy again (load 40–99%), so CPU times are rough; sizes are exact.
+From `-l 5` on Arca applies RAR 5's E8, E8E9, ARM and delta filters, chosen for each 64 KiB stretch of a file, as WinRAR does from `-m3` (see `crates/arca-rar/vendor/PATCHES.md`). The tables above predate them. Measured the same way, `-Runs 3`, with `-Levels "3,4,5" -Kinds "exe,media,all"`; "Before" is Arca at commit `17769b4`, the last without filters, run the same day. The machine was busy again (load 40–99%), so CPU times are rough; sizes are exact.
 
 | Kind, level | Before: CPU | size | **Filters: CPU** | size | WinRAR: CPU | size |
 | --- | --- | --- | --- | --- | --- | --- |
