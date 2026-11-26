@@ -4,21 +4,32 @@ This file defines the project-wide rules for agents and contributors. More-speci
 
 ## Project shape
 
-Arca is a cross-platform archiver written in Rust. The workspace crates live under `crates/`:
+Arca is a cross-platform archiver written in Rust. The workspace crates live under `crates/`; the root also holds `docs/`, `site/`, `packaging/`, `brand/`, `benchmarks/` and `windows/`.
 
 - `arca-core`: shared errors, bounded parsing, limits, and path safety.
 - `arca-zip`: ZIP/Zip64 reading and writing, compression, and encryption.
 - `arca-tar`: TAR reading and writing.
+- `arca-xz`: XZ streams in safe Rust.
+- `arca-stream`: standalone gzip, XZ, bzip2 and Zstandard streams, with or without a TAR inside.
 - `arca-7z`: bounded 7z reading, solid extraction, and Store/LZMA2 writing.
+- `arca-rar`: RAR/CBR reading and RAR5 creation.
+- `arca-iso`: read-only ISO 9660.
+- `arca-extra`: read-only CPIO, AR, DEB, RPM, CAB and LZH.
+- `arca-disk`: read-only VHD, VHDX, VMDK, DMG and raw disk images.
+- `arca-compare`: entry checksums and archive/folder comparison without extracting.
+- `arca-bench`: codec benchmarks on data generated in memory.
 - `arca-cli`: the `arca` command-line binary.
 - `arca-gui`: the desktop window.
 - `arca-setup`: the installer window and engine; releases still ship the Inno Setup one.
+- `arca-sfx`: the self-extracting stub that `arca create --sfx` prepends to a ZIP.
 - `arca-notify`: broadcasts environment and file-association changes to Windows.
 - `arca-brand`: brand colours, typefaces and colour helpers shared by `arca-gui` and `arca-setup`.
 - `arca-icons`: desktop file-type icons.
 - `arca-drag`: drag-and-drop integration.
 - `arca-net`: networking support.
 - `windows/arca-shell`: Windows Explorer integration; it is outside the workspace.
+
+Vendored third-party crates live in `crates/arca-7z/vendor`, `crates/arca-rar/vendor` and `crates/arca-xz/vendor`; they are outside the workspace and their patches are listed in each `PATCHES.md`. Paths in scripts, workflows and docs include the `crates/` prefix.
 
 Read `README.md` before making broad changes. Design rationale lives in `docs/plans/design-rationale.md`; other plans and project history live in `docs/plans/`.
 
@@ -89,6 +100,13 @@ docs: document interoperability checks
 ```
 
 Pull request titles should follow the same format. The description should state the user-visible or technical outcome, relevant tests, and any platform limitations.
+
+## Issues and pull requests
+
+- Issue forms live in `.github/ISSUE_TEMPLATE/` and the pull request template in `.github/pull_request_template.md`. Keep them in line with this guide and with `docs/guide/contributing.md` when the checks or the workflow change.
+- Fill in the pull request template; delete a checklist item only if it truly does not apply, and say why.
+- Bug reports must name the component, `arca --version` (or the GUI version), the operating system and the exact command or steps. Ask for a minimal archive that reproduces it, never for one that contains private data.
+- Labels in use for issues are `bug`, `enhancement` and `question`; do not invent new ones.
 
 ## Documentation and releases
 
