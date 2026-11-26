@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/beyondhumane/arca/blob/main/docs/guide/contributing.md
+    about: How to build, test and contribute. Read it before opening a pull request.
+  - name: Documentation
+    url: https://github.com/beyondhumane/arca/tree/main/docs/guide
+    about: Guides for the command line, the desktop app, formats and interoperability.

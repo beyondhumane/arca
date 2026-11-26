@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest a format, an option, or an improvement to the CLI or the desktop app.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [roadmap](https://github.com/beyondhumane/arca/blob/main/docs/guide/roadmap.md) and the [existing issues](https://github.com/beyondhumane/arca/issues?q=is%3Aissue) first.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Command line (arca)
+        - Desktop app (arca-gui)
+        - Archive format support
+        - Windows or Linux integration
+        - Packaging or installer
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem do you want to solve?
+      description: Describe what you are trying to do and why it is hard today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Arca to do?
+      description: The behaviour, command line or screen you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you tried
+      description: Other tools or workarounds, and what they get wrong.
+  - type: textarea
+    id: samples
+    attributes:
+      label: Specification or sample files
+      description: For a new format, link its specification and a few small sample files that carry no private data.

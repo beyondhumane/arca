@@ -1,0 +1,93 @@
+name: Bug report
+description: Arca crashed, gave a wrong result, or could not open an archive it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Search the [existing issues](https://github.com/beyondhumane/arca/issues?q=is%3Aissue) first.
+
+        Do not attach archives that contain private data. If the archive is sensitive, say so and describe it instead (format, size, how it was created).
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Command line (arca)
+        - Desktop app (arca-gui)
+        - Windows installer (arca-setup)
+        - Windows Explorer menu
+        - Self-extracting archive (--sfx)
+        - Linux packaging or file associations
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Arca version
+      description: Output of `arca --version`, or the version shown in Settings > About.
+      placeholder: arca 1.0.1
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Operating system
+      description: Name, version and architecture.
+      placeholder: Windows 11 24H2 x86_64, Ubuntu 24.04 x86_64, macOS 15 arm64
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: Archive format
+      multiple: true
+      options:
+        - ZIP or ZIP container (jar, epub, cbz...)
+        - 7z
+        - RAR / CBR
+        - TAR
+        - gzip, xz, bzip2 or Zstandard
+        - ISO
+        - CPIO, AR, DEB, RPM, CAB or LZH
+        - Disk image (VHD, VHDX, VMDK, DMG, IMG)
+        - Not related to a format
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact command, or the clicks in the app. Include flags, passwords (never real ones) and the working folder if it matters.
+      placeholder: |
+        1. Run `arca extract broken.zip -o out`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Error text exactly as shown, panic messages and exit codes included. Screenshots are welcome for the desktop app.
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sample archive or how it was made
+      description: Attach the smallest archive that reproduces the problem, or the command that creates it. If it does not reproduce with a smaller one, say how big it is.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: The archive and the logs I attached contain no private data.
+          required: true

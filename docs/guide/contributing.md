@@ -30,7 +30,11 @@ bash interop.sh            # needs zip, unzip, tar and 7-Zip
 
 ## Reporting a bug
 
-[Open an issue](https://github.com/beyondhumane/arca/issues/new) and include `arca --version`, your operating system, the exact command you ran and what happened. If you can share the archive, or a smaller one that reproduces the problem, even better. Browse [existing issues](https://github.com/beyondhumane/arca/issues) first.
+[Open an issue](https://github.com/beyondhumane/arca/issues/new) and include `arca --version`, your operating system, the exact command you ran and what happened. If you can share the archive, or a smaller one that reproduces the problem, even better. Browse [existing issues](https://github.com/beyondhumane/arca/issues) first. The bug report form asks for each of these; feature requests have their own form. Do not attach archives that contain private data.
+
+## Opening a pull request
+
+Pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/), in English: `fix(arca-zip): reject truncated central directory`. The pull request template lists the checks to run (`cargo fmt`, `cargo clippy`, `cargo test`, both release builds and `interop.sh`) and what to say about parsers, tests and platforms you could not try.
 
 ## License
 

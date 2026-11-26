@@ -30,7 +30,11 @@ bash interop.sh            # necesita zip, unzip, tar y 7-Zip
 
 ## Reportar un error
 
-[Abre un issue](https://github.com/beyondhumane/arca/issues/new) e incluye `arca --version`, tu sistema operativo, el comando exacto que ejecutaste y qué pasó. Si puedes compartir el archivo, o uno más pequeño que reproduzca el problema, mejor todavía. Revisa primero los [issues existentes](https://github.com/beyondhumane/arca/issues).
+[Abre un issue](https://github.com/beyondhumane/arca/issues/new) e incluye `arca --version`, tu sistema operativo, el comando exacto que ejecutaste y qué pasó. Si puedes compartir el archivo, o uno más pequeño que reproduzca el problema, mejor todavía. Revisa primero los [issues existentes](https://github.com/beyondhumane/arca/issues). El formulario de errores pide cada uno de estos datos; las solicitudes de funciones tienen el suyo. No adjuntes archivos que contengan datos privados.
+
+## Abrir un pull request
+
+Los títulos de los pull requests siguen [Conventional Commits](https://www.conventionalcommits.org/), en inglés: `fix(arca-zip): reject truncated central directory`. La plantilla del pull request lista las comprobaciones que hay que ejecutar (`cargo fmt`, `cargo clippy`, `cargo test`, las dos compilaciones release e `interop.sh`) y qué indicar sobre los parsers, las pruebas y las plataformas que no pudiste probar.
 
 ## Licencia
 
