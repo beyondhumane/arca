@@ -55,7 +55,7 @@ No platform is marked as validated without a real manual test.
 
 ## `columns` persistence defect (resolved)
 
-`arca-gui/src/main.rs::Settings::save` wrote `columns = ...` and
+`crates/arca-gui/src/main.rs::Settings::save` wrote `columns = ...` and
 `Settings::load` did not read that key, so column changes were lost on restart
 even though `gui.conf` kept the line. It was recorded here during G1 and
 deliberately **not** fixed then: the production UI and the `gui.conf` format

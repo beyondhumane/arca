@@ -8,7 +8,7 @@ The move to GPUI (`migration-to-gpui.md`, commit 1816bbb) was not measured befor
 
 ## What changed
 
-Only the view. `controller/`, `model.rs`, `archive_ops/`, `tree.rs`, `i18n.rs` and the settings are the same as on `main`. The new view lives in `arca-gui/src/ui/`:
+Only the view. `controller/`, `model.rs`, `archive_ops/`, `tree.rs`, `i18n.rs` and the settings are the same as on `main`. The new view lives in `crates/arca-gui/src/ui/`:
 
 - `mod.rs`: `Shell`, the eframe `App`. It repaints only while there is work in flight (jobs, listing, preview, file dialogs, update check), and on the 100 ms `TICK` while that lasts. It also handles the startup size, files dropped onto the window, dragging entries out of it, and shortcuts.
 - `header.rs`, `sidebar.rs`, `browser.rs`, `preview.rs`, `jobs.rs`, `dialogs.rs`: the toolbar and footer, places and the folder tree, Details/List and Columns, the preview, tasks, and every dialog.
@@ -27,7 +27,7 @@ Machine: 8 vCPU Intel Xeon Platinum 8559C VM, Linux/X11, **no physical GPU**: bo
 | `arca-gui` release binary | 17.8 MiB | 34.4 MiB |
 | `.text` (`cargo bloat`) | 13.1 MiB | 27.0 MiB |
 | Clean release build of the workspace | 195 s | 414 s |
-| Incremental release build after touching `arca-gui/src/main.rs` | 126 s | 261 s |
+| Incremental release build after touching `crates/arca-gui/src/main.rs` | 126 s | 261 s |
 | PSS, empty window | 56 MiB | 113 MiB |
 | PSS, 100 000-entry zip | 82 MiB | 140 MiB |
 | Threads | 22 | 53 |
@@ -44,7 +44,7 @@ cargo build --release -p arca-gui && ls -l target/release/arca-gui
 cargo bloat --release -p arca-gui --crates -n 25
 # clean and incremental builds
 rm -rf target && time cargo build --release
-touch arca-gui/src/main.rs && time cargo build --release -p arca-gui
+touch crates/arca-gui/src/main.rs && time cargo build --release -p arca-gui
 # memory, threads and idle CPU: start the window, wait for it to be mapped
 # (`xdotool search --onlyvisible --pid`), wait 3 s, then sample
 # /proc/<pid>/{stat,status,smaps_rollup} for 10 s

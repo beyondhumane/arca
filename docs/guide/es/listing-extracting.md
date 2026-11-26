@@ -22,8 +22,8 @@ arca list arca.zip --time
 ```
 
 ```text
-       22966  deflate   72.6%  arca/arca-cli/src/main.rs
-      114710  deflate   76.8%  arca/arca-zip/src/lib.rs
+       22966  deflate   72.6%  arca/crates/arca-cli/src/main.rs
+      114710  deflate   76.8%  arca/crates/arca-zip/src/lib.rs
 174 entries, 2.3 MB uncompressed, listed in 0.1 ms
 ```
 

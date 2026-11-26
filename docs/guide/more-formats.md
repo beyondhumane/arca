@@ -90,7 +90,7 @@ are limited to 64 MiB.
 
 ## Checking it against other tools
 
-The CAB fixtures in `arca-extra/tests/fixtures` were made with Windows'
+The CAB fixtures in `crates/arca-extra/tests/fixtures` were made with Windows'
 `makecab` (MSZIP and LZX) and are listed by `bsdtar` too. The CPIO and AR
 readers were checked by hand on archives written by `bsdtar --format newc`,
 `odc`, `bin`, `ar` and `argnu`.

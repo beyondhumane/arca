@@ -45,7 +45,7 @@ they are missing.
 
 ```sh
 cargo build --release -p arca-cli
-UNRAR=/path/to/unrar SEVENZIP=/path/to/7zz python3 arca-rar/tests/create-stress.py --require-tools
+UNRAR=/path/to/unrar SEVENZIP=/path/to/7zz python3 crates/arca-rar/tests/create-stress.py --require-tools
 ```
 
 ## Zstandard in ZIP

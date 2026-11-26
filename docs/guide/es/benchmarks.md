@@ -340,7 +340,7 @@ El disco sostenía 327 MB/s antes de las cuatro ejecuciones y 90 MB/s después. 
 
 ## RAR 5 contra WinRAR
 
-Arca escribe RAR 5 con su propio compresor, una copia parcheada de `rars` (véase `arca-rar/vendor/PATCHES.md`). Estas cifras lo comparan con el `Rar.exe` de consola de WinRAR 7.23 en el nivel al que corresponde cada nivel de Arca: `-l 1`, `3`, `6`, `7` y `9` de Arca contra `-m1` a `-m5`.
+Arca escribe RAR 5 con su propio compresor, una copia parcheada de `rars` (véase `crates/arca-rar/vendor/PATCHES.md`). Estas cifras lo comparan con el `Rar.exe` de consola de WinRAR 7.23 en el nivel al que corresponde cada nivel de Arca: `-l 1`, `3`, `6`, `7` y `9` de Arca contra `-m1` a `-m5`.
 
 AMD Ryzen 7 3700X (8 núcleos, 16 hilos), 32 GB, Windows 11. **La máquina estaba ocupada**: durante todas las pruebas se compilaban otros proyectos, y la carga del procesador medida antes de cada ejecución estuvo casi siempre entre el 60 y el 100%. El tiempo real varía el doble o más de una ejecución a otra, así que las tablas dan primero el tiempo de CPU de todo el proceso (con todos sus hilos) y el tamaño, que la carga mueve mucho menos. Cada cifra es la mediana de 3 ejecuciones; el CSV que escribe el script guarda cada ejecución con su carga.
 
@@ -411,7 +411,7 @@ La fila de «antes» es la misma orden con `-Arca` apuntando a una compilación 
 
 ### Filtros de datos
 
-A partir de `-l 5` Arca aplica los filtros E8, E8E9, ARM y delta de RAR 5, elegidos para cada tramo de 64 KiB de un archivo, como hace WinRAR desde `-m3` (véase `arca-rar/vendor/PATCHES.md`). Las tablas anteriores son de antes de los filtros. Se midió de la misma forma, `-Runs 3`, con `-Levels "3,4,5" -Kinds "exe,media,all"`; «Antes» es Arca en el commit `17769b4`, el último sin filtros, ejecutado el mismo día. La máquina volvía a estar ocupada (carga del 40 al 99%), así que los tiempos de CPU son aproximados; los tamaños son exactos.
+A partir de `-l 5` Arca aplica los filtros E8, E8E9, ARM y delta de RAR 5, elegidos para cada tramo de 64 KiB de un archivo, como hace WinRAR desde `-m3` (véase `crates/arca-rar/vendor/PATCHES.md`). Las tablas anteriores son de antes de los filtros. Se midió de la misma forma, `-Runs 3`, con `-Levels "3,4,5" -Kinds "exe,media,all"`; «Antes» es Arca en el commit `17769b4`, el último sin filtros, ejecutado el mismo día. La máquina volvía a estar ocupada (carga del 40 al 99%), así que los tiempos de CPU son aproximados; los tamaños son exactos.
 
 | Tipo, nivel | Antes: CPU | tamaño | **Filtros: CPU** | tamaño | WinRAR: CPU | tamaño |
 | --- | --- | --- | --- | --- | --- | --- |

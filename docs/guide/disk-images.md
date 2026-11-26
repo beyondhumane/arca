@@ -108,7 +108,7 @@ tables, VHD, VHDX, VMDK and DMG containers) and damage it: cut short at many
 lengths, or with bytes flipped over its headers, it must open, test and read
 without a panic. The
 NTFS volume is the 2 MiB `testfs1` image of the [`ntfs`](https://crates.io/crates/ntfs)
-crate (MIT or Apache-2.0), kept as `arca-disk/tests/fixtures/ntfs.img.xz`.
+crate (MIT or Apache-2.0), kept as `crates/arca-disk/tests/fixtures/ntfs.img.xz`.
 
 ```sh
 cargo test -p arca-disk

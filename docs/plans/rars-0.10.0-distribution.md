@@ -293,7 +293,7 @@ acceptance work remains in the [RAR record](../todos/rar-format.md).
 [unrar-src]: https://www.rarlab.com/rar/unrarsrc-7.3.1.tar.gz
 [seven-license]: https://www.7-zip.org/license.txt
 [release]: https://github.com/beyondhumane/arca/blob/c8918c8f7d9804a98cda45aaf84f8e7483082150/.github/workflows/release.yml
-[fixtures]: https://github.com/beyondhumane/arca/blob/c8918c8f7d9804a98cda45aaf84f8e7483082150/arca-rar/tests/fixtures/README.md
+[fixtures]: https://github.com/beyondhumane/arca/blob/c8918c8f7d9804a98cda45aaf84f8e7483082150/crates/arca-rar/tests/fixtures/README.md
 
 ## Scope update: writer feature enabled (2026-10-04)
 
@@ -303,7 +303,7 @@ reinterpreted as writer evidence.
 
 - `arca-rar/Cargo.toml` now resolves `rars 0.10.0` with
   `features = ["encryption", "write"]`. `recovery` and `parallel` remain off and
-  the crate defaults remain disabled; `python3 arca-rar/tests/check-features.py`
+  the crate defaults remain disabled; `python3 crates/arca-rar/tests/check-features.py`
   asserts exactly `encryption,write` for every default build and no `rars` in the
   opt-out builds.
 - Compiled scope: creation of new single-volume, non-solid, unencrypted RAR5
@@ -324,7 +324,7 @@ reinterpreted as writer evidence.
 - What this does not establish: it is not a legal clearance, not a resolution
   of the open provenance questions, and not a claim that the writer is
   WinRAR-equivalent. The creation validation record
-  ([RAR_CREATE_VALIDATION.md](../../arca-rar/RAR_CREATE_VALIDATION.md)) states
+  ([RAR_CREATE_VALIDATION.md](../../crates/arca-rar/RAR_CREATE_VALIDATION.md)) states
   which interoperability checks were actually run and with which tool versions.
 
 ## Scope update: vendored writer and parallel feature (2026-11-16)
@@ -332,8 +332,8 @@ reinterpreted as writer evidence.
 This section records a later change of technical scope. Everything above still
 stands as written.
 
-- `rars 0.10.2` is now vendored in `arca-rar/vendor/rars` from the crates.io
-  archive (SHA-256 recorded in `arca-rar/vendor/PATCHES.md`) and applied with
+- `rars 0.10.2` is now vendored in `crates/arca-rar/vendor/rars` from the crates.io
+  archive (SHA-256 recorded in `crates/arca-rar/vendor/PATCHES.md`) and applied with
   `[patch.crates-io]`. The patches touch only the RAR 5 writer's speed and are
   listed there: the binary-tree finder is kept for a whole member, and levels 2
   and 3 search and price less. The reader, the format code and the integrity
@@ -342,7 +342,7 @@ stands as written.
   several threads. It adds `rayon`, `rayon-core`, `crossbeam-deque`,
   `crossbeam-epoch`, `crossbeam-utils` and `either`, all MIT OR Apache-2.0;
   `python3 packaging/rar-notices.py` lists them and records `rars` as vendored,
-  and `python3 arca-rar/tests/check-features.py` asserts
+  and `python3 crates/arca-rar/tests/check-features.py` asserts
   `encryption,parallel,write` on the vendored copy. `recovery` stays off.
-- `arca-rar/fuzz` keeps its own lockfile on the crates.io copy, whose reader is
+- `crates/arca-rar/fuzz` keeps its own lockfile on the crates.io copy, whose reader is
   the one the vendored copy carries unchanged.

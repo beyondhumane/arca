@@ -14,7 +14,7 @@ Status: **stages 1 and 2 written, stage 2 half tested.** The new installer exist
 | Done | "Start using ARCA" and a link to the release notes |
 | Error | The reason and "Retry" |
 
-The engine, in `arca-setup/src/engine`, works on Windows, per user, without administrator rights:
+The engine, in `crates/arca-setup/src/engine`, works on Windows, per user, without administrator rights:
 
 - Extracts the files from a ZIP embedded in the executable, using `arca-zip`. If a file is in use (Arca open, the Explorer DLL loaded) it moves it aside as `name.old-N` and writes the new one; the next sweep deletes the moved files.
 - Writes the HKCU registry: classic menu, associations, capabilities, PATH and the Installed apps entry. It uses Inno's key, so it adopts a previous installation instead of duplicating it.
@@ -53,8 +53,8 @@ The Inno Setup wizard cannot draw these screens: vector background, steps with s
 
 Arca updates itself and takes the installer's shape for granted. Changing it without honouring these five points breaks updates for everyone who already has it installed.
 
-1. **File name**: `arca-setup-<version>-x86_64.exe`, uploaded to the `github.com/beyondhumane/arca` release. The new-version notice looks for that pattern (`arca-gui/src/controller/actions.rs`) and checks the sum in `SHA256SUMS.txt`.
-2. **Arguments**: `/VERYSILENT /NOCANCEL /NORESTART /NORESTARTAPPLICATIONS /update=1` (`install_update` in `arca-gui/src/archive_ops/mod.rs`). Silent mode opens no window.
+1. **File name**: `arca-setup-<version>-x86_64.exe`, uploaded to the `github.com/beyondhumane/arca` release. The new-version notice looks for that pattern (`crates/arca-gui/src/controller/actions.rs`) and checks the sum in `SHA256SUMS.txt`.
+2. **Arguments**: `/VERYSILENT /NOCANCEL /NORESTART /NORESTARTAPPLICATIONS /update=1` (`install_update` in `crates/arca-gui/src/archive_ops/mod.rs`). Silent mode opens no window.
 3. **Flicker-free update**: with `/update=1` Explorer is not restarted. The extension DLL is replaced on the next start and the executables are copied regardless.
 4. **Reopening Arca**: with `/update=1` the installer itself launches `arca-gui.exe` when done; Arca closes itself so it can be replaced.
 5. **`unins000.exe` next to `arca-gui.exe`**: `installed_by_setup()` uses it to know whether the copy can update itself. Either the new uninstaller keeps that name, or that check changes in the same commit.
@@ -89,5 +89,5 @@ It must also **adopt an existing Inno installation**: same `AppId` (`{7C4E0E4A-6
 - **egui, not another stack.** It is the one `arca-gui` uses since the move back from GPUI (see `migration-to-egui.md`); both crates share eframe and the CI cache.
 - **SVG through `egui_extras` (`resvg`).** The symbol, the logo and the backgrounds are vector. Each SVG carries an intrinsic size of about 1.5 times its on-screen size, so the texture `egui_extras` rasterizes is scaled down rather than up and the edges stay smooth.
 - **Backgrounds without blur filters.** Each `feGaussianBlur` forced a whole canvas to be rasterized, and the screen took seconds to paint the background.
-- **Sora and Inter embedded.** Sora SemiBold (headings, buttons, emphasis) and Inter Regular (body), both under the OFL, which ships in `arca-brand/fonts`. If they fail to load, the installer falls back to the system font.
+- **Sora and Inter embedded.** Sora SemiBold (headings, buttons, emphasis) and Inter Regular (body), both under the OFL, which ships in `crates/arca-brand/fonts`. If they fail to load, the installer falls back to the system font.
 - **The tagline is outlined**, extracted from Sora's glyphs, so the logo looks the same without the font installed.

@@ -205,7 +205,7 @@ tiene cabecera final, los siguientes también deben tenerla.
 La creación tiene sus propios techos (miembros, bytes de nombre, 4 GiB por
 fichero, 16 GiB en total, 64 MiB de cabeceras y un libro de memoria gestionada
 de 256 MiB para el escritor; consulta
-[`arca_rar::create_limits`](https://github.com/beyondhumane/arca/blob/main/arca-rar/src/lib.rs)).
+[`arca_rar::create_limits`](https://github.com/beyondhumane/arca/blob/main/crates/arca-rar/src/lib.rs)).
 Son límites del decodificador y del escritor, no un aislamiento estricto de
 memoria o tiempo de CPU. Algunos filtros necesitan más memoria de la permitida y se rechazan.
 La cancelación se comprueba al buscar, analizar y decodificar, y entre los pasos
@@ -245,8 +245,8 @@ de integridad depende de las sumas y autenticadores presentes en el archivo.
   amplían la cobertura del lector; el harness de creación con semilla compara
   los archivos que Arca escribe con UnRAR y 7-Zip oficiales. No demuestran
   compatibilidad exhaustiva. Consulta el
-  [registro de validación del lector](https://github.com/beyondhumane/arca/blob/main/arca-rar/RAR_VALIDATION.md)
-  y el [registro de validación de la creación](https://github.com/beyondhumane/arca/blob/main/arca-rar/RAR_CREATE_VALIDATION.md).
+  [registro de validación del lector](https://github.com/beyondhumane/arca/blob/main/crates/arca-rar/RAR_VALIDATION.md)
+  y el [registro de validación de la creación](https://github.com/beyondhumane/arca/blob/main/crates/arca-rar/RAR_CREATE_VALIDATION.md).
 - La [revisión de procedencia](https://github.com/beyondhumane/arca/blob/main/docs/plans/rars-0.10.0-distribution.md)
   recoge la declaración Apache-2.0 del autor y dudas sobre fuentes e
   investigación. No demostró una infracción ni una incompatibilidad de licencia
@@ -259,14 +259,14 @@ de integridad depende de las sumas y autenticadores presentes en el archivo.
 Comprobaciones reproducibles:
 
 ```sh
-python3 arca-rar/tests/check-features.py
+python3 crates/arca-rar/tests/check-features.py
 cargo test --workspace
 cargo test --workspace --no-default-features --features codecs-native
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release -p arca-cli
-python3 arca-rar/tests/create-stress.py            # smoke acotado; omite las herramientas ausentes
-UNRAR=/ruta/a/unrar SEVENZIP=/ruta/a/7zz python3 arca-rar/tests/create-stress.py --stress --require-tools
+python3 crates/arca-rar/tests/create-stress.py            # smoke acotado; omite las herramientas ausentes
+UNRAR=/ruta/a/unrar SEVENZIP=/ruta/a/7zz python3 crates/arca-rar/tests/create-stress.py --stress --require-tools
 ```
 
 Consulta el [registro de decisiones](https://github.com/beyondhumane/arca/blob/main/docs/todos/rar-format.md)
-y la [procedencia de los fixtures](https://github.com/beyondhumane/arca/blob/main/arca-rar/tests/fixtures/README.md).
+y la [procedencia de los fixtures](https://github.com/beyondhumane/arca/blob/main/crates/arca-rar/tests/fixtures/README.md).

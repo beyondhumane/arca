@@ -71,7 +71,7 @@ evidence identifies them. No upstream contact was made during this audit.
   links/reparse points, special files and ambiguous/unsafe extraction paths.
 
 The [RAR guide](../guide/rar.md) documents exact limits, publication semantics,
-commands and remaining exclusions. The [fixture record](../../arca-rar/tests/fixtures/README.md)
+commands and remaining exclusions. The [fixture record](../../crates/arca-rar/tests/fixtures/README.md)
 identifies independent official-RAR fixtures and the legacy upstream sample.
 RAR/UnRAR reference executables are local test tools, not redistributed with
 Arca or required by its runtime.
@@ -129,9 +129,9 @@ Decided and implemented after the read-only activation above, superseding the
 - Nothing is ever replaced: the archive is staged beside the output, verified
   with the reader, and published with `persist_noclobber`.
 - Validation: unit and integration tests in `arca-rar`, `arca-cli` and
-  `arca-gui`, plus the seeded CLI harness `arca-rar/tests/create-stress.py`
+  `arca-gui`, plus the seeded CLI harness `crates/arca-rar/tests/create-stress.py`
   (bounded smoke in CI against official UnRAR 7.12 and 7-Zip 24.09; `--stress`
-  for the larger campaign). Results and gaps: [RAR_CREATE_VALIDATION.md](../../arca-rar/RAR_CREATE_VALIDATION.md).
+  for the larger campaign). Results and gaps: [RAR_CREATE_VALIDATION.md](../../crates/arca-rar/RAR_CREATE_VALIDATION.md).
 - Still out of scope: modifying existing archives, repair/recovery, encrypted,
   solid or multivolume output, RAR4 output, CBR creation and OS associations.
   The CLI cancels RAR creation cooperatively on SIGINT/SIGTERM (`ctrlc`, flag

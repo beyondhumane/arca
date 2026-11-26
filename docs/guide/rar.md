@@ -201,7 +201,7 @@ Each reading operation uses these fixed ceilings:
 Header and output budgets apply across the complete set. Creation has its own
 ceilings (members, name bytes, 4 GiB per file, 16 GiB total, 64 MiB of headers
 and a 256 MiB managed writer-memory ledger, see
-[`arca_rar::create_limits`](https://github.com/beyondhumane/arca/blob/main/arca-rar/src/lib.rs)).
+[`arca_rar::create_limits`](https://github.com/beyondhumane/arca/blob/main/crates/arca-rar/src/lib.rs)).
 These are decoder and writer limits, not a hard process-RSS or CPU-time sandbox. Some
 filtered archives need more buffered decoding than permitted and are rejected.
 The GUI's cancellation flag is checked while parsing and decoding as well as
@@ -240,8 +240,8 @@ Integrity guarantees depend on the checksums/authenticators the archive carries.
   bounded mutation fuzzing extend reader coverage; the seeded creation harness
   compares archives Arca writes against official UnRAR and 7-Zip. They do not
   establish exhaustive compatibility. See the
-  [reader validation record](https://github.com/beyondhumane/arca/blob/main/arca-rar/RAR_VALIDATION.md)
-  and the [creation validation record](https://github.com/beyondhumane/arca/blob/main/arca-rar/RAR_CREATE_VALIDATION.md)
+  [reader validation record](https://github.com/beyondhumane/arca/blob/main/crates/arca-rar/RAR_VALIDATION.md)
+  and the [creation validation record](https://github.com/beyondhumane/arca/blob/main/crates/arca-rar/RAR_CREATE_VALIDATION.md)
   for reproducible checks and uncovered cases.
 - The [provenance review](https://github.com/beyondhumane/arca/blob/main/docs/plans/rars-0.10.0-distribution.md)
   records upstream's Apache-2.0 declaration and unresolved source/research
@@ -255,14 +255,14 @@ Integrity guarantees depend on the checksums/authenticators the archive carries.
 Run the feature audit, tests and the bounded creation harness with:
 
 ```sh
-python3 arca-rar/tests/check-features.py
+python3 crates/arca-rar/tests/check-features.py
 cargo test --workspace
 cargo test --workspace --no-default-features --features codecs-native
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release -p arca-cli
-python3 arca-rar/tests/create-stress.py            # bounded smoke, skips absent tools
-UNRAR=/path/to/unrar SEVENZIP=/path/to/7zz python3 arca-rar/tests/create-stress.py --stress --require-tools
+python3 crates/arca-rar/tests/create-stress.py            # bounded smoke, skips absent tools
+UNRAR=/path/to/unrar SEVENZIP=/path/to/7zz python3 crates/arca-rar/tests/create-stress.py --stress --require-tools
 ```
 
 See the [decision record](https://github.com/beyondhumane/arca/blob/main/docs/todos/rar-format.md) and
-[fixture provenance](https://github.com/beyondhumane/arca/blob/main/arca-rar/tests/fixtures/README.md).
+[fixture provenance](https://github.com/beyondhumane/arca/blob/main/crates/arca-rar/tests/fixtures/README.md).

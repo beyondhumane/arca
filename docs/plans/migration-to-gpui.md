@@ -128,7 +128,7 @@ After reaching functional parity, validating accessibility and completing the pl
   only saturated pixels are `danger` and `warning`, which tell "extracted" from
   "not extracted" and are not decoration.
 - **4/6 px radius, 26 px row, 13 px base font.**
-- The tokens live in `arca-gui/src/gpui_theme.rs` and are `gpui-component`'s;
+- The tokens live in `crates/arca-gui/src/gpui_theme.rs` and are `gpui-component`'s;
   Arca adds no token layer of its own.
 - Keep `AppController`, `AppAction`, the workers, the `gui.conf` format and the platform integrations intact.
 - Redesign toolbar, navigation, table, empty states, progress, notifications, menus and dialogs with a coherent system of tokens, spacing, typography, icons, hover/focus/disabled states and responsive behaviour.
