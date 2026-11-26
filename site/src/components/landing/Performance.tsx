@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { ArrowRight, Scale } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { useInView } from '@/lib/hooks';
 import { Accent, Container, Reveal, SectionHeading } from '../ui';
 import { useCopy, useLang } from '@/lib/i18n';
 import { MethodLink } from './MethodLink';
-import { docPath } from '@/lib/router';
 
 type Bar = { label: string; value: number; display: string; arca?: boolean; sub?: string };
 type Group = { title?: string; bars: Bar[] };
@@ -126,7 +124,7 @@ const DATASETS: Dataset[] = [
 
 type Words = { tab: string; title: string; context: string; groups: string[]; highlights: string[] };
 
-const COPY: Record<'en' | 'es', { sets: Words[]; eyebrow: string; title: [string, string]; description: string; tabs: string; lower: string; loses: string; losesText: [string, string, string]; full: string }> = {
+const COPY: Record<'en' | 'es', { sets: Words[]; eyebrow: string; title: [string, string]; description: string; tabs: string; lower: string }> = {
   en: {
     sets: DATASETS.map((d) => ({
       tab: d.tab,
@@ -140,9 +138,6 @@ const COPY: Record<'en' | 'es', { sets: Words[]; eyebrow: string; title: [string
     description: 'Each chart names the machine it ran on and links to the command behind it, including the runs Arca loses.',
     tabs: 'Benchmarks',
     lower: 'Lower is better',
-    loses: 'Where it doesn’t win',
-    losesText: ['5,358 small source files, deflate vs deflate on Windows 11: ', '7-Zip 0.627 s', ', Arca 0.710 s. With many tiny files, 97% of the time goes to creating files on NTFS, and every tool pays that cost.'],
-    full: 'Full methodology',
   },
   es: {
     sets: [
@@ -180,9 +175,6 @@ const COPY: Record<'en' | 'es', { sets: Words[]; eyebrow: string; title: [string
     description: 'Cada gráfica dice en qué máquina se midió y enlaza al comando que la produjo, también las pruebas que Arca pierde.',
     tabs: 'Benchmarks',
     lower: 'Menos es mejor',
-    loses: 'Dónde no gana',
-    losesText: ['5358 archivos de código pequeños, deflate contra deflate en Windows 11: ', '7-Zip 0.627 s', ', Arca 0.710 s. Con muchos archivos diminutos, el 97% del tiempo se va en crear archivos en NTFS, y todas las herramientas pagan ese coste.'],
-    full: 'Metodología completa',
   },
 };
 
@@ -345,22 +337,6 @@ export function Performance() {
                     </li>
                   ))}
                 </ul>
-              </div>
-              <div className="rounded-3xl border border-white/[0.07] bg-white/[0.02] p-6">
-                <div className="flex items-center gap-2 text-sm font-medium text-white">
-                  <Scale className="size-4 text-brand-300" /> {t.loses}
-                </div>
-                <p className="mt-3 text-sm leading-relaxed text-slate-400">
-                  {t.losesText[0]}
-                  <span className="text-slate-200">{t.losesText[1]}</span>
-                  {t.losesText[2]}
-                </p>
-                <a
-                  href={docPath(lang, 'benchmarks', 'deflate-against-deflate-on-windows-11')}
-                  className="mt-4 inline-flex items-center gap-1 text-sm text-brand-300 transition hover:gap-2 hover:text-brand-200"
-                >
-                  {t.full} <ArrowRight className="size-3.5" />
-                </a>
               </div>
             </div>
           </div>
