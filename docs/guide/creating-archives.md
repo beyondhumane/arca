@@ -173,7 +173,7 @@ archive without `.gz`, so `access.log.gz` extracts to `access.log`. The name a
 gzip header may store is not used. gzip records only the last member's size,
 modulo 4 GiB, so `list` shows 0 for the size.
 
-On Linux and macOS a symbolic link inside the folders being archived goes into a TAR (`.tar`, `.tar.gz`, `.tar.xz`) as a link, after the regular files, holding exactly the target it had. It is never followed, so a link to a folder elsewhere does not pull that folder in. Targets longer than 100 bytes go in a pax `linkpath` record. Whether a link is safe to recreate is decided on extraction (see [Links in TAR archives](listing-extracting.md#links-in-tar-archives)). On Windows links are left out, as before.
+On Linux and macOS a symbolic link inside the folders being archived goes into a TAR (`.tar`, `.tar.gz`, `.tar.xz`) as a link, after the regular files, holding exactly the target it had. It is never followed, so a link to a folder elsewhere does not pull that folder in. Names and targets that do not fit a ustar header go in a pax `path` or `linkpath` record in front of the entry; Arca reads GNU `L`/`K` long names too but never writes them. Whether a link is safe to recreate is decided on extraction (see [Links in TAR archives](listing-extracting.md#links-in-tar-archives)). On Windows links are left out, as before.
 
 ## XZ
 
@@ -209,7 +209,7 @@ arca create notes.txt.bz2 notes.txt         # one file, no container
 arca create notes.txt.zst notes.txt
 ```
 
-They behave like XZ: a `.bz2` or `.zst` holds exactly one file, and a folder or
+`.bz2` and `.tar.bz2` are always built in, `--no-default-features` included, and do not need `codecs-native`; the BZip2 method of [7z](#7z) is separate. They behave like XZ: a `.bz2` or `.zst` holds exactly one file, and a folder or
 several inputs need the TAR variant. When reading, the signature decides the
 codec and the contents decide whether a TAR is inside, whatever the name says.
 
@@ -306,7 +306,7 @@ self-extractor, so ZIP tools such as `unzip -t setup.exe` or .NET’s
 - Directories are walked recursively in sorted order, so the same input always produces the same entry order.
 - Paths are stored relative to the parent of each input: `arca create a.zip ~/work/site` stores entries as `site/…`.
 - Modification times are preserved.
-- ZIP adds regular files and skips symbolic links. TAR adds regular files and, on Linux and macOS, stores symbolic links as links without following them (see above). 7z and RAR also preserve empty directories and reject symbolic links (see above).
+- ZIP adds regular files and skips symbolic links without a notice. TAR adds regular files and, on Linux and macOS, stores symbolic links as links without following them (see above). 7z and RAR also preserve empty directories and reject symbolic links (see above).
 
 ## Encrypting while you create
 

@@ -79,7 +79,7 @@ match ZipArchive::open(file) {
 - LZMA dictionaries and PPMd models: 256 MiB per stage; Zstd window: 256 MiB.
   These are not a global memory quota. There is no total extracted-byte or CPU-time quota.
 - Baseline decoding: Copy, LZMA, LZMA2, PPMd, DEFLATE, AES, single-stream
-  BCJ/Delta. Default `codecs-native` adds Bzip2 and Zstd. Brotli and LZ4 are unsupported.
+  BCJ/Delta. Default `codecs-native` adds Bzip2 and Zstd inside 7z; `.bz2` and `.tar.bz2` do not depend on it (they use `libbz2-rs-sys` in every build). Brotli and LZ4 are unsupported.
 - Encrypted extraction validates the entire stable source before destination
   callbacks, then streams selected blocks. CRC-32 is not authentication.
 - Progress/cancellation is cooperative; bounded header parsing and KDF setup

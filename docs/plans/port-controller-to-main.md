@@ -1,6 +1,6 @@
 # Port `AppController` to today's `main.rs`
 
-Status: transformation done; `cargo test --workspace`, `cargo test -p arca-gui` and `cargo fmt -p arca-gui -- --check` pass.
+Status: historical. The GPUI shell it targets was dropped for egui (see `migration-to-egui.md`); unchecked items below are not current product gaps. Transformation done; `cargo test --workspace`, `cargo test -p arca-gui` and `cargo fmt -p arca-gui -- --check` pass.
 
 Done in this batch:
 

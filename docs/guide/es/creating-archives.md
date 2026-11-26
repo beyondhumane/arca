@@ -178,6 +178,8 @@ cualquier otra cosa es un único fichero que se llama como el archivo sin
 guardar la cabecera gzip no se usa. gzip solo registra el tamaño del último
 miembro, módulo 4 GiB, así que `list` muestra 0 como tamaño.
 
+En Linux y macOS, un enlace simbólico dentro de las carpetas que se archivan entra en un TAR (`.tar`, `.tar.gz`, `.tar.xz`) como enlace, después de los ficheros normales, con exactamente el destino que tenía. Nunca se sigue, así que un enlace a una carpeta de fuera no la arrastra. Los nombres y destinos que no caben en una cabecera ustar van en un registro pax `path` o `linkpath` delante de la entrada; Arca también lee los nombres largos GNU `L`/`K`, pero nunca los escribe. Si un enlace es seguro de recrear se decide al extraer (consulta [Enlaces en archivos TAR](listing-extracting.md#enlaces-en-archivos-tar)). En Windows los enlaces se dejan fuera, como antes.
+
 ## XZ
 
 ```sh
@@ -213,7 +215,7 @@ arca create notes.txt.bz2 notes.txt         # un fichero, sin contenedor
 arca create notes.txt.zst notes.txt
 ```
 
-Funcionan como XZ: un `.bz2` o un `.zst` guarda un único fichero, y una carpeta
+`.bz2` y `.tar.bz2` están siempre incluidos, también con `--no-default-features`, y no necesitan `codecs-native`; el método BZip2 de [7z](#7z) es aparte. Funcionan como XZ: un `.bz2` o un `.zst` guarda un único fichero, y una carpeta
 o varias entradas necesitan la variante TAR. Al leer, la firma decide el códec
 y el contenido decide si lleva un TAR dentro, diga lo que diga el nombre.
 
@@ -317,7 +319,7 @@ o el `ZipFile.OpenRead` de .NET leen el propio programa como un ZIP, y también
 - Los directorios se recorren de forma recursiva en orden alfabético, así que la misma entrada siempre produce el mismo orden de entradas.
 - Las rutas se guardan relativas al padre de cada entrada: `arca create a.zip ~/work/site` guarda las entradas como `site/…`.
 - Se preservan las fechas de modificación.
-- ZIP/TAR añaden ficheros normales y omiten enlaces simbólicos. 7z y RAR también conservan directorios vacíos y rechazan enlaces simbólicos (ver arriba).
+- ZIP añade ficheros normales y omite los enlaces simbólicos sin avisar. TAR añade ficheros normales y, en Linux y macOS, guarda los enlaces simbólicos como enlaces sin seguirlos (ver arriba). 7z y RAR también conservan directorios vacíos y rechazan enlaces simbólicos (ver arriba).
 
 ## Cifrar al crear
 
