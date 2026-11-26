@@ -7,6 +7,8 @@ keywords: hoja de ruta futuro 7z lzma xz sólido enlaces simbólicos udf planifi
 
 # Hoja de ruta
 
+[English](../roadmap.md) | **Español**
+
 Lo que Arca todavía no hace y, donde importa, por qué.
 
 ## Disponible

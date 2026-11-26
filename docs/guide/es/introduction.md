@@ -7,6 +7,8 @@ keywords: resumen qué por qué estado acerca de overview what why status about
 
 # Introducción
 
+[English](../introduction.md) | **Español**
+
 Arca es un explorador de archivos y un archivador en uno, escrito en Rust. Su ventana de escritorio recorre el disco como cualquier explorador y entra en archivos ZIP, 7z, TAR, RAR e ISO como si fueran carpetas; crea archivos ZIP, 7z, TAR y RAR y flujos XZ, bzip2 y Zstandard, comprime con Deflate o Zstandard usando todos los núcleos de tu máquina y cifra con AES-256. El mismo núcleo funciona como un único binario de línea de comandos y como menú contextual del Explorador de Windows.
 
 ## ¿Por qué otro archivador?

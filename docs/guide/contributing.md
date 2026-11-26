@@ -7,6 +7,8 @@ keywords: contribute pull request issue bug license apache
 
 # Contributing & license
 
+**English** | [Español](es/contributing.md)
+
 Arca is developed in the open on GitHub. Bug reports, benchmarks from your own hardware and pull requests are all welcome.
 
 ## Set up

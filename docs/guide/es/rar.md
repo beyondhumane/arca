@@ -7,6 +7,8 @@ keywords: rar cbr solo lectura crear rar5 cifrado ocultar nombres sólido multiv
 
 # RAR
 
+[English](../rar.md) | **Español**
+
 Arca lee todas las familias RAR y **crea nuevos archivos RAR5**: sólidos o no,
 cifrados con o sin nombres ocultos, enteros o en volúmenes, con o sin registro
 de recuperación. Los archivos RAR y CBR existentes nunca se modifican. RAR está activo

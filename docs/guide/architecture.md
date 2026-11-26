@@ -7,6 +7,8 @@ keywords: crates workspace unsafe design dependencies profiles lto
 
 # Architecture
 
+**English** | [Español](es/architecture.md)
+
 Arca is a Cargo workspace. Each crate has one job and a declared stance on unsafe code.
 
 ## Crates

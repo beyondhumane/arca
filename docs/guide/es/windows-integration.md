@@ -7,6 +7,8 @@ keywords: windows explorador menú contextual clic derecho instalador inno setup
 
 # Integración con Windows
 
+[English](../windows-integration.md) | **Español**
+
 En Windows, Arca se integra con el Explorador de archivos para que puedas abrir y extraer archivos comprimidos sin tocar una terminal.
 
 ## Menú contextual del Explorador

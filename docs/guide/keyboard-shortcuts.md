@@ -7,6 +7,8 @@ keywords: keys shortcuts hotkeys keyboard ctrl alt
 
 # Keyboard shortcuts
 
+**English** | [Español](es/keyboard-shortcuts.md)
+
 List commands apply to the active pane. Text fields and dialogs retain their editing keys.
 
 | Keys | Action |

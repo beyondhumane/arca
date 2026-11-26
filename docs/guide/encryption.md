@@ -7,6 +7,8 @@ keywords: password aes aes-256 encrypt decrypt zipcrypto hmac pbkdf2 security
 
 # Encryption
 
+**English** | [Español](es/encryption.md)
+
 Arca encrypts `.zip` archives with AES-256 using the WinZip AE-2 scheme, the same one 7-Zip, WinRAR and NanaZip write. `interop.sh` checks it in both directions against 7-Zip.
 
 ## The ZIP scheme

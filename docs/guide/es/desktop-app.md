@@ -7,6 +7,8 @@ keywords: interfaz gráfica ventana arca-gui escritorio aplicación explorador p
 
 # El espacio de trabajo de escritorio
 
+[English](../desktop-app.md) | **Español**
+
 `arca-gui` es un explorador de archivos y un archivador en la misma ventana. Arranca en la carpeta donde lo dejaste, muestra el disco como cualquier explorador y abre un archivo comprimido en el mismo sitio al hacer doble clic, con los mismos paneles, filtros, vista previa y menús contextuales. La banda superior reúne el historial, la ruta (haz clic en su parte vacía, en el lápiz o pulsa **Ctrl+L** para escribirla), el filtro, el menú **Vista**, la búsqueda (**Ctrl+K**), los ajustes y el menú **Más**.
 
 ## Explorar el disco

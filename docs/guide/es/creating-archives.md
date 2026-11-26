@@ -7,6 +7,8 @@ keywords: crear comprimir nivel códec zstd deflate store hilos tar gzip xz txz 
 
 # Crear archivos
 
+[English](../creating-archives.md) | **Español**
+
 ```text
 arca create <OUT> <INPUTS>... [-l LEVEL] [-c CODEC] [-j THREADS] [-p PASSWORD] [--hide-names] [-v SIZE] [--solid] [--recovery PERCENT] [--sfx [--console]]
 ```

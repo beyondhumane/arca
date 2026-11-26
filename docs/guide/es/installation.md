@@ -7,6 +7,8 @@ keywords: instalar descargar compilar cargo rust versión binario windows macos 
 
 # Instalación
 
+[English](../installation.md) | **Español**
+
 Cada versión publica binarios precompilados para Windows, macOS y Linux. También puedes compilar Arca desde el código fuente con un toolchain de Rust estándar.
 
 ## Descargar una versión

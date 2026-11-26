@@ -7,6 +7,8 @@ keywords: verificar crc ci github actions benchmark metodología test verify crc
 
 # Pruebas y benchmarking
 
+[English](../testing-benchmarking.md) | **Español**
+
 ## arca test
 
 Lee cada entrada y comprueba su CRC (o su HMAC, cuando la entrada está cifrada) sin escribir nada en disco.

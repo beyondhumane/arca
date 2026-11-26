@@ -7,6 +7,8 @@ keywords: cpio ar deb rpm cab cabinet lzh lha mszip lzx initramfs paquete debian
 
 # CPIO, AR, DEB, RPM, CAB y LZH
 
+[English](../more-formats.md) | **Español**
+
 Arca lee seis formatos más de los que abren 7-Zip y NanaZip. Vienen incluidos,
 no necesitan ninguna feature de Cargo y son de **solo lectura**: Arca nunca los
 crea ni los modifica. Listar, comprobar, extraer, las vistas previas, las sumas

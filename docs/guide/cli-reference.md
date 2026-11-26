@@ -7,6 +7,8 @@ keywords: cli command line options flags reference help exit status
 
 # CLI reference
 
+**English** | [Español](es/cli-reference.md)
+
 ZIP, 7z, TAR (plain, gzip, XZ, bzip2 and Zstandard), standalone gzip, XZ, bzip2 and Zstandard, and [RAR](rar.md) are enabled by default. RAR supports `list`,
 `test` and `extract`, including `-p` for encrypted data or headers, and
 `create` for new RAR5 archives, solid, encrypted, in volumes or with a recovery record. Modifying an existing RAR or

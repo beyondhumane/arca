@@ -7,6 +7,8 @@ keywords: performance speed benchmarks nanazip 7-zip zip numbers rating codecs t
 
 # Benchmarks
 
+**English** | [Español](es/benchmarks.md)
+
 These numbers come from specific machines and should not be read as a general advantage. Each one comes with its method, including the cases where Arca loses.
 
 ## Measure your own machine

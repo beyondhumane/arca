@@ -7,6 +7,8 @@ keywords: roadmap future 7z lzma xz solid symlinks udf planned
 
 # Roadmap
 
+**English** | [Español](es/roadmap.md)
+
 What Arca doesn’t do yet and, where it matters, why.
 
 ## Available

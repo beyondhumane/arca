@@ -7,6 +7,8 @@ keywords: teclas atajos combinaciones teclado keys shortcuts hotkeys keyboard ct
 
 # Atajos de teclado
 
+[English](../keyboard-shortcuts.md) | **Español**
+
 Las órdenes de lista actúan sobre el panel activo. Los campos de texto y los diálogos conservan sus teclas de edición.
 
 | Teclas | Acción |

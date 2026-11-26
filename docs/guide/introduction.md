@@ -7,6 +7,8 @@ keywords: overview what why status about
 
 # Introduction
 
+**English** | [Español](es/introduction.md)
+
 Arca is a file explorer and an archiver in one, written in Rust. Its desktop window browses your disk like any explorer and steps into ZIP, 7z, TAR, RAR and ISO archives as if they were folders; it creates ZIP, 7z, TAR and RAR archives and XZ, bzip2 and Zstandard streams, compresses with Deflate or Zstandard across every core of your machine, and encrypts with AES-256. The same core runs as a single command-line binary and as the Windows Explorer context menu.
 
 ## Why another archiver?

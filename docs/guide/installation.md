@@ -7,6 +7,8 @@ keywords: install download build cargo rust release binary windows macos linux s
 
 # Installation
 
+**English** | [Español](es/installation.md)
+
 Every release ships prebuilt binaries for Windows, macOS and Linux. You can also build Arca from source with a stock Rust toolchain.
 
 ## Download a release

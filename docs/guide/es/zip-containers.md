@@ -7,6 +7,8 @@ keywords: contenedor zip apk aar jar war ear epub cbz xpi whl wheel nupkg ipa so
 
 # Contenedores ZIP
 
+[English](../zip-containers.md) | **Español**
+
 Muchos tipos de archivo son archivos ZIP normales con su propia extensión y
 algunas reglas más. Arca los abre con su lector de ZIP, así que no hace falta
 renombrarlos:

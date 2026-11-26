@@ -7,6 +7,8 @@ keywords: interoperabilidad compatibilidad 7-zip unzip tar winrar nanazip sha-25
 
 # Interoperabilidad
 
+[English](../interoperability.md) | **Español**
+
 Un archivador solo es útil si otras herramientas pueden abrir lo que escribe.
 `interop.sh` compara hashes tras recorridos de ida y vuelta y comprueba rechazos
 y limpieza. El resumen final da el número según la compilación y las herramientas.
